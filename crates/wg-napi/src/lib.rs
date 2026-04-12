@@ -1,6 +1,7 @@
 //! Node.js/NAPI bindings for WikiGraph.
 
 use napi::bindgen_prelude::*;
+use napi_derive::napi;
 use std::sync::Arc;
 use wg_core::{Config, WikiGraph};
 

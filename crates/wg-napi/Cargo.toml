@@ -15,4 +15,5 @@ crate-type = ["cdylib"]
 [dependencies]
 wg-core = { path = "../wg-core" }
 napi = "2"
+napi-derive = "2"
 serde = { version = "1.0", features = ["derive"] }

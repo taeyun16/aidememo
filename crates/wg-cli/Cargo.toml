@@ -24,3 +24,8 @@ ulid = "1.1"
 tempfile = "3.10"
 walkdir = "2.4"
 notify = "6.1"
+
+# Async runtime + HTTP (for MCP server)
+tokio = { version = "1.35", features = ["full"] }
+axum = "0.7"
+tokio-stream = "0.1"

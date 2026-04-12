@@ -5,8 +5,10 @@ use std::path::PathBuf;
 
 pub mod init;
 pub mod watch;
+pub mod mcp_serve;
 
 pub use init::InitSub;
+pub use mcp_serve::McpSub;
 pub use watch::WatchSub;
 
 #[derive(Debug, Clone)]
@@ -32,6 +34,7 @@ pub enum Command {
     Model(ModelSub),
     Init(InitSub),
     Watch(WatchSub),
+    McpServe(McpSub),
 }
 
 #[derive(Debug, Clone)]
@@ -174,6 +177,7 @@ pub fn build_cli() -> OptionParser<Args> {
 
     let init_cmd = init::init_command();
     let watch_cmd = watch::watch_command();
+    let mcp_serve_cmd = mcp_serve::mcp_serve_command();
 
     let command = construct!([
         entity_command(),
@@ -191,6 +195,7 @@ pub fn build_cli() -> OptionParser<Args> {
         model_command(),
         init_cmd,
         watch_cmd,
+        mcp_serve_cmd,
     ]);
 
     construct!(Args {

@@ -1,8 +1,9 @@
 //! Python bindings for WikiGraph using PyO3.
 
 use pyo3::prelude::*;
+use pyo3::types::PyModule;
 use std::sync::Arc;
-use wg_core::{Config, Result, WikiGraph};
+use wg_core::{Config, WikiGraph};
 
 /// WikiGraph Python wrapper.
 #[pyclass]
@@ -26,7 +27,7 @@ impl PyWikiGraph {
 
 /// Initialize the wg Python module.
 #[pymodule]
-fn wg_python(_py: Python, m: &PyModule) -> PyResult<()> {
+fn wg_python(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyWikiGraph>()?;
     Ok(())
 }

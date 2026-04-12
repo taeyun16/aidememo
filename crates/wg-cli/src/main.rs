@@ -48,6 +48,7 @@ fn main() {
         cmd::Command::Model(sub) => handle_model(config, sub),
         cmd::Command::Init(sub) => cmd::init::run_init(sub.wiki_root, sub.no_ingest),
         cmd::Command::Watch(sub) => cmd::watch::run_watch(sub.wiki_root, sub.interval),
+        cmd::Command::McpServe(sub) => cmd::mcp_serve::run_mcp_serve(sub.port, sub.wiki_root),
     };
 
     match result {
