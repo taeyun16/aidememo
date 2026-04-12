@@ -4,6 +4,7 @@ pub mod config;
 pub mod error;
 pub mod fuzzy;
 pub mod graph;
+pub mod index;
 pub mod ingest;
 pub mod lint;
 pub mod migrate;

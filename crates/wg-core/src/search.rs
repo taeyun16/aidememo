@@ -5,40 +5,21 @@
 use crate::config::Config;
 use crate::error::{Result, WgError};
 use crate::graph::Graph;
+use crate::index::{build_bm25_index, Bm25IndexState};
 use crate::store::Store;
 use crate::types::*;
-
-/// BM25 search engine state.
-struct IndexState {
-    /// BM25 search engine instance keyed by FactId.
-    engine: bm25::SearchEngine<FactId>,
-    /// Whether the index needs rebuilding.
-    dirty: bool,
-    /// Rebuild generation counter.
-    generation: u64,
-}
-
-impl IndexState {
-    fn new() -> Self {
-        Self {
-            engine: bm25::SearchEngineBuilder::<FactId>::with_avgdl(256.0).build(),
-            dirty: false,
-            generation: 0,
-        }
-    }
-}
 
 /// Search engine for WikiGraph.
 pub struct SearchEngine<'a> {
     store: &'a Store,
     config: &'a Config,
-    index: parking_lot::RwLock<IndexState>,
+    index: parking_lot::RwLock<Bm25IndexState>,
 }
 
 impl<'a> SearchEngine<'a> {
     /// Create a new search engine.
     pub fn new(store: &'a Store, config: &'a Config) -> Self {
-        let index = Self::build_index(store);
+        let index = build_bm25_index(store);
         Self {
             store,
             config,
@@ -46,49 +27,11 @@ impl<'a> SearchEngine<'a> {
         }
     }
 
-    /// Build the BM25 index from all facts.
-    fn build_index(store: &Store) -> IndexState {
-        let mut state = IndexState::new();
-
-        let facts = match store.fact_list(FactListOpts {
-            limit: Some(100000),
-            ..Default::default()
-        }) {
-            Ok(facts) => facts,
-            Err(_) => return state,
-        };
-
-        for fact in facts {
-            // Build document text from content + entity names + tags
-            let mut text = fact.content.clone();
-
-            // Add entity names
-            for entity_id in &fact.entity_ids {
-                if let Ok(entity) = store.entity_get_by_id(*entity_id) {
-                    text.push(' ');
-                    text.push_str(&entity.name);
-                }
-            }
-
-            // Add tags
-            for tag in &fact.tags {
-                text.push(' ');
-                text.push_str(tag);
-            }
-
-            state.engine.upsert(bm25::Document::new(fact.id, text));
-        }
-
-        state.dirty = false;
-        state.generation += 1;
-        state
-    }
-
     /// Rebuild the index if dirty.
     fn ensure_index(&self) {
         let mut index = self.index.write();
         if index.dirty {
-            let new_index = Self::build_index(self.store);
+            let new_index = build_bm25_index(self.store);
             *index = new_index;
         }
     }
@@ -191,12 +134,12 @@ mod semantic {
     pub struct HybridSearchEngine<'a> {
         store: &'a Store,
         config: &'a Config,
-        bm25_index: parking_lot::RwLock<IndexState>,
+        bm25_index: parking_lot::RwLock<Bm25IndexState>,
     }
 
     impl<'a> HybridSearchEngine<'a> {
         pub fn new(store: &'a Store, config: &'a Config) -> Self {
-            let bm25_index = SearchEngine::build_index(store);
+            let bm25_index = build_bm25_index(store);
             Self {
                 store,
                 config,
