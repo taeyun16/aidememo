@@ -1,0 +1,24 @@
+# Build artifacts
+/target/
+**/target/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Wiki data (user-specific, never commit)
+*.redb
+_meta/
+.wg/
+models/
+
+# Temp files
+*.bak
+*.tmp

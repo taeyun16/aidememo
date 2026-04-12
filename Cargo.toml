@@ -1,0 +1,41 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/wg-core",
+    "crates/wg-cli",
+    "crates/wg-python",
+    "crates/wg-napi",
+    "crates/wg-nif",
+    "crates/wg-ffi",
+]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.85"
+authors = ["WikiGraph Team"]
+description = "Wiki-Graph: Structured index engine for LLM wikis"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/aspect-build/wg"
+version = "0.1.0"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "warn"
+panic = "deny"
+todo = "warn"
+dbg_macro = "deny"
+missing_errors_doc = "warn"
+missing_panics_doc = "warn"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+
+[profile.dev]
+opt-level = 0
+debug = false

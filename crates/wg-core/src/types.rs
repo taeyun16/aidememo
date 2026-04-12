@@ -1,0 +1,664 @@
+//! Shared types for WikiGraph.
+//!
+//! Core types:
+//! - [`EntityId`] — ULID-based canonical entity identifier
+//! - [`FactId`] — ULID-based fact identifier
+//! - [`EntityRecord`] — persisted entity data
+//! - [`FactRecord`] — persisted fact data
+//! - [`RelationRecord`] — persisted relation data
+
+use serde::{Deserialize, Serialize};
+use std::str::FromStr;
+use ulid::Ulid;
+
+/// Canonical entity identifier (ULID-based).
+///
+/// All entities are identified by EntityId, not by name.
+/// Name/aliases are secondary indexes only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct EntityId(pub Ulid);
+
+impl EntityId {
+    /// Create a new random EntityId.
+    pub fn new() -> Self {
+        Self(Ulid::new())
+    }
+
+    /// Parse from string representation.
+    pub fn parse(s: &str) -> Option<Self> {
+        Ulid::from_str(s).ok().map(Self)
+    }
+
+    /// Return the ULID as string.
+    pub fn to_string(&self) -> String {
+        self.0.to_string()
+    }
+
+    /// Return raw bytes as a fixed-size array.
+    pub fn as_bytes(&self) -> [u8; 16] {
+        self.0.to_bytes()
+    }
+}
+
+impl Default for EntityId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl std::fmt::Display for EntityId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+/// Canonical fact identifier (ULID-based).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct FactId(pub Ulid);
+
+impl FactId {
+    /// Create a new random FactId.
+    pub fn new() -> Self {
+        Self(Ulid::new())
+    }
+
+    /// Parse from string representation.
+    pub fn parse(s: &str) -> Option<Self> {
+        Ulid::from_str(s).ok().map(Self)
+    }
+
+    /// Return the ULID as string.
+    pub fn to_string(&self) -> String {
+        self.0.to_string()
+    }
+
+    /// Return raw bytes as a fixed-size array.
+    pub fn as_bytes(&self) -> [u8; 16] {
+        self.0.to_bytes()
+    }
+}
+
+impl Default for FactId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl std::fmt::Display for FactId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+/// Entity type classification.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum EntityType {
+    /// Technology (tools, infrastructure, software)
+    Technology,
+    /// Concept (patterns, principles, architectural styles)
+    Concept,
+    /// Comparison (feature matrix, pros/cons)
+    Comparison,
+    /// Query (question, investigation)
+    Query,
+    /// Person
+    Person,
+    /// Team
+    Team,
+    /// Unknown/unclassified
+    Unknown,
+}
+
+impl Default for EntityType {
+    fn default() -> Self {
+        Self::Unknown
+    }
+}
+
+impl std::fmt::Display for EntityType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            EntityType::Technology => write!(f, "technology"),
+            EntityType::Concept => write!(f, "concept"),
+            EntityType::Comparison => write!(f, "comparison"),
+            EntityType::Query => write!(f, "query"),
+            EntityType::Person => write!(f, "person"),
+            EntityType::Team => write!(f, "team"),
+            EntityType::Unknown => write!(f, "unknown"),
+        }
+    }
+}
+
+/// Entity record stored in redb.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EntityRecord {
+    /// Canonical ID (ULID).
+    pub id: EntityId,
+    /// Display name (e.g., "Redis").
+    pub name: String,
+    /// Lowercase normalized name for search.
+    pub name_lower: String,
+    /// Entity type classification.
+    pub entity_type: EntityType,
+    /// Alternative names/aliases.
+    pub aliases: Vec<String>,
+    /// Tags for categorization.
+    pub tags: Vec<String>,
+    /// Source markdown page path (e.g., "entities/redis.md").
+    pub source_page: Option<String>,
+    /// Creation timestamp (epoch ms).
+    pub created_at: u64,
+    /// Last update timestamp (epoch ms).
+    pub updated_at: u64,
+}
+
+impl EntityRecord {
+    /// Create a new entity record.
+    pub fn new(name: String, entity_type: EntityType) -> Self {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        let name_lower = name.to_lowercase();
+        Self {
+            id: EntityId::new(),
+            name,
+            name_lower,
+            entity_type,
+            aliases: Vec::new(),
+            tags: Vec::new(),
+            source_page: None,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    /// Update the record with new data.
+    pub fn update(&mut self, input: EntityUpdate) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        if let Some(name) = input.name {
+            self.name = name.clone();
+            self.name_lower = name.to_lowercase();
+        }
+        if let Some(entity_type) = input.entity_type {
+            self.entity_type = entity_type;
+        }
+        if let Some(aliases) = input.aliases {
+            self.aliases = aliases;
+        }
+        if let Some(tags) = input.tags {
+            self.tags = tags;
+        }
+        if let Some(source_page) = input.source_page {
+            self.source_page = Some(source_page);
+        }
+        self.updated_at = now;
+    }
+}
+
+/// Input for creating a new entity.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct EntityInput {
+    pub name: String,
+    #[serde(default)]
+    pub entity_type: Option<EntityType>,
+    #[serde(default)]
+    pub aliases: Option<Vec<String>>,
+    #[serde(default)]
+    pub tags: Option<Vec<String>>,
+    #[serde(default)]
+    pub source_page: Option<String>,
+}
+
+/// Input for updating an entity.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct EntityUpdate {
+    pub name: Option<String>,
+    pub entity_type: Option<EntityType>,
+    pub aliases: Option<Vec<String>>,
+    pub tags: Option<Vec<String>>,
+    pub source_page: Option<String>,
+}
+
+/// Summary of an entity (for list operations).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EntitySummary {
+    pub id: EntityId,
+    pub name: String,
+    pub entity_type: EntityType,
+    pub fact_count: u32,
+    pub tags: Vec<String>,
+}
+
+/// Relation type (user-defined).
+///
+/// Common types: "uses", "depends_on", "decided_by", "implements", "manages".
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct RelationType(pub String);
+
+impl RelationType {
+    pub fn new(s: impl Into<String>) -> Self {
+        Self(s.into())
+    }
+}
+
+impl std::fmt::Display for RelationType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl Default for RelationType {
+    fn default() -> Self {
+        Self("related".to_string())
+    }
+}
+
+/// Relation record stored in redb.
+///
+/// Key: "{source_id}\0{rel_type}\0{target_id}"
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RelationRecord {
+    /// Source entity ID.
+    pub source_id: EntityId,
+    /// Target entity ID.
+    pub target_id: EntityId,
+    /// Relation type (e.g., "uses", "depends_on").
+    pub relation_type: RelationType,
+    /// Weight/confidence (0.0-1.0).
+    pub weight: f32,
+    /// Evidence/source paths.
+    pub evidence: Vec<String>,
+    /// Creation timestamp (epoch ms).
+    pub created_at: u64,
+}
+
+/// Input for creating a relation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RelationInput {
+    pub source: String, // entity name (resolved to ID)
+    pub target: String, // entity name (resolved to ID)
+    pub relation_type: RelationType,
+    #[serde(default)]
+    pub weight: Option<f32>,
+    #[serde(default)]
+    pub evidence: Option<Vec<String>>,
+}
+
+/// Fact type classification.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FactType {
+    Decision,
+    Pattern,
+    Convention,
+    Claim,
+    Note,
+    Question,
+    Unknown,
+}
+
+impl Default for FactType {
+    fn default() -> Self {
+        Self::Unknown
+    }
+}
+
+impl std::fmt::Display for FactType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FactType::Decision => write!(f, "decision"),
+            FactType::Pattern => write!(f, "pattern"),
+            FactType::Convention => write!(f, "convention"),
+            FactType::Claim => write!(f, "claim"),
+            FactType::Note => write!(f, "note"),
+            FactType::Question => write!(f, "question"),
+            FactType::Unknown => write!(f, "unknown"),
+        }
+    }
+}
+
+/// Fact record stored in redb.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FactRecord {
+    /// Canonical ID (ULID).
+    pub id: FactId,
+    /// The fact content.
+    pub content: String,
+    /// Fact type.
+    pub fact_type: FactType,
+    /// Referenced entity IDs (not names).
+    pub entity_ids: Vec<EntityId>,
+    /// Tags.
+    pub tags: Vec<String>,
+    /// Source page path (e.g., "entities/redis.md#ha").
+    pub source: Option<String>,
+    /// Source confidence (0-1): manual=1.0, auto-extract=0.5, LLM=0.3.
+    pub source_confidence: f32,
+    /// Relevance score (0-1): updated via feedback.
+    pub relevance_score: f32,
+    /// Creation timestamp (epoch ms).
+    pub created_at: u64,
+    /// Last update timestamp (epoch ms).
+    pub updated_at: u64,
+    /// Number of times accessed.
+    pub access_count: u32,
+    /// Last access timestamp (epoch ms).
+    pub last_accessed_at: u64,
+}
+
+impl FactRecord {
+    /// Create a new fact record.
+    pub fn new(content: String, fact_type: FactType, entity_ids: Vec<EntityId>) -> Self {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        Self {
+            id: FactId::new(),
+            content,
+            fact_type,
+            entity_ids,
+            tags: Vec::new(),
+            source: None,
+            source_confidence: 0.5,
+            relevance_score: 0.5,
+            created_at: now,
+            updated_at: now,
+            access_count: 0,
+            last_accessed_at: now,
+        }
+    }
+
+    /// Update the fact with new data.
+    pub fn update(&mut self, input: FactUpdate) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        if let Some(content) = input.content {
+            self.content = content;
+        }
+        if let Some(fact_type) = input.fact_type {
+            self.fact_type = fact_type;
+        }
+        if let Some(tags) = input.tags {
+            self.tags = tags;
+        }
+        if let Some(source) = input.source {
+            self.source = Some(source);
+        }
+        self.updated_at = now;
+    }
+
+    /// Record an access.
+    pub fn record_access(&mut self) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        self.access_count += 1;
+        self.last_accessed_at = now;
+    }
+}
+
+/// Input for creating a fact.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FactInput {
+    pub content: String,
+    #[serde(default)]
+    pub fact_type: Option<FactType>,
+    #[serde(default)]
+    pub entity_ids: Option<Vec<EntityId>>,
+    #[serde(default)]
+    pub tags: Option<Vec<String>>,
+    #[serde(default)]
+    pub source: Option<String>,
+    #[serde(default)]
+    pub source_confidence: Option<f32>,
+}
+
+/// Input for updating a fact.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct FactUpdate {
+    pub content: Option<String>,
+    pub fact_type: Option<FactType>,
+    pub tags: Option<Vec<String>>,
+    pub source: Option<String>,
+}
+
+/// Options for listing entities.
+#[derive(Debug, Clone, Default)]
+pub struct ListOpts {
+    pub entity_type: Option<EntityType>,
+    pub min_facts: Option<u32>,
+    pub sort_by: EntitySort,
+    pub limit: Option<usize>,
+    pub offset: usize,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub enum EntitySort {
+    Name,
+    #[default]
+    UpdatedAt,
+    FactCount,
+}
+
+/// Options for traversing the graph.
+#[derive(Debug, Clone, Default)]
+pub struct TraverseOpts {
+    /// Maximum depth (default: 2).
+    pub depth: u32,
+    /// Relation types to follow.
+    pub relation_types: Option<Vec<RelationType>>,
+    /// Direction (forward/reverse/both).
+    pub direction: TraverseDirection,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub enum TraverseDirection {
+    #[default]
+    Forward,
+    Reverse,
+    Both,
+}
+
+/// Result of a graph traversal.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TraverseResult {
+    /// Entities found during traversal.
+    pub entities: Vec<EntitySummary>,
+    /// Relations found.
+    pub relations: Vec<RelationRecord>,
+    /// Total nodes visited.
+    pub visited_count: usize,
+}
+
+/// A single step in a path.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PathStep {
+    pub from: EntityId,
+    pub relation_type: RelationType,
+    pub to: EntityId,
+}
+
+/// Search result item.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SearchResult {
+    pub fact_id: FactId,
+    pub content: String,
+    pub fact_type: FactType,
+    pub entity_names: Vec<String>,
+    pub source: Option<String>,
+    pub score: f32,
+    pub rank: usize,
+}
+
+/// Options for search.
+#[derive(Debug, Clone, Default)]
+pub struct SearchOpts {
+    pub limit: Option<usize>,
+    pub min_confidence: Option<f32>,
+    pub entity_filter: Option<Vec<EntityId>>,
+    pub bm25_weight: f32,
+    pub semantic_weight: f32,
+}
+
+/// Options for listing facts.
+#[derive(Debug, Clone, Default)]
+pub struct FactListOpts {
+    pub fact_type: Option<FactType>,
+    pub entity_id: Option<EntityId>,
+    pub min_confidence: Option<f32>,
+    pub limit: Option<usize>,
+    pub offset: usize,
+}
+
+/// Store statistics.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct StoreStats {
+    pub entity_count: u64,
+    pub fact_count: u64,
+    pub relation_count: u64,
+    pub total_size_bytes: u64,
+    pub last_ingest_at: Option<u64>,
+}
+
+/// Export scope.
+#[derive(Debug, Clone, Copy, Default)]
+pub enum ExportScope {
+    #[default]
+    All,
+    Entities,
+    Relations,
+    Facts,
+}
+
+/// Export statistics.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ExportStats {
+    pub entities_exported: u64,
+    pub relations_exported: u64,
+    pub facts_exported: u64,
+}
+
+/// Import statistics.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ImportStats {
+    pub entities_imported: u64,
+    pub relations_imported: u64,
+    pub facts_imported: u64,
+    pub errors: u64,
+}
+
+/// Lint issue severity.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LintSeverity {
+    Error,
+    Warning,
+    Info,
+}
+
+impl std::fmt::Display for LintSeverity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LintSeverity::Error => write!(f, "error"),
+            LintSeverity::Warning => write!(f, "warning"),
+            LintSeverity::Info => write!(f, "info"),
+        }
+    }
+}
+
+/// A single lint issue.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LintIssue {
+    pub severity: LintSeverity,
+    pub code: String,
+    pub message: String,
+    pub entity_id: Option<EntityId>,
+    pub fact_id: Option<FactId>,
+}
+
+/// Lint report.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct LintReport {
+    pub issues: Vec<LintIssue>,
+    pub entity_count: u64,
+    pub fact_count: u64,
+    pub relation_count: u64,
+}
+
+#[cfg(feature = "semantic")]
+mod semantic_types {
+    use super::*;
+
+    /// Vector record format for semantic search.
+    ///
+    /// Binary format:
+    /// - bytes[0]: version (u8, current: 1)
+    /// - bytes[1..3]: dimensions (u16 LE, current: 256)
+    /// - bytes[3]: dtype (u8, 0=f32, 1=f16, 2=i8)
+    /// - bytes[4..]: little-endian vector data
+    #[derive(Debug, Clone)]
+    pub struct VectorRecord {
+        pub version: u8,
+        pub dimensions: u16,
+        pub dtype: VectorDType,
+        pub data: Vec<u8>,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum VectorDType {
+        F32,
+        F16,
+        I8,
+    }
+
+    impl VectorRecord {
+        pub const CURRENT_VERSION: u8 = 1;
+        pub const CURRENT_DIMENSIONS: u16 = 256;
+
+        /// Encode to binary format.
+        pub fn encode(&self) -> Vec<u8> {
+            let mut bytes = Vec::with_capacity(4 + self.data.len());
+            bytes.push(self.version);
+            bytes.extend_from_slice(&self.dimensions.to_le_bytes());
+            bytes.push(self.dtype as u8);
+            bytes.extend_from_slice(&self.data);
+            bytes
+        }
+
+        /// Decode from binary format.
+        pub fn decode(bytes: &[u8]) -> Option<Self> {
+            if bytes.len() < 4 {
+                return None;
+            }
+            let version = bytes[0];
+            if version != Self::CURRENT_VERSION {
+                return None;
+            }
+            let dimensions = u16::from_le_bytes([bytes[1], bytes[2]]);
+            let dtype = match bytes[3] {
+                0 => VectorDType::F32,
+                1 => VectorDType::F16,
+                2 => VectorDType::I8,
+                _ => return None,
+            };
+            let data = bytes[4..].to_vec();
+            Some(Self {
+                version,
+                dimensions,
+                dtype,
+                data,
+            })
+        }
+    }
+}
+
+#[cfg(feature = "semantic")]
+pub use semantic_types::*;

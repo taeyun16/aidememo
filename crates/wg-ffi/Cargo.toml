@@ -1,0 +1,17 @@
+[package]
+name = "wg-ffi"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description.workspace = true
+license.workspace = true
+repository.workspace = true
+version.workspace = true
+
+[lib]
+name = "wg_ffi"
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+wg-core = { path = "../wg-core" }
+serde = { version = "1.0", features = ["derive"] }
