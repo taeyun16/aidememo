@@ -6,10 +6,7 @@
 use crate::config::Config;
 use crate::error::{Result, WgError};
 use crate::types::*;
-use parking_lot::RwLock;
-use redb::{
-    Database, ReadableMultimapTable, ReadableTable, ReadableTableMetadata, TableDefinition,
-};
+use redb::{Database, ReadableTable, TableDefinition};
 use std::path::Path;
 use std::sync::Arc;
 use ulid::Ulid;
@@ -25,6 +22,10 @@ pub(crate) const RELATIONS_REV_TABLE: TableDefinition<&[u8], &[u8]> =
 pub(crate) const FACTS_TABLE: TableDefinition<&[u8], &[u8]> = TableDefinition::new("facts");
 pub(crate) const FACT_BY_ENTITY_TABLE: TableDefinition<&str, &[u8]> =
     TableDefinition::new("fact_by_entity");
+pub(crate) const SEARCH_SESSIONS_TABLE: TableDefinition<&str, &[u8]> =
+    TableDefinition::new("search_sessions");
+pub(crate) const SEARCH_FEEDBACK_TABLE: TableDefinition<&str, &[u8]> =
+    TableDefinition::new("search_feedback");
 
 // Schema version
 const CURRENT_SCHEMA_VERSION: u32 = 1;
@@ -40,6 +41,12 @@ unsafe impl Send for Store {}
 unsafe impl Sync for Store {}
 
 impl Store {
+    /// Access the store configuration.
+    #[allow(dead_code)]
+    pub(crate) fn config(&self) -> &Config {
+        &self.config
+    }
+
     /// Open or create a WikiGraph store at the given path.
     pub fn open(path: &Path, config: Config) -> Result<Self> {
         // Ensure parent directory exists
@@ -83,6 +90,8 @@ impl Store {
         write_txn.open_table(RELATIONS_REV_TABLE).ok();
         write_txn.open_table(FACTS_TABLE).ok();
         write_txn.open_table(FACT_BY_ENTITY_TABLE).ok();
+        write_txn.open_table(SEARCH_SESSIONS_TABLE).ok();
+        write_txn.open_table(SEARCH_FEEDBACK_TABLE).ok();
 
         // Set schema version if not exists
         {
@@ -288,6 +297,8 @@ impl Store {
         let id = EntityId::new();
         let mut record =
             EntityRecord::new(input.name.clone(), input.entity_type.unwrap_or_default());
+        // Use the same id — don't let EntityRecord generate a different one
+        record.id = id;
 
         if let Some(aliases) = input.aliases {
             record.aliases = aliases;
@@ -308,7 +319,7 @@ impl Store {
 
         // Check if entity with same name exists
         {
-            let mut by_name =
+            let by_name =
                 write_txn
                     .open_table(ENTITY_BY_NAME_TABLE)
                     .map_err(|e| WgError::StoreRead {
@@ -474,19 +485,50 @@ impl Store {
                 source: Box::new(e),
             })?;
 
-        let record_bytes = entities
-            .get(id.as_bytes().as_slice())
-            .map_err(|e| WgError::StoreRead {
-                table: "entities",
-                key: id.to_string(),
-                source: Box::new(e),
-            })?
-            .ok_or(WgError::EntityIdNotFound(id.to_string()))?;
+        let record_bytes =
+            entities
+                .get(id.as_bytes().as_slice())
+                .map_err(|e| WgError::StoreRead {
+                    table: "entities",
+                    key: id.to_string(),
+                    source: Box::new(e),
+                })?;
 
-        serde_json::from_slice(record_bytes.value()).map_err(|e| WgError::Deserialize {
-            context: format!("entity {:?}", id),
-            source: e,
-        })
+        if let Some(record_bytes) = record_bytes {
+            let mut record: EntityRecord =
+                serde_json::from_slice(record_bytes.value()).map_err(|e| WgError::Deserialize {
+                    context: format!("entity {:?}", id),
+                    source: e,
+                })?;
+            record.id = id;
+            return Ok(record);
+        }
+
+        // Compatibility fallback for legacy rows whose stored JSON id doesn't match the table key.
+        for entry in entities.iter().map_err(|e| WgError::StoreRead {
+            table: "entities",
+            key: "<iter>".to_string(),
+            source: Box::new(e),
+        })? {
+            let (_key, value) = entry.map_err(|e| WgError::StoreRead {
+                table: "entities",
+                key: "<entry>".to_string(),
+                source: Box::new(e),
+            })?;
+
+            let mut record: EntityRecord =
+                serde_json::from_slice(value.value()).map_err(|e| WgError::Deserialize {
+                    context: format!("entity {:?}", id),
+                    source: e,
+                })?;
+
+            if record.id == id {
+                record.id = id;
+                return Ok(record);
+            }
+        }
+
+        Err(WgError::EntityIdNotFound(id.to_string()))
     }
 
     /// Update an entity.
@@ -593,7 +635,7 @@ impl Store {
                 source: Box::new(e),
             })?;
 
-        let facts = read_txn
+        let _facts = read_txn
             .open_table(FACTS_TABLE)
             .map_err(|e| WgError::StoreRead {
                 table: "facts",
@@ -608,17 +650,23 @@ impl Store {
             key: "<iter>".to_string(),
             source: Box::new(e),
         })? {
-            let (_key, value) = entry.map_err(|e| WgError::StoreRead {
+            let (key, value) = entry.map_err(|e| WgError::StoreRead {
                 table: "entities",
                 key: "<entry>".to_string(),
                 source: Box::new(e),
             })?;
 
-            let record: EntityRecord =
+            let mut record: EntityRecord =
                 serde_json::from_slice(value.value()).map_err(|e| WgError::Deserialize {
                     context: "entity list".to_string(),
                     source: e,
                 })?;
+
+            let id = match key.value().try_into() {
+                Ok(bytes) => EntityId(Ulid::from_bytes(bytes)),
+                Err(_) => record.id,
+            };
+            record.id = id;
 
             // Apply filters
             if let Some(ref entity_type) = opts.entity_type {
@@ -879,6 +927,7 @@ impl Store {
             input.fact_type.unwrap_or_default(),
             input.entity_ids.unwrap_or_default(),
         );
+        record.id = id;
 
         if let Some(tags) = input.tags {
             record.tags = tags;
@@ -1239,6 +1288,113 @@ impl Store {
         )?;
 
         Ok(())
+    }
+
+    /// Add a search session record.
+    pub fn search_session_add(&mut self, session: &SearchSession) -> Result<()> {
+        let write_txn = self
+            .db
+            .begin_write()
+            .map_err(|e| WgError::TransactionBegin {
+                source: Box::new(e),
+            })?;
+
+        let mut table =
+            write_txn
+                .open_table(SEARCH_SESSIONS_TABLE)
+                .map_err(|e| WgError::StoreWrite {
+                    table: "search_sessions",
+                    key: session.id.clone(),
+                    source: Box::new(e),
+                })?;
+
+        let bytes = serde_json::to_vec(session).map_err(|e| WgError::Serialize {
+            context: "search_session".to_string(),
+            source: e,
+        })?;
+
+        table
+            .insert(session.id.as_str(), bytes.as_slice())
+            .map_err(|e| WgError::StoreWrite {
+                table: "search_sessions",
+                key: session.id.clone(),
+                source: Box::new(e),
+            })?;
+        drop(table);
+
+        write_txn.commit().map_err(|e| WgError::Internal {
+            0: format!("transaction commit failed: {}", e),
+        })?;
+
+        Ok(())
+    }
+
+    /// Add a search feedback record.
+    pub fn search_feedback_add(&mut self, feedback: &SearchFeedback) -> Result<()> {
+        let write_txn = self
+            .db
+            .begin_write()
+            .map_err(|e| WgError::TransactionBegin {
+                source: Box::new(e),
+            })?;
+
+        let mut table =
+            write_txn
+                .open_table(SEARCH_FEEDBACK_TABLE)
+                .map_err(|e| WgError::StoreWrite {
+                    table: "search_feedback",
+                    key: format!("{}:{}", feedback.session_id, feedback.fact_id).to_string(),
+                    source: Box::new(e),
+                })?;
+
+        let bytes = serde_json::to_vec(feedback).map_err(|e| WgError::Serialize {
+            context: "search_feedback".to_string(),
+            source: e,
+        })?;
+
+        table
+            .insert(
+                format!("{}:{}", feedback.session_id, feedback.fact_id).as_str(),
+                bytes.as_slice(),
+            )
+            .map_err(|e| WgError::StoreWrite {
+                table: "search_feedback",
+                key: format!("{}:{}", feedback.session_id, feedback.fact_id),
+                source: Box::new(e),
+            })?;
+        drop(table);
+
+        write_txn.commit().map_err(|e| WgError::Internal {
+            0: format!("transaction commit failed: {}", e),
+        })?;
+
+        Ok(())
+    }
+
+    /// Count total feedback entries.
+    pub fn search_feedback_count(&self) -> Result<usize> {
+        let read_txn = self
+            .db
+            .begin_read()
+            .map_err(|e| WgError::TransactionBegin {
+                source: Box::new(e),
+            })?;
+
+        let table = read_txn
+            .open_table(SEARCH_FEEDBACK_TABLE)
+            .map_err(|e| WgError::StoreRead {
+                table: "search_feedback",
+                key: "<all>".to_string(),
+                source: Box::new(e),
+            })?;
+
+        let iter = table.iter().map_err(|e| WgError::StoreRead {
+            table: "search_feedback",
+            key: "<count>".to_string(),
+            source: Box::new(e),
+        })?;
+        let count = iter.fold(0, |acc, _| acc + 1);
+        Ok(count)
     }
 
     // === Relation Operations ===
@@ -1687,5 +1843,186 @@ mod tests {
 
         let stats2 = store.stats().unwrap();
         assert_eq!(stats2.entity_count, 1);
+    }
+}
+
+// === Adapt operations (semantic-adapt feature) ===
+
+#[cfg(feature = "semantic-adapt")]
+impl Store {
+    /// Train the domain adapter using all available feedback.
+    pub fn adapt_train(&mut self) -> Result<crate::types::AdaptResult> {
+        use crate::adapt::DomainAdapter;
+
+        let read_txn = self
+            .db
+            .begin_read()
+            .map_err(|e| WgError::TransactionBegin {
+                source: Box::new(e),
+            })?;
+
+        let table = read_txn
+            .open_table(SEARCH_FEEDBACK_TABLE)
+            .map_err(|e| WgError::StoreRead {
+                table: "search_feedback",
+                key: "<all>".to_string(),
+                source: Box::new(e),
+            })?;
+
+        let mut feedback_pairs = Vec::new();
+        let iter = table.iter().map_err(|e| WgError::StoreRead {
+            table: "search_feedback",
+            key: "<iter>".to_string(),
+            source: Box::new(e),
+        })?;
+
+        for item in iter {
+            let (_, value) = item.map_err(|e| WgError::StoreRead {
+                table: "search_feedback",
+                key: "<item>".to_string(),
+                source: Box::new(e),
+            })?;
+            let fb: crate::types::SearchFeedback =
+                serde_json::from_slice(value.value()).map_err(|e| WgError::Deserialize {
+                    context: "search_feedback".to_string(),
+                    source: e,
+                })?;
+            feedback_pairs.push((fb.fact_id.to_string(), fb.helpful));
+        }
+
+        drop(read_txn);
+
+        let mut adapter = DomainAdapter::new();
+        let result = adapter.train(&feedback_pairs);
+
+        // Persist adapter state to meta
+        let bytes = adapter.to_bytes()?;
+        self.meta_set("adapter_state", &bytes)?;
+
+        Ok(result)
+    }
+
+    /// Get the current adapter status and statistics.
+    pub fn adapt_status(&self) -> Result<crate::types::AdaptStatus> {
+        let feedback_count = self.search_feedback_count()?;
+        let adapter = self.load_adapter()?;
+        Ok(adapter.status(feedback_count))
+    }
+
+    /// Evaluate the adapter on all available feedback.
+    pub fn adapt_eval(&self) -> Result<crate::types::AdaptEvalReport> {
+        let read_txn = self
+            .db
+            .begin_read()
+            .map_err(|e| WgError::TransactionBegin {
+                source: Box::new(e),
+            })?;
+
+        let table = read_txn
+            .open_table(SEARCH_FEEDBACK_TABLE)
+            .map_err(|e| WgError::StoreRead {
+                table: "search_feedback",
+                key: "<all>".to_string(),
+                source: Box::new(e),
+            })?;
+
+        let mut feedback_pairs = Vec::new();
+        let iter = table.iter().map_err(|e| WgError::StoreRead {
+            table: "search_feedback",
+            key: "<iter>".to_string(),
+            source: Box::new(e),
+        })?;
+
+        for item in iter {
+            let (_, value) = item.map_err(|e| WgError::StoreRead {
+                table: "search_feedback",
+                key: "<item>".to_string(),
+                source: Box::new(e),
+            })?;
+            let fb: crate::types::SearchFeedback =
+                serde_json::from_slice(value.value()).map_err(|e| WgError::Deserialize {
+                    context: "search_feedback".to_string(),
+                    source: e,
+                })?;
+            feedback_pairs.push((fb.fact_id.to_string(), fb.helpful));
+        }
+
+        drop(read_txn);
+
+        let adapter = self.load_adapter()?;
+        Ok(adapter.evaluate(&feedback_pairs, 10))
+    }
+
+    /// Load the adapter from meta bytes, or return a fresh one.
+    fn load_adapter(&self) -> Result<crate::adapt::DomainAdapter> {
+        match self.meta_get::<Vec<u8>>("adapter_state")? {
+            Some(bytes) => crate::adapt::DomainAdapter::from_bytes(&bytes),
+            None => Ok(crate::adapt::DomainAdapter::new()),
+        }
+    }
+
+    /// Get a meta value as bytes.
+    fn meta_get<T: serde::de::DeserializeOwned>(&self, key: &str) -> Result<Option<T>> {
+        let read_txn = self
+            .db
+            .begin_read()
+            .map_err(|e| WgError::TransactionBegin {
+                source: Box::new(e),
+            })?;
+
+        let meta = read_txn
+            .open_table(META_TABLE)
+            .map_err(|e| WgError::StoreRead {
+                table: "meta",
+                key: key.to_string(),
+                source: Box::new(e),
+            })?;
+
+        match meta.get(key).map_err(|e| WgError::StoreRead {
+            table: "meta",
+            key: key.to_string(),
+            source: Box::new(e),
+        })? {
+            Some(value) => {
+                let bytes = value.value();
+                let val: T = serde_json::from_slice(bytes).map_err(|e| WgError::Deserialize {
+                    context: format!("meta/{}", key),
+                    source: e,
+                })?;
+                Ok(Some(val))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Set a meta value from bytes.
+    fn meta_set(&mut self, key: &str, value: &[u8]) -> Result<()> {
+        let write_txn = self
+            .db
+            .begin_write()
+            .map_err(|e| WgError::TransactionBegin {
+                source: Box::new(e),
+            })?;
+
+        let mut meta = write_txn
+            .open_table(META_TABLE)
+            .map_err(|e| WgError::StoreWrite {
+                table: "meta",
+                key: key.to_string(),
+                source: Box::new(e),
+            })?;
+
+        meta.insert(key, value).map_err(|e| WgError::StoreWrite {
+            table: "meta",
+            key: key.to_string(),
+            source: Box::new(e),
+        })?;
+        drop(meta);
+
+        write_txn.commit().map_err(|e| WgError::Internal {
+            0: format!("meta set commit failed: {}", e),
+        })?;
+
+        Ok(())
     }
 }

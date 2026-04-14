@@ -3,17 +3,18 @@
 //! Provides BM25 keyword search and hybrid semantic search.
 
 use crate::config::Config;
-use crate::error::{Result, WgError};
+use crate::error::Result;
 use crate::graph::Graph;
-use crate::index::{build_bm25_index, Bm25IndexState};
+use crate::index::{Bm25IndexState, build_bm25_index};
 use crate::store::Store;
 use crate::types::*;
+use parking_lot::RwLock;
 
 /// Search engine for WikiGraph.
 pub struct SearchEngine<'a> {
     store: &'a Store,
     config: &'a Config,
-    index: parking_lot::RwLock<Bm25IndexState>,
+    index: RwLock<Bm25IndexState>,
 }
 
 impl<'a> SearchEngine<'a> {
@@ -23,7 +24,7 @@ impl<'a> SearchEngine<'a> {
         Self {
             store,
             config,
-            index: parking_lot::RwLock::new(index),
+            index: RwLock::new(index),
         }
     }
 
@@ -31,8 +32,7 @@ impl<'a> SearchEngine<'a> {
     fn ensure_index(&self) {
         let mut index = self.index.write();
         if index.dirty {
-            let new_index = build_bm25_index(self.store);
-            *index = new_index;
+            *index = build_bm25_index(self.store);
         }
     }
 
@@ -40,10 +40,11 @@ impl<'a> SearchEngine<'a> {
     pub fn search(&self, query: &str, opts: SearchOpts) -> Result<Vec<SearchResult>> {
         self.ensure_index();
 
+        let limit = opts.limit.unwrap_or(self.config.search.default_limit);
+        let min_confidence = opts.min_confidence.unwrap_or(self.config.search.min_trust);
+
         let index = self.index.read();
-        // Perform BM25 search
-        let bm25_results: Vec<bm25::SearchResult<FactId>> =
-            index.engine.search(query, opts.limit.unwrap_or(10));
+        let bm25_results: Vec<bm25::SearchResult<FactId>> = index.engine.search(query, limit);
 
         let mut results = Vec::new();
 
@@ -52,45 +53,35 @@ impl<'a> SearchEngine<'a> {
             let score = bm25_result.score;
 
             if let Ok(fact) = self.store.fact_get(&fact_id) {
-                // Apply min confidence filter
-                if let Some(min_conf) = opts.min_confidence {
-                    if fact.source_confidence < min_conf {
-                        continue;
-                    }
+                if fact.source_confidence < min_confidence {
+                    continue;
                 }
 
-                // Apply entity filter
-                if let Some(ref entity_filter) = opts.entity_filter {
-                    if !fact
-                        .entity_ids
-                        .iter()
-                        .any(|eid| entity_filter.contains(eid))
-                    {
-                        continue;
-                    }
+                if !matches_entity_filter(&fact, opts.entity_filter.as_ref()) {
+                    continue;
                 }
 
-                // Get entity names for display
-                let entity_names: Vec<String> = fact
-                    .entity_ids
-                    .iter()
-                    .filter_map(|eid| self.store.entity_get_by_id(*eid).ok())
-                    .map(|e| e.name)
-                    .collect();
-
-                // Calculate combined score
-                let combined_score =
-                    score * (0.6 * fact.source_confidence + 0.4 * fact.relevance_score);
-
-                results.push(SearchResult {
-                    fact_id,
-                    content: fact.content,
-                    fact_type: fact.fact_type,
-                    entity_names,
-                    source: fact.source,
-                    score: combined_score,
-                    rank: rank + 1,
-                });
+                #[cfg(feature = "semantic")]
+                {
+                    results.push(build_search_result(
+                        self.store,
+                        fact,
+                        fact_id,
+                        score,
+                        rank + 1,
+                        opts.session_id.clone(),
+                    ));
+                }
+                #[cfg(not(feature = "semantic"))]
+                {
+                    results.push(build_search_result(
+                        self.store,
+                        fact,
+                        fact_id,
+                        score,
+                        rank + 1,
+                    ));
+                }
             }
         }
 
@@ -105,7 +96,6 @@ impl<'a> SearchEngine<'a> {
         depth: u32,
         opts: SearchOpts,
     ) -> Result<Vec<SearchResult>> {
-        // First, traverse to find entities in scope
         let traverse_result = Graph::new(self.store).traverse(
             start,
             TraverseOpts {
@@ -115,10 +105,8 @@ impl<'a> SearchEngine<'a> {
             },
         )?;
 
-        // Create entity filter from traversal result
         let entity_ids: Vec<EntityId> = traverse_result.entities.iter().map(|e| e.id).collect();
 
-        // Search with entity filter
         let mut search_opts = opts;
         search_opts.entity_filter = Some(entity_ids);
 
@@ -126,147 +114,339 @@ impl<'a> SearchEngine<'a> {
     }
 }
 
-#[cfg(feature = "semantic")]
-mod semantic {
-    use super::*;
-
-    /// Hybrid search combining BM25 and semantic vectors.
-    pub struct HybridSearchEngine<'a> {
-        store: &'a Store,
-        config: &'a Config,
-        bm25_index: parking_lot::RwLock<Bm25IndexState>,
-    }
-
-    impl<'a> HybridSearchEngine<'a> {
-        pub fn new(store: &'a Store, config: &'a Config) -> Self {
-            let bm25_index = build_bm25_index(store);
-            Self {
-                store,
-                config,
-                bm25_index: parking_lot::RwLock::new(bm25_index),
-            }
-        }
-
-        /// Search using RRF (Reciprocal Rank Fusion) combining BM25 and semantic.
-        pub fn hybrid_search(&self, query: &str, opts: SearchOpts) -> Result<Vec<SearchResult>> {
-            // BM25 results
-            let bm25_results = self.bm25_search(query, opts.limit.unwrap_or(10))?;
-
-            // Semantic results (if model is available)
-            let semantic_results = self.semantic_search(query, opts.limit.unwrap_or(10)).ok();
-
-            // RRF fusion
-            let limit = opts.limit.unwrap_or(10) as usize;
-            let fused = self.rrf_fusion(
-                &bm25_results,
-                semantic_results.as_deref(),
-                opts.bm25_weight,
-                opts.semantic_weight,
-                limit,
-            );
-
-            Ok(fused)
-        }
-
-        fn bm25_search(&self, query: &str, limit: usize) -> Result<Vec<SearchResult>> {
-            let index = self.bm25_index.read();
-
-            let bm25_results: Vec<bm25::SearchResult<FactId>> = index.engine.search(query, limit);
-            let mut results = Vec::new();
-
-            for (rank, bm25_result) in bm25_results.into_iter().enumerate() {
-                let fact_id = bm25_result.document.id;
-                let score = bm25_result.score;
-
-                if let Ok(fact) = self.store.fact_get(&fact_id) {
-                    results.push(SearchResult {
-                        fact_id,
-                        content: fact.content.clone(),
-                        fact_type: fact.fact_type,
-                        entity_names: fact
-                            .entity_ids
-                            .iter()
-                            .filter_map(|eid| self.store.entity_get_by_id(*eid).ok())
-                            .map(|e| e.name)
-                            .collect(),
-                        source: fact.source.clone(),
-                        score,
-                        rank: rank + 1,
-                    });
-                }
-            }
-
-            Ok(results)
-        }
-
-        fn semantic_search(&self, query: &str, limit: usize) -> Result<Vec<SearchResult>> {
-            // This would use Model2Vec to encode query and compute cosine similarity
-            // For now, return empty results if semantic feature is enabled but model not loaded
-            Err(WgError::SearchFailed(
-                "Semantic model not yet implemented".to_string(),
-            ))
-        }
-
-        fn rrf_fusion(
-            &self,
-            bm25_results: &[SearchResult],
-            semantic_results: Option<&[SearchResult]>,
-            bm25_weight: f32,
-            semantic_weight: f32,
-            limit: usize,
-        ) -> Vec<SearchResult> {
-            use std::collections::HashMap;
-
-            const RRF_K: f32 = 60.0; // RRF constant
-
-            let mut scores: HashMap<FactId, f32> = HashMap::new();
-
-            // BM25 scores
-            for result in bm25_results {
-                let rrf_score = bm25_weight / (RRF_K + result.rank as f32);
-                *scores.entry(result.fact_id).or_insert(0.0) += rrf_score;
-            }
-
-            // Semantic scores
-            if let Some(semantic_results) = semantic_results {
-                for result in semantic_results {
-                    let rrf_score = semantic_weight / (RRF_K + result.rank as f32);
-                    *scores.entry(result.fact_id).or_insert(0.0) += rrf_score;
-                }
-            }
-
-            // Sort by combined score
-            let mut sorted: Vec<_> = scores.into_iter().collect();
-            sorted.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-
-            // Fetch full results (limited)
-            let mut results = Vec::new();
-            for (rank, (fact_id, score)) in sorted.into_iter().enumerate().take(limit) {
-                if let Ok(fact) = self.store.fact_get(&fact_id) {
-                    results.push(SearchResult {
-                        fact_id,
-                        content: fact.content,
-                        fact_type: fact.fact_type,
-                        entity_names: fact
-                            .entity_ids
-                            .iter()
-                            .filter_map(|eid| self.store.entity_get_by_id(*eid).ok())
-                            .map(|e| e.name)
-                            .collect(),
-                        source: fact.source,
-                        score,
-                        rank: rank + 1,
-                    });
-                }
-            }
-
-            results
-        }
+fn matches_entity_filter(fact: &FactRecord, entity_filter: Option<&Vec<EntityId>>) -> bool {
+    match entity_filter {
+        Some(filter) => fact.entity_ids.iter().any(|eid| filter.contains(eid)),
+        None => true,
     }
 }
 
 #[cfg(feature = "semantic")]
-pub use semantic::HybridSearchEngine;
+fn build_search_result(
+    store: &Store,
+    fact: FactRecord,
+    fact_id: FactId,
+    score: f32,
+    rank: usize,
+    session_id: Option<String>,
+) -> SearchResult {
+    let entity_names: Vec<String> = fact
+        .entity_ids
+        .iter()
+        .filter_map(|eid| store.entity_get_by_id(*eid).ok())
+        .map(|e| e.name)
+        .collect();
+
+    SearchResult {
+        fact_id,
+        content: fact.content,
+        fact_type: fact.fact_type,
+        entity_names,
+        source: fact.source,
+        score,
+        rank,
+        session_id,
+    }
+}
+
+#[cfg(not(feature = "semantic"))]
+fn build_search_result(
+    store: &Store,
+    fact: FactRecord,
+    fact_id: FactId,
+    score: f32,
+    rank: usize,
+) -> SearchResult {
+    let entity_names: Vec<String> = fact
+        .entity_ids
+        .iter()
+        .filter_map(|eid| store.entity_get_by_id(*eid).ok())
+        .map(|e| e.name)
+        .collect();
+
+    SearchResult {
+        fact_id,
+        content: fact.content,
+        fact_type: fact.fact_type,
+        entity_names,
+        source: fact.source,
+        score,
+        rank,
+    }
+}
+
+#[cfg(feature = "semantic")]
+mod semantic {
+    use super::*;
+    use crate::error::WgError;
+    use model2vec_rs::model::StaticModel;
+    use std::cmp::Ordering;
+    use std::path::{Path, PathBuf};
+
+    /// Hybrid search combining BM25 and semantic vectors.
+    pub fn hybrid_search(
+        store: &Store,
+        query: &str,
+        opts: SearchOpts,
+    ) -> Result<Vec<SearchResult>> {
+        let config = store.config();
+        let engine = SearchEngine::new(store, config);
+
+        let bm25_results = engine.search(query, opts.clone())?;
+        let semantic_results = semantic_search(store, query, &opts)?;
+
+        let bm25_weight = effective_weight(opts.bm25_weight, config.search.bm25_weight);
+        let semantic_weight = effective_weight(opts.semantic_weight, config.search.semantic_weight);
+        let limit = opts.limit.unwrap_or(config.search.default_limit);
+
+        Ok(rrf_fusion(
+            store,
+            &bm25_results,
+            Some(semantic_results.as_slice()),
+            bm25_weight,
+            semantic_weight,
+            limit,
+        ))
+    }
+
+    fn semantic_search(store: &Store, query: &str, opts: &SearchOpts) -> Result<Vec<SearchResult>> {
+        let config = store.config();
+        let model = load_model(config)?;
+        let query_embedding = embed_text(&model, query);
+
+        let mut facts = store.fact_list(FactListOpts {
+            limit: None,
+            offset: 0,
+            ..Default::default()
+        })?;
+
+        let min_confidence = opts.min_confidence.unwrap_or(config.search.min_trust);
+
+        facts.retain(|fact| {
+            fact.source_confidence >= min_confidence
+                && matches_entity_filter(fact, opts.entity_filter.as_ref())
+        });
+
+        if facts.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let texts: Vec<String> = facts
+            .iter()
+            .map(|fact| fact_semantic_text(store, fact))
+            .collect();
+        let embeddings = model.encode(&texts);
+
+        let mut scored: Vec<(usize, f32)> = facts
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, _fact)| {
+                embeddings
+                    .get(idx)
+                    .map(|embedding| (idx, cosine_similarity(&query_embedding, embedding)))
+            })
+            .collect();
+
+        scored.sort_by(|a, b| {
+            b.1.partial_cmp(&a.1)
+                .unwrap_or(Ordering::Equal)
+                .then_with(|| a.0.cmp(&b.0))
+        });
+
+        let mut results = Vec::with_capacity(scored.len());
+        for (rank, (idx, score)) in scored.into_iter().enumerate() {
+            let fact = facts[idx].clone();
+            let fact_id = fact.id;
+            results.push(build_search_result(store, fact, fact_id, score, rank + 1, None));
+        }
+
+        Ok(results)
+    }
+
+    fn load_model(config: &Config) -> Result<StaticModel> {
+        let cache_dir = expand_tilde(&config.model.cache_dir);
+        let configured_name = Path::new(&config.model.name);
+        let local_candidate = if configured_name.exists() {
+            configured_name.to_path_buf()
+        } else {
+            cache_dir.join(&config.model.name)
+        };
+
+        if local_candidate.exists() {
+            StaticModel::from_pretrained(&local_candidate, None, None, None).map_err(|source| {
+                WgError::ModelLoadFailed {
+                    path: local_candidate,
+                    source: Box::new(std::io::Error::other(source.to_string())),
+                }
+            })
+        } else if config.model.auto_download {
+            StaticModel::from_pretrained(&config.model.name, None, None, None).map_err(|source| {
+                WgError::ModelLoadFailed {
+                    path: PathBuf::from(&config.model.name),
+                    source: Box::new(std::io::Error::other(source.to_string())),
+                }
+            })
+        } else {
+            Err(WgError::ModelNotFound {
+                name: config.model.name.clone(),
+                cache_dir,
+            })
+        }
+    }
+
+    /// Encode a single text into a semantic embedding.
+    pub fn embed_text(model: &StaticModel, text: &str) -> Vec<f32> {
+        model.encode_single(text)
+    }
+
+    fn fact_semantic_text(store: &Store, fact: &FactRecord) -> String {
+        let mut parts = vec![fact.content.clone()];
+
+        if !fact.tags.is_empty() {
+            parts.push(fact.tags.join(" "));
+        }
+
+        let entity_names: Vec<String> = fact
+            .entity_ids
+            .iter()
+            .filter_map(|eid| store.entity_get_by_id(*eid).ok())
+            .map(|entity| entity.name)
+            .collect();
+        if !entity_names.is_empty() {
+            parts.push(entity_names.join(" "));
+        }
+
+        if let Some(source) = &fact.source {
+            parts.push(source.clone());
+        }
+
+        parts.join("\n")
+    }
+
+    fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+        let mut dot = 0.0f32;
+        let mut norm_a = 0.0f32;
+        let mut norm_b = 0.0f32;
+
+        for (x, y) in a.iter().zip(b.iter()) {
+            dot += x * y;
+            norm_a += x * x;
+            norm_b += y * y;
+        }
+
+        if norm_a == 0.0 || norm_b == 0.0 {
+            return 0.0;
+        }
+
+        dot / (norm_a.sqrt() * norm_b.sqrt())
+    }
+
+    fn effective_weight(opts_weight: f32, config_weight: f32) -> f32 {
+        if opts_weight > 0.0 {
+            opts_weight
+        } else {
+            config_weight
+        }
+    }
+
+    fn expand_tilde(path: &str) -> PathBuf {
+        if path == "~" {
+            return home_dir().unwrap_or_else(|| PathBuf::from(path));
+        }
+
+        if let Some(rest) = path.strip_prefix("~/") {
+            if let Some(home) = home_dir() {
+                return home.join(rest);
+            }
+        }
+
+        PathBuf::from(path)
+    }
+
+    fn home_dir() -> Option<PathBuf> {
+        std::env::var_os("HOME").map(PathBuf::from)
+    }
+
+    fn rrf_fusion(
+        store: &Store,
+        bm25_results: &[SearchResult],
+        semantic_results: Option<&[SearchResult]>,
+        bm25_weight: f32,
+        semantic_weight: f32,
+        limit: usize,
+    ) -> Vec<SearchResult> {
+        use std::collections::HashMap;
+
+        const RRF_K: f32 = 60.0;
+
+        #[derive(Clone)]
+        struct FusedEntry {
+            result: SearchResult,
+            score: f32,
+        }
+
+        let mut scores: HashMap<FactId, FusedEntry> = HashMap::new();
+
+        for result in bm25_results {
+            let fused_score = bm25_weight / (RRF_K + result.rank as f32);
+            scores
+                .entry(result.fact_id)
+                .and_modify(|entry| entry.score += fused_score)
+                .or_insert_with(|| FusedEntry {
+                    result: result.clone(),
+                    score: fused_score,
+                });
+        }
+
+        if let Some(semantic_results) = semantic_results {
+            for result in semantic_results {
+                let fused_score = semantic_weight / (RRF_K + result.rank as f32);
+                scores
+                    .entry(result.fact_id)
+                    .and_modify(|entry| entry.score += fused_score)
+                    .or_insert_with(|| FusedEntry {
+                        result: result.clone(),
+                        score: fused_score,
+                    });
+            }
+        }
+
+        let mut entries: Vec<FusedEntry> = scores.into_values().collect();
+        entries.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(Ordering::Equal)
+                .then_with(|| a.result.rank.cmp(&b.result.rank))
+        });
+
+        let mut results = Vec::new();
+        for (rank, entry) in entries.into_iter().take(limit).enumerate() {
+            let mut result = entry.result;
+            if let Ok(fact) = store.fact_get(&result.fact_id) {
+                result.content = fact.content;
+                result.fact_type = fact.fact_type;
+                result.entity_names = fact
+                    .entity_ids
+                    .iter()
+                    .filter_map(|eid| store.entity_get_by_id(*eid).ok())
+                    .map(|entity| entity.name)
+                    .collect();
+                result.source = fact.source;
+            }
+            result.score = entry.score;
+            result.rank = rank + 1;
+            results.push(result);
+        }
+
+        results
+    }
+}
+
+#[cfg(feature = "semantic")]
+pub use semantic::embed_text;
+
+#[cfg(feature = "semantic")]
+pub use semantic::hybrid_search;
 
 #[cfg(test)]
 mod tests {
@@ -285,7 +465,6 @@ mod tests {
     fn test_bm25_search() {
         let (mut store, _dir) = create_test_store();
 
-        // Create entities
         store
             .entity_add(EntityInput {
                 name: "Redis".to_string(),
@@ -297,7 +476,6 @@ mod tests {
 
         let redis_id = store.resolve_entity("Redis").unwrap();
 
-        // Create facts
         store
             .fact_add(FactInput {
                 content: "Redis Sentinel provides high availability".to_string(),
@@ -323,16 +501,14 @@ mod tests {
         let config = Config::default();
         let engine = SearchEngine::new(&store, &config);
 
-        // Search
         let results = engine
             .search("high availability", SearchOpts::default())
             .unwrap();
         assert!(!results.is_empty());
 
-        // Search with no matches
         let results = engine
             .search("nonexistent query xyz", SearchOpts::default())
             .unwrap();
-        // Results may be empty or contain low-scoring results
+        assert!(results.len() <= config.search.default_limit);
     }
 }

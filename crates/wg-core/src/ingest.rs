@@ -80,7 +80,7 @@ pub struct Section {
 pub fn ingest_wiki(
     wiki_root: &Path,
     store: &mut Store,
-    incremental: bool,
+    _incremental: bool,
 ) -> Result<IngestStats, WgError> {
     let wiki_root = wiki_root.to_path_buf();
     let mut stats = IngestStats::default();
@@ -126,17 +126,19 @@ pub fn ingest_wiki(
                     source_page: Some(parsed.rel_path.clone()),
                 };
 
-                match store.entity_get(&entity_name) {
+                let entity_id = match store.entity_get(&entity_name) {
                     Ok(_) => {
                         // entity already exists — skip (don't overwrite user data)
                         stats.entities_updated += 1;
+                        // Get the existing entity's ID
+                        store.entity_get(&entity_name)?.id
                     }
                     Err(_) => {
                         // create new entity
-                        let _id = store.entity_add(entity_input)?;
                         stats.entities_added += 1;
+                        store.entity_add(entity_input)?
                     }
-                }
+                };
 
                 // --- Relations from wikilinks ---
                 for wl in &parsed.wikilinks {
@@ -154,11 +156,15 @@ pub fn ingest_wiki(
 
                 // --- Facts from sections ---
                 for section in &parsed.sections {
+                    // Only add sections with a meaningful fact type (skip "Unknown")
+                    if section.fact_type == FactType::Unknown {
+                        continue;
+                    }
                     let source = Some(format!("{}#{}", parsed.rel_path, section.anchor));
                     let fact_input = FactInput {
                         content: section.content.clone(),
                         fact_type: Some(section.fact_type.clone()),
-                        entity_ids: None, // resolved later by caller if needed
+                        entity_ids: Some(vec![entity_id]),
                         tags: None,
                         source,
                         source_confidence: Some(0.5), // auto-extracted
@@ -244,7 +250,7 @@ fn extract_frontmatter(content: &str) -> (String, String) {
 /// Supports: type, tags, aliases, sources.
 fn parse_frontmatter(
     frontmatter: &str,
-    rel_path: &str,
+    _rel_path: &str,
 ) -> (Option<EntityType>, Vec<String>, Vec<String>) {
     let mut entity_type = None;
     let mut tags = Vec::new();
@@ -383,7 +389,12 @@ fn extract_wikilinks(text: &str) -> Vec<Wikilink> {
 fn infer_fact_type(heading: &str) -> FactType {
     let h = heading.to_lowercase();
 
-    if h.contains("decision") || h.contains("결정") || h.contains("전략") {
+    if h.contains("decision")
+        || h.contains("결정")
+        || h.contains("전략")
+        || h.contains("strategy")
+        || h.contains("strategic")
+    {
         FactType::Decision
     } else if h.contains("convention") || h.contains("규칙") || h.contains("표준") {
         FactType::Convention
@@ -422,10 +433,7 @@ fn extract_sections(body: &str) -> Vec<Section> {
     let mut current_line = 0;
     let mut line_num = 0;
 
-    // Prepend a dummy heading at line 0 so the last section gets emitted
-    let text = format!("# \n{}", body);
-
-    for line in text.lines() {
+    for line in body.lines() {
         line_num += 1;
 
         let trimmed = line.trim();
@@ -455,6 +463,16 @@ fn extract_sections(body: &str) -> Vec<Section> {
             }
             current_content.push_str(line);
         }
+    }
+
+    if !current_heading.is_empty() && !current_content.trim().is_empty() {
+        sections.push(Section {
+            heading: current_heading,
+            anchor: current_anchor,
+            content: current_content.trim().to_string(),
+            fact_type: current_fact_type,
+            line: current_line,
+        });
     }
 
     sections
@@ -508,6 +526,7 @@ port: 6379
         assert_eq!(sections[0].heading, "HA Strategy");
         assert_eq!(sections[0].fact_type, FactType::Decision);
         assert!(sections[0].content.contains("Sentinel"));
+        assert_eq!(sections[1].heading, "Configuration");
     }
 
     #[test]

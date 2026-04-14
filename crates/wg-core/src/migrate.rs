@@ -134,7 +134,7 @@ impl<'a> Importer<'a> {
 
             let json: serde_json::Value = match serde_json::from_str(line) {
                 Ok(v) => v,
-                Err(e) => {
+                Err(_e) => {
                     stats.errors += 1;
                     continue;
                 }

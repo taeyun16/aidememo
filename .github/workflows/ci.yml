@@ -1,0 +1,22 @@
+name: CI
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          version: 1.85
+      - run: cargo build --workspace
+      - run: cargo test -p wg-core --lib
+      - run: cargo test -p wg-cli --lib
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          version: 1.85
+      - run: cargo fmt --check
+      - run: cargo clippy --workspace -- -D warnings

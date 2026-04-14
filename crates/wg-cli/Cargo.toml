@@ -13,7 +13,7 @@ name = "wg"
 path = "src/main.rs"
 
 [dependencies]
-wg-core = { path = "../wg-core", features = ["semantic"] }
+wg-core = { path = "../wg-core", features = ["semantic", "semantic-adapt"] }
 bpaf = { version = "0.9", features = ["derive"] }
 chrono = "0.4"
 serde = { version = "1.0", features = ["derive"] }

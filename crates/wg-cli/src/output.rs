@@ -1,6 +1,6 @@
 //! Output formatting for CLI.
 
-use comfy_table::{Cell, Color, Table};
+use comfy_table::Table;
 use wg_core::{
     EntityRecord, EntitySummary, FactRecord, LintReport, Result, SearchResult, StoreStats,
     TraverseResult, WgError, WikiGraph,
@@ -10,7 +10,6 @@ use wg_core::{
 pub enum Format {
     Table,
     Json,
-    Markdown,
 }
 
 pub fn format_entity(entity: &EntityRecord, format: Format) -> Result<String> {
@@ -19,7 +18,7 @@ pub fn format_entity(entity: &EntityRecord, format: Format) -> Result<String> {
             context: "entity".to_string(),
             source: e,
         }),
-        Format::Table | Format::Markdown => {
+        Format::Table => {
             let mut table = Table::new();
             table.set_header(vec!["Field", "Value"]);
             table.add_row(vec!["ID", &entity.id.to_string()]);
@@ -41,7 +40,7 @@ pub fn format_entity_list(entities: &[EntitySummary], format: Format) -> Result<
             context: "entity list".to_string(),
             source: e,
         }),
-        Format::Table | Format::Markdown => {
+        Format::Table => {
             let mut table = Table::new();
             table.set_header(vec!["Name", "Type", "Facts", "Tags"]);
 
@@ -125,7 +124,7 @@ pub fn format_traverse(result: &TraverseResult, format: Format) -> Result<String
             context: "traverse result".to_string(),
             source: e,
         }),
-        Format::Table | Format::Markdown => {
+        Format::Table => {
             let mut table = Table::new();
             table.set_header(vec!["Name", "Type", "Facts", "Tags"]);
 
@@ -151,7 +150,7 @@ pub fn format_traverse(result: &TraverseResult, format: Format) -> Result<String
 
 pub fn format_search_results(
     results: &[SearchResult],
-    wiki: &WikiGraph,
+    _wiki: &WikiGraph,
     format: Format,
 ) -> Result<String> {
     match format {
@@ -159,7 +158,7 @@ pub fn format_search_results(
             context: "search results".to_string(),
             source: e,
         }),
-        Format::Table | Format::Markdown => {
+        Format::Table => {
             let mut table = Table::new();
             table.set_header(vec!["#", "Content", "Type", "Entities", "Score"]);
 
@@ -191,7 +190,7 @@ pub fn format_lint_report(report: &LintReport, format: Format) -> Result<String>
             context: "lint report".to_string(),
             source: e,
         }),
-        Format::Table | Format::Markdown => {
+        Format::Table => {
             let mut output = String::new();
             output.push_str(&format!("Graph Health Report\n"));
             output.push_str(&format!("====================\n\n"));
@@ -256,6 +255,6 @@ fn format_size(bytes: u64) -> String {
 
 fn chrono_from_ms(ms: u64) -> String {
     let secs = ms / 1000;
-    let naive = chrono::NaiveDateTime::from_timestamp_opt(secs as i64, 0).unwrap_or_default();
+    let naive = chrono::DateTime::from_timestamp(secs as i64, 0).map(|dt| dt.naive_utc()).unwrap_or_default();
     naive.format("%Y-%m-%d %H:%M:%S").to_string()
 }

@@ -3,11 +3,13 @@ resolver = "2"
 members = [
     "crates/wg-core",
     "crates/wg-cli",
-    "crates/wg-python",
+    "benchmarks",
     "crates/wg-napi",
-    "crates/wg-nif",
+    "crates/wg-python",
     "crates/wg-ffi",
+    "crates/wg-nif",
 ]
+# Native addon / Python extension crates are now part of the workspace build.
 
 [workspace.package]
 edition = "2024"

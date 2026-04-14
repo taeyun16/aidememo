@@ -1,6 +1,6 @@
 //! Lint engine for graph health checks.
 
-use crate::error::Result;
+use crate::error::{Result, WgError};
 use crate::store::Store;
 use crate::types::*;
 
@@ -115,7 +115,24 @@ impl<'a> LintEngine<'a> {
         })?;
 
         for entity in entities {
-            let record = self.store.entity_get_by_id(entity.id)?;
+            let record = match self.store.entity_get_by_id(entity.id) {
+                Ok(r) => r,
+                Err(WgError::EntityIdNotFound(_)) => {
+                    // Corrupt or migrated entity ID — skip gracefully
+                    issues.push(LintIssue {
+                        severity: LintSeverity::Warning,
+                        code: "malformed_entity".to_string(),
+                        message: format!(
+                            "Entity '{}' has an unreadable ID '{}'",
+                            entity.name, entity.id
+                        ),
+                        entity_id: Some(entity.id),
+                        fact_id: None,
+                    });
+                    continue;
+                }
+                Err(e) => return Err(e),
+            };
             let age = now.saturating_sub(record.updated_at);
 
             if age > stale_threshold {
@@ -137,7 +154,7 @@ impl<'a> LintEngine<'a> {
     }
 
     fn check_one_way_relations(&self) -> Result<Vec<LintIssue>> {
-        let mut issues = Vec::new();
+        let issues = Vec::new();
 
         let entities = self.store.entity_list(ListOpts {
             limit: Some(10000),

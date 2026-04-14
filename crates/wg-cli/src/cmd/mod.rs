@@ -3,12 +3,18 @@
 use bpaf::*;
 use std::path::PathBuf;
 
+pub mod adapt;
+pub mod feedback;
 pub mod init;
 pub mod watch;
 pub mod mcp_serve;
+pub mod model;
 
+pub use adapt::AdaptSub;
+pub use feedback::FeedbackSub;
 pub use init::InitSub;
 pub use mcp_serve::McpSub;
+pub use model::ModelSub;
 pub use watch::WatchSub;
 
 #[derive(Debug, Clone)]
@@ -32,6 +38,8 @@ pub enum Command {
     Sync(SyncSub),
     Config(ConfigSub),
     Model(ModelSub),
+    Feedback(FeedbackSub),
+    Adapt(AdaptSub),
     Init(InitSub),
     Watch(WatchSub),
     McpServe(McpSub),
@@ -161,13 +169,6 @@ pub enum ConfigSub {
     Set { key: String, value: String },
 }
 
-#[derive(Debug, Clone)]
-pub enum ModelSub {
-    Status,
-    Download { name: Option<String> },
-    RebuildVectors,
-}
-
 pub fn build_cli() -> OptionParser<Args> {
     let store_path = long("store")
         .short('s')
@@ -178,6 +179,9 @@ pub fn build_cli() -> OptionParser<Args> {
     let init_cmd = init::init_command();
     let watch_cmd = watch::watch_command();
     let mcp_serve_cmd = mcp_serve::mcp_serve_command();
+    let model_cmd = model::model_command();
+    let feedback_cmd = feedback::feedback_command();
+    let adapt_cmd = adapt::adapt_command();
 
     let command = construct!([
         entity_command(),
@@ -192,7 +196,9 @@ pub fn build_cli() -> OptionParser<Args> {
         ingest_command(),
         sync_command(),
         config_command(),
-        model_command(),
+        model_cmd,
+        feedback_cmd,
+        adapt_cmd,
         init_cmd,
         watch_cmd,
         mcp_serve_cmd,
@@ -577,26 +583,3 @@ fn config_command() -> impl Parser<Command> {
         .help("Configuration management")
 }
 
-fn model_command() -> impl Parser<Command> {
-    let status = pure(ModelSub::Status)
-        .to_options()
-        .command("status")
-        .help("Show model status");
-
-    let name = positional::<String>("NAME").optional();
-    let download = construct!(ModelSub::Download { name })
-        .to_options()
-        .command("download")
-        .help("Download a model");
-
-    let rebuild_vectors = pure(ModelSub::RebuildVectors)
-        .to_options()
-        .command("rebuild-vectors")
-        .help("Rebuild semantic vectors");
-
-    construct!([status, download, rebuild_vectors])
-        .map(Command::Model)
-        .to_options()
-        .command("model")
-        .help("Model management")
-}

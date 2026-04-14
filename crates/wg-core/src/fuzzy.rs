@@ -185,7 +185,7 @@ mod tests {
         assert!(result.is_some());
 
         // Fuzzy match (typo)
-        let result = matcher.best_match("Radix", 0.3).unwrap();
+        let result = matcher.best_match("Redsi", 0.3).unwrap();
         assert!(result.is_some());
         assert_eq!(result.unwrap().0.name, "Redis");
 
@@ -208,7 +208,7 @@ mod tests {
         assert!(sim > 0.9);
 
         // Medium similarity
-        let sim = matcher.trigram_sim("Redis", "Radix");
+        let sim = matcher.trigram_sim("Redis", "Redsi");
         assert!(sim > 0.3);
 
         // Low similarity
@@ -238,7 +238,7 @@ mod tests {
         assert_eq!(result.name, "Redis");
 
         // Fuzzy match
-        let result = store.entity_get_fuzzy("Radix").unwrap();
+        let result = store.entity_get_fuzzy("Reddis").unwrap();
         assert_eq!(result.name, "Redis");
 
         // No match

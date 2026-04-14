@@ -14,6 +14,7 @@ semantic = ["model2vec-rs"]
 semantic-adapt = ["semantic"]
 parallel = ["rayon"]
 remote = ["oneio"]
+s3 = ["aws-sdk-s3", "aws-credential-types", "tokio/full", "zstd"]
 
 [dependencies]
 # CLI 파싱
@@ -54,6 +55,11 @@ rayon = { version = "1.8", optional = true }
 
 # S3 공유 (선택)
 oneio = { version = "0.20", optional = true }
+aws-sdk-s3 = { version = "1.129.0", optional = true }
+aws-credential-types = { version = "1.2.14", optional = true }
+zstd = { version = "0.13.3", optional = true }
+# Async runtime for optional S3 workflows
+tokio = { version = "1.35", features = ["full"], optional = true }
 
 # 에러 처리
 thiserror = "1.0"

@@ -497,6 +497,9 @@ pub struct SearchResult {
     pub source: Option<String>,
     pub score: f32,
     pub rank: usize,
+    /// The search session this result belongs to (if tracked).
+    #[cfg(feature = "semantic")]
+    pub session_id: Option<String>,
 }
 
 /// Options for search.
@@ -507,6 +510,9 @@ pub struct SearchOpts {
     pub entity_filter: Option<Vec<EntityId>>,
     pub bm25_weight: f32,
     pub semantic_weight: f32,
+    /// Search session to attribute results to (enables feedback tracking).
+    #[cfg(feature = "semantic")]
+    pub session_id: Option<String>,
 }
 
 /// Options for listing facts.
@@ -595,8 +601,6 @@ pub struct LintReport {
 
 #[cfg(feature = "semantic")]
 mod semantic_types {
-    use super::*;
-
     /// Vector record format for semantic search.
     ///
     /// Binary format:
@@ -658,6 +662,51 @@ mod semantic_types {
             })
         }
     }
+}
+
+/// Search session — records a single search query for feedback tracking.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SearchSession {
+    pub id: String,
+    pub query: String,
+    pub timestamp: u64,
+    pub result_count: usize,
+}
+
+/// Search feedback — records user feedback on a search result.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SearchFeedback {
+    pub session_id: String,
+    pub fact_id: FactId,
+    pub helpful: bool,
+    pub timestamp: u64,
+}
+
+/// Domain adapter evaluation report.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AdaptEvalReport {
+    pub total_feedback: usize,
+    pub helpful_count: usize,
+    pub skipped_count: usize,
+    pub precision_at_10: f32,
+    pub recall_boost: f32,
+}
+
+/// Domain adapter training result.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AdaptResult {
+    pub feedback_used: usize,
+    pub helpful_count: usize,
+    pub generation: u32,
+}
+
+/// Current state of the domain adapter.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AdaptStatus {
+    pub has_adapter: bool,
+    pub feedback_count: usize,
+    pub generation: u32,
+    pub ready: bool,
 }
 
 #[cfg(feature = "semantic")]

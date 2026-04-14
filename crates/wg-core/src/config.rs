@@ -44,16 +44,24 @@ impl Default for StoreConfig {
 pub struct ModelConfig {
     /// Model name (e.g., "minishlab/potion-multilingual-128M").
     pub name: String,
+    /// Directory where downloaded model artifacts are stored.
+    #[serde(default = "default_model_download_dir")]
+    pub download_dir: String,
     /// Model cache directory.
     pub cache_dir: String,
     /// Auto-download model on first use.
     pub auto_download: bool,
 }
 
+fn default_model_download_dir() -> String {
+    "~/.wg/models/downloads".to_string()
+}
+
 impl Default for ModelConfig {
     fn default() -> Self {
         Self {
             name: "minishlab/potion-multilingual-128M".to_string(),
+            download_dir: default_model_download_dir(),
             cache_dir: "~/.wg/models".to_string(),
             auto_download: true,
         }
@@ -208,6 +216,7 @@ impl ModelConfig {
     fn get(&self, key: &str) -> Option<String> {
         match key {
             "name" => Some(self.name.clone()),
+            "download_dir" => Some(self.download_dir.clone()),
             "cache_dir" => Some(self.cache_dir.clone()),
             "auto_download" => Some(self.auto_download.to_string()),
             _ => None,
@@ -218,6 +227,10 @@ impl ModelConfig {
         match key {
             "name" => {
                 self.name = value.to_string();
+                Ok(())
+            }
+            "download_dir" => {
+                self.download_dir = value.to_string();
                 Ok(())
             }
             "cache_dir" => {
@@ -333,6 +346,7 @@ mod tests {
         let config = Config::default();
         assert_eq!(config.store.path, "./_meta/wiki.redb");
         assert_eq!(config.model.name, "minishlab/potion-multilingual-128M");
+        assert_eq!(config.model.download_dir, "~/.wg/models/downloads");
         assert_eq!(config.search.default_limit, 10);
         assert_eq!(config.lint.stale_days, 90);
     }

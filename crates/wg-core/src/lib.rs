@@ -11,6 +11,11 @@ pub mod migrate;
 pub mod search;
 pub mod store;
 pub mod types;
+pub mod adapt;
+#[cfg(feature = "s3")]
+pub mod s3;
+#[cfg(feature = "s3")]
+pub mod wal;
 
 use parking_lot::RwLock;
 use std::path::Path;
@@ -19,7 +24,6 @@ use std::sync::Arc;
 pub use config::Config;
 pub use error::{Result, WgError};
 pub use ingest::{IngestStats, ParsedFile, Section, Wikilink};
-pub use types::*;
 
 // Re-export ulid for external use
 pub use ulid;
@@ -36,6 +40,13 @@ pub struct WikiGraph {
     // For mutable operations, we use RwLock
     store: Arc<RwLock<Store>>,
     config: Arc<Config>,
+}
+
+impl WikiGraph {
+    /// Access the store (read-only or write via RwLock).
+    pub fn store(&self) -> &Arc<RwLock<Store>> {
+        &self.store
+    }
 }
 
 impl WikiGraph {
@@ -126,8 +137,14 @@ impl WikiGraph {
     // === Fact Operations ===
 
     /// Add a new fact.
+    pub fn add_fact(&self, input: FactInput) -> Result<FactId> {
+        let mut store = self.store.write();
+        store.fact_add(input)
+    }
+
+    /// Backwards-compatible alias for add_fact.
     pub fn fact_add(&self, input: FactInput) -> Result<FactId> {
-        self.store.write().fact_add(input)
+        self.add_fact(input)
     }
 
     /// Get a fact by ID.
@@ -148,6 +165,16 @@ impl WikiGraph {
     /// Record feedback for a fact.
     pub fn fact_feedback(&self, id: &FactId, helpful: bool) -> Result<()> {
         self.store.write().fact_feedback(id, helpful)
+    }
+
+    /// Record a search session.
+    pub fn search_session_add(&self, session: &SearchSession) -> Result<()> {
+        self.store.write().search_session_add(session)
+    }
+
+    /// Record feedback for a search result.
+    pub fn search_feedback_add(&self, feedback: &SearchFeedback) -> Result<()> {
+        self.store.write().search_feedback_add(feedback)
     }
 
     /// List facts with options.
@@ -214,6 +241,13 @@ impl WikiGraph {
         engine.search(query, opts)
     }
 
+    /// Search using hybrid BM25 + semantic ranking.
+    #[cfg(feature = "semantic")]
+    pub fn hybrid_search(&self, query: &str, opts: SearchOpts) -> Result<Vec<SearchResult>> {
+        let store = self.store.read();
+        search::hybrid_search(&*store, query, opts)
+    }
+
     /// Search with graph traversal scope.
     #[cfg(feature = "semantic")]
     pub fn search_with_traverse(
@@ -231,7 +265,7 @@ impl WikiGraph {
 
     /// Search (BM25 only, no semantic features).
     #[cfg(not(feature = "semantic"))]
-    pub fn search(&self, query: &str, opts: SearchOpts) -> Result<Vec<SearchResult>> {
+    pub fn search(&self, _query: &str, _opts: SearchOpts) -> Result<Vec<SearchResult>> {
         Err(WgError::SearchFailed(
             "BM25 search requires the 'semantic' feature".to_string(),
         ))
@@ -240,11 +274,34 @@ impl WikiGraph {
     // === Lint ===
 
     /// Run graph health checks.
-    pub fn lint(&self) -> Result<LintReport> {
+    pub fn lint(&self) -> Result<Vec<LintIssue>> {
         use crate::lint::LintEngine;
         let store = self.store.read();
         let engine = LintEngine::new(&*store);
-        engine.lint()
+        Ok(engine.lint()?.issues)
+    }
+
+    // === Adapt (semantic-adapt feature) ===
+
+    /// Train the domain adapter using all search feedback.
+    #[cfg(feature = "semantic-adapt")]
+    pub fn adapt_train(&self) -> Result<crate::types::AdaptResult> {
+        let mut store = self.store.write();
+        store.adapt_train()
+    }
+
+    /// Get current adapter status.
+    #[cfg(feature = "semantic-adapt")]
+    pub fn adapt_status(&self) -> Result<crate::types::AdaptStatus> {
+        let store = self.store.read();
+        store.adapt_status()
+    }
+
+    /// Evaluate the adapter on all feedback.
+    #[cfg(feature = "semantic-adapt")]
+    pub fn adapt_eval(&self) -> Result<crate::types::AdaptEvalReport> {
+        let store = self.store.read();
+        store.adapt_eval()
     }
 
     // === Import/Export ===
@@ -284,10 +341,11 @@ impl WikiGraph {
 
 // Re-export types for convenience
 pub use types::{
-    EntityId, EntityInput, EntityRecord, EntitySort, EntitySummary, EntityType, EntityUpdate,
-    ExportScope, ExportStats, FactId, FactInput, FactListOpts, FactRecord, FactType, FactUpdate,
-    ImportStats, LintIssue, LintReport, LintSeverity, ListOpts, PathStep, RelationInput,
-    RelationRecord, RelationType, SearchOpts, SearchResult, StoreStats, TraverseDirection,
+    AdaptEvalReport, AdaptResult, AdaptStatus, EntityId, EntityInput, EntityRecord, EntitySort,
+    EntitySummary, EntityType, EntityUpdate, ExportScope, ExportStats, FactId, FactInput,
+    FactListOpts, FactRecord, FactType, FactUpdate, ImportStats, LintIssue, LintReport,
+    LintSeverity, ListOpts, PathStep, RelationInput, RelationRecord, RelationType,
+    SearchFeedback, SearchOpts, SearchResult, SearchSession, StoreStats, TraverseDirection,
     TraverseOpts, TraverseResult,
 };
 

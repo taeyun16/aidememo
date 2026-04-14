@@ -6,9 +6,9 @@ mod output;
 use std::path::PathBuf;
 use std::process::exit;
 use wg_core::{
-    Config, EntityInput, EntitySort, EntityType, EntityUpdate, ExportScope, FactInput,
-    FactListOpts, FactType, FactUpdate, IngestStats, ListOpts, RelationType, SearchOpts,
-    TraverseDirection, TraverseOpts, WgError, WikiGraph,
+    Config, EntityInput, EntitySort, EntityType, ExportScope, FactInput,
+    FactListOpts, FactType, ListOpts, SearchOpts,
+    TraverseDirection, TraverseOpts, WgError, WikiGraph, LintReport,
 };
 
 fn main() {
@@ -46,6 +46,8 @@ fn main() {
         cmd::Command::Sync(sub) => handle_sync(&store_path, config, sub),
         cmd::Command::Config(sub) => handle_config(config, sub),
         cmd::Command::Model(sub) => handle_model(config, sub),
+        cmd::Command::Feedback(sub) => cmd::feedback::run_feedback(&store_path, config, sub),
+        cmd::Command::Adapt(sub) => cmd::adapt::run_adapt(&store_path, config, sub),
         cmd::Command::Init(sub) => cmd::init::run_init(sub.wiki_root, sub.no_ingest),
         cmd::Command::Watch(sub) => cmd::watch::run_watch(sub.wiki_root, sub.interval),
         cmd::Command::McpServe(sub) => cmd::mcp_serve::run_mcp_serve(sub.port, sub.wiki_root),
@@ -153,7 +155,7 @@ fn handle_fact(path: &PathBuf, config: Config, sub: cmd::FactSub) -> Result<Stri
                     .collect()
             });
 
-            let id = wiki.fact_add(FactInput {
+            let id = wiki.add_fact(FactInput {
                 content: content.clone(),
                 fact_type: parse_fact_type(fact_type),
                 entity_ids,
@@ -262,21 +264,34 @@ fn handle_search(path: &PathBuf, config: Config, sub: cmd::SearchSub) -> Result<
     let default_limit = config.search.default_limit;
     let bm25_weight = config.search.bm25_weight;
     let semantic_weight = config.search.semantic_weight;
-    with_wiki(path, config, |wiki| {
+    with_wiki_mut(path, config, |wiki| {
+        let session_id = wg_core::ulid::Ulid::new().to_string();
         let opts = SearchOpts {
             limit: sub.limit.or(Some(default_limit)),
             min_confidence: sub.min_confidence,
             entity_filter: None,
             bm25_weight,
             semantic_weight,
+            session_id: Some(session_id.clone()),
         };
 
         let results = if let Some(ref start) = sub.traverse_from {
             let depth = sub.traverse_depth.unwrap_or(2);
             wiki.search_with_traverse(&sub.query, start, depth, opts)?
         } else {
-            wiki.search(&sub.query, opts)?
+            wiki.hybrid_search(&sub.query, opts)?
         };
+
+        let search_session = wg_core::SearchSession {
+            id: session_id,
+            query: sub.query.clone(),
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|e| WgError::Internal(format!("system clock error: {}", e)))?
+                .as_millis() as u64,
+            result_count: results.len(),
+        };
+        wiki.search_session_add(&search_session)?;
 
         let format = if sub.json {
             output::Format::Json
@@ -289,7 +304,14 @@ fn handle_search(path: &PathBuf, config: Config, sub: cmd::SearchSub) -> Result<
 
 fn handle_lint(path: &PathBuf, config: Config, sub: cmd::LintSub) -> Result<String, WgError> {
     with_wiki(path, config, |wiki| {
-        let report = wiki.lint()?;
+        let issues = wiki.lint()?;
+        let stats = wiki.stats()?;
+        let report = LintReport {
+            issues,
+            entity_count: stats.entity_count,
+            fact_count: stats.fact_count,
+            relation_count: stats.relation_count,
+        };
         let format = if sub.json {
             output::Format::Json
         } else {
@@ -421,18 +443,7 @@ fn handle_config(config: Config, sub: cmd::ConfigSub) -> Result<String, WgError>
 }
 
 fn handle_model(config: Config, sub: cmd::ModelSub) -> Result<String, WgError> {
-    match sub {
-        cmd::ModelSub::Status => Ok(format!(
-            "Model: {} (not yet loaded)\nCache dir: {}",
-            config.model.name, config.model.cache_dir
-        )),
-        cmd::ModelSub::Download { name } => Err(WgError::InvalidInput(
-            "Model download not yet implemented".to_string(),
-        )),
-        cmd::ModelSub::RebuildVectors => Err(WgError::InvalidInput(
-            "Vector rebuild not yet implemented".to_string(),
-        )),
-    }
+    cmd::model::run_model(config, sub)
 }
 
 // Helper functions
@@ -453,7 +464,7 @@ fn parse_fact_type(s: Option<String>) -> Option<FactType> {
     s.map(|t| match t.to_lowercase().as_str() {
         "decision" | "decide" => FactType::Decision,
         "pattern" => FactType::Pattern,
-        "convention" | "convention" => FactType::Convention,
+        "convention" => FactType::Convention,
         "claim" | "assertion" => FactType::Claim,
         "note" | "notes" => FactType::Note,
         "question" | "query" => FactType::Question,
