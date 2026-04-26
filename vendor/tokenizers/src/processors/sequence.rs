@@ -13,6 +13,39 @@ impl Sequence {
     pub fn new(processors: Vec<PostProcessorWrapper>) -> Self {
         Self { processors }
     }
+
+    pub fn get(&self, index: usize) -> Option<&PostProcessorWrapper> {
+        self.processors.get(index)
+    }
+
+    pub fn get_mut(&mut self, index: usize) -> Option<&mut PostProcessorWrapper> {
+        self.processors.get_mut(index)
+    }
+
+    pub fn set_mut(&mut self, index: usize, post_proc: PostProcessorWrapper) {
+        self.processors[index] = post_proc;
+    }
+}
+
+impl AsRef<[PostProcessorWrapper]> for Sequence {
+    fn as_ref(&self) -> &[PostProcessorWrapper] {
+        &self.processors
+    }
+}
+
+impl AsMut<[PostProcessorWrapper]> for Sequence {
+    fn as_mut(&mut self) -> &mut [PostProcessorWrapper] {
+        &mut self.processors
+    }
+}
+
+impl IntoIterator for Sequence {
+    type Item = PostProcessorWrapper;
+    type IntoIter = std::vec::IntoIter<Self::Item>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.processors.into_iter()
+    }
 }
 
 impl PostProcessor for Sequence {
@@ -40,7 +73,7 @@ mod tests {
     use super::*;
     use crate::processors::{ByteLevel, PostProcessorWrapper};
     use crate::tokenizer::{Encoding, PostProcessor};
-    use std::collections::HashMap;
+    use ahash::AHashMap;
     use std::iter::FromIterator;
 
     #[test]
@@ -60,7 +93,7 @@ mod tests {
             vec![],
             vec![],
             vec![],
-            HashMap::new(),
+            AHashMap::new(),
         );
 
         let bytelevel = ByteLevel::default().trim_offsets(true);
@@ -80,7 +113,7 @@ mod tests {
             vec![],
             vec![],
             vec![],
-            HashMap::from_iter(vec![(0, 0..5)]),
+            AHashMap::from_iter(vec![(0, 0..5)]),
         );
 
         assert_eq!(
@@ -123,7 +156,7 @@ mod tests {
             vec![],
             vec![],
             vec![],
-            HashMap::from_iter(vec![(0, 0..5), (1, 5..10)]),
+            AHashMap::from_iter(vec![(0, 0..5), (1, 5..10)]),
         );
         assert_eq!(
             pair_expected,

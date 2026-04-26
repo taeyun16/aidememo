@@ -1,10 +1,11 @@
 use super::{
     normalizer::Range, Model, NormalizedString, Normalizer, Offsets, PreTokenizedString, Token,
 };
+use ahash::{AHashMap, AHashSet};
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder, MatchKind};
 use regex::Regex;
 use serde::{ser::SerializeSeq, Deserialize, Serialize, Serializer};
-use std::collections::{HashMap, HashSet};
+use std::sync::LazyLock;
 
 /// Represent a token added by the user on top of the existing Model vocabulary.
 /// AddedToken can be configured to specify the behavior they should have in various situations
@@ -28,7 +29,7 @@ pub struct AddedToken {
 }
 
 impl AddedToken {
-    /// Build this token from the given content, specifying if it is intented to be a
+    /// Build this token from the given content, specifying if it is intended to be a
     /// special token. Special tokens are not normalized by default.
     pub fn from<S: Into<String>>(content: S, special: bool) -> Self {
         Self {
@@ -94,12 +95,10 @@ impl std::hash::Hash for AddedToken {
 
 type MatchingSet = (AhoCorasick, Vec<u32>);
 
-lazy_static! {
-    static ref STARTS_WITH_WORD: Regex = Regex::new(r"^\w").unwrap();
-    static ref ENDS_WITH_WORD: Regex = Regex::new(r"\w$").unwrap();
-    static ref RIGHTMOST_SPACE_AT_START: Regex = Regex::new(r"^\s*").unwrap();
-    static ref LEFTMOST_SPACE_AT_END: Regex = Regex::new(r"\s*$").unwrap();
-}
+static STARTS_WITH_WORD: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\w").unwrap());
+static ENDS_WITH_WORD: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\w$").unwrap());
+static RIGHTMOST_SPACE_AT_START: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\s*").unwrap());
+static LEFTMOST_SPACE_AT_END: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\s*$").unwrap());
 
 fn ends_with_word(sentence: &str) -> bool {
     ENDS_WITH_WORD.is_match(sentence)
@@ -142,10 +141,10 @@ fn space_rightmost_at_start(sentence: &str) -> usize {
 pub struct AddedVocabulary {
     /// Contains the mapping from String (token content) to ID. This map contains both special
     /// tokens and classic added tokens that were added to the this vocabulary.
-    added_tokens_map: HashMap<String, u32>,
+    added_tokens_map: AHashMap<String, u32>,
     /// Contains the mapping from ID to AddedToken for all the added tokens, both special
     /// and classic.
-    added_tokens_map_r: HashMap<u32, AddedToken>,
+    added_tokens_map_r: AHashMap<u32, AddedToken>,
 
     /// Contains only the classic AddedToken, in the specific order the user gave them.
     added_tokens: Vec<AddedToken>,
@@ -154,7 +153,7 @@ pub struct AddedVocabulary {
 
     /// A Set, containing all the special token for easy access while decoding. This let's
     /// us remove them easily with an O(1) complexity.
-    special_tokens_set: HashSet<String>,
+    special_tokens_set: AHashSet<String>,
 
     /// A RegexSet containing all the non-normalized patterns used to split on AddedTokens
     split_trie: MatchingSet,
@@ -176,11 +175,11 @@ impl AddedVocabulary {
             .build::<_, &&[u8]>([])
             .expect("The normalized trie should build correctly");
         Self {
-            added_tokens_map: HashMap::new(),
-            added_tokens_map_r: HashMap::new(),
+            added_tokens_map: AHashMap::new(),
+            added_tokens_map_r: AHashMap::new(),
             added_tokens: vec![],
             special_tokens: vec![],
-            special_tokens_set: HashSet::new(),
+            special_tokens_set: AHashSet::new(),
             split_trie: (trie, vec![]),
             split_normalized_trie: (normalized_trie, vec![]),
             encode_special_tokens: false,
@@ -198,12 +197,12 @@ impl AddedVocabulary {
     }
 
     /// Get the additional vocabulary
-    pub fn get_vocab(&self) -> &HashMap<String, u32> {
+    pub fn get_vocab(&self) -> &AHashMap<String, u32> {
         &self.added_tokens_map
     }
 
     /// Get the additional vocabulary with the AddedTokens
-    pub fn get_added_tokens_decoder(&self) -> &HashMap<u32, AddedToken> {
+    pub fn get_added_tokens_decoder(&self) -> &AHashMap<u32, AddedToken> {
         &self.added_tokens_map_r
     }
 
@@ -273,45 +272,48 @@ impl AddedVocabulary {
             }
         }
 
-        // Then we delegate to `add_tokens`, that will take care of refreshing added tokens too.
         let mut ignored = 0;
+
+        let mut existing: AHashSet<AddedToken> =
+            self.added_tokens_map_r.values().cloned().collect();
+        let mut next_id = self.added_tokens_map_r.keys().copied().max().map_or(
+            model.get_vocab_size() as u32,
+            |max| {
+                if max >= model.get_vocab_size() as u32 || model.get_vocab_size() == 0 {
+                    max + 1
+                } else {
+                    model.get_vocab_size() as u32
+                }
+            },
+        );
+
         for token in tokens {
-            if token.content.is_empty() || self.added_tokens_map_r.values().any(|val| val == token)
-            {
+            if token.content.is_empty() || existing.contains(token) {
                 ignored += 1;
                 continue;
             }
-            // If a token is already part of the vocabulary, we mark it as added
+
             let new_id = if let Some(new_id) = self.token_to_id(&token.content, model) {
                 new_id
             } else {
-                self.added_tokens_map.values().cloned().max().map_or(
-                    model.get_vocab_size() as u32,
-                    |max| {
-                        if (max >= model.get_vocab_size() as u32) || model.get_vocab_size() == 0 {
-                            max + 1
-                        } else {
-                            model.get_vocab_size() as u32
-                        }
-                    },
-                )
+                let id = next_id;
+                next_id += 1;
+                id
             };
-            // Make sure we modify the previous entry
-            self.added_tokens_map
+
+            *self
+                .added_tokens_map
                 .entry(token.content.clone())
-                .and_modify(|old_id| *old_id = new_id)
-                .or_insert_with(|| new_id);
+                .or_default() = new_id;
             // Update the current revert operation
-            self.added_tokens_map_r
-                .entry(new_id)
-                .and_modify(|t| *t = token.clone())
-                .or_insert_with(|| token.clone());
+            *self.added_tokens_map_r.entry(new_id).or_default() = token.clone();
             // Make sure to remove previous entry (if the token gets a new id)
 
             // Finally add the token to the classic set if special
             if !self.special_tokens_set.contains(&token.content) {
                 self.added_tokens.push(token.clone());
             }
+            existing.insert(token.clone());
         }
 
         self.refresh_added_tokens(model, normalizer);
@@ -321,7 +323,7 @@ impl AddedVocabulary {
     }
 
     /// Reconstruct our internal RegexSet when new tokens are added to the vocabulary.
-    ///
+    /// # TODO @ArthurZucker we should probably make this async? rebuilding the regex takes a long time.
     /// We keep two different RegexSet, one that will take care of matching against the
     /// non-normalized string, and one matching against the normalized one.
     fn refresh_added_tokens<N: Normalizer>(&mut self, model: &impl Model, normalizer: Option<&N>) {
@@ -547,19 +549,20 @@ mod tests {
     use crate::normalizers::utils::Lowercase;
     use crate::normalizers::NormalizerWrapper;
     use crate::{OffsetReferential, OffsetType, Result, Token, Trainer};
+    use std::collections::HashMap;
     use std::path::{Path, PathBuf};
 
     #[derive(Serialize, Deserialize)]
     struct ModelMock {
-        vocab: HashMap<String, u32>,
-        vocab_r: HashMap<u32, String>,
+        vocab: AHashMap<String, u32>,
+        vocab_r: AHashMap<u32, String>,
     }
     impl ModelMock {
         pub fn new<I>(iter: I) -> Self
         where
             I: IntoIterator<Item = &'static (&'static str, u32)>,
         {
-            let vocab: HashMap<String, u32> = iter
+            let vocab: AHashMap<String, u32> = iter
                 .into_iter()
                 .map(|&(tok, id)| (tok.to_string(), id))
                 .collect();
@@ -620,7 +623,7 @@ mod tests {
             self.vocab_r.get(&id).cloned()
         }
         fn get_vocab(&self) -> HashMap<String, u32> {
-            self.vocab.clone()
+            self.vocab.clone().into_iter().collect()
         }
         fn get_vocab_size(&self) -> usize {
             self.vocab.len()
@@ -669,7 +672,7 @@ mod tests {
         // Also adds tokens already covered by the model
         let added_token = AddedToken::from("test", false);
         assert_eq!(
-            vocab.add_tokens(&[added_token.clone()], &model, normalizer),
+            vocab.add_tokens(std::slice::from_ref(&added_token), &model, normalizer),
             1
         );
         assert_eq!(vocab.len(), 3);
@@ -716,7 +719,7 @@ mod tests {
         assert!(vocab.is_special_token("test"));
         assert_eq!(
             *vocab.get_added_tokens_decoder(),
-            HashMap::from([
+            AHashMap::from([
                 (0, AddedToken::from("test", true)),
                 (2, AddedToken::from("added_token_1", true)),
                 (3, AddedToken::from("added_token_2", true)),

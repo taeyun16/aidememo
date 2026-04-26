@@ -22,8 +22,11 @@ bytemuck = "1.16"
 # byte slice — we feed it the mmap'd slice.
 safetensors = "0.4"
 
-# HuggingFace tokenizer — same crate model2vec-rs uses.
-tokenizers = { version = "0.20", default-features = false, features = ["onig"] }
+# HuggingFace tokenizer — same crate model2vec-rs uses. Bumped from
+# 0.20 to 0.22 because v0.22.0 switched the unigram trie internally
+# from std HashMap to ahash::AHashMap (PR #1799). Our vendored fork
+# layers Vec-children + with_capacity on top of that.
+tokenizers = { version = "0.22", default-features = false, features = ["onig"] }
 
 # F16 fallback for quantized model variants (potion-base-2M / 4M).
 half = "2.4"

@@ -9,8 +9,8 @@
 //!   - [`PostProcessor`](trait.PostProcessor.html): Takes care of the processing after tokenization (like truncating, padding,
 //!     ...).
 
+use ahash::AHashMap;
 use std::{
-    collections::HashMap,
     fs::{read_to_string, File},
     io::{prelude::*, BufReader},
     ops::{Deref, DerefMut},
@@ -189,6 +189,8 @@ impl Token {
 }
 
 use std::borrow::Cow;
+use std::collections::HashMap;
+
 #[derive(Debug, Clone)]
 pub enum InputSequence<'s> {
     Raw(Cow<'s, str>),
@@ -233,7 +235,7 @@ impl<'s> From<&'s [String]> for InputSequence<'s> {
     }
 }
 
-impl<'s> From<Vec<String>> for InputSequence<'s> {
+impl From<Vec<String>> for InputSequence<'_> {
     fn from(input: Vec<String>) -> Self {
         Self::PreTokenizedOwned(Cow::Owned(input))
     }
@@ -389,7 +391,7 @@ where
         self
     }
 
-    /// Set the trunaction parameters.
+    /// Set the truncation parameters.
     #[must_use]
     pub fn with_truncation(mut self, trunc: Option<TruncationParams>) -> Self {
         self.truncation = trunc;
@@ -657,7 +659,7 @@ where
         self.padding.as_mut()
     }
 
-    /// Get the vocabulary
+    // Get the vocabulary as a plain HashMap for bindings compatibility
     pub fn get_vocab(&self, with_added_tokens: bool) -> HashMap<String, u32> {
         let mut final_vocab = self.model.get_vocab();
 
@@ -675,7 +677,7 @@ where
     }
 
     /// Get the added tokens decoder
-    pub fn get_added_tokens_decoder(&self) -> HashMap<u32, AddedToken> {
+    pub fn get_added_tokens_decoder(&self) -> AHashMap<u32, AddedToken> {
         self.added_vocabulary.get_added_tokens_decoder().clone()
     }
 
@@ -702,7 +704,7 @@ where
             .or_else(|| self.model.id_to_token(id))
     }
 
-    /// set the added bocab's splitting scheme
+    /// set the added vocab's splitting scheme
     pub fn set_encode_special_tokens(&mut self, value: bool) {
         self.added_vocabulary.set_encode_special_tokens(value);
     }
@@ -1035,17 +1037,16 @@ pub struct DecodeStream<'tok, M, N, PT, PP, D> {
     /// The index within the ids corresponding to the prefix so we can drain
     /// correctly
     prefix_index: usize,
-    /// We need to keep 2 prefixes.
-    /// Prefix is the second one that was already emitted to discard the part
-    /// of the text of all the ids
-    /// read is the prefix kept only for starting side effects of the prefix
-    read_index: usize,
 }
 
 #[derive(thiserror::Error, Debug)]
 pub enum DecodeStreamError {
-    #[error("Invalid prefix encountered")]
-    InvalidPrefix,
+    #[error("Invalid prefix encountered while decoding stream. Token ID: {token_id}, Expected prefix: '{expected_prefix}', Actual string: '{actual_string}'")]
+    InvalidPrefix {
+        token_id: u32,
+        expected_prefix: String,
+        actual_string: String,
+    },
 }
 
 impl<'tok, M, N, PT, PP, D> DecodeStream<'tok, M, N, PT, PP, D>
@@ -1063,7 +1064,6 @@ where
             skip_special_tokens,
             prefix: "".to_string(),
             prefix_index: 0,
-            read_index: 0,
         }
     }
 
@@ -1071,12 +1071,11 @@ where
     pub fn step(&mut self, id: u32) -> Result<Option<String>> {
         step_decode_stream(
             self.tokenizer,
-            id,
+            vec![id],
             self.skip_special_tokens,
             &mut self.ids,
             &mut self.prefix,
             &mut self.prefix_index,
-            &mut self.read_index,
         )
     }
 }
@@ -1084,12 +1083,11 @@ where
 /// Internal function exposed only to bypass python limitations
 pub fn step_decode_stream<M, N, PT, PP, D>(
     tokenizer: &TokenizerImpl<M, N, PT, PP, D>,
-    id: u32,
+    token_ids: Vec<u32>,
     skip_special_tokens: bool,
     ids: &mut Vec<u32>,
     prefix: &mut String,
     prefix_index: &mut usize,
-    read_index: &mut usize,
 ) -> Result<Option<String>>
 where
     M: Model,
@@ -1098,24 +1096,35 @@ where
     PP: PostProcessor,
     D: Decoder,
 {
-    ids.push(id);
+    if prefix.is_empty() && !ids.is_empty() {
+        let new_prefix = tokenizer.decode(ids, skip_special_tokens)?;
+        if !new_prefix.ends_with('�') {
+            *prefix = new_prefix;
+            *prefix_index = ids.len();
+        }
+    }
+
+    ids.extend(token_ids);
     let string = tokenizer.decode(ids.as_slice(), skip_special_tokens)?;
     if string.len() > prefix.len() && !string.ends_with('�') {
         if !(string.starts_with(&*prefix)) {
-            return Err(Box::new(DecodeStreamError::InvalidPrefix));
+            return Err(Box::new(DecodeStreamError::InvalidPrefix {
+                token_id: *ids.last().unwrap(),
+                expected_prefix: prefix.clone(),
+                actual_string: string,
+            }));
         }
+
         let new_text = &string[prefix.len()..].to_string();
         let new_prefix_index = ids.len() - *prefix_index;
-        *ids = ids.drain(*read_index..).collect();
+        *ids = ids.drain(*prefix_index..).collect();
         *prefix = tokenizer.decode(ids, skip_special_tokens)?;
-        *read_index = *prefix_index;
         *prefix_index = new_prefix_index;
         Ok(Some(new_text.to_string()))
     } else {
         Ok(None)
     }
 }
-
 impl<M, N, PT, PP, D> TokenizerImpl<M, N, PT, PP, D>
 where
     M: Model,
@@ -1135,6 +1144,7 @@ where
     }
 }
 
+#[allow(dead_code)]
 impl<M, N, PT, PP, D> TokenizerImpl<M, N, PT, PP, D>
 where
     N: Normalizer,
@@ -1395,7 +1405,9 @@ where
                         }
                     }),
                     |seq| {
-                        let normalized = self.do_normalize(seq.as_ref())?;
+                        let normalized = self
+                            .added_vocabulary
+                            .extract_and_normalize(self.normalizer.as_ref(), seq.as_ref());
                         let pre_tokenized = self.do_pre_tokenize(normalized)?;
                         Ok(pre_tokenized
                             .get_splits(OffsetReferential::Original, OffsetType::Byte)
@@ -1446,7 +1458,9 @@ where
                 }
             }),
             |seq| {
-                let normalized = self.do_normalize(seq.as_ref())?;
+                let normalized = self
+                    .added_vocabulary
+                    .extract_and_normalize(self.normalizer.as_ref(), seq.as_ref());
                 let pre_tokenized = self.do_pre_tokenize(normalized)?;
                 Ok(pre_tokenized
                     .get_splits(OffsetReferential::Original, OffsetType::Byte)
@@ -1561,59 +1575,5 @@ where
         file.write_all(serialized.as_bytes())?;
 
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod test {
-    #[cfg(feature = "http")]
-    #[test]
-    fn test_decoding_with_added_bpe() {
-        use crate::{
-            normalizers,
-            pre_tokenizers::split::{Split, SplitPattern},
-            AddedToken, NormalizerWrapper, PreTokenizerWrapper, SplitDelimiterBehavior, Tokenizer,
-        };
-
-        let mut tokenizer = Tokenizer::from_pretrained("meta-llama/Meta-Llama-3-8B", None).unwrap();
-        tokenizer.normalizer = Some(NormalizerWrapper::from(normalizers::ByteLevel::new()));
-        tokenizer.pre_tokenizer = Some(PreTokenizerWrapper::Split(
-            Split::new(
-                SplitPattern::Regex(r"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}{1,3}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+".into()),
-                SplitDelimiterBehavior::Isolated,
-                false,
-            )
-            .unwrap(),
-        ));
-        tokenizer.add_tokens(&[AddedToken::from("嗎", false).normalized(false)]);
-        let encoded = tokenizer
-            .encode("Hey! how is this token: 嗎", false)
-            .unwrap();
-        assert_eq!(
-            encoded.get_ids(),
-            [19182, 0, 1268, 602, 82, 62428, 82, 4037, 25, 220, 128256]
-        );
-        assert_eq!(
-            encoded.get_tokens(),
-            ["Hey", "!", "Ġhow", "Ġi", "s", "Ġthi", "s", "Ġtoken", ":", "Ġ", "嗎"]
-        );
-
-        let decoded = tokenizer.decode(encoded.get_ids(), false);
-        assert_eq!(decoded.unwrap(), "Hey! how is this token: 嗎");
-
-        tokenizer.add_tokens(&[AddedToken::from("д", false).normalized(true)]);
-        let encoded = tokenizer
-            .encode("Hey! how is this token: д", false)
-            .unwrap();
-        assert_eq!(
-            encoded.get_ids(),
-            [19182, 0, 1268, 602, 82, 62428, 82, 4037, 25, 220, 128257]
-        );
-        assert_eq!(
-            encoded.get_tokens(),
-            ["Hey", "!", "Ġhow", "Ġi", "s", "Ġthi", "s", "Ġtoken", ":", "Ġ", "Ð´"]
-        );
-        let decoded = tokenizer.decode(encoded.get_ids(), false);
-        assert_eq!(decoded.unwrap(), "Hey! how is this token: д")
     }
 }

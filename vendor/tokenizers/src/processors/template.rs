@@ -57,9 +57,9 @@
 //! [`TemplateProcessing`]: struct.TemplateProcessing.html
 //!
 use crate::{Encoding, PostProcessor, Result};
+use ahash::{AHashMap, AHashSet};
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
 use std::convert::{TryFrom, TryInto};
 use std::result::Result as StdResult;
 
@@ -293,7 +293,7 @@ impl TryFrom<&str> for Template {
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, Eq)]
 #[serde(transparent)]
 pub struct Tokens(
-    #[serde(serialize_with = "crate::utils::ordered_map")] pub HashMap<String, SpecialToken>,
+    #[serde(serialize_with = "crate::utils::ordered_map")] pub AHashMap<String, SpecialToken>,
 );
 
 impl<T: Into<SpecialToken>> From<Vec<T>> for Tokens {
@@ -309,8 +309,8 @@ impl<T: Into<SpecialToken>> From<Vec<T>> for Tokens {
     }
 }
 
-impl From<HashMap<String, SpecialToken>> for Tokens {
-    fn from(v: HashMap<String, SpecialToken>) -> Self {
+impl From<AHashMap<String, SpecialToken>> for Tokens {
+    fn from(v: AHashMap<String, SpecialToken>) -> Self {
         Self(v)
     }
 }
@@ -338,7 +338,7 @@ impl From<HashMap<String, SpecialToken>> for Tokens {
 #[builder(build_fn(validate = "Self::validate"))]
 pub struct TemplateProcessing {
     #[builder(try_setter, default = "\"$0\".try_into().unwrap()")]
-    single: Template,
+    pub single: Template,
     #[builder(try_setter, default = "\"$A:0 $B:1\".try_into().unwrap()")]
     pair: Template,
     #[builder(setter(skip), default = "self.default_added(true)")]
@@ -349,6 +349,58 @@ pub struct TemplateProcessing {
     added_pair: usize,
     #[builder(setter(into), default)]
     special_tokens: Tokens,
+}
+
+impl TemplateProcessing {
+    // Getter for `single`
+    pub fn get_single(&self) -> String {
+        format!("{:?}", self.single)
+    }
+
+    // Setter for `single`
+    pub fn set_single(&mut self, single: Template) {
+        self.single = single;
+    }
+
+    // Getter for `pair`
+    pub fn get_pair(&self) -> &Template {
+        &self.pair
+    }
+
+    // Setter for `pair`
+    pub fn set_pair(&mut self, pair: Template) {
+        self.pair = pair;
+    }
+
+    // Getter for `added_single`
+    pub fn get_added_single(&self) -> usize {
+        self.added_single
+    }
+
+    // Setter for `added_single`
+    pub fn set_added_single(&mut self, added_single: usize) {
+        self.added_single = added_single;
+    }
+
+    // Getter for `added_pair`
+    pub fn get_added_pair(&self) -> usize {
+        self.added_pair
+    }
+
+    // Setter for `added_pair`
+    pub fn set_added_pair(&mut self, added_pair: usize) {
+        self.added_pair = added_pair;
+    }
+
+    // Getter for `special_tokens`
+    pub fn get_special_tokens(&self) -> &Tokens {
+        &self.special_tokens
+    }
+
+    // Setter for `special_tokens`
+    pub fn set_special_tokens(&mut self, special_tokens: Tokens) {
+        self.special_tokens = special_tokens;
+    }
 }
 
 impl From<&str> for TemplateProcessingBuilderError {
@@ -414,7 +466,7 @@ impl TemplateProcessingBuilder {
     }
 
     fn validate(&self) -> std::result::Result<(), String> {
-        let pair_has_both = self.pair.as_ref().map_or(true, |pair| {
+        let pair_has_both = self.pair.as_ref().is_none_or(|pair| {
             let mut has_a = false;
             let mut has_b = false;
             for piece in &pair.0 {
@@ -441,7 +493,7 @@ impl TemplateProcessingBuilder {
             let exist = self
                 .special_tokens
                 .as_ref()
-                .map_or(false, |map| map.0.contains_key(sp));
+                .is_some_and(|map| map.0.contains_key(sp));
 
             match exist {
                 false => Some(sp),
@@ -450,7 +502,7 @@ impl TemplateProcessingBuilder {
         };
 
         let empty = [];
-        let missing: HashSet<&str> = self
+        let missing: AHashSet<&str> = self
             .single
             .as_ref()
             .map_or(empty.iter(), |s| s.0.iter())
@@ -459,7 +511,7 @@ impl TemplateProcessingBuilder {
                 Piece::Sequence { .. } => None,
                 Piece::SpecialToken { id, .. } => check(id.as_ref()),
             })
-            .collect::<HashSet<_>>();
+            .collect::<AHashSet<_>>();
 
         if missing.is_empty() {
             Ok(())
@@ -508,25 +560,25 @@ impl TemplateProcessing {
                     }
                     Piece::SpecialToken { id, type_id } => {
                         if add_special_tokens {
-                            let tok = &self.special_tokens.0[id]; // We already checked existance above
+                            let tok = &self.special_tokens.0[id]; // We already checked existence above
                             let len = tok.ids.len();
 
                             let encoding = Encoding::new(
                                 tok.ids.clone(),
-                                std::iter::repeat(*type_id).take(len).collect(),
+                                std::iter::repeat_n(*type_id, len).collect(),
                                 tok.tokens.clone(),
                                 // words
-                                std::iter::repeat(None).take(len).collect(),
+                                std::iter::repeat_n(None, len).collect(),
                                 // offsets
-                                std::iter::repeat((0, 0)).take(len).collect(),
+                                std::iter::repeat_n((0, 0), len).collect(),
                                 // special_tokens_mask
-                                std::iter::repeat(1).take(len).collect(),
+                                std::iter::repeat_n(1, len).collect(),
                                 // attention_mask
-                                std::iter::repeat(1).take(len).collect(),
+                                std::iter::repeat_n(1, len).collect(),
                                 // overflowing
                                 vec![],
                                 // sequence_range
-                                HashMap::new(),
+                                AHashMap::new(),
                             );
                             Some(encoding)
                         } else {
@@ -865,7 +917,7 @@ mod tests {
                 vec![1, 0, 0, 1],
                 vec![1, 1, 1, 1],
                 vec![],
-                HashMap::from_iter(vec![(0, 1..3)]),
+                AHashMap::from_iter(vec![(0, 1..3)]),
             )
         );
         assert_eq!(single_encoding.token_to_sequence(2), Some(0));
@@ -889,7 +941,7 @@ mod tests {
                 vec![1, 0, 0, 1, 0, 1],
                 vec![1, 1, 1, 1, 1, 1],
                 vec![],
-                HashMap::from_iter(vec![(0, 1..3), (1, 4..5)]),
+                AHashMap::from_iter(vec![(0, 1..3), (1, 4..5)]),
             )
         );
         assert_eq!(pair_encoding.token_to_sequence(2), Some(0));
@@ -951,9 +1003,9 @@ mod tests {
                     vec![1, 0, 1],
                     vec![1, 1, 1],
                     vec![],
-                    HashMap::from_iter(vec![(0, 1..2)]),
+                    AHashMap::from_iter(vec![(0, 1..2)]),
                 )],
-                HashMap::from_iter(vec![(0, 1..3)]),
+                AHashMap::from_iter(vec![(0, 1..3)]),
             )
         );
         assert_eq!(single_encoding.token_to_sequence(2), Some(0));
@@ -1009,9 +1061,9 @@ mod tests {
                             vec![1, 0, 1, 0, 1],
                             vec![1, 1, 1, 1, 1],
                             vec![],
-                            HashMap::from_iter(vec![(0, 1..2), (1, 3..4)]),
+                            AHashMap::from_iter(vec![(0, 1..2), (1, 3..4)]),
                         ),],
-                        HashMap::from_iter(vec![(1, 3..5), (0, 1..2)]),
+                        AHashMap::from_iter(vec![(1, 3..5), (0, 1..2)]),
                     ),
                     Encoding::new(
                         vec![1, 13, 0, 17, 0],
@@ -1028,7 +1080,7 @@ mod tests {
                         vec![1, 0, 1, 0, 1],
                         vec![1, 1, 1, 1, 1],
                         vec![],
-                        HashMap::from_iter(vec![(0, 1..2), (1, 3..4)]),
+                        AHashMap::from_iter(vec![(0, 1..2), (1, 3..4)]),
                     ),
                     Encoding::new(
                         vec![1, 12, 14, 0, 17, 0],
@@ -1060,12 +1112,12 @@ mod tests {
                             vec![1, 0, 1, 0, 1],
                             vec![1, 1, 1, 1, 1],
                             vec![],
-                            HashMap::from_iter(vec![(0, 1..2), (1, 3..4)]),
+                            AHashMap::from_iter(vec![(0, 1..2), (1, 3..4)]),
                         ),],
-                        HashMap::from_iter(vec![(0, 1..3), (1, 4..5)]),
+                        AHashMap::from_iter(vec![(0, 1..3), (1, 4..5)]),
                     )
                 ],
-                HashMap::from_iter(vec![(0, 1..3), (1, 4..6)]),
+                AHashMap::from_iter(vec![(0, 1..3), (1, 4..6)]),
             )
         );
         assert_eq!(pair_encoding.token_to_sequence(2), Some(0));
