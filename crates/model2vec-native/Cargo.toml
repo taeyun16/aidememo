@@ -1,0 +1,58 @@
+[package]
+name = "model2vec-native"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "Zero-copy mmap-backed Model2Vec inference (no heap copy of weights)"
+license.workspace = true
+repository.workspace = true
+version.workspace = true
+
+[dependencies]
+# Read-only mmap of safetensors weights — keeps the 489 MB matrix
+# file-backed instead of copying it into the Rust heap.
+memmap2 = "0.9"
+
+# Zero-copy &[u8] → &[f32] re-interpretation. Required because the
+# safetensors payload is little-endian f32 already; chunks_exact + map +
+# collect (what model2vec-rs does) is a redundant ~500 MB allocation.
+bytemuck = "1.16"
+
+# Header parsing. SafeTensors itself is zero-copy when fed an existing
+# byte slice — we feed it the mmap'd slice.
+safetensors = "0.4"
+
+# HuggingFace tokenizer — same crate model2vec-rs uses.
+tokenizers = { version = "0.20", default-features = false, features = ["onig"] }
+
+# F16 fallback for quantized model variants (potion-base-2M / 4M).
+half = "2.4"
+
+# JSON config parsing (config.json's `normalize` flag).
+serde_json = "1.0"
+
+# HuggingFace download path — only pulled in when caller uses
+# `from_pretrained_hub`. Zero cost for local-path usage.
+hf-hub = { version = "0.5", default-features = false, features = ["ureq", "native-tls"], optional = true }
+
+# Standard error handling.
+thiserror = "1.0"
+
+[features]
+default = ["hub"]
+# Enable HuggingFace hub downloads. Off → loads only from local paths.
+hub = ["dep:hf-hub"]
+
+# This crate uses unsafe (mmap is fundamentally unsafe in Rust). The
+# workspace-wide `unsafe_code = "forbid"` is overridden here because
+# memmap2's whole point is reading the mapped pages — there's no safe
+# alternative to mmap on the OS API surface.
+[lints.rust]
+unsafe_code = "allow"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "warn"
+panic = "deny"
+todo = "warn"
+dbg_macro = "deny"

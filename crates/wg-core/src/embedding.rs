@@ -77,12 +77,13 @@ pub fn load_provider(config: &Config) -> Result<Box<dyn EmbeddingProvider>> {
 #[cfg(feature = "semantic")]
 mod model2vec {
     use super::{Config, EmbeddingProvider, Result, WgError};
-    use model2vec_rs::model::StaticModel;
+    use model2vec_native::StaticModel;
     use std::path::{Path, PathBuf};
 
     pub struct Model2VecProvider {
         inner: StaticModel,
         name: String,
+        dim: usize,
     }
 
     impl Model2VecProvider {
@@ -96,19 +97,25 @@ mod model2vec {
             };
 
             let inner = if local_candidate.exists() {
-                StaticModel::from_pretrained(&local_candidate, None, None, None).map_err(
-                    |source| WgError::ModelLoadFailed {
+                // Local directory layout (tokenizer.json/model.safetensors/config.json).
+                StaticModel::from_pretrained(&local_candidate, None).map_err(|source| {
+                    WgError::ModelLoadFailed {
                         path: local_candidate.clone(),
                         source: Box::new(std::io::Error::other(source.to_string())),
-                    },
-                )?
+                    }
+                })?
             } else if config.model.auto_download {
-                StaticModel::from_pretrained(&config.model.name, None, None, None).map_err(
-                    |source| WgError::ModelLoadFailed {
+                // HF Hub fallback. mmap kicks in on the cached files.
+                // model2vec-native's `hub` feature is on by default, so
+                // this call is always available; if a downstream
+                // explicitly disabled it the linker error is what we
+                // want anyway (clear failure mode).
+                StaticModel::from_hub(&config.model.name, None).map_err(|source| {
+                    WgError::ModelLoadFailed {
                         path: PathBuf::from(&config.model.name),
                         source: Box::new(std::io::Error::other(source.to_string())),
-                    },
-                )?
+                    }
+                })?
             } else {
                 return Err(WgError::ModelNotFound {
                     name: config.model.name.clone(),
@@ -116,15 +123,12 @@ mod model2vec {
                 });
             };
 
+            let dim = inner.dimension();
             Ok(Self {
                 inner,
                 name: config.model.name.clone(),
+                dim,
             })
-        }
-
-        /// Access the underlying StaticModel — used by adapt code paths.
-        pub fn inner(&self) -> &StaticModel {
-            &self.inner
         }
     }
 
@@ -133,9 +137,7 @@ mod model2vec {
             format!("model2vec({})", self.name)
         }
         fn dimension(&self) -> usize {
-            // Model2Vec exposes dim via encode_single output length.
-            // Cheap sentinel call; cached after first use in practice.
-            self.inner.encode_single("").len()
+            self.dim
         }
         fn embed(&self, text: &str) -> Result<Vec<f32>> {
             Ok(self.inner.encode_single(text))

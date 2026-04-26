@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/model2vec-native",
     "crates/wg-core",
     "crates/wg-cli",
     "benchmarks",

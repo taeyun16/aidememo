@@ -10,7 +10,7 @@ version.workspace = true
 
 [features]
 default = []
-semantic = ["model2vec-rs", "ureq", "simsimd"]
+semantic = ["model2vec-native", "ureq", "simsimd"]
 semantic-adapt = ["semantic"]
 parallel = ["rayon"]
 remote = ["oneio"]
@@ -48,7 +48,10 @@ comfy-table = "7.0"
 chrono = "0.4"
 
 # 시맨틱 검색 (선택)
-model2vec-rs = { version = "0.1", optional = true }
+# Replaced upstream model2vec-rs with our zero-copy mmap variant — same
+# API surface, but the 489 MB embedding matrix stays file-backed instead
+# of being copied twice into the heap.
+model2vec-native = { path = "../model2vec-native", optional = true }
 
 # OpenAI-compatible HTTP embeddings (Ollama / OpenAI / OpenRouter / vLLM / LocalAI).
 # Pulled in alongside the `semantic` feature so users who opt into semantic
