@@ -11,6 +11,12 @@
 //! Thread safety: a single `wg_store_t*` is safe to share across threads
 //! (the underlying graph uses an `RwLock` internally).
 
+// `extern "C"` functions taking `*const c_char` necessarily dereference raw
+// pointers, but marking them `unsafe` would change the C header signature
+// for no benefit (C callers don't have `unsafe`). The `ptr_to_str` /
+// `store_ref` helpers null-check before dereferencing.
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
+
 use serde_json::json;
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;

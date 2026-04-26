@@ -1727,10 +1727,7 @@ mod tests {
                 "Redis",
                 EntityUpdate {
                     name: Some("Redis Server".to_string()),
-                    entity_type: None,
-                    aliases: None,
-                    tags: None,
-                    source_page: None,
+                    ..Default::default()
                 },
             )
             .unwrap();

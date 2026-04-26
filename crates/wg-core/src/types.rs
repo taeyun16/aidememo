@@ -29,11 +29,6 @@ impl EntityId {
         Ulid::from_str(s).ok().map(Self)
     }
 
-    /// Return the ULID as string.
-    pub fn to_string(&self) -> String {
-        self.0.to_string()
-    }
-
     /// Return raw bytes as a fixed-size array.
     pub fn as_bytes(&self) -> [u8; 16] {
         self.0.to_bytes()
@@ -65,11 +60,6 @@ impl FactId {
     /// Parse from string representation.
     pub fn parse(s: &str) -> Option<Self> {
         Ulid::from_str(s).ok().map(Self)
-    }
-
-    /// Return the ULID as string.
-    pub fn to_string(&self) -> String {
-        self.0.to_string()
     }
 
     /// Return raw bytes as a fixed-size array.

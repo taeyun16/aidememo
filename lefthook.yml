@@ -1,0 +1,61 @@
+# Pre-commit / pre-push hooks for the wg workspace.
+#
+# Install:
+#   brew install lefthook         # macOS
+#   # or:  npm install -g lefthook
+#   lefthook install
+#
+# Skip a single hook run:
+#   git commit --no-verify        # bypass everything
+#   LEFTHOOK_EXCLUDE=clippy …     # skip just clippy
+#
+# Tier 0 (pre-commit) is fast on purpose — anything slow goes to pre-push.
+
+output:
+  - meta
+  - summary
+  - failure
+
+pre-commit:
+  parallel: true
+  commands:
+    rust-fmt:
+      glob: "*.rs"
+      run: cargo fmt --all -- --check
+      fail_text: "run 'cargo fmt --all' to fix"
+
+    elixir-fmt:
+      glob: "{*.ex,*.exs}"
+      root: "crates/wg-nif"
+      run: mix format --check-formatted {staged_files}
+      fail_text: "run 'cd crates/wg-nif && mix format' to fix"
+
+    workspace-deny-unwrap:
+      # Quick guard: workspace lints already deny `unwrap_used` and
+      # `panic` — `cargo check` surfaces those as errors.
+      glob: "*.rs"
+      run: cargo check --workspace --all-targets --features semantic --quiet
+      fail_text: "code denies unwrap/panic/dbg_macro — see workspace lints in Cargo.toml"
+
+pre-push:
+  parallel: false  # tests can race on shared resources (model cache, redb files)
+  commands:
+    clippy:
+      run: cargo clippy --workspace --all-targets --features semantic --quiet
+      fail_text: "fix clippy errors before pushing (warnings tolerated, errors block)"
+
+    test-core:
+      run: cargo test -p wg-core --features semantic --quiet
+      fail_text: "wg-core tests failed"
+
+    test-cli:
+      run: cargo test -p wg-cli --bin wg --quiet
+      fail_text: "wg-cli tests failed"
+
+# Long-running operations live in pre-push only:
+# - cargo clippy (1st run = slow)
+# - cargo test (full suite, ~10–15s with semantic)
+#
+# Bindings (Python wheel build, NAPI .node, NIF .so, FFI staticlib) are
+# NOT in pre-push because they require external toolchains (maturin / npm /
+# mix / clang). Run them manually in `./scripts/test-bindings.sh` (TBD).
