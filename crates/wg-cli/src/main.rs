@@ -25,11 +25,23 @@ fn main() {
         }
     };
 
-    // Get store path
-    let store_path = args
-        .store_path
-        .clone()
-        .unwrap_or_else(|| PathBuf::from(&config.store.path));
+    // Resolve store path: --store > --project > default_project > store.path.
+    let store_path = if let Some(path) = args.store_path.clone() {
+        path
+    } else if let Some(project) = &args.project {
+        match config.project_path(project) {
+            Some(p) => p,
+            None => {
+                eprintln!(
+                    "Error: project '{}' not registered. Run `wg project list`.",
+                    project
+                );
+                exit(1);
+            }
+        }
+    } else {
+        config.default_store_path()
+    };
 
     let json = args.json;
 
@@ -45,6 +57,8 @@ fn main() {
         cmd::Command::Doctor(sub) => cmd::doctor::run_doctor(&store_path, config, sub, json),
         cmd::Command::Recent(sub) => cmd::recent::run_recent(&store_path, config, sub, json),
         cmd::Command::Edit(sub) => cmd::edit::run_edit(&store_path, config, sub, json),
+        cmd::Command::Graph(sub) => cmd::graph::run_graph(&store_path, config, sub),
+        cmd::Command::Project(sub) => cmd::project::run_project(config, sub),
         cmd::Command::Export(sub) => handle_export(&store_path, config, sub),
         cmd::Command::Import(sub) => handle_import(&store_path, config, sub),
         cmd::Command::Stats(sub) => handle_stats(&store_path, config, sub, json),
@@ -179,12 +193,38 @@ fn handle_fact(
                 None => None,
             };
             with_wiki_mut(path, config, |wiki| {
-                let entity_ids = entities.map(|names| {
-                    names
-                        .iter()
-                        .filter_map(|n| wiki.resolve_entity(n).ok())
-                        .collect()
-                });
+                let mut auto_created: Vec<String> = Vec::new();
+                let entity_ids = match entities {
+                    Some(names) => {
+                        // Allow comma-separated names in a single --entities flag.
+                        let names: Vec<String> = names
+                            .into_iter()
+                            .flat_map(|raw| {
+                                raw.split(',')
+                                    .map(|s| s.trim().to_string())
+                                    .collect::<Vec<_>>()
+                            })
+                            .filter(|s| !s.is_empty())
+                            .collect();
+                        let mut ids = Vec::new();
+                        for name in &names {
+                            match wiki.resolve_entity(name) {
+                                Ok(id) => ids.push(id),
+                                Err(_) => {
+                                    let new_id = wiki.entity_add(EntityInput {
+                                        name: name.clone(),
+                                        entity_type: Some(EntityType::Unknown),
+                                        ..Default::default()
+                                    })?;
+                                    auto_created.push(name.clone());
+                                    ids.push(new_id);
+                                }
+                            }
+                        }
+                        Some(ids)
+                    }
+                    None => None,
+                };
 
                 let id = wiki.add_fact(FactInput {
                     content: content.clone(),
@@ -195,7 +235,20 @@ fn handle_fact(
                     source_confidence: confidence,
                     observed_at: observed_at_ms,
                 })?;
-                Ok(format!("Added fact with ID {}", id))
+                let mut msg = format!("Added fact with ID {}", id);
+                if !auto_created.is_empty() {
+                    let label = if auto_created.len() == 1 {
+                        "entity"
+                    } else {
+                        "entities"
+                    };
+                    msg.push_str(&format!(
+                        "\n  auto-created {}: {}",
+                        label,
+                        auto_created.join(", ")
+                    ));
+                }
+                Ok(msg)
             })
         }
         cmd::FactSub::Get { id } => with_wiki(path, config, |wiki| {

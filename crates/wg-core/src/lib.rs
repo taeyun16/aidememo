@@ -21,7 +21,7 @@ use parking_lot::RwLock;
 use std::path::Path;
 use std::sync::Arc;
 
-pub use config::Config;
+pub use config::{Config, ProjectConfig};
 pub use error::{Result, WgError};
 pub use ingest::{IngestStats, ParsedFile, Section, Wikilink};
 

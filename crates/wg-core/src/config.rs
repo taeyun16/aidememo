@@ -4,6 +4,7 @@
 
 use crate::error::{Result, WgError};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 /// WikiGraph configuration.
@@ -13,6 +14,13 @@ pub struct Config {
     pub model: ModelConfig,
     pub search: SearchConfig,
     pub lint: LintConfig,
+    /// Named projects (multi-store support). Empty by default.
+    #[serde(default)]
+    pub projects: BTreeMap<String, ProjectConfig>,
+    /// Name of the project to use when neither --store nor --project is given.
+    /// If unset (or the project is missing), falls back to `store.path`.
+    #[serde(default)]
+    pub default_project: Option<String>,
 }
 
 impl Default for Config {
@@ -22,8 +30,16 @@ impl Default for Config {
             model: ModelConfig::default(),
             search: SearchConfig::default(),
             lint: LintConfig::default(),
+            projects: BTreeMap::new(),
+            default_project: None,
         }
     }
+}
+
+/// One registered project (name → store path).
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ProjectConfig {
+    pub path: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -112,6 +128,25 @@ impl Default for LintConfig {
 }
 
 impl Config {
+    /// Resolve the store path for a named project.
+    ///
+    /// Returns `None` if the project doesn't exist; expands `~` to the home
+    /// directory if present.
+    pub fn project_path(&self, name: &str) -> Option<PathBuf> {
+        self.projects.get(name).map(|p| expand_home(&p.path))
+    }
+
+    /// Resolve the store path that should be used when no `--store` / `--project`
+    /// is given. Falls through `default_project` → `store.path`.
+    pub fn default_store_path(&self) -> PathBuf {
+        if let Some(name) = &self.default_project {
+            if let Some(p) = self.project_path(name) {
+                return p;
+            }
+        }
+        expand_home(&self.store.path)
+    }
+
     /// Load configuration from ~/.wg/config.toml.
     pub fn load() -> Result<Self> {
         let path = Self::config_path()?;
@@ -323,6 +358,16 @@ impl LintConfig {
             _ => Err(WgError::ConfigKeyNotFound(format!("lint.{}", key))),
         }
     }
+}
+
+/// Expand a leading `~` in a path string to the user's home directory.
+fn expand_home(s: &str) -> PathBuf {
+    if let Some(rest) = s.strip_prefix("~/") {
+        if let Some(home) = dirs::home_dir() {
+            return home.join(rest);
+        }
+    }
+    PathBuf::from(s)
 }
 
 /// Simple helper to get home directory.

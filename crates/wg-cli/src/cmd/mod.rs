@@ -7,11 +7,13 @@ pub mod adapt;
 pub mod doctor;
 pub mod edit;
 pub mod feedback;
+pub mod graph;
 pub mod init;
 pub mod mcp_serve;
 pub mod mcp_stdio;
 pub mod mcp_tools;
 pub mod model;
+pub mod project;
 pub mod recent;
 pub mod watch;
 
@@ -19,16 +21,19 @@ pub use adapt::AdaptSub;
 pub use doctor::DoctorSub;
 pub use edit::EditSub;
 pub use feedback::FeedbackSub;
+pub use graph::GraphSub;
 pub use init::InitSub;
 pub use mcp_serve::McpSub;
 pub use mcp_stdio::McpStdioSub;
 pub use model::ModelSub;
+pub use project::ProjectSub;
 pub use recent::RecentSub;
 pub use watch::WatchSub;
 
 #[derive(Debug, Clone)]
 pub struct Args {
     pub store_path: Option<PathBuf>,
+    pub project: Option<String>,
     pub json: bool,
     pub command: Command,
 }
@@ -45,6 +50,8 @@ pub enum Command {
     Doctor(DoctorSub),
     Recent(RecentSub),
     Edit(EditSub),
+    Graph(GraphSub),
+    Project(ProjectSub),
     Export(ExportSub),
     Import(ImportSub),
     Stats(StatsSub),
@@ -203,8 +210,14 @@ pub enum ConfigSub {
 pub fn build_cli() -> OptionParser<Args> {
     let store_path = long("store")
         .short('s')
-        .help("Path to wiki.redb store")
+        .help("Path to wiki.redb store (overrides --project and config)")
         .argument::<PathBuf>("PATH")
+        .optional();
+
+    let project = long("project")
+        .short('P')
+        .help("Use a registered project (see `wg project list`)")
+        .argument::<String>("NAME")
         .optional();
 
     let json = long("json")
@@ -222,6 +235,8 @@ pub fn build_cli() -> OptionParser<Args> {
     let doctor_cmd = doctor::doctor_command();
     let recent_cmd = recent::recent_command();
     let edit_cmd = edit::edit_command();
+    let graph_cmd = graph::graph_command();
+    let project_cmd = project::project_command();
 
     let command = construct!([
         entity_command(),
@@ -234,6 +249,8 @@ pub fn build_cli() -> OptionParser<Args> {
         doctor_cmd,
         recent_cmd,
         edit_cmd,
+        graph_cmd,
+        project_cmd,
         export_command(),
         import_command(),
         stats_command(),
@@ -251,6 +268,7 @@ pub fn build_cli() -> OptionParser<Args> {
 
     construct!(Args {
         store_path,
+        project,
         json,
         command,
     })
