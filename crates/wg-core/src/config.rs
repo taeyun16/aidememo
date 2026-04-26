@@ -121,6 +121,42 @@ pub struct SearchConfig {
     pub bm25_weight: f32,
     /// Semantic weight in RRF fusion.
     pub semantic_weight: f32,
+    /// Tier 7-B: how many BM25 candidates to feed into the semantic
+    /// re-ranker. Cap on per-query embedding inference cost. 0 disables
+    /// the prefilter (fall back to scoring every fact).
+    #[serde(default = "default_semantic_prefilter")]
+    pub semantic_prefilter: usize,
+    /// Tier 7-D: enable graph-aware prefilter — facts attached to
+    /// entities in the BM25 result set, plus their N-hop neighbors,
+    /// are added to the semantic re-ranker's candidate pool. Closes
+    /// the gap where BM25 misses semantic-only matches but graph
+    /// neighborhood would have surfaced them.
+    #[serde(default = "default_true")]
+    pub graph_prefilter: bool,
+    /// Tier 7-D: how many hops to expand from BM25 result entities
+    /// (1 = direct neighbors only).
+    #[serde(default = "default_graph_depth")]
+    pub graph_depth: u32,
+    /// Tier 7-D: cap on extra facts pulled in from graph expansion.
+    /// Bounds the worst-case candidate pool size.
+    #[serde(default = "default_graph_fact_cap")]
+    pub graph_fact_cap: usize,
+}
+
+fn default_semantic_prefilter() -> usize {
+    50
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_graph_depth() -> u32 {
+    1
+}
+
+fn default_graph_fact_cap() -> usize {
+    50
 }
 
 impl Default for SearchConfig {
@@ -130,6 +166,10 @@ impl Default for SearchConfig {
             min_trust: 0.0,
             bm25_weight: 1.0,
             semantic_weight: 1.0,
+            semantic_prefilter: default_semantic_prefilter(),
+            graph_prefilter: default_true(),
+            graph_depth: default_graph_depth(),
+            graph_fact_cap: default_graph_fact_cap(),
         }
     }
 }
@@ -339,6 +379,10 @@ impl SearchConfig {
             "min_trust" => Some(self.min_trust.to_string()),
             "bm25_weight" => Some(self.bm25_weight.to_string()),
             "semantic_weight" => Some(self.semantic_weight.to_string()),
+            "semantic_prefilter" => Some(self.semantic_prefilter.to_string()),
+            "graph_prefilter" => Some(self.graph_prefilter.to_string()),
+            "graph_depth" => Some(self.graph_depth.to_string()),
+            "graph_fact_cap" => Some(self.graph_fact_cap.to_string()),
             _ => None,
         }
     }
@@ -367,6 +411,30 @@ impl SearchConfig {
                 self.semantic_weight = value
                     .parse()
                     .map_err(|_| WgError::InvalidInput(format!("invalid float: {}", value)))?;
+                Ok(())
+            }
+            "semantic_prefilter" => {
+                self.semantic_prefilter = value
+                    .parse()
+                    .map_err(|_| WgError::InvalidInput(format!("invalid integer: {}", value)))?;
+                Ok(())
+            }
+            "graph_prefilter" => {
+                self.graph_prefilter = value
+                    .parse()
+                    .map_err(|_| WgError::InvalidInput(format!("invalid boolean: {}", value)))?;
+                Ok(())
+            }
+            "graph_depth" => {
+                self.graph_depth = value
+                    .parse()
+                    .map_err(|_| WgError::InvalidInput(format!("invalid integer: {}", value)))?;
+                Ok(())
+            }
+            "graph_fact_cap" => {
+                self.graph_fact_cap = value
+                    .parse()
+                    .map_err(|_| WgError::InvalidInput(format!("invalid integer: {}", value)))?;
                 Ok(())
             }
             _ => Err(WgError::ConfigKeyNotFound(format!("search.{}", key))),

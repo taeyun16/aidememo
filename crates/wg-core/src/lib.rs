@@ -23,6 +23,9 @@ use parking_lot::RwLock;
 use std::path::Path;
 use std::sync::Arc;
 
+#[cfg(feature = "semantic")]
+use std::sync::OnceLock;
+
 pub use config::{Config, ProjectConfig};
 pub use error::{Result, WgError};
 pub use ingest::{IngestStats, ParsedFile, Section, Wikilink};
@@ -42,6 +45,27 @@ pub struct WikiGraph {
     // For mutable operations, we use RwLock
     store: Arc<RwLock<Store>>,
     config: Arc<Config>,
+    /// Tier 7-A: lazy-loaded embedding provider, reused across all
+    /// search calls. Without this `load_provider` was called per
+    /// query, paying the Model2Vec model load cost (≈1 GB virtual
+    /// allocation, hundreds of ms of wall time) every time.
+    #[cfg(feature = "semantic")]
+    provider: OnceLock<Arc<dyn embedding::EmbeddingProvider>>,
+    /// Tier 7-A: LRU of recently-seen query embeddings. LLM agents
+    /// often repeat the same topic across turns; cached query vectors
+    /// skip the inference entirely.
+    #[cfg(feature = "semantic")]
+    query_embed_cache: Arc<parking_lot::Mutex<lru::LruCache<String, Vec<f32>>>>,
+    /// Tier 7-C: in-memory cache of fact embeddings, quantized to i8
+    /// (4× smaller than the f32 originals). Built lazily on first
+    /// search-touch of each fact. Without this every search re-ran
+    /// Model2Vec inference for every candidate; with it the second
+    /// search onwards pays only the SIMD cosine cost.
+    /// Invalidated on fact_add / fact_update / fact_delete.
+    #[cfg(feature = "semantic")]
+    fact_embed_cache: Arc<
+        parking_lot::RwLock<std::collections::HashMap<types::FactId, search::QuantizedEmbedding>>,
+    >,
 }
 
 impl WikiGraph {
@@ -60,7 +84,33 @@ impl WikiGraph {
         Ok(Self {
             store: Arc::new(RwLock::new(store)),
             config: Arc::new(config),
+            #[cfg(feature = "semantic")]
+            provider: OnceLock::new(),
+            #[cfg(feature = "semantic")]
+            query_embed_cache: Arc::new(parking_lot::Mutex::new(lru::LruCache::new(
+                std::num::NonZeroUsize::new(256).expect("non-zero"),
+            ))),
+            #[cfg(feature = "semantic")]
+            fact_embed_cache: Arc::new(parking_lot::RwLock::new(std::collections::HashMap::new())),
         })
+    }
+
+    /// Lazy-load (or return) the embedding provider. Cached for the
+    /// lifetime of the WikiGraph.
+    #[cfg(feature = "semantic")]
+    fn embed_provider(&self) -> Result<Arc<dyn embedding::EmbeddingProvider>> {
+        if let Some(p) = self.provider.get() {
+            return Ok(p.clone());
+        }
+        let provider: Arc<dyn embedding::EmbeddingProvider> =
+            Arc::from(embedding::load_provider(&self.config)?);
+        // OnceLock::set returns Err if already initialized — race-safe.
+        let _ = self.provider.set(provider);
+        Ok(self
+            .provider
+            .get()
+            .expect("just set or already populated")
+            .clone())
     }
 
     /// Close the WikiGraph store.
@@ -154,8 +204,15 @@ impl WikiGraph {
 
     /// Add a new fact.
     pub fn add_fact(&self, input: FactInput) -> Result<FactId> {
-        let mut store = self.store.write();
-        store.fact_add(input)
+        let id = {
+            let mut store = self.store.write();
+            store.fact_add(input)?
+        };
+        // New fact text → no cached embedding to keep, but the BM25
+        // index will need rebuilding too. The fact_embed_cache only
+        // holds inferred-once vectors keyed by FactId; new IDs simply
+        // get computed lazily on first search.
+        Ok(id)
     }
 
     /// Backwards-compatible alias for add_fact.
@@ -170,12 +227,24 @@ impl WikiGraph {
 
     /// Update a fact.
     pub fn fact_update(&self, id: &FactId, input: FactUpdate) -> Result<()> {
-        self.store.write().fact_update(id, input)
+        self.store.write().fact_update(id, input)?;
+        // Tier 7-C: content may have changed → invalidate the cached
+        // embedding so the next search re-quantizes from fresh inference.
+        #[cfg(feature = "semantic")]
+        {
+            self.fact_embed_cache.write().remove(id);
+        }
+        Ok(())
     }
 
     /// Delete a fact.
     pub fn fact_delete(&self, id: &FactId) -> Result<()> {
-        self.store.write().fact_delete(id)
+        self.store.write().fact_delete(id)?;
+        #[cfg(feature = "semantic")]
+        {
+            self.fact_embed_cache.write().remove(id);
+        }
+        Ok(())
     }
 
     /// Record feedback for a fact.
@@ -290,8 +359,16 @@ impl WikiGraph {
     /// Search using hybrid BM25 + semantic ranking.
     #[cfg(feature = "semantic")]
     pub fn hybrid_search(&self, query: &str, opts: SearchOpts) -> Result<Vec<SearchResult>> {
+        let provider = self.embed_provider()?;
         let store = self.store.read();
-        search::hybrid_search(&*store, query, opts)
+        search::hybrid_search_with_ctx(
+            &*store,
+            query,
+            opts,
+            provider.as_ref(),
+            &self.query_embed_cache,
+            &self.fact_embed_cache,
+        )
     }
 
     /// Search with graph traversal scope.

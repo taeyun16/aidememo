@@ -207,27 +207,154 @@ fn build_search_result(
     }
 }
 
+/// Tier 7-C: fact embedding stored as i8 + a per-vector scale.
+///
+/// Per-vector scaling lets us keep the dynamic range of each fact
+/// independent (some embeddings have outlier dimensions). Cosine
+/// is invariant to positive scale, so as long as we apply the same
+/// quantization to the query side, similarity rankings are preserved
+/// up to quantization noise.
+#[cfg(feature = "semantic")]
+#[derive(Debug, Clone)]
+pub struct QuantizedEmbedding {
+    pub data: Vec<i8>,
+}
+
+#[cfg(feature = "semantic")]
+impl QuantizedEmbedding {
+    /// Quantize an f32 vector to i8 using max-abs scaling. Empty input
+    /// yields an empty vector.
+    pub fn from_f32(v: &[f32]) -> Self {
+        if v.is_empty() {
+            return Self { data: Vec::new() };
+        }
+        let max = v.iter().fold(0f32, |acc, x| acc.max(x.abs()));
+        if max <= 0.0 {
+            return Self {
+                data: vec![0; v.len()],
+            };
+        }
+        let scale = 127.0 / max;
+        let data = v
+            .iter()
+            .map(|x| (x * scale).round().clamp(-127.0, 127.0) as i8)
+            .collect();
+        Self { data }
+    }
+}
+
 #[cfg(feature = "semantic")]
 mod semantic {
     use super::*;
+    use crate::embedding::EmbeddingProvider;
+    use lru::LruCache;
+    use parking_lot::{Mutex, RwLock};
     use std::cmp::Ordering;
+    use std::collections::{HashMap, HashSet};
     use std::path::PathBuf;
 
+    /// Cosine similarity between two i8 vectors via simsimd. Returns 0.0
+    /// on size mismatch or empty input. Range mirrors the f32 path:
+    /// 0 (orthogonal) → 1 (identical).
+    fn cosine_i8(a: &[i8], b: &[i8]) -> f32 {
+        use simsimd::SpatialSimilarity;
+        if a.is_empty() || b.is_empty() || a.len() != b.len() {
+            return 0.0;
+        }
+        match i8::cosine(a, b) {
+            Some(distance) => (1.0 - distance) as f32,
+            None => 0.0,
+        }
+    }
+
     /// Hybrid search combining BM25 and semantic vectors.
+    ///
+    /// Loads a fresh provider on every call. Prefer `hybrid_search_with_ctx`
+    /// from `WikiGraph::hybrid_search`, which reuses a singleton provider +
+    /// query-embedding cache. This convenience wrapper exists for tests and
+    /// one-off callers (bindings, scripts) that don't want to plumb a context.
     pub fn hybrid_search(
         store: &Store,
         query: &str,
         opts: SearchOpts,
     ) -> Result<Vec<SearchResult>> {
+        let provider = crate::embedding::load_provider(store.config())?;
+        let cache = Mutex::new(LruCache::new(
+            std::num::NonZeroUsize::new(8).expect("non-zero"),
+        ));
+        let fact_cache = RwLock::new(HashMap::new());
+        hybrid_search_with_ctx(store, query, opts, &*provider, &cache, &fact_cache)
+    }
+
+    /// Hybrid search with a caller-owned provider + query-embedding cache.
+    /// Used by `WikiGraph` to avoid reloading the Model2Vec model on every
+    /// search and to memoize repeated queries.
+    pub fn hybrid_search_with_ctx(
+        store: &Store,
+        query: &str,
+        opts: SearchOpts,
+        provider: &dyn EmbeddingProvider,
+        query_cache: &Mutex<LruCache<String, Vec<f32>>>,
+        fact_cache: &RwLock<HashMap<FactId, QuantizedEmbedding>>,
+    ) -> Result<Vec<SearchResult>> {
         let config = store.config();
         let engine = SearchEngine::new(store, config);
 
-        let bm25_results = engine.search(query, opts.clone())?;
-        let semantic_results = semantic_search(store, query, &opts)?;
+        // Tier 7-B: pull a wider BM25 candidate slate than the final
+        // limit. The semantic re-ranker scores only these candidates,
+        // capping per-query embedding inference at `semantic_prefilter`
+        // facts instead of the whole store. Final RRF fusion still uses
+        // BM25 results too, so any candidate ranked highly by either
+        // signal can win.
+        let limit = opts.limit.unwrap_or(config.search.default_limit);
+        let prefilter = config.search.semantic_prefilter;
+        let bm25_opts = SearchOpts {
+            limit: Some(limit.max(prefilter).max(1)),
+            ..opts.clone()
+        };
+        let bm25_results = engine.search(query, bm25_opts)?;
+
+        // Tier 7-D: graph-aware prefilter. Take the entities surfaced
+        // by BM25 hits, walk N hops outward, and pull facts attached
+        // to those neighbors into the candidate pool. wg's graph is
+        // the differentiator — semantic neighborhoods + relation
+        // structure together catch matches that pure keyword overlap
+        // misses (e.g. a fact about "PostgreSQL replication" is a
+        // strong candidate when the user searched for "Redis" and
+        // those entities are linked in the graph).
+        let semantic_candidates: Option<Vec<FactId>> = if prefilter > 0 {
+            let mut ids: Vec<FactId> = bm25_results
+                .iter()
+                .take(prefilter)
+                .map(|r| r.fact_id)
+                .collect();
+            if config.search.graph_prefilter {
+                let extra = graph_expand_candidates(
+                    store,
+                    &bm25_results,
+                    config.search.graph_depth,
+                    config.search.graph_fact_cap,
+                    &ids,
+                )?;
+                ids.extend(extra);
+            }
+            Some(ids)
+        } else {
+            None
+        };
+
+        let semantic_results = semantic_search(
+            store,
+            query,
+            &opts,
+            provider,
+            query_cache,
+            fact_cache,
+            semantic_candidates.as_deref(),
+        )?;
 
         let bm25_weight = effective_weight(opts.bm25_weight, config.search.bm25_weight);
         let semantic_weight = effective_weight(opts.semantic_weight, config.search.semantic_weight);
-        let limit = opts.limit.unwrap_or(config.search.default_limit);
 
         Ok(rrf_fusion(
             store,
@@ -239,25 +366,58 @@ mod semantic {
         ))
     }
 
-    fn semantic_search(store: &Store, query: &str, opts: &SearchOpts) -> Result<Vec<SearchResult>> {
+    fn semantic_search(
+        store: &Store,
+        query: &str,
+        opts: &SearchOpts,
+        provider: &dyn EmbeddingProvider,
+        query_cache: &Mutex<LruCache<String, Vec<f32>>>,
+        fact_cache: &RwLock<HashMap<FactId, QuantizedEmbedding>>,
+        candidates: Option<&[FactId]>,
+    ) -> Result<Vec<SearchResult>> {
         let config = store.config();
-        let provider = crate::embedding::load_provider(config)?;
-        let query_embedding = provider.embed(query)?;
+        // LRU hit: Model2Vec inference for the query is the second-most
+        // expensive op after fact embedding; for hot queries (LLM agents
+        // often repeat the same topic across turns) caching pays off
+        // immediately.
+        let query_embedding = {
+            let mut cache = query_cache.lock();
+            if let Some(v) = cache.get(query) {
+                v.clone()
+            } else {
+                let v = provider.embed(query)?;
+                cache.put(query.to_string(), v.clone());
+                v
+            }
+        };
 
-        let mut facts = store.fact_list(FactListOpts {
-            limit: None,
-            offset: 0,
-            since: opts.since,
-            until: opts.until,
-            current_only: opts.current_only,
-            ..Default::default()
-        })?;
+        // Tier 7-B: when BM25 has narrowed the universe down to a
+        // candidate slate, hydrate just those FactRecords. Otherwise
+        // fall back to scanning every fact (maintains old behavior
+        // when prefilter=0 or when no candidates are available).
+        let mut facts: Vec<FactRecord> = match candidates {
+            Some(ids) if !ids.is_empty() => ids
+                .iter()
+                .filter_map(|id| store.fact_get(id).ok())
+                .collect(),
+            _ => store.fact_list(FactListOpts {
+                limit: None,
+                offset: 0,
+                since: opts.since,
+                until: opts.until,
+                current_only: opts.current_only,
+                ..Default::default()
+            })?,
+        };
 
         let min_confidence = opts.min_confidence.unwrap_or(config.search.min_trust);
 
         facts.retain(|fact| {
             fact.source_confidence >= min_confidence
                 && matches_entity_filter(fact, opts.entity_filter.as_ref())
+                && (opts.since.is_none() && opts.until.is_none()
+                    || matches_time_window(fact, opts.since, opts.until))
+                && (!opts.current_only || fact.superseded_at.is_none())
         });
 
         if facts.is_empty() {
@@ -279,21 +439,55 @@ mod semantic {
             .filter_map(|eid| store.entity_get_by_id(eid).ok().map(|e| (eid, e.name)))
             .collect();
 
-        let texts: Vec<String> = facts
-            .iter()
-            .map(|fact| fact_semantic_text_cached(fact, &entity_names))
-            .collect();
-        let embeddings = provider.embed_batch(&texts)?;
+        // Tier 7-C: split facts into (a) those with a cached i8 embedding
+        // and (b) those that need fresh inference. Only embed the misses,
+        // then quantize+store them so subsequent searches are inference-free.
+        let q_quantized = QuantizedEmbedding::from_f32(&query_embedding);
 
+        let cached_lookup: HashMap<FactId, QuantizedEmbedding> = {
+            let cache = fact_cache.read();
+            facts
+                .iter()
+                .filter_map(|f| cache.get(&f.id).map(|q| (f.id, q.clone())))
+                .collect()
+        };
+
+        let miss_indices: Vec<usize> = facts
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, f)| {
+                if cached_lookup.contains_key(&f.id) {
+                    None
+                } else {
+                    Some(idx)
+                }
+            })
+            .collect();
+
+        if !miss_indices.is_empty() {
+            let miss_texts: Vec<String> = miss_indices
+                .iter()
+                .map(|&idx| fact_semantic_text_cached(&facts[idx], &entity_names))
+                .collect();
+            let new_embeddings = provider.embed_batch(&miss_texts)?;
+            let mut writer = fact_cache.write();
+            for (slot, embedding) in miss_indices.iter().zip(new_embeddings.iter()) {
+                let fact_id = facts[*slot].id;
+                writer.insert(fact_id, QuantizedEmbedding::from_f32(embedding));
+            }
+        }
+
+        let cache_view = fact_cache.read();
         let mut scored: Vec<(usize, f32)> = facts
             .iter()
             .enumerate()
-            .filter_map(|(idx, _fact)| {
-                embeddings
-                    .get(idx)
-                    .map(|embedding| (idx, cosine_similarity(&query_embedding, embedding)))
+            .filter_map(|(idx, fact)| {
+                cache_view
+                    .get(&fact.id)
+                    .map(|q| (idx, cosine_i8(&q_quantized.data, &q.data)))
             })
             .collect();
+        drop(cache_view);
 
         scored.sort_by(|a, b| {
             b.1.partial_cmp(&a.1)
@@ -358,21 +552,95 @@ mod semantic {
         parts.join("\n")
     }
 
-    /// Cosine similarity via simsimd — auto-dispatches to AVX2 / AVX-512 /
-    /// NEON depending on CPU. Falls back to a portable scalar loop if
-    /// simsimd returns `None` (e.g. mismatched lengths or empty input).
+    /// Tier 7-D: expand the candidate pool with facts attached to
+    /// graph neighbors of the BM25 hit set. Caps the output at
+    /// `fact_cap` to bound the worst case (a hub entity could
+    /// transitively reach the entire graph).
     ///
-    /// simsimd reports cosine **distance**, not similarity, so we invert.
-    /// Range: 0 (orthogonal) → 1 (identical).
-    fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
-        use simsimd::SpatialSimilarity;
-        if a.is_empty() || b.is_empty() || a.len() != b.len() {
-            return 0.0;
+    /// Returns FactIds **excluding** anything already in `existing`,
+    /// so the caller can append without dedup work downstream.
+    fn graph_expand_candidates(
+        store: &Store,
+        bm25_results: &[SearchResult],
+        depth: u32,
+        fact_cap: usize,
+        existing: &[FactId],
+    ) -> Result<Vec<FactId>> {
+        if depth == 0 || fact_cap == 0 {
+            return Ok(Vec::new());
         }
-        match f32::cosine(a, b) {
-            Some(distance) => (1.0 - distance) as f32,
-            None => 0.0,
+
+        let already: HashSet<FactId> = existing.iter().copied().collect();
+
+        // 1. Pull the seed entity set from BM25 hits.
+        let mut seed_entities: HashSet<EntityId> = HashSet::new();
+        for r in bm25_results {
+            if let Ok(fact) = store.fact_get(&r.fact_id) {
+                for eid in fact.entity_ids {
+                    seed_entities.insert(eid);
+                }
+            }
         }
+        if seed_entities.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // 2. Walk N hops out. Reuses the existing graph BFS rather
+        //    than re-implementing it. Direction = Both because
+        //    inbound/outbound relations are equally relevant for
+        //    augmenting candidates.
+        let graph = crate::graph::Graph::new(store);
+        let mut neighbor_entities: HashSet<EntityId> = HashSet::new();
+        for seed_id in &seed_entities {
+            let entity = match store.entity_get_by_id(*seed_id) {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+            let result = graph.traverse(
+                &entity.name,
+                TraverseOpts {
+                    depth,
+                    relation_types: None,
+                    direction: TraverseDirection::Both,
+                },
+            )?;
+            for e in result.entities {
+                neighbor_entities.insert(e.id);
+            }
+        }
+
+        // 3. Drop seeds — those facts already came in via BM25.
+        for seed in &seed_entities {
+            neighbor_entities.remove(seed);
+        }
+        if neighbor_entities.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // 4. For each neighbor, pull a bounded slice of its facts.
+        //    `per_entity` divides the global cap roughly evenly so
+        //    a single hub doesn't monopolize the budget.
+        let per_entity = (fact_cap / neighbor_entities.len().max(1)).max(1);
+        let mut out: Vec<FactId> = Vec::with_capacity(fact_cap);
+        for eid in neighbor_entities {
+            if out.len() >= fact_cap {
+                break;
+            }
+            let facts = store.fact_list(FactListOpts {
+                entity_id: Some(eid),
+                limit: Some(per_entity),
+                ..Default::default()
+            })?;
+            for f in facts {
+                if !already.contains(&f.id) && !out.contains(&f.id) {
+                    out.push(f.id);
+                    if out.len() >= fact_cap {
+                        break;
+                    }
+                }
+            }
+        }
+        Ok(out)
     }
 
     fn effective_weight(opts_weight: f32, config_weight: f32) -> f32 {
@@ -485,7 +753,7 @@ mod semantic {
 //   let p = wg_core::embedding::load_provider(config)?;
 //   let v = p.embed(text)?;
 #[cfg(feature = "semantic")]
-pub use semantic::hybrid_search;
+pub use semantic::{hybrid_search, hybrid_search_with_ctx};
 
 #[cfg(test)]
 mod tests {

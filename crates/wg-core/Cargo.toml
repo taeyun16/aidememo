@@ -61,6 +61,10 @@ ureq = { version = "2.12", features = ["json"], optional = true }
 # whenever they opt into semantic search.
 simsimd = { version = "6", optional = true }
 
+# LRU cache for query embeddings (Tier 7-A). Repeated queries skip the
+# Model2Vec inference entirely. Tiny dep, well-maintained.
+lru = "0.12"
+
 # 병렬 처리 (선택)
 rayon = { version = "1.8", optional = true }
 
