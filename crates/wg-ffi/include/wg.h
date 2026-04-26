@@ -1,4 +1,15 @@
-/* WikiGraph C-ABI header */
+/* wg.h — C-ABI for Wiki-Graph (wg).
+ *
+ * All read functions return a heap-allocated, NUL-terminated UTF-8 JSON
+ * string. The caller MUST free it with wg_free_string. On error the JSON
+ * payload is `{"error": "..."}`.
+ *
+ * Build: link against libwg_ffi (cdylib or staticlib).
+ *
+ *   cc example.c -L /path/to/target/debug -lwg_ffi -o example
+ *
+ * Thread safety: a single wg_store_t* is safe to share across threads.
+ */
 
 #ifndef WG_H
 #define WG_H
@@ -10,45 +21,82 @@
 extern "C" {
 #endif
 
-// Opaque handle
-typedef struct wg_store wg_store_t;
+/* Opaque handle. */
+typedef struct WgStore wg_store_t;
 
-// Error codes
-typedef enum wg_error {
-    WG_OK = 0,
-    WG_ERROR = 1,
-    WG_NOT_FOUND = 2,
-    WG_INVALID_INPUT = 3,
-} wg_error_t;
+/* Lifecycle. */
+wg_store_t* wg_open(const char* path);
+void        wg_close(wg_store_t* store);
+void        wg_free_string(char* s);
+char*       wg_version(void);
 
-// Lifecycle
-wg_store_t* wg_open(const char* path, wg_error_t* error);
-void wg_close(wg_store_t* store);
+/* Search & query. */
+char* wg_search(const wg_store_t* store, const char* query, uint32_t limit);
+char* wg_query(const wg_store_t* store,
+               const char* topic,
+               uint32_t limit,
+               uint32_t depth,
+               uint32_t recent_limit);
 
-// Entity operations
-wg_error_t wg_entity_add(wg_store_t* store, const char* name, const char* type);
-wg_error_t wg_entity_get(wg_store_t* store, const char* name, char** output);
-wg_error_t wg_entity_list(wg_store_t* store, char** output);
-wg_error_t wg_entity_delete(wg_store_t* store, const char* name);
+/* Graph. */
+char* wg_traverse(const wg_store_t* store,
+                  const char* entity,
+                  uint32_t depth,
+                  const char* direction /* "forward" | "reverse" | "both" */);
+char* wg_path_find(const wg_store_t* store, const char* from, const char* to);
 
-// Fact operations
-wg_error_t wg_fact_add(wg_store_t* store, const char* content, const char* type, char** fact_id);
-wg_error_t wg_fact_get(wg_store_t* store, const char* fact_id, char** output);
-wg_error_t wg_fact_list(wg_store_t* store, const char* entity, char** output);
-wg_error_t wg_fact_delete(wg_store_t* store, const char* fact_id);
+/* Entity CRUD.
+ * tags_json / aliases_json: JSON arrays of strings, e.g. "[\"a\",\"b\"]".
+ *                           Pass NULL or "" to omit.
+ */
+char* wg_entity_add(const wg_store_t* store,
+                    const char* name,
+                    const char* entity_type,    /* may be NULL */
+                    const char* tags_json,      /* may be NULL */
+                    const char* aliases_json,   /* may be NULL */
+                    const char* source_page);   /* may be NULL */
+char* wg_entity_get(const wg_store_t* store, const char* name);
+char* wg_entity_list(const wg_store_t* store,
+                     uint32_t limit,            /* 0 = no limit */
+                     const char* entity_type);  /* may be NULL */
+char* wg_entity_delete(const wg_store_t* store, const char* name);
+char* wg_resolve_entity(const wg_store_t* store, const char* name);
 
-// Search
-wg_error_t wg_search(wg_store_t* store, const char* query, char** output);
+/* Fact CRUD. */
+char* wg_fact_add(const wg_store_t* store,
+                  const char* content,
+                  const char* entity_ids_json,  /* JSON array of ULIDs, may be NULL */
+                  const char* fact_type,        /* may be NULL */
+                  const char* tags_json,        /* may be NULL */
+                  const char* source,           /* may be NULL */
+                  float       confidence);      /* 0.0 = unset */
+char* wg_fact_get(const wg_store_t* store, const char* fact_id);
+char* wg_fact_list(const wg_store_t* store,
+                   const char* entity,         /* may be NULL */
+                   const char* fact_type,      /* may be NULL */
+                   uint32_t    limit);         /* 0 = no limit */
+char* wg_fact_delete(const wg_store_t* store, const char* fact_id);
 
-// Graph traversal
-wg_error_t wg_traverse(wg_store_t* store, const char* entity, int depth, char** output);
-wg_error_t wg_path_find(wg_store_t* store, const char* from, const char* to, char** output);
+/* Relations. */
+char* wg_relation_add(const wg_store_t* store,
+                      const char* source,
+                      const char* target,
+                      const char* rel_type);
+char* wg_relation_remove(const wg_store_t* store,
+                         const char* source,
+                         const char* target,
+                         const char* rel_type);
+char* wg_relations_get(const wg_store_t* store,
+                       const char* entity,
+                       const char* direction); /* may be NULL → "both" */
 
-// Statistics
-wg_error_t wg_stats(wg_store_t* store, char** output);
+/* Ingest, lint, stats. */
+char* wg_ingest(const wg_store_t* store, const char* wiki_root, bool incremental);
+char* wg_lint(const wg_store_t* store);
+char* wg_stats(const wg_store_t* store);
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif // WG_H
+#endif /* WG_H */

@@ -34,3 +34,9 @@ crates/wg-napi/index.d.ts
 crates/wg-python/__pycache__/
 crates/wg-python/*.so
 crates/wg-python/*.egg-info/
+
+# Elixir NIF bindings — built artifacts
+crates/wg-nif/_build/
+crates/wg-nif/deps/
+crates/wg-nif/priv/
+crates/wg-nif/mix.lock

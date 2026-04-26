@@ -4656,6 +4656,7 @@ version = "0.1.0"
 dependencies = [
  "rustler",
  "serde",
+ "serde_json",
  "wg-core",
 ]
 
