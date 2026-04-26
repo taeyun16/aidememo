@@ -375,6 +375,27 @@ pub extern "C" fn wg_entity_delete(store: *const WgStore, name: *const c_char) -
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn wg_entity_describe(
+    store: *const WgStore,
+    name: *const c_char,
+    summary: *const c_char,
+) -> *mut c_char {
+    return_json(|| {
+        let s = store_ref(store)?;
+        let name = ptr_to_str(name)?;
+        let summary = if summary.is_null() {
+            ""
+        } else {
+            ptr_to_str(summary)?
+        };
+        s.wiki
+            .entity_describe(name, summary)
+            .map_err(|e| e.to_string())?;
+        Ok(json!({ "ok": true }).to_string())
+    })
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn wg_resolve_entity(store: *const WgStore, name: *const c_char) -> *mut c_char {
     return_json(|| {
         let s = store_ref(store)?;

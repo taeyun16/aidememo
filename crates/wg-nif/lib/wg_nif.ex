@@ -86,6 +86,10 @@ defmodule WgNif do
   end
 
   def entity_delete(handle, name), do: Native.entity_delete(handle, name)
+
+  def entity_describe(handle, name, summary),
+    do: Native.entity_describe(handle, name, summary)
+
   def resolve_entity(handle, name), do: Native.resolve_entity(handle, name)
 
   # === Fact CRUD ===========================================================

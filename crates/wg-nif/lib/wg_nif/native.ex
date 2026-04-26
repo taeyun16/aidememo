@@ -35,6 +35,7 @@ defmodule WgNif.Native do
   def entity_get(_h, _name), do: :erlang.nif_error(:nif_not_loaded)
   def entity_list(_h, _limit, _type), do: :erlang.nif_error(:nif_not_loaded)
   def entity_delete(_h, _name), do: :erlang.nif_error(:nif_not_loaded)
+  def entity_describe(_h, _name, _summary), do: :erlang.nif_error(:nif_not_loaded)
   def resolve_entity(_h, _name), do: :erlang.nif_error(:nif_not_loaded)
 
   def fact_add(_h, _content, _ids, _type, _tags, _source, _confidence),

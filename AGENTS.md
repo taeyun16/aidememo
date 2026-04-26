@@ -42,7 +42,8 @@ wg recent [-n N] [--type T] [--last 30d]          last 7d facts (default)
 wg traverse <entity> [-d N]                        forward graph walk
 wg path <from> <to>                                shortest path
 wg graph [--from E] [--depth N] [--format mermaid|dot]
-wg entity get|list / wg fact get|list
+wg entity get|list|show <NAME>                     show: compiled view (summary + recent)
+wg fact get|list
 wg stats                                           counts + size
 ```
 
@@ -52,6 +53,7 @@ wg fact add <content> --entities A,B [--type T]     auto-creates missing entitie
 wg fact supersede <OLD_ID> <NEW_ID>                 validity-window invalidate
 wg edit fact <ID> --append/--prepend/--find+--replace/--content
 wg entity add <name> [--type service]               custom types accepted
+wg entity describe <name> "..." | --from-stdin | --clear   compiled-truth summary
 wg relation add <src> <tgt> <rel_type>
 ```
 
@@ -61,6 +63,7 @@ wg doctor [--json]                       friendly health check (wraps lint)
 wg lint [--json]                          raw lint issues
 wg bench <golden.jsonl> [--k 5] [--limit N]
                                           P@K / R@K / latency benchmark
+wg skill check <path> [--json]            validate SKILL.md files
 wg ingest <root> [-i]                     ingest markdown
 wg watch <root> [--search Q]              live re-ingest + optional live search
 wg export [--scope all|...] / wg import

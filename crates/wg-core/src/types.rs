@@ -200,6 +200,15 @@ pub struct EntityRecord {
     pub created_at: u64,
     /// Last update timestamp (epoch ms).
     pub updated_at: u64,
+    /// "Compiled truth" — a synthesized prose summary of what we currently
+    /// believe about this entity. Distinct from the fact list (the evidence
+    /// trail). Set explicitly via `wg entity describe` or via bindings;
+    /// not auto-generated. `None` until a user provides one.
+    #[serde(default)]
+    pub summary: Option<String>,
+    /// When the summary was last set (epoch ms). `None` while `summary` is `None`.
+    #[serde(default)]
+    pub summary_updated_at: Option<u64>,
 }
 
 impl EntityRecord {
@@ -220,6 +229,8 @@ impl EntityRecord {
             source_page: None,
             created_at: now,
             updated_at: now,
+            summary: None,
+            summary_updated_at: None,
         }
     }
 
@@ -244,6 +255,16 @@ impl EntityRecord {
         }
         if let Some(source_page) = input.source_page {
             self.source_page = Some(source_page);
+        }
+        if let Some(summary) = input.summary {
+            // Empty string clears the summary; non-empty sets it.
+            if summary.is_empty() {
+                self.summary = None;
+                self.summary_updated_at = None;
+            } else {
+                self.summary = Some(summary);
+                self.summary_updated_at = Some(now);
+            }
         }
         self.updated_at = now;
     }
@@ -271,6 +292,10 @@ pub struct EntityUpdate {
     pub aliases: Option<Vec<String>>,
     pub tags: Option<Vec<String>>,
     pub source_page: Option<String>,
+    /// "Compiled truth" prose summary. `Some("")` clears it, `Some(text)` sets
+    /// it (and bumps `summary_updated_at`), `None` leaves it unchanged.
+    #[serde(default)]
+    pub summary: Option<String>,
 }
 
 /// Summary of an entity (for list operations).

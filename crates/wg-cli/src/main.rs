@@ -60,6 +60,7 @@ fn main() {
         cmd::Command::Graph(sub) => cmd::graph::run_graph(&store_path, config, sub),
         cmd::Command::Project(sub) => cmd::project::run_project(config, sub),
         cmd::Command::Bench(sub) => cmd::bench::run_bench(&store_path, config, sub, json),
+        cmd::Command::Skill(sub) => cmd::skill::run_skill(sub),
         cmd::Command::Export(sub) => handle_export(&store_path, config, sub),
         cmd::Command::Import(sub) => handle_import(&store_path, config, sub),
         cmd::Command::Stats(sub) => handle_stats(&store_path, config, sub, json),
@@ -169,6 +170,48 @@ fn handle_entity(
         cmd::EntitySub::Delete { name } => with_wiki_mut(path, config, |wiki| {
             wiki.entity_delete(&name)?;
             Ok(format!("Deleted entity '{}'", name))
+        }),
+        cmd::EntitySub::Describe {
+            from_stdin,
+            clear,
+            content,
+            name,
+        } => with_wiki_mut(path, config, |wiki| {
+            let summary = if clear {
+                String::new()
+            } else if from_stdin {
+                use std::io::Read;
+                let mut buf = String::new();
+                std::io::stdin()
+                    .read_to_string(&mut buf)
+                    .map_err(|e| WgError::Internal(format!("stdin read: {}", e)))?;
+                buf.trim().to_string()
+            } else {
+                content.clone().ok_or_else(|| {
+                    WgError::InvalidInput("describe needs CONTENT, --from-stdin, or --clear".into())
+                })?
+            };
+            wiki.entity_describe(&name, &summary)?;
+            if summary.is_empty() {
+                Ok(format!("Cleared summary for '{}'", name))
+            } else {
+                Ok(format!(
+                    "Updated summary for '{}' ({} chars)",
+                    name,
+                    summary.len()
+                ))
+            }
+        }),
+        cmd::EntitySub::Show { recent, name } => with_wiki(path, config, |wiki| {
+            let entity = wiki.entity_get(&name)?;
+            let recent_n = recent.unwrap_or(5);
+            let facts = wiki.fact_list(FactListOpts {
+                entity_id: Some(entity.id),
+                limit: Some(recent_n),
+                current_only: false,
+                ..Default::default()
+            })?;
+            output::format_entity_show(&entity, &facts, fmt(json))
         }),
     }
 }

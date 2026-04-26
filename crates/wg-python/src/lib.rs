@@ -236,6 +236,11 @@ impl PyWikiGraph {
         self.0.entity_delete(&name).map_err(map_err)
     }
 
+    /// Set (or clear, with `""`) the entity's compiled-truth summary.
+    fn entity_describe(&self, name: String, summary: String) -> PyResult<()> {
+        self.0.entity_describe(&name, &summary).map_err(map_err)
+    }
+
     /// Resolve a name or alias to a canonical entity ID.
     fn resolve_entity(&self, name: String) -> PyResult<String> {
         let id = self.0.resolve_entity(&name).map_err(map_err)?;

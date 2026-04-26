@@ -254,6 +254,19 @@ fn entity_delete(handle: ResourceArc<WgNif>, name: String) -> NifResult<rustler:
 }
 
 #[rustler::nif]
+fn entity_describe(
+    handle: ResourceArc<WgNif>,
+    name: String,
+    summary: String,
+) -> NifResult<rustler::Atom> {
+    handle
+        .wiki
+        .entity_describe(&name, &summary)
+        .map_err(|_| rustler::Error::BadArg)?;
+    Ok(rustler::types::atom::ok())
+}
+
+#[rustler::nif]
 fn resolve_entity(handle: ResourceArc<WgNif>, name: String) -> NifResult<String> {
     let id = handle
         .wiki

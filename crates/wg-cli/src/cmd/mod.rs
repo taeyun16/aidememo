@@ -16,6 +16,7 @@ pub mod mcp_tools;
 pub mod model;
 pub mod project;
 pub mod recent;
+pub mod skill;
 pub mod watch;
 
 pub use adapt::AdaptSub;
@@ -30,6 +31,7 @@ pub use mcp_stdio::McpStdioSub;
 pub use model::ModelSub;
 pub use project::ProjectSub;
 pub use recent::RecentSub;
+pub use skill::SkillSub;
 pub use watch::WatchSub;
 
 #[derive(Debug, Clone)]
@@ -55,6 +57,7 @@ pub enum Command {
     Graph(GraphSub),
     Project(ProjectSub),
     Bench(BenchSub),
+    Skill(SkillSub),
     Export(ExportSub),
     Import(ImportSub),
     Stats(StatsSub),
@@ -98,6 +101,16 @@ pub enum EntitySub {
         action: AliasAction,
     },
     Delete {
+        name: String,
+    },
+    Describe {
+        from_stdin: bool,
+        clear: bool,
+        name: String,
+        content: Option<String>,
+    },
+    Show {
+        recent: Option<usize>,
         name: String,
     },
 }
@@ -246,6 +259,7 @@ pub fn build_cli() -> OptionParser<Args> {
     let graph_cmd = graph::graph_command();
     let project_cmd = project::project_command();
     let bench_cmd = bench::bench_command();
+    let skill_cmd = skill::skill_command();
 
     let command = construct!([
         entity_command(),
@@ -261,6 +275,7 @@ pub fn build_cli() -> OptionParser<Args> {
         graph_cmd,
         project_cmd,
         bench_cmd,
+        skill_cmd,
         export_command(),
         import_command(),
         stats_command(),
@@ -386,7 +401,34 @@ fn entity_command() -> impl Parser<Command> {
         .command("delete")
         .help("Delete an entity");
 
-    construct!([add, get, list, rename, alias, delete])
+    let from_stdin = long("from-stdin")
+        .help("Read summary from stdin instead of CONTENT")
+        .switch();
+    let clear = long("clear").help("Clear the existing summary").switch();
+    let name = positional::<String>("NAME");
+    let content = positional::<String>("CONTENT").optional();
+    let describe = construct!(EntitySub::Describe {
+        from_stdin,
+        clear,
+        name,
+        content,
+    })
+    .to_options()
+    .command("describe")
+    .help("Set the entity's compiled-truth summary (use --from-stdin or pass CONTENT)");
+
+    let recent = long("recent")
+        .short('n')
+        .help("Number of recent facts to include (default 5)")
+        .argument::<usize>("N")
+        .optional();
+    let name = positional::<String>("NAME");
+    let show = construct!(EntitySub::Show { recent, name })
+        .to_options()
+        .command("show")
+        .help("Show entity page: summary + recent facts (the compiled view)");
+
+    construct!([add, get, list, rename, alias, delete, describe, show])
         .map(Command::Entity)
         .to_options()
         .command("entity")

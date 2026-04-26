@@ -111,6 +111,20 @@ impl WikiGraph {
         )
     }
 
+    /// Set the "compiled truth" summary prose for an entity.
+    ///
+    /// Pass `""` to clear an existing summary, or any non-empty text to set
+    /// it. Updates `summary_updated_at` to now in either direction.
+    pub fn entity_describe(&self, name: &str, summary: &str) -> Result<()> {
+        self.store.write().entity_update(
+            name,
+            EntityUpdate {
+                summary: Some(summary.to_string()),
+                ..Default::default()
+            },
+        )
+    }
+
     /// Add an alias to an entity.
     pub fn entity_alias_add(&self, name: &str, alias: &str) -> Result<()> {
         let record = self.store.read().entity_get(name)?;

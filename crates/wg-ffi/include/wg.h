@@ -65,6 +65,10 @@ char* wg_entity_list(const wg_store_t* store,
                      uint32_t limit,            /* 0 = no limit */
                      const char* entity_type);  /* may be NULL */
 char* wg_entity_delete(const wg_store_t* store, const char* name);
+/* Set the compiled-truth summary; pass "" or NULL to clear. */
+char* wg_entity_describe(const wg_store_t* store,
+                         const char* name,
+                         const char* summary);
 char* wg_resolve_entity(const wg_store_t* store, const char* name);
 
 /* Fact CRUD. */

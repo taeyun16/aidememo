@@ -326,6 +326,25 @@ fn tool_query(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String> 
     })
 }
 
+fn tool_entity_describe(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String> {
+    let name = args
+        .get("name")
+        .and_then(|v| v.as_str())
+        .ok_or("name required")?;
+    let summary = args.get("summary").and_then(|v| v.as_str()).unwrap_or("");
+    wiki.entity_describe(name, summary)
+        .map_err(|e| e.to_string())?;
+    let msg = if summary.is_empty() {
+        format!("Cleared summary for '{}'", name)
+    } else {
+        format!("Updated summary for '{}' ({} chars)", name, summary.len())
+    };
+    Ok(ToolCallResult {
+        content: vec![ContentBlock::text(msg)],
+        is_error: None,
+    })
+}
+
 fn tool_fact_add(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String> {
     let content = args
         .get("content")
@@ -474,6 +493,19 @@ pub fn list_tools() -> Vec<Tool> {
             }),
         },
         Tool {
+            name: "wg_entity_describe".into(),
+            description: "Set the entity's compiled-truth summary — a synthesized prose understanding distinct from the fact list. Pass an empty string to clear. The summary is the headline answer for 'what do we know about X?'."
+                .into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "summary": {"type": "string", "description": "Prose summary; empty string clears."}
+                },
+                "required": ["name", "summary"]
+            }),
+        },
+        Tool {
             name: "wg_fact_add".into(),
             description: "Add a new fact to the wiki graph.".into(),
             input_schema: json!({
@@ -499,6 +531,7 @@ fn call_tool(name: &str, args: &Value, wiki: &WikiGraph) -> Result<ToolCallResul
         "wg_recent" => tool_recent(args, wiki),
         "wg_backlinks" => tool_backlinks(args, wiki),
         "wg_query" => tool_query(args, wiki),
+        "wg_entity_describe" => tool_entity_describe(args, wiki),
         "wg_fact_add" => tool_fact_add(args, wiki),
         _ => Err(format!("Unknown tool: {}", name)),
     }

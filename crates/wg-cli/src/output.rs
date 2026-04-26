@@ -6,6 +6,13 @@ use wg_core::{
     StoreStats, TraverseResult, WgError, WikiGraph,
 };
 
+fn fact_one_line(f: &FactRecord) -> String {
+    let snippet: String = f.content.chars().take(70).collect();
+    let id_short = &f.id.to_string()[..8];
+    let when = format_when(f.observed_at, f.created_at);
+    format!("  [{}] {}  ({})", id_short, snippet, when)
+}
+
 #[derive(Debug, Clone, Copy)]
 pub enum Format {
     Table,
@@ -63,9 +70,68 @@ pub fn format_entity(entity: &EntityRecord, format: Format) -> Result<String> {
             if let Some(ref source) = entity.source_page {
                 table.add_row(vec!["Source", source]);
             }
+            if let Some(ref summary) = entity.summary {
+                table.add_row(vec!["Summary", summary]);
+            }
             Ok(table.to_string())
         }
     }
+}
+
+/// Render the "compiled view" of an entity: summary + recent facts.
+pub fn format_entity_show(
+    entity: &EntityRecord,
+    recent: &[FactRecord],
+    format: Format,
+) -> Result<String> {
+    if let Format::Json = format {
+        let payload = serde_json::json!({
+            "entity": entity,
+            "recent_facts": recent,
+        });
+        return serde_json::to_string_pretty(&payload).map_err(|e| WgError::Serialize {
+            context: "entity show".to_string(),
+            source: e,
+        });
+    }
+    let mut out = String::new();
+    out.push_str(&format!("# {} ({})\n", entity.name, entity.entity_type));
+    if !entity.aliases.is_empty() {
+        out.push_str(&format!("  aliases: {}\n", entity.aliases.join(", ")));
+    }
+    if !entity.tags.is_empty() {
+        out.push_str(&format!("  tags: {}\n", entity.tags.join(", ")));
+    }
+    out.push('\n');
+
+    match &entity.summary {
+        Some(text) => {
+            out.push_str("Summary:\n");
+            for line in text.lines() {
+                out.push_str("  ");
+                out.push_str(line);
+                out.push('\n');
+            }
+            if let Some(ts) = entity.summary_updated_at {
+                out.push_str(&format!("  (updated {})\n", format_when(None, ts)));
+            }
+        }
+        None => {
+            out.push_str("Summary: (none — set with `wg entity describe <name> \"...\"`)\n");
+        }
+    }
+    out.push('\n');
+
+    if recent.is_empty() {
+        out.push_str("Recent facts: (none)\n");
+    } else {
+        out.push_str(&format!("Recent facts ({}):\n", recent.len()));
+        for f in recent {
+            out.push_str(&fact_one_line(f));
+            out.push('\n');
+        }
+    }
+    Ok(out)
 }
 
 pub fn format_entity_list(entities: &[EntitySummary], format: Format) -> Result<String> {

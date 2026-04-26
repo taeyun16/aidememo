@@ -263,6 +263,12 @@ impl WgStore {
         self.wiki.entity_delete(&name).map_err(err)
     }
 
+    /// Set (or clear, with `""`) the entity's compiled-truth summary.
+    #[napi]
+    pub fn entity_describe(&self, name: String, summary: String) -> napi::Result<()> {
+        self.wiki.entity_describe(&name, &summary).map_err(err)
+    }
+
     #[napi]
     pub fn resolve_entity(&self, name: String) -> napi::Result<String> {
         let id = self.wiki.resolve_entity(&name).map_err(err)?;

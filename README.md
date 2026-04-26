@@ -51,19 +51,22 @@ wg --project personal stats             # one-off override
 - `wg traverse <entity> [-d N]` — graph traversal
 - `wg path <from> <to>` — find a path between entities
 - `wg graph [--from E] [--format mermaid|dot]` — visualize subgraph
-- `wg entity get|list` / `wg fact get|list` / `wg stats`
+- `wg entity get|list|show` / `wg fact get|list` / `wg stats`
+- `wg entity show <name>` — compiled view: summary + recent facts
 
 ### Write
 - `wg fact add <content> --entities A,B [--type decision]` (auto-creates missing entities)
 - `wg fact supersede <OLD_ID> <NEW_ID>` — set validity window
 - `wg edit fact <ID> --append/--prepend/--find+--replace/--content`
 - `wg entity add <name> [--type service]` (custom types accepted)
+- `wg entity describe <name> "..."` (or `--from-stdin` / `--clear`) — set compiled-truth summary
 - `wg relation add <source> <target> <rel_type>` / `wg relation remove`
 
 ### Maintenance
 - `wg doctor [--json]` — health check
 - `wg lint [--json]` — raw lint issues
 - `wg bench <golden.jsonl> [--k 5]` — measure P@K, R@K, p50/p95 latency against a golden set
+- `wg skill check <path>` — validate Claude Code SKILL.md frontmatter + tool refs
 - `wg ingest <wiki_root> [-i]` — ingest markdown
 - `wg watch <wiki_root> [--search QUERY]` — re-ingest on file changes (live search optional)
 - `wg sync <wiki_root>` — alias for incremental ingest
@@ -118,6 +121,8 @@ and `fact_supersede` for validity-window workflows.
 - **Hybrid search** — BM25 + Model2Vec semantic vectors, RRF fusion
 - **4 query modes** — naive (search-only) / local (entity-centric) / hybrid (default) / global (broad)
 - **Typed-relation extraction** — zero-LLM regex patterns for `works_at`, `depends_on`, `supersedes`, … (37 phrases)
+- **Compiled-truth + timeline** — each entity has a manual `summary` ("what we currently believe") plus the fact list ("evidence trail")
+- **`wg skill check`** — validate Claude Code SKILL.md frontmatter, tool references, body length
 - **`wg bench`** — JSONL golden-set runner with P@K / R@K / latency reports
 - **Knowledge graph** — entities, facts, relations with named traversal
 - **Markdown ingest** — frontmatter, `[[wikilinks]]`, heading sections, dates
