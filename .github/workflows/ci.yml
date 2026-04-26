@@ -49,12 +49,11 @@ jobs:
       - run: cargo test --workspace --no-default-features
       - run: cargo test -p wg-core --features semantic
       - run: cargo test -p wg-cli --bin wg
-      # Verifies the vendored tokenizers patch + model2vec-native build
-      # cleanly. The integration tests in model2vec-native (smoke.rs)
-      # require a real ~500 MB HF model cache, so we just compile and
-      # run the lib-level tests here. Build alone catches API drift.
-      - run: cargo build -p model2vec-native
-      - run: cargo test -p model2vec-native --lib
+      # model2vec-native lives in its own repo
+      # (https://github.com/taeyun16/model2vec-native) and is pulled
+      # in as a git dep when --features wg-core/semantic is on, so
+      # `cargo test -p wg-core --features semantic` already exercises
+      # it end-to-end here.
 
   dhat-build:
     name: dhat-heap build sanity

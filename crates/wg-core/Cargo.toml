@@ -48,10 +48,11 @@ comfy-table = "7.0"
 chrono = "0.4"
 
 # 시맨틱 검색 (선택)
-# Replaced upstream model2vec-rs with our zero-copy mmap variant — same
-# API surface, but the 489 MB embedding matrix stays file-backed instead
-# of being copied twice into the heap.
-model2vec-native = { path = "../model2vec-native", optional = true }
+# Zero-copy mmap variant of model2vec-rs — same API surface, the 489 MB
+# embedding matrix stays file-backed instead of being copied twice into
+# the heap. Lives in its own repo so it's reusable outside wg.
+# Pinned to a specific rev for reproducibility; bump as needed.
+model2vec-native = { git = "https://github.com/taeyun16/model2vec-native", rev = "254b304", optional = true }
 
 # OpenAI-compatible HTTP embeddings (Ollama / OpenAI / OpenRouter / vLLM / LocalAI).
 # Pulled in alongside the `semantic` feature so users who opt into semantic
