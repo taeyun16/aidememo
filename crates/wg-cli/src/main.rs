@@ -487,7 +487,7 @@ fn handle_stats(
 }
 
 fn handle_ingest(path: &PathBuf, config: Config, sub: cmd::IngestSub) -> Result<String, WgError> {
-    let mut wiki = WikiGraph::open(path, config)?;
+    let wiki = WikiGraph::open(path, config)?;
     let stats = wiki.ingest(&sub.wiki_root, sub.incremental)?;
 
     let mut lines = vec![format!(

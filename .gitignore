@@ -22,3 +22,15 @@ models/
 # Temp files
 *.bak
 *.tmp
+
+# Node bindings — built artifacts
+crates/wg-napi/node_modules/
+crates/wg-napi/package-lock.json
+crates/wg-napi/*.node
+crates/wg-napi/index.js
+crates/wg-napi/index.d.ts
+
+# Python bindings — built artifacts
+crates/wg-python/__pycache__/
+crates/wg-python/*.so
+crates/wg-python/*.egg-info/

@@ -57,7 +57,7 @@ pub fn run_init(wiki_root: PathBuf, no_ingest: bool) -> Result<String, WgError> 
     }
 
     // 3. Open (or create) the store
-    let mut wiki = WikiGraph::open(&store_path, config.clone())?;
+    let wiki = WikiGraph::open(&store_path, config.clone())?;
 
     // 4. Ingest if not skipped
     let stats = if no_ingest {

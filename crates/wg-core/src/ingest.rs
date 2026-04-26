@@ -16,7 +16,7 @@ use crate::store::Store;
 use crate::types::{EntityInput, EntityType, FactInput, FactType, RelationInput, RelationType};
 
 /// Result of a complete ingest operation.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct IngestStats {
     pub entities_added: u64,
     pub entities_updated: u64,

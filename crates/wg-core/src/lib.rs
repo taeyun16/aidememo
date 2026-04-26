@@ -225,7 +225,7 @@ impl WikiGraph {
     ///
     /// Parses frontmatter, wikilinks, and heading-anchored sections,
     /// then writes entities, relations, and facts to the store.
-    pub fn ingest(&mut self, wiki_root: &Path, incremental: bool) -> Result<ingest::IngestStats> {
+    pub fn ingest(&self, wiki_root: &Path, incremental: bool) -> Result<ingest::IngestStats> {
         let mut store = self.store.write();
         ingest::ingest_wiki(wiki_root, &mut store, incremental)
     }

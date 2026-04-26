@@ -59,7 +59,7 @@ pub fn run_watch(wiki_root: PathBuf, interval_secs: Option<u64>) -> Result<Strin
     let store_path = PathBuf::from(&config.store.path);
 
     // Open the store
-    let mut wiki = WikiGraph::open(&store_path, config)?;
+    let wiki = WikiGraph::open(&store_path, config)?;
 
     // Do an initial ingest
     println!("Initial ingest...");
