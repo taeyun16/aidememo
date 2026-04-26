@@ -75,6 +75,7 @@ fn parse_fact_id(s: &str) -> napi::Result<FactId> {
 pub struct SearchArgs {
     pub limit: Option<u32>,
     pub min_confidence: Option<f64>,
+    pub current_only: Option<bool>,
 }
 
 #[napi(object)]
@@ -82,6 +83,7 @@ pub struct QueryArgs {
     pub limit: Option<u32>,
     pub depth: Option<u32>,
     pub recent_limit: Option<u32>,
+    pub current_only: Option<bool>,
 }
 
 #[napi(object)]
@@ -120,6 +122,7 @@ pub struct FactListArgs {
     pub fact_type: Option<String>,
     pub min_confidence: Option<f64>,
     pub limit: Option<u32>,
+    pub current_only: Option<bool>,
 }
 
 // ---------------------------------------------------------------------------
@@ -148,10 +151,12 @@ impl WgStore {
         let args = args.unwrap_or(SearchArgs {
             limit: None,
             min_confidence: None,
+            current_only: None,
         });
         let opts = SearchOpts {
             limit: args.limit.map(|v| v as usize),
             min_confidence: args.min_confidence.map(|v| v as f32),
+            current_only: args.current_only.unwrap_or(false),
             ..Default::default()
         };
         let results = self.wiki.hybrid_search(&query, opts).map_err(err)?;
@@ -164,12 +169,14 @@ impl WgStore {
             limit: None,
             depth: None,
             recent_limit: None,
+            current_only: None,
         });
         let opts = QueryOpts {
             search_limit: args.limit.unwrap_or(10) as usize,
             depth: args.depth.unwrap_or(2),
             recent_limit: args.recent_limit.unwrap_or(10) as usize,
             since: None,
+            current_only: args.current_only.unwrap_or(false),
         };
         let result = self.wiki.query(&topic, opts).map_err(err)?;
         to_json(&result)
@@ -300,6 +307,7 @@ impl WgStore {
             fact_type: None,
             min_confidence: None,
             limit: None,
+            current_only: None,
         });
         let entity_id = match args.entity {
             Some(name) => Some(self.wiki.resolve_entity(&name).map_err(err)?),
@@ -313,10 +321,17 @@ impl WgStore {
             offset: 0,
             since: None,
             until: None,
-            current_only: false,
+            current_only: args.current_only.unwrap_or(false),
         };
         let facts = self.wiki.fact_list(opts).map_err(err)?;
         to_json(&facts)
+    }
+
+    #[napi]
+    pub fn fact_supersede(&self, old_id: String, new_id: String) -> napi::Result<()> {
+        let old = parse_fact_id(&old_id)?;
+        let new = parse_fact_id(&new_id)?;
+        self.wiki.fact_supersede(&old, &new).map_err(err)
     }
 
     #[napi]

@@ -32,7 +32,8 @@ defmodule WgNif do
 
   def search(handle, query, opts \\ []) do
     limit = Keyword.get(opts, :limit, 10)
-    handle |> Native.search(query, limit) |> Jason.decode!()
+    current_only = Keyword.get(opts, :current_only, false)
+    handle |> Native.search(query, limit, current_only) |> Jason.decode!()
   end
 
   @doc """
@@ -43,7 +44,11 @@ defmodule WgNif do
     limit = Keyword.get(opts, :limit, 10)
     depth = Keyword.get(opts, :depth, 2)
     recent_limit = Keyword.get(opts, :recent_limit, 10)
-    handle |> Native.query(topic, limit, depth, recent_limit) |> Jason.decode!()
+    current_only = Keyword.get(opts, :current_only, false)
+
+    handle
+    |> Native.query(topic, limit, depth, recent_limit, current_only)
+    |> Jason.decode!()
   end
 
   # === Graph ===============================================================
@@ -102,10 +107,14 @@ defmodule WgNif do
     entity = Keyword.get(opts, :entity, "")
     type = Keyword.get(opts, :fact_type, "")
     limit = Keyword.get(opts, :limit, 0)
-    handle |> Native.fact_list(entity, type, limit) |> Jason.decode!()
+    current_only = Keyword.get(opts, :current_only, false)
+    handle |> Native.fact_list(entity, type, limit, current_only) |> Jason.decode!()
   end
 
   def fact_delete(handle, fact_id), do: Native.fact_delete(handle, fact_id)
+
+  def fact_supersede(handle, old_id, new_id),
+    do: Native.fact_supersede(handle, old_id, new_id)
 
   # === Relations ===========================================================
 

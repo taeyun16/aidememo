@@ -107,17 +107,20 @@ impl PyWikiGraph {
     // === Search ===
 
     /// Hybrid search (BM25 + semantic). Returns a list of result dicts.
-    #[pyo3(signature = (query, limit=None, min_confidence=None))]
+    /// Set `current_only=True` to exclude superseded facts.
+    #[pyo3(signature = (query, limit=None, min_confidence=None, current_only=false))]
     fn search(
         &self,
         py: Python<'_>,
         query: String,
         limit: Option<usize>,
         min_confidence: Option<f32>,
+        current_only: bool,
     ) -> PyResult<PyObject> {
         let opts = SearchOpts {
             limit,
             min_confidence,
+            current_only,
             ..Default::default()
         };
         let results = self.0.hybrid_search(&query, opts).map_err(map_err)?;
@@ -126,7 +129,7 @@ impl PyWikiGraph {
 
     /// Unified context fetch: search + entity resolve + traverse + recent facts.
     /// Returns one dict with keys: topic, entity, search, related, recent_facts.
-    #[pyo3(signature = (topic, limit=10, depth=2, recent_limit=10))]
+    #[pyo3(signature = (topic, limit=10, depth=2, recent_limit=10, current_only=false))]
     fn query(
         &self,
         py: Python<'_>,
@@ -134,12 +137,14 @@ impl PyWikiGraph {
         limit: usize,
         depth: u32,
         recent_limit: usize,
+        current_only: bool,
     ) -> PyResult<PyObject> {
         let opts = QueryOpts {
             search_limit: limit,
             depth,
             recent_limit,
             since: None,
+            current_only,
         };
         let result = self.0.query(&topic, opts).map_err(map_err)?;
         to_py(py, &result)
@@ -272,8 +277,9 @@ impl PyWikiGraph {
         to_py(py, &fact)
     }
 
-    /// List facts. Filters: entity (name), fact_type, min_confidence, limit.
-    #[pyo3(signature = (entity=None, fact_type=None, min_confidence=None, limit=None))]
+    /// List facts. Filters: entity (name), fact_type, min_confidence, limit,
+    /// current_only (exclude superseded).
+    #[pyo3(signature = (entity=None, fact_type=None, min_confidence=None, limit=None, current_only=false))]
     fn fact_list(
         &self,
         py: Python<'_>,
@@ -281,6 +287,7 @@ impl PyWikiGraph {
         fact_type: Option<String>,
         min_confidence: Option<f32>,
         limit: Option<usize>,
+        current_only: bool,
     ) -> PyResult<PyObject> {
         let entity_id = match entity {
             Some(name) => Some(self.0.resolve_entity(&name).map_err(map_err)?),
@@ -294,7 +301,7 @@ impl PyWikiGraph {
             offset: 0,
             since: None,
             until: None,
-            current_only: false,
+            current_only,
         };
         let facts = self.0.fact_list(opts).map_err(map_err)?;
         to_py(py, &facts)
@@ -304,6 +311,13 @@ impl PyWikiGraph {
     fn fact_delete(&self, fact_id: String) -> PyResult<()> {
         let id = parse_fact_id(&fact_id)?;
         self.0.fact_delete(&id).map_err(map_err)
+    }
+
+    /// Mark `old_id` as superseded by `new_id` (validity windows).
+    fn fact_supersede(&self, old_id: String, new_id: String) -> PyResult<()> {
+        let old = parse_fact_id(&old_id)?;
+        let new = parse_fact_id(&new_id)?;
+        self.0.fact_supersede(&old, &new).map_err(map_err)
     }
 
     // === Relations ===

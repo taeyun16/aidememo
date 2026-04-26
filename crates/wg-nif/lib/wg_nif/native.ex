@@ -21,8 +21,11 @@ defmodule WgNif.Native do
   end
 
   def open(_path), do: :erlang.nif_error(:nif_not_loaded)
-  def search(_h, _query, _limit), do: :erlang.nif_error(:nif_not_loaded)
-  def query(_h, _topic, _limit, _depth, _recent_limit), do: :erlang.nif_error(:nif_not_loaded)
+  def search(_h, _query, _limit, _current_only), do: :erlang.nif_error(:nif_not_loaded)
+
+  def query(_h, _topic, _limit, _depth, _recent_limit, _current_only),
+    do: :erlang.nif_error(:nif_not_loaded)
+
   def traverse(_h, _entity, _depth, _direction), do: :erlang.nif_error(:nif_not_loaded)
   def path_find(_h, _from, _to), do: :erlang.nif_error(:nif_not_loaded)
 
@@ -38,8 +41,12 @@ defmodule WgNif.Native do
     do: :erlang.nif_error(:nif_not_loaded)
 
   def fact_get(_h, _id), do: :erlang.nif_error(:nif_not_loaded)
-  def fact_list(_h, _entity, _type, _limit), do: :erlang.nif_error(:nif_not_loaded)
+
+  def fact_list(_h, _entity, _type, _limit, _current_only),
+    do: :erlang.nif_error(:nif_not_loaded)
+
   def fact_delete(_h, _id), do: :erlang.nif_error(:nif_not_loaded)
+  def fact_supersede(_h, _old, _new), do: :erlang.nif_error(:nif_not_loaded)
   def relation_add(_h, _src, _tgt, _type), do: :erlang.nif_error(:nif_not_loaded)
   def relation_remove(_h, _src, _tgt, _type), do: :erlang.nif_error(:nif_not_loaded)
   def relations_get(_h, _entity, _direction), do: :erlang.nif_error(:nif_not_loaded)

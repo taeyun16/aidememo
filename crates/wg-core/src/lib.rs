@@ -320,6 +320,7 @@ impl WikiGraph {
             SearchOpts {
                 limit: Some(opts.search_limit),
                 since: opts.since,
+                current_only: opts.current_only,
                 ..Default::default()
             },
         )?;
@@ -339,6 +340,7 @@ impl WikiGraph {
                 entity_id: Some(e.id),
                 limit: Some(opts.recent_limit),
                 since: opts.since,
+                current_only: opts.current_only,
                 ..Default::default()
             })?;
             (traverse.entities, recent)

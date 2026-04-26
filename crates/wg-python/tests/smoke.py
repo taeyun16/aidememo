@@ -87,8 +87,25 @@ def main() -> None:
         except RuntimeError as e:
             print(f"query skipped: {e}")
 
+        # Validity windows: supersede the first fact with a new one and verify
+        # current_only filtering hides it.
+        new_fid = g.fact_add(
+            "Redis Sentinel + Cluster supersedes Sentinel-only HA",
+            entity_ids=[eid_redis],
+            fact_type="decision",
+        )
+        g.fact_supersede(fid, new_fid)
+        old = g.fact_get(fid)
+        assert old["superseded_at"] is not None, "fact_supersede should set superseded_at"
+        assert old["superseded_by"] == new_fid
+
+        all_facts = g.fact_list(entity="Redis")
+        current_facts = g.fact_list(entity="Redis", current_only=True)
+        assert len(current_facts) == len(all_facts) - 1, "current_only should hide superseded"
+
         # Cleanup writes
         g.fact_delete(fid)
+        g.fact_delete(new_fid)
         g.relation_remove("Redis", "Postgres", "alternative_to")
         g.entity_delete("Postgres")
 

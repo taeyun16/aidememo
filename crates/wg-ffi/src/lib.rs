@@ -166,6 +166,7 @@ pub extern "C" fn wg_search(
     store: *const WgStore,
     query: *const c_char,
     limit: u32,
+    current_only: bool,
 ) -> *mut c_char {
     return_json(|| {
         let s = store_ref(store)?;
@@ -176,6 +177,7 @@ pub extern "C" fn wg_search(
             } else {
                 Some(limit as usize)
             },
+            current_only,
             ..Default::default()
         };
         let results = s.wiki.hybrid_search(q, opts).map_err(|e| e.to_string())?;
@@ -190,6 +192,7 @@ pub extern "C" fn wg_query(
     limit: u32,
     depth: u32,
     recent_limit: u32,
+    current_only: bool,
 ) -> *mut c_char {
     return_json(|| {
         let s = store_ref(store)?;
@@ -203,6 +206,7 @@ pub extern "C" fn wg_query(
                 recent_limit as usize
             },
             since: None,
+            current_only,
         };
         let result = s.wiki.query(topic, opts).map_err(|e| e.to_string())?;
         json_serialize(&result)
@@ -460,6 +464,7 @@ pub extern "C" fn wg_fact_list(
     entity: *const c_char,
     fact_type: *const c_char,
     limit: u32,
+    current_only: bool,
 ) -> *mut c_char {
     return_json(|| {
         let s = store_ref(store)?;
@@ -490,10 +495,29 @@ pub extern "C" fn wg_fact_list(
             offset: 0,
             since: None,
             until: None,
-            current_only: false,
+            current_only,
         };
         let facts = s.wiki.fact_list(opts).map_err(|e| e.to_string())?;
         json_serialize(&facts)
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn wg_fact_supersede(
+    store: *const WgStore,
+    old_id: *const c_char,
+    new_id: *const c_char,
+) -> *mut c_char {
+    return_json(|| {
+        let s = store_ref(store)?;
+        let old_str = ptr_to_str(old_id)?;
+        let new_str = ptr_to_str(new_id)?;
+        let old = FactId::parse(old_str).ok_or_else(|| format!("invalid fact id: {old_str}"))?;
+        let new = FactId::parse(new_str).ok_or_else(|| format!("invalid fact id: {new_str}"))?;
+        s.wiki
+            .fact_supersede(&old, &new)
+            .map_err(|e| e.to_string())?;
+        Ok(json!({ "ok": true }).to_string())
     })
 }
 

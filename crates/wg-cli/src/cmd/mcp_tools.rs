@@ -307,6 +307,10 @@ fn tool_query(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String> 
             .and_then(|v| v.as_u64())
             .unwrap_or(10) as usize,
         since: None,
+        current_only: args
+            .get("current_only")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
     };
     let result = wiki.query(topic, opts).map_err(|e| e.to_string())?;
     let text = serde_json::to_string_pretty(&result).map_err(|e| e.to_string())?;

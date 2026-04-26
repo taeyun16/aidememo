@@ -645,6 +645,8 @@ pub struct QueryOpts {
     pub recent_limit: usize,
     /// Lower-bound timestamp for search/recent (epoch ms). `None` = no bound.
     pub since: Option<u64>,
+    /// If `true`, exclude superseded facts from search and recent_facts.
+    pub current_only: bool,
 }
 
 impl Default for QueryOpts {
@@ -654,6 +656,7 @@ impl Default for QueryOpts {
             depth: 2,
             recent_limit: 10,
             since: None,
+            current_only: false,
         }
     }
 }

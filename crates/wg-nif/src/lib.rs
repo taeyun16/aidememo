@@ -109,9 +109,15 @@ fn open(env: Env, store_path: String) -> Return {
 // ---------------------------------------------------------------------------
 
 #[rustler::nif]
-fn search(handle: ResourceArc<WgNif>, query: String, limit: u32) -> NifResult<String> {
+fn search(
+    handle: ResourceArc<WgNif>,
+    query: String,
+    limit: u32,
+    current_only: bool,
+) -> NifResult<String> {
     let opts = SearchOpts {
         limit: Some(limit as usize),
+        current_only,
         ..Default::default()
     };
     let results = handle
@@ -128,12 +134,14 @@ fn query(
     limit: u32,
     depth: u32,
     recent_limit: u32,
+    current_only: bool,
 ) -> NifResult<String> {
     let opts = QueryOpts {
         search_limit: limit as usize,
         depth,
         recent_limit: recent_limit as usize,
         since: None,
+        current_only,
     };
     let result = handle
         .wiki
@@ -312,6 +320,7 @@ fn fact_list(
     entity: String,
     fact_type: String,
     limit: u32,
+    current_only: bool,
 ) -> NifResult<String> {
     let entity_id = if entity.is_empty() {
         None
@@ -334,13 +343,28 @@ fn fact_list(
         offset: 0,
         since: None,
         until: None,
-        current_only: false,
+        current_only,
     };
     let facts = handle
         .wiki
         .fact_list(opts)
         .map_err(|_| rustler::Error::BadArg)?;
     to_json(&facts)
+}
+
+#[rustler::nif]
+fn fact_supersede(
+    handle: ResourceArc<WgNif>,
+    old_id: String,
+    new_id: String,
+) -> NifResult<rustler::Atom> {
+    let old = parse_fact_id(&old_id)?;
+    let new = parse_fact_id(&new_id)?;
+    handle
+        .wiki
+        .fact_supersede(&old, &new)
+        .map_err(|_| rustler::Error::BadArg)?;
+    Ok(rustler::types::atom::ok())
 }
 
 #[rustler::nif]

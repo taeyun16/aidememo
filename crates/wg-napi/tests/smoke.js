@@ -81,8 +81,25 @@ function main() {
       console.log(`query skipped: ${e.message}`);
     }
 
+    // Validity windows
+    const newFid = g.factAdd('Redis Sentinel + Cluster supersedes Sentinel-only HA', {
+      entityIds: [eidRedis],
+      factType: 'decision',
+    });
+    g.factSupersede(fid, newFid);
+    const oldFact = JSON.parse(g.factGet(fid));
+    if (oldFact.superseded_at == null) throw new Error('expected superseded_at to be set');
+    if (oldFact.superseded_by !== newFid) throw new Error('expected superseded_by to point to newFid');
+
+    const allFacts = JSON.parse(g.factList({ entity: 'Redis' }));
+    const currentFacts = JSON.parse(g.factList({ entity: 'Redis', currentOnly: true }));
+    if (currentFacts.length !== allFacts.length - 1) {
+      throw new Error(`expected currentOnly to hide 1 fact (all=${allFacts.length}, current=${currentFacts.length})`);
+    }
+
     // Cleanup
     g.factDelete(fid);
+    g.factDelete(newFid);
     g.relationRemove('Redis', 'Postgres', 'alternative_to');
     g.entityDelete('Postgres');
 

@@ -452,6 +452,7 @@ fn handle_query(
             depth: sub.depth.unwrap_or(2),
             recent_limit: sub.recent_limit.unwrap_or(10),
             since: since_ms,
+            current_only: false,
         };
         let result = wiki.query(&sub.topic, opts)?;
         if json {

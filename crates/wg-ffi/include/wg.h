@@ -30,13 +30,17 @@ void        wg_close(wg_store_t* store);
 void        wg_free_string(char* s);
 char*       wg_version(void);
 
-/* Search & query. */
-char* wg_search(const wg_store_t* store, const char* query, uint32_t limit);
+/* Search & query. `current_only` excludes superseded facts. */
+char* wg_search(const wg_store_t* store,
+                const char* query,
+                uint32_t limit,
+                bool        current_only);
 char* wg_query(const wg_store_t* store,
                const char* topic,
                uint32_t limit,
                uint32_t depth,
-               uint32_t recent_limit);
+               uint32_t recent_limit,
+               bool     current_only);
 
 /* Graph. */
 char* wg_traverse(const wg_store_t* store,
@@ -74,8 +78,13 @@ char* wg_fact_get(const wg_store_t* store, const char* fact_id);
 char* wg_fact_list(const wg_store_t* store,
                    const char* entity,         /* may be NULL */
                    const char* fact_type,      /* may be NULL */
-                   uint32_t    limit);         /* 0 = no limit */
+                   uint32_t    limit,          /* 0 = no limit */
+                   bool        current_only);  /* exclude superseded */
 char* wg_fact_delete(const wg_store_t* store, const char* fact_id);
+/* Mark old_id as superseded by new_id (validity windows). */
+char* wg_fact_supersede(const wg_store_t* store,
+                        const char* old_id,
+                        const char* new_id);
 
 /* Relations. */
 char* wg_relation_add(const wg_store_t* store,

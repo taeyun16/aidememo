@@ -78,8 +78,25 @@ defmodule WgNifTest do
     assert Map.has_key?(ctx, "related")
     assert Map.has_key?(ctx, "recent_facts")
 
+    # Validity windows
+    new_fid =
+      WgNif.fact_add(g, "Redis Sentinel + Cluster supersedes Sentinel-only HA",
+        entity_ids: [eid_redis],
+        fact_type: "decision"
+      )
+
+    :ok = WgNif.fact_supersede(g, fid, new_fid)
+    old = WgNif.fact_get(g, fid)
+    assert old["superseded_at"] != nil
+    assert old["superseded_by"] == new_fid
+
+    all_facts = WgNif.fact_list(g, entity: "Redis")
+    current_facts = WgNif.fact_list(g, entity: "Redis", current_only: true)
+    assert length(current_facts) == length(all_facts) - 1
+
     # Cleanup writes
     :ok = WgNif.fact_delete(g, fid)
+    :ok = WgNif.fact_delete(g, new_fid)
     :ok = WgNif.relation_remove(g, "Redis", "Postgres", "alternative_to")
     :ok = WgNif.entity_delete(g, "Postgres")
   end
