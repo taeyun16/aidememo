@@ -10,6 +10,12 @@ members = [
     "crates/wg-ffi",
     "crates/wg-nif",
 ]
+exclude = [
+    # Local fork of tokenizers; consumed via [patch.crates-io] below.
+    # Keep it out of our workspace because it's an independent crate
+    # with its own edition/lints we don't want to override.
+    "vendor/tokenizers",
+]
 # Native addon / Python extension crates are now part of the workspace build.
 
 [workspace.package]
@@ -52,3 +58,10 @@ debug = "full"
 strip = false
 lto = false        # full LTO inlines through allocations and confuses dhat
 codegen-units = 16
+
+# Local fork of tokenizers 0.20.4 with one upstream-bound fix:
+#  - models/unigram/model.rs: HashMap::new() → with_capacity(n)
+# Vendored under vendor/tokenizers; the upstream PR is queued separately
+# (see .notes/tokenizers-pr.patch).
+[patch.crates-io]
+tokenizers = { path = "vendor/tokenizers" }

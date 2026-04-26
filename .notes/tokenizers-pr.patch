@@ -1,0 +1,95 @@
+--- ../pristine_orig/models/unigram/model.rs	2026-04-27 01:58:26
++++ src/models/unigram/model.rs	2026-04-27 01:58:26
+@@ -98,7 +98,14 @@
+         byte_fallback: bool,
+     ) -> Result<Self> {
+         let n = vocab.len();
+-        let mut token_to_ids: TokenMap = HashMap::new();
++        // Pre-size the map: we already know exactly how many entries
++        // are coming. Without this hint, HashMap::new() starts at 0
++        // capacity and grows by doubling, triggering ~log2(n) rehashes
++        // that each allocate a fresh table and copy every existing
++        // entry. For a 500k-vocab tokenizer (e.g. multilingual models)
++        // this churn dominates loader memory — measured at ~270 MB of
++        // peak transient hashbrown allocations, all redundant.
++        let mut token_to_ids: TokenMap = HashMap::with_capacity(n);
+         let mut builder = TrieBuilder::default();
+ 
+         if let Some(unk_id) = unk_id {
+--- ../pristine_orig/models/unigram/trie.rs	2026-04-27 01:58:26
++++ src/models/unigram/trie.rs	2026-04-27 01:58:26
+@@ -1,4 +1,3 @@
+-use std::collections::HashMap;
+ use std::hash::Hash;
+ 
+ #[derive(Default)]
+@@ -25,12 +24,32 @@
+     pub fn push(&mut self, element: &[Label]) {
+         let mut node = &mut self.root;
+         for label in element.iter() {
+-            node = node.children.entry(*label).or_default();
++            // Children store: a flat Vec<(Label, Node)>. For Unigram
++            // trie nodes the fan-out is tiny — usually 1–4 children, with
++            // root being the only "wide" node (≤ alphabet size). At those
++            // sizes a linear scan over a packed Vec beats a HashMap on
++            // both memory (no per-node hash table overhead × millions of
++            // nodes) and lookup latency (predictable, cache-resident).
++            //
++            // The HashMap variant in upstream tokenizers (0.20.x) ships
++            // an empty HashMap with every Default::default() Node, so
++            // for a 500k-vocab tokenizer (e.g. multilingual model)
++            // it's 500k+ near-empty hash tables — measured at ~270 MB
++            // of resident hashbrown structure with ~1.1M small allocs.
++            let pos = node.children.iter().position(|(l, _)| *l == *label);
++            node = match pos {
++                Some(idx) => &mut node.children[idx].1,
++                None => {
++                    node.children.push((*label, Node::default()));
++                    let last = node.children.len() - 1;
++                    &mut node.children[last].1
++                }
++            };
+         }
+         node.is_leaf = true;
+     }
+ 
+-    pub fn common_prefix_search<T>(&self, iterator: T) -> TrieIterator<Label, T>
++    pub fn common_prefix_search<T>(&self, iterator: T) -> TrieIterator<'_, Label, T>
+     where
+         T: Iterator<Item = Label>,
+     {
+@@ -58,7 +77,13 @@
+         loop {
+             let label = self.iterator.next()?;
+             self.prefix.push(label);
+-            let child = self.node.children.get(&label)?;
++            // Linear find — same fan-out argument as in `push`.
++            let child = self
++                .node
++                .children
++                .iter()
++                .find(|(l, _)| *l == label)
++                .map(|(_, n)| n)?;
+             self.node = child;
+             if self.node.is_leaf {
+                 return Some(self.prefix.clone());
+@@ -78,14 +103,17 @@
+ #[derive(Clone)]
+ pub struct Node<Label> {
+     is_leaf: bool,
+-    children: HashMap<Label, Node<Label>>,
++    /// Packed list of children. Empty `Vec` (no allocation) when the
++    /// node has no children, which is the dominant case in deep trie
++    /// branches.
++    children: Vec<(Label, Node<Label>)>,
+ }
+ 
+ impl<Label> Default for Node<Label> {
+     fn default() -> Self {
+         Self {
+             is_leaf: false,
+-            children: HashMap::new(),
++            children: Vec::new(),
+         }
+     }
+ }
