@@ -46,7 +46,7 @@ wg --project personal stats             # one-off override
 
 ### Read & search
 - `wg search <query> [-l N] [--last 30d] [--current]` — hybrid search
-- `wg query <topic>` — unified context (search + traverse + recent)
+- `wg query <topic> [--mode naive|local|hybrid|global]` — unified context (search + traverse + recent)
 - `wg recent [-n N] [--type T] [--last 30d]` — recent activity
 - `wg traverse <entity> [-d N]` — graph traversal
 - `wg path <from> <to>` — find a path between entities
@@ -63,6 +63,7 @@ wg --project personal stats             # one-off override
 ### Maintenance
 - `wg doctor [--json]` — health check
 - `wg lint [--json]` — raw lint issues
+- `wg bench <golden.jsonl> [--k 5]` — measure P@K, R@K, p50/p95 latency against a golden set
 - `wg ingest <wiki_root> [-i]` — ingest markdown
 - `wg watch <wiki_root> [--search QUERY]` — re-ingest on file changes (live search optional)
 - `wg sync <wiki_root>` — alias for incremental ingest
@@ -115,6 +116,9 @@ and `fact_supersede` for validity-window workflows.
 ## Features
 
 - **Hybrid search** — BM25 + Model2Vec semantic vectors, RRF fusion
+- **4 query modes** — naive (search-only) / local (entity-centric) / hybrid (default) / global (broad)
+- **Typed-relation extraction** — zero-LLM regex patterns for `works_at`, `depends_on`, `supersedes`, … (37 phrases)
+- **`wg bench`** — JSONL golden-set runner with P@K / R@K / latency reports
 - **Knowledge graph** — entities, facts, relations with named traversal
 - **Markdown ingest** — frontmatter, `[[wikilinks]]`, heading sections, dates
 - **`wg query`** — one-call context: search + entity + traverse + recent

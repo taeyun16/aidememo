@@ -135,6 +135,7 @@ fn query(
     depth: u32,
     recent_limit: u32,
     current_only: bool,
+    mode: String,
 ) -> NifResult<String> {
     let opts = QueryOpts {
         search_limit: limit as usize,
@@ -142,6 +143,7 @@ fn query(
         recent_limit: recent_limit as usize,
         since: None,
         current_only,
+        mode: wg_core::QueryMode::parse(&mode),
     };
     let result = handle
         .wiki

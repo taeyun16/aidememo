@@ -45,9 +45,10 @@ defmodule WgNif do
     depth = Keyword.get(opts, :depth, 2)
     recent_limit = Keyword.get(opts, :recent_limit, 10)
     current_only = Keyword.get(opts, :current_only, false)
+    mode = Keyword.get(opts, :mode, "hybrid")
 
     handle
-    |> Native.query(topic, limit, depth, recent_limit, current_only)
+    |> Native.query(topic, limit, depth, recent_limit, current_only, mode)
     |> Jason.decode!()
   end
 

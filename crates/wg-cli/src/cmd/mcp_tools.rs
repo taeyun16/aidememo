@@ -299,6 +299,11 @@ fn tool_query(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String> 
         .get("topic")
         .and_then(|v| v.as_str())
         .ok_or("topic required")?;
+    let mode = args
+        .get("mode")
+        .and_then(|v| v.as_str())
+        .map(wg_core::QueryMode::parse)
+        .unwrap_or_default();
     let opts = wg_core::QueryOpts {
         search_limit: args.get("limit").and_then(|v| v.as_u64()).unwrap_or(10) as usize,
         depth: args.get("depth").and_then(|v| v.as_u64()).unwrap_or(2) as u32,
@@ -311,6 +316,7 @@ fn tool_query(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String> 
             .get("current_only")
             .and_then(|v| v.as_bool())
             .unwrap_or(false),
+        mode,
     };
     let result = wiki.query(topic, opts).map_err(|e| e.to_string())?;
     let text = serde_json::to_string_pretty(&result).map_err(|e| e.to_string())?;
@@ -452,7 +458,7 @@ pub fn list_tools() -> Vec<Tool> {
         },
         Tool {
             name: "wg_query".into(),
-            description: "Unified context fetch for a topic. One call returns: hybrid search hits, the resolved entity (if any), related entities (graph traversal), and recent facts on that entity. Prefer this over chaining wg_search + wg_traverse + wg_entity_list when you want context."
+            description: "Unified context fetch for a topic. One call returns: hybrid search hits, the resolved entity (if any), related entities (graph traversal), and recent facts. Modes: naive (search only), local (entity + neighbors, no global search), hybrid (default), global (broader scan)."
                 .into(),
             input_schema: json!({
                 "type": "object",
@@ -460,7 +466,9 @@ pub fn list_tools() -> Vec<Tool> {
                     "topic": {"type": "string", "description": "Topic, entity name, or alias"},
                     "limit": {"type": "number", "default": 10, "description": "Max search hits"},
                     "depth": {"type": "number", "default": 2, "description": "Traverse depth if topic is an entity"},
-                    "recent_limit": {"type": "number", "default": 10, "description": "Max recent facts"}
+                    "recent_limit": {"type": "number", "default": 10, "description": "Max recent facts"},
+                    "mode": {"type": "string", "enum": ["naive", "local", "hybrid", "global"], "default": "hybrid"},
+                    "current_only": {"type": "boolean", "default": false}
                 },
                 "required": ["topic"]
             }),

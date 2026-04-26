@@ -4,6 +4,7 @@ use bpaf::*;
 use std::path::PathBuf;
 
 pub mod adapt;
+pub mod bench;
 pub mod doctor;
 pub mod edit;
 pub mod feedback;
@@ -18,6 +19,7 @@ pub mod recent;
 pub mod watch;
 
 pub use adapt::AdaptSub;
+pub use bench::BenchSub;
 pub use doctor::DoctorSub;
 pub use edit::EditSub;
 pub use feedback::FeedbackSub;
@@ -52,6 +54,7 @@ pub enum Command {
     Edit(EditSub),
     Graph(GraphSub),
     Project(ProjectSub),
+    Bench(BenchSub),
     Export(ExportSub),
     Import(ImportSub),
     Stats(StatsSub),
@@ -176,6 +179,7 @@ pub struct QuerySub {
     pub depth: Option<u32>,
     pub recent_limit: Option<usize>,
     pub last: Option<String>,
+    pub mode: Option<String>,
     pub topic: String,
 }
 
@@ -241,6 +245,7 @@ pub fn build_cli() -> OptionParser<Args> {
     let edit_cmd = edit::edit_command();
     let graph_cmd = graph::graph_command();
     let project_cmd = project::project_command();
+    let bench_cmd = bench::bench_command();
 
     let command = construct!([
         entity_command(),
@@ -255,6 +260,7 @@ pub fn build_cli() -> OptionParser<Args> {
         edit_cmd,
         graph_cmd,
         project_cmd,
+        bench_cmd,
         export_command(),
         import_command(),
         stats_command(),
@@ -623,6 +629,11 @@ fn query_command() -> impl Parser<Command> {
         .help("Restrict search/recent to last N: e.g. 30d, 12h, 4w")
         .argument::<String>("DURATION")
         .optional();
+    let mode = long("mode")
+        .short('m')
+        .help("Retrieval strategy: naive | local | hybrid (default) | global")
+        .argument::<String>("MODE")
+        .optional();
     let topic = positional::<String>("TOPIC");
 
     construct!(QuerySub {
@@ -630,13 +641,14 @@ fn query_command() -> impl Parser<Command> {
         depth,
         recent_limit,
         last,
+        mode,
         topic
     })
     .map(Command::Query)
     .to_options()
     .command("query")
     .short('q')
-    .help("Unified context fetch: search + traverse + recent facts")
+    .help("Unified context fetch (naive/local/hybrid/global modes)")
 }
 
 fn export_command() -> impl Parser<Command> {

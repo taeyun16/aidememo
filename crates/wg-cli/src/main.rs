@@ -59,6 +59,7 @@ fn main() {
         cmd::Command::Edit(sub) => cmd::edit::run_edit(&store_path, config, sub, json),
         cmd::Command::Graph(sub) => cmd::graph::run_graph(&store_path, config, sub),
         cmd::Command::Project(sub) => cmd::project::run_project(config, sub),
+        cmd::Command::Bench(sub) => cmd::bench::run_bench(&store_path, config, sub, json),
         cmd::Command::Export(sub) => handle_export(&store_path, config, sub),
         cmd::Command::Import(sub) => handle_import(&store_path, config, sub),
         cmd::Command::Stats(sub) => handle_stats(&store_path, config, sub, json),
@@ -446,6 +447,11 @@ fn handle_query(
     json: bool,
 ) -> Result<String, WgError> {
     let since_ms = resolve_since(None, sub.last.as_deref())?;
+    let mode = sub
+        .mode
+        .as_deref()
+        .map(wg_core::QueryMode::parse)
+        .unwrap_or_default();
     with_wiki(path, config, |wiki| {
         let opts = QueryOpts {
             search_limit: sub.limit.unwrap_or(10),
@@ -453,6 +459,7 @@ fn handle_query(
             recent_limit: sub.recent_limit.unwrap_or(10),
             since: since_ms,
             current_only: false,
+            mode,
         };
         let result = wiki.query(&sub.topic, opts)?;
         if json {

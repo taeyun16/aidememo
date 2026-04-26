@@ -193,10 +193,16 @@ pub extern "C" fn wg_query(
     depth: u32,
     recent_limit: u32,
     current_only: bool,
+    mode: *const c_char,
 ) -> *mut c_char {
     return_json(|| {
         let s = store_ref(store)?;
         let topic = ptr_to_str(topic)?;
+        let mode = if mode.is_null() {
+            wg_core::QueryMode::default()
+        } else {
+            wg_core::QueryMode::parse(ptr_to_str(mode)?)
+        };
         let opts = QueryOpts {
             search_limit: if limit == 0 { 10 } else { limit as usize },
             depth: if depth == 0 { 2 } else { depth },
@@ -207,6 +213,7 @@ pub extern "C" fn wg_query(
             },
             since: None,
             current_only,
+            mode,
         };
         let result = s.wiki.query(topic, opts).map_err(|e| e.to_string())?;
         json_serialize(&result)

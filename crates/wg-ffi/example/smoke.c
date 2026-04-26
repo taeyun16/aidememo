@@ -132,7 +132,7 @@ int main(void) {
     CHECK(contains(r, "entity_count"), "stats");
     wg_free_string(r);
 
-    r = wg_query(g, "Redis", 3, 1, 3, false);
+    r = wg_query(g, "Redis", 3, 1, 3, false, "hybrid");
     CHECK(contains(r, "\"topic\""), "query topic");
     CHECK(contains(r, "\"entity\""), "query entity");
     CHECK(contains(r, "\"search\""), "query search");

@@ -129,7 +129,8 @@ impl PyWikiGraph {
 
     /// Unified context fetch: search + entity resolve + traverse + recent facts.
     /// Returns one dict with keys: topic, entity, search, related, recent_facts.
-    #[pyo3(signature = (topic, limit=10, depth=2, recent_limit=10, current_only=false))]
+    /// `mode`: "naive" | "local" | "hybrid" (default) | "global".
+    #[pyo3(signature = (topic, limit=10, depth=2, recent_limit=10, current_only=false, mode=None))]
     fn query(
         &self,
         py: Python<'_>,
@@ -138,6 +139,7 @@ impl PyWikiGraph {
         depth: u32,
         recent_limit: usize,
         current_only: bool,
+        mode: Option<String>,
     ) -> PyResult<PyObject> {
         let opts = QueryOpts {
             search_limit: limit,
@@ -145,6 +147,10 @@ impl PyWikiGraph {
             recent_limit,
             since: None,
             current_only,
+            mode: mode
+                .as_deref()
+                .map(wg_core::QueryMode::parse)
+                .unwrap_or_default(),
         };
         let result = self.0.query(&topic, opts).map_err(map_err)?;
         to_py(py, &result)

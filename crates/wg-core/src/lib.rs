@@ -316,31 +316,60 @@ impl WikiGraph {
     /// LLM agents and MCP clients minimizing context-window spend.
     #[cfg(feature = "semantic")]
     pub fn query(&self, topic: &str, opts: types::QueryOpts) -> Result<types::QueryResult> {
-        let search = self.hybrid_search(
-            topic,
-            SearchOpts {
-                limit: Some(opts.search_limit),
-                since: opts.since,
-                current_only: opts.current_only,
-                ..Default::default()
-            },
-        )?;
+        use types::QueryMode;
 
-        let entity = self.entity_get(topic).ok();
+        // 1. Hybrid search — every mode except `Local` runs it.
+        let search = if opts.mode == QueryMode::Local {
+            Vec::new()
+        } else {
+            self.hybrid_search(
+                topic,
+                SearchOpts {
+                    limit: Some(opts.search_limit),
+                    since: opts.since,
+                    current_only: opts.current_only,
+                    ..Default::default()
+                },
+            )?
+        };
+
+        // 2. Entity resolution — every mode except `Naive` runs it.
+        let entity = if opts.mode == QueryMode::Naive {
+            None
+        } else {
+            self.entity_get(topic).ok()
+        };
+
+        // 3. Traverse depth — Global widens, Local narrows.
+        let depth = match opts.mode {
+            QueryMode::Local => opts.depth.max(1),
+            QueryMode::Global => opts.depth.max(4),
+            _ => opts.depth,
+        };
+
+        // 4. Recent facts — Global drops the recency cap.
+        let recent_limit = match opts.mode {
+            QueryMode::Global => 200, // big-but-bounded
+            _ => opts.recent_limit,
+        };
+        let recent_since = match opts.mode {
+            QueryMode::Global => None,
+            _ => opts.since,
+        };
 
         let (related, recent_facts) = if let Some(ref e) = entity {
             let traverse = self.traverse(
                 &e.name,
                 TraverseOpts {
-                    depth: opts.depth,
+                    depth,
                     relation_types: None,
                     direction: TraverseDirection::Both,
                 },
             )?;
             let recent = self.fact_list(FactListOpts {
                 entity_id: Some(e.id),
-                limit: Some(opts.recent_limit),
-                since: opts.since,
+                limit: Some(recent_limit),
+                since: recent_since,
                 current_only: opts.current_only,
                 ..Default::default()
             })?;
@@ -431,9 +460,9 @@ pub use types::{
     AdaptEvalReport, AdaptResult, AdaptStatus, EntityId, EntityInput, EntityRecord, EntitySort,
     EntitySummary, EntityType, EntityUpdate, ExportScope, ExportStats, FactId, FactInput,
     FactListOpts, FactRecord, FactType, FactUpdate, ImportStats, LintIssue, LintReport,
-    LintSeverity, ListOpts, PathStep, QueryOpts, QueryResult, RelationInput, RelationRecord,
-    RelationType, SearchFeedback, SearchOpts, SearchResult, SearchSession, StoreStats,
-    TraverseDirection, TraverseOpts, TraverseResult,
+    LintSeverity, ListOpts, PathStep, QueryMode, QueryOpts, QueryResult, RelationInput,
+    RelationRecord, RelationType, SearchFeedback, SearchOpts, SearchResult, SearchSession,
+    StoreStats, TraverseDirection, TraverseOpts, TraverseResult,
 };
 
 #[cfg(feature = "semantic")]

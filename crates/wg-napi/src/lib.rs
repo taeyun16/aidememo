@@ -84,6 +84,8 @@ pub struct QueryArgs {
     pub depth: Option<u32>,
     pub recent_limit: Option<u32>,
     pub current_only: Option<bool>,
+    /// Retrieval strategy: "naive" | "local" | "hybrid" (default) | "global"
+    pub mode: Option<String>,
 }
 
 #[napi(object)]
@@ -170,6 +172,7 @@ impl WgStore {
             depth: None,
             recent_limit: None,
             current_only: None,
+            mode: None,
         });
         let opts = QueryOpts {
             search_limit: args.limit.unwrap_or(10) as usize,
@@ -177,6 +180,11 @@ impl WgStore {
             recent_limit: args.recent_limit.unwrap_or(10) as usize,
             since: None,
             current_only: args.current_only.unwrap_or(false),
+            mode: args
+                .mode
+                .as_deref()
+                .map(wg_core::QueryMode::parse)
+                .unwrap_or_default(),
         };
         let result = self.wiki.query(&topic, opts).map_err(err)?;
         to_json(&result)

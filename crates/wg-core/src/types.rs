@@ -634,6 +634,68 @@ pub struct FactListOpts {
     pub current_only: bool,
 }
 
+/// Retrieval strategy for `WikiGraph::query`. Inspired by LightRAG.
+///
+/// - `Naive`: hybrid search only — no entity resolution, no traverse, no recent.
+///   Fastest; equivalent to calling `hybrid_search` directly. Use when you just
+///   want top-K facts.
+/// - `Local`: entity-centric — resolve the topic to an entity, return
+///   immediate neighbors + facts. **Skips** the global hybrid search. Use
+///   when you know the topic is an entity name and want its surroundings.
+/// - `Hybrid` (default): search + entity + traverse(depth) + recent. The
+///   "best of both" mode that matches the original `wg query` behavior.
+/// - `Global`: broad scan — search + entity + traverse(deeper) + every fact
+///   on the resolved entity (no recency cap). Use for "what does the wiki
+///   know about X overall?".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QueryMode {
+    Naive,
+    Local,
+    Hybrid,
+    Global,
+}
+
+impl Default for QueryMode {
+    fn default() -> Self {
+        QueryMode::Hybrid
+    }
+}
+
+impl QueryMode {
+    /// Parse a string into a QueryMode (case-insensitive). Unknown → Hybrid.
+    pub fn parse(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "naive" => QueryMode::Naive,
+            "local" => QueryMode::Local,
+            "global" => QueryMode::Global,
+            _ => QueryMode::Hybrid,
+        }
+    }
+}
+
+impl std::fmt::Display for QueryMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            QueryMode::Naive => write!(f, "naive"),
+            QueryMode::Local => write!(f, "local"),
+            QueryMode::Hybrid => write!(f, "hybrid"),
+            QueryMode::Global => write!(f, "global"),
+        }
+    }
+}
+
+impl serde::Serialize for QueryMode {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> std::result::Result<S::Ok, S::Error> {
+        s.collect_str(self)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for QueryMode {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
+        Ok(QueryMode::parse(&String::deserialize(d)?))
+    }
+}
+
 /// Options for `WikiGraph::query` — a unified context fetch (search + traverse + recent facts).
 #[derive(Debug, Clone)]
 pub struct QueryOpts {
@@ -647,6 +709,8 @@ pub struct QueryOpts {
     pub since: Option<u64>,
     /// If `true`, exclude superseded facts from search and recent_facts.
     pub current_only: bool,
+    /// Retrieval strategy. `Hybrid` by default.
+    pub mode: QueryMode,
 }
 
 impl Default for QueryOpts {
@@ -657,6 +721,7 @@ impl Default for QueryOpts {
             recent_limit: 10,
             since: None,
             current_only: false,
+            mode: QueryMode::default(),
         }
     }
 }

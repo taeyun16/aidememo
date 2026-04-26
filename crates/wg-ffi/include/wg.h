@@ -40,7 +40,8 @@ char* wg_query(const wg_store_t* store,
                uint32_t limit,
                uint32_t depth,
                uint32_t recent_limit,
-               bool     current_only);
+               bool     current_only,
+               const char* mode);  /* "naive"|"local"|"hybrid"|"global" or NULL */
 
 /* Graph. */
 char* wg_traverse(const wg_store_t* store,

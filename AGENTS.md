@@ -36,7 +36,8 @@ cargo install --path crates/wg-cli      # one-off install
 ### Read / search
 ```
 wg search <query> [-l N] [--current]              hybrid BM25+semantic
-wg query <topic> [-l N] [-d N] [--recent-limit N] unified search+traverse+recent
+wg query <topic> [-l N] [-d N] [--recent-limit N] [-m naive|local|hybrid|global]
+                                                   unified search+traverse+recent
 wg recent [-n N] [--type T] [--last 30d]          last 7d facts (default)
 wg traverse <entity> [-d N]                        forward graph walk
 wg path <from> <to>                                shortest path
@@ -58,6 +59,8 @@ wg relation add <src> <tgt> <rel_type>
 ```
 wg doctor [--json]                       friendly health check (wraps lint)
 wg lint [--json]                          raw lint issues
+wg bench <golden.jsonl> [--k 5] [--limit N]
+                                          P@K / R@K / latency benchmark
 wg ingest <root> [-i]                     ingest markdown
 wg watch <root> [--search Q]              live re-ingest + optional live search
 wg export [--scope all|...] / wg import
