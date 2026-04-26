@@ -4625,6 +4625,7 @@ dependencies = [
  "toml",
  "trigram",
  "ulid",
+ "ureq",
  "walkdir",
  "zstd",
 ]

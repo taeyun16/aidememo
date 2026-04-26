@@ -171,6 +171,7 @@ pub struct PathSub {
 #[derive(Debug, Clone)]
 pub struct SearchSub {
     pub json: bool,
+    pub all_projects: bool,
     pub traverse_from: Option<String>,
     pub traverse_depth: Option<u32>,
     pub min_confidence: Option<f32>,
@@ -623,9 +624,13 @@ fn search_command() -> impl Parser<Command> {
         .argument::<usize>("LIMIT")
         .optional();
     let json = long("json").short('j').help("Output as JSON").switch();
+    let all_projects = long("all-projects")
+        .help("Search across every registered project (`wg project list`); merges + re-ranks")
+        .switch();
 
     construct!(SearchSub {
         json,
+        all_projects,
         traverse_from,
         traverse_depth,
         min_confidence,
@@ -639,7 +644,7 @@ fn search_command() -> impl Parser<Command> {
     .to_options()
     .command("search")
     .short('s')
-    .help("Search facts")
+    .help("Search facts (use --all-projects for cross-project)")
 }
 
 fn lint_command() -> impl Parser<Command> {

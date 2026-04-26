@@ -135,11 +135,18 @@ fn tool_search(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String>
         )
         .map_err(|e| e.to_string())?;
 
+    // Surface fact.source as a citation alongside content + score so agents
+    // can attribute each hit. Pattern requested by mem0 #467.
     let text = results
         .into_iter()
         .map(|r| {
+            let src = r
+                .source
+                .as_deref()
+                .map(|s| format!("\n  source: {s}"))
+                .unwrap_or_default();
             format!(
-                "[{}] {}\n  score={:.3}",
+                "[{}] {}\n  score={:.3}{src}",
                 r.fact_id,
                 r.content.chars().take(120).collect::<String>(),
                 r.score

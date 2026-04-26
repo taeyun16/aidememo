@@ -287,7 +287,9 @@ pub fn format_search_results(
         }),
         Format::Table => {
             let mut table = Table::new();
-            table.set_header(vec!["#", "Content", "Type", "Entities", "Score", "When"]);
+            table.set_header(vec![
+                "#", "Content", "Type", "Entities", "Score", "When", "Source",
+            ]);
 
             for result in results {
                 // Truncate content if too long
@@ -298,6 +300,7 @@ pub fn format_search_results(
                 };
 
                 let when = format_when(result.observed_at, result.created_at);
+                let src = result.source.as_deref().unwrap_or("");
 
                 table.add_row(vec![
                     result.rank.to_string().as_str(),
@@ -306,6 +309,7 @@ pub fn format_search_results(
                     result.entity_names.join(", ").as_str(),
                     &format!("{:.3}", result.score),
                     when.as_str(),
+                    src,
                 ]);
             }
 

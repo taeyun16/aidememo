@@ -10,7 +10,7 @@ version.workspace = true
 
 [features]
 default = []
-semantic = ["model2vec-rs"]
+semantic = ["model2vec-rs", "ureq"]
 semantic-adapt = ["semantic"]
 parallel = ["rayon"]
 remote = ["oneio"]
@@ -49,6 +49,11 @@ chrono = "0.4"
 
 # 시맨틱 검색 (선택)
 model2vec-rs = { version = "0.1", optional = true }
+
+# OpenAI-compatible HTTP embeddings (Ollama / OpenAI / OpenRouter / vLLM / LocalAI).
+# Pulled in alongside the `semantic` feature so users who opt into semantic
+# search get the choice between offline (Model2Vec) and pluggable HTTP.
+ureq = { version = "2.12", features = ["json"], optional = true }
 
 # 병렬 처리 (선택)
 rayon = { version = "1.8", optional = true }

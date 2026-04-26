@@ -58,15 +58,38 @@ impl Default for StoreConfig {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ModelConfig {
-    /// Model name (e.g., "minishlab/potion-multilingual-128M").
+    /// Embedding provider: "model2vec" (default, offline) or "openai"
+    /// (HTTP — works for OpenAI / Ollama / OpenRouter / vLLM / LocalAI).
+    #[serde(default = "default_provider")]
+    pub provider: String,
+    /// Model name. For model2vec this is the HuggingFace handle; for
+    /// openai-compat it's the model id sent in the request body
+    /// (e.g. "text-embedding-3-small", "nomic-embed-text").
     pub name: String,
     /// Directory where downloaded model artifacts are stored.
     #[serde(default = "default_model_download_dir")]
     pub download_dir: String,
     /// Model cache directory.
     pub cache_dir: String,
-    /// Auto-download model on first use.
+    /// Auto-download model on first use (model2vec only).
     pub auto_download: bool,
+    /// HTTP endpoint for openai-compat providers, e.g.
+    /// `http://localhost:11434/v1/embeddings` or
+    /// `https://api.openai.com/v1/embeddings`.
+    #[serde(default)]
+    pub endpoint: String,
+    /// Env var name to read the API key from (e.g. `OPENAI_API_KEY`).
+    /// Empty means no auth header sent — fine for Ollama / LocalAI.
+    #[serde(default)]
+    pub api_key_env: String,
+    /// Vector dimension. Required for openai-compat (different models
+    /// have different dims); for model2vec it's auto-detected.
+    #[serde(default)]
+    pub dimension: usize,
+}
+
+fn default_provider() -> String {
+    "model2vec".to_string()
 }
 
 fn default_model_download_dir() -> String {
@@ -76,10 +99,14 @@ fn default_model_download_dir() -> String {
 impl Default for ModelConfig {
     fn default() -> Self {
         Self {
+            provider: default_provider(),
             name: "minishlab/potion-multilingual-128M".to_string(),
             download_dir: default_model_download_dir(),
             cache_dir: "~/.wg/models".to_string(),
             auto_download: true,
+            endpoint: String::new(),
+            api_key_env: String::new(),
+            dimension: 0,
         }
     }
 }
@@ -250,16 +277,24 @@ impl StoreConfig {
 impl ModelConfig {
     fn get(&self, key: &str) -> Option<String> {
         match key {
+            "provider" => Some(self.provider.clone()),
             "name" => Some(self.name.clone()),
             "download_dir" => Some(self.download_dir.clone()),
             "cache_dir" => Some(self.cache_dir.clone()),
             "auto_download" => Some(self.auto_download.to_string()),
+            "endpoint" => Some(self.endpoint.clone()),
+            "api_key_env" => Some(self.api_key_env.clone()),
+            "dimension" => Some(self.dimension.to_string()),
             _ => None,
         }
     }
 
     fn set(&mut self, key: &str, value: &str) -> Result<()> {
         match key {
+            "provider" => {
+                self.provider = value.to_string();
+                Ok(())
+            }
             "name" => {
                 self.name = value.to_string();
                 Ok(())
@@ -276,6 +311,20 @@ impl ModelConfig {
                 self.auto_download = value
                     .parse()
                     .map_err(|_| WgError::InvalidInput(format!("invalid boolean: {}", value)))?;
+                Ok(())
+            }
+            "endpoint" => {
+                self.endpoint = value.to_string();
+                Ok(())
+            }
+            "api_key_env" => {
+                self.api_key_env = value.to_string();
+                Ok(())
+            }
+            "dimension" => {
+                self.dimension = value
+                    .parse()
+                    .map_err(|_| WgError::InvalidInput(format!("invalid integer: {}", value)))?;
                 Ok(())
             }
             _ => Err(WgError::ConfigKeyNotFound(format!("model.{}", key))),

@@ -442,6 +442,20 @@ fn handle_search(
     let semantic_weight = config.search.semantic_weight;
     let since_ms = resolve_since(sub.since.as_deref(), sub.last.as_deref())?;
     let until_ms = resolve_until(sub.until.as_deref())?;
+
+    if sub.all_projects {
+        return run_search_all_projects(
+            config,
+            sub,
+            since_ms,
+            until_ms,
+            default_limit,
+            bm25_weight,
+            semantic_weight,
+            json,
+        );
+    }
+
     with_wiki_mut(path, config, |wiki| {
         let session_id = wg_core::ulid::Ulid::new().to_string();
         let opts = SearchOpts {
@@ -481,6 +495,111 @@ fn handle_search(
         };
         output::format_search_results(&results, &wiki, format)
     })
+}
+
+/// Run a hybrid search across every registered project, tag each hit with
+/// its project name, merge by score, and render. Used by `wg search
+/// --all-projects` (Tier 5-A.3 — Basic Memory issue #123).
+fn run_search_all_projects(
+    config: Config,
+    sub: cmd::SearchSub,
+    since_ms: Option<u64>,
+    until_ms: Option<u64>,
+    default_limit: usize,
+    bm25_weight: f32,
+    semantic_weight: f32,
+    json: bool,
+) -> Result<String, WgError> {
+    if config.projects.is_empty() {
+        return Err(WgError::InvalidInput(
+            "no projects registered — `wg project create` first".into(),
+        ));
+    }
+    let limit = sub.limit.or(Some(default_limit));
+    let mut all: Vec<(String, wg_core::SearchResult)> = Vec::new();
+
+    for (proj_name, _proj_cfg) in &config.projects {
+        let store_path = match config.project_path(proj_name) {
+            Some(p) => p,
+            None => continue,
+        };
+        let wiki = match WikiGraph::open(&store_path, config.clone()) {
+            Ok(w) => w,
+            Err(e) => {
+                eprintln!(
+                    "[wg search] skipping project '{}' ({}): {}",
+                    proj_name,
+                    store_path.display(),
+                    e
+                );
+                continue;
+            }
+        };
+        let opts = SearchOpts {
+            limit,
+            min_confidence: sub.min_confidence,
+            entity_filter: None,
+            bm25_weight,
+            semantic_weight,
+            since: since_ms,
+            until: until_ms,
+            session_id: None,
+            current_only: false,
+        };
+        match wiki.hybrid_search(&sub.query, opts) {
+            Ok(hits) => {
+                for h in hits {
+                    all.push((proj_name.clone(), h));
+                }
+            }
+            Err(e) => eprintln!("[wg search] project '{}' search failed: {}", proj_name, e),
+        }
+    }
+
+    // Sort by score descending across the merged set, then re-rank.
+    all.sort_by(|a, b| {
+        b.1.score
+            .partial_cmp(&a.1.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    if let Some(l) = limit {
+        all.truncate(l);
+    }
+    for (i, (_p, r)) in all.iter_mut().enumerate() {
+        r.rank = i + 1;
+    }
+
+    if sub.json || json {
+        let payload: Vec<_> = all
+            .iter()
+            .map(|(p, r)| {
+                serde_json::json!({
+                    "project": p,
+                    "result": r,
+                })
+            })
+            .collect();
+        return serde_json::to_string_pretty(&payload).map_err(|e| WgError::Serialize {
+            context: "all-projects search".to_string(),
+            source: e,
+        });
+    }
+
+    let mut out = String::new();
+    out.push_str(&format!(
+        "Search '{}' across {} project(s) — {} hit(s)\n\n",
+        sub.query,
+        config.projects.len(),
+        all.len()
+    ));
+    for (proj, r) in &all {
+        let snippet: String = r.content.chars().take(60).collect();
+        out.push_str(&format!(
+            "  [{}] [{}] {}  (score={:.3})\n",
+            proj, r.fact_id, snippet, r.score
+        ));
+    }
+    Ok(out)
 }
 
 fn handle_query(

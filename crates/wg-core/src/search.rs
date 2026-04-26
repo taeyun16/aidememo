@@ -210,10 +210,8 @@ fn build_search_result(
 #[cfg(feature = "semantic")]
 mod semantic {
     use super::*;
-    use crate::error::WgError;
-    use model2vec_rs::model::StaticModel;
     use std::cmp::Ordering;
-    use std::path::{Path, PathBuf};
+    use std::path::PathBuf;
 
     /// Hybrid search combining BM25 and semantic vectors.
     pub fn hybrid_search(
@@ -243,8 +241,8 @@ mod semantic {
 
     fn semantic_search(store: &Store, query: &str, opts: &SearchOpts) -> Result<Vec<SearchResult>> {
         let config = store.config();
-        let model = load_model(config)?;
-        let query_embedding = embed_text(&model, query);
+        let provider = crate::embedding::load_provider(config)?;
+        let query_embedding = provider.embed(query)?;
 
         let mut facts = store.fact_list(FactListOpts {
             limit: None,
@@ -270,7 +268,7 @@ mod semantic {
             .iter()
             .map(|fact| fact_semantic_text(store, fact))
             .collect();
-        let embeddings = model.encode(&texts);
+        let embeddings = provider.embed_batch(&texts)?;
 
         let mut scored: Vec<(usize, f32)> = facts
             .iter()
@@ -305,41 +303,15 @@ mod semantic {
         Ok(results)
     }
 
-    fn load_model(config: &Config) -> Result<StaticModel> {
-        let cache_dir = expand_tilde(&config.model.cache_dir);
-        let configured_name = Path::new(&config.model.name);
-        let local_candidate = if configured_name.exists() {
-            configured_name.to_path_buf()
-        } else {
-            cache_dir.join(&config.model.name)
-        };
-
-        if local_candidate.exists() {
-            StaticModel::from_pretrained(&local_candidate, None, None, None).map_err(|source| {
-                WgError::ModelLoadFailed {
-                    path: local_candidate,
-                    source: Box::new(std::io::Error::other(source.to_string())),
-                }
-            })
-        } else if config.model.auto_download {
-            StaticModel::from_pretrained(&config.model.name, None, None, None).map_err(|source| {
-                WgError::ModelLoadFailed {
-                    path: PathBuf::from(&config.model.name),
-                    source: Box::new(std::io::Error::other(source.to_string())),
-                }
-            })
-        } else {
-            Err(WgError::ModelNotFound {
-                name: config.model.name.clone(),
-                cache_dir,
-            })
-        }
-    }
-
-    /// Encode a single text into a semantic embedding.
-    pub fn embed_text(model: &StaticModel, text: &str) -> Vec<f32> {
-        model.encode_single(text)
-    }
+    // `load_model` and `embed_text` previously lived here and were used
+    // directly by semantic_search. They've been replaced by the
+    // `crate::embedding::EmbeddingProvider` trait — keeping a single,
+    // pluggable seam (Model2Vec by default; OpenAI-compatible HTTP if
+    // `model.provider = "openai"`).
+    //
+    // If you need the StaticModel directly (e.g. for adapt training),
+    // construct a `Model2VecProvider` via `embedding::load_provider()` and
+    // downcast — but right now nothing else in the crate needs raw access.
 
     fn fact_semantic_text(store: &Store, fact: &FactRecord) -> String {
         let mut parts = vec![fact.content.clone()];
@@ -487,8 +459,11 @@ mod semantic {
 }
 
 #[cfg(feature = "semantic")]
-pub use semantic::embed_text;
-
+// `embed_text` was an explicit fn re-export; embedding is now done
+// through `crate::embedding::EmbeddingProvider::embed`. External callers
+// that need a one-shot embed should call:
+//   let p = wg_core::embedding::load_provider(config)?;
+//   let v = p.embed(text)?;
 #[cfg(feature = "semantic")]
 pub use semantic::hybrid_search;
 

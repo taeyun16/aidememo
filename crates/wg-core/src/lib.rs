@@ -2,6 +2,7 @@
 
 pub mod adapt;
 pub mod config;
+pub mod embedding;
 pub mod error;
 pub mod fuzzy;
 pub mod graph;
