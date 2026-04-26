@@ -49,6 +49,25 @@ jobs:
       - run: cargo test --workspace --no-default-features
       - run: cargo test -p wg-core --features semantic
       - run: cargo test -p wg-cli --bin wg
+      # Verifies the vendored tokenizers patch + model2vec-native build
+      # cleanly. The integration tests in model2vec-native (smoke.rs)
+      # require a real ~500 MB HF model cache, so we just compile and
+      # run the lib-level tests here. Build alone catches API drift.
+      - run: cargo build -p model2vec-native
+      - run: cargo test -p model2vec-native --lib
+
+  dhat-build:
+    name: dhat-heap build sanity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # The release-debug profile + dhat-heap feature are how
+      # `wg bench` reports allocation backtraces. Compile-only check
+      # to make sure that path doesn't bitrot — no need to run a
+      # benchmark in CI.
+      - run: cargo build --profile release-debug -p wg-cli --features wg-core/semantic,dhat-heap
 
   docs:
     name: cargo doc (no warnings)
