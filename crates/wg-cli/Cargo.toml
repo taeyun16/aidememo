@@ -15,9 +15,22 @@ path = "src/main.rs"
 [dependencies]
 wg-core = { path = "../wg-core", features = ["semantic", "semantic-adapt"] }
 
-# Profile-mode measurement for `wg bench`. Both crates are tiny + cross-platform.
+# Profile-mode measurement for `wg bench`.
+# - memory-stats: cross-platform RSS (includes virtual mappings — useful as a
+#   broad upper bound but overstates real memory on mmap-heavy workloads).
+# - cpu-time: process-level CPU user time.
+# - peak_alloc: instruments the GlobalAlloc to track Rust heap-only bytes —
+#   isolates application allocations from mmaped artifacts (model weights,
+#   simsimd shared libs).
 memory-stats = "1.2"
 cpu-time = "1.0"
+peak_alloc = "0.3"
+
+# OS-native physical-memory metrics. macOS reports phys_footprint
+# (compressed + swapped, excludes shared mmap pages); Linux exposes
+# RssAnon via /proc/self/status, which excludes mmap'd files.
+[target.'cfg(target_os = "macos")'.dependencies]
+mach2 = "0.4"
 
 bpaf = { version = "0.9", features = ["derive"] }
 chrono = "0.4"

@@ -23,8 +23,13 @@ use wg_core::{Config, SearchOpts, WgError, WikiGraph};
 
 use cpu_time::ProcessTime;
 use memory_stats::memory_stats;
+use peak_alloc::PeakAlloc;
 
 use crate::cmd::Command;
+use crate::cmd::memprobe;
+// Re-grab the global allocator handle so we can read its peak/current
+// counters. PeakAlloc is a zero-sized type — this is just an alias.
+const ALLOC: PeakAlloc = PeakAlloc;
 
 #[derive(Debug, Clone)]
 pub struct BenchSub {
@@ -102,6 +107,10 @@ struct Summary {
 #[derive(Debug, serde::Serialize)]
 struct ProfileMetrics {
     /// Process resident set size before the benchmark started.
+    /// Note: RSS includes file-backed mmap regions (model weights,
+    /// shared libraries, redb's mmap), so it overstates real
+    /// application memory on mmap-heavy workloads. Cross-reference
+    /// with `heap` and `os_native` for a more accurate picture.
     rss_baseline_mb: f64,
     /// Peak RSS sampled across queries.
     rss_peak_mb: f64,
@@ -109,6 +118,35 @@ struct ProfileMetrics {
     rss_delta_mb: f64,
     /// CPU user time spent inside this process for the whole bench run.
     cpu_user_ms: f64,
+    /// Tier 7-E: Rust heap-only allocations, sampled via the
+    /// `peak_alloc` GlobalAlloc wrapper. Excludes anything mmap'd.
+    /// `None` if the allocator hook isn't installed.
+    heap: Option<HeapMetrics>,
+    /// Tier 7-E: OS-native physical-memory probe. macOS reports
+    /// `phys_footprint` (anonymous + compressed + swapped, excludes
+    /// shared mmap pages — this is what Activity Monitor's "Memory"
+    /// column shows). Linux reports `RssAnon` from /proc/self/status.
+    /// Other OSes: `None`.
+    os_native: Option<OsNativeMetrics>,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct HeapMetrics {
+    /// Heap bytes currently held by Rust at the end of the bench run.
+    current_mb: f64,
+    /// Peak heap bytes seen during the run.
+    peak_mb: f64,
+    /// Delta peak − current at start of the search loop.
+    delta_mb: f64,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct OsNativeMetrics {
+    /// One of `phys_footprint` (macOS) or `rss_anon` (Linux).
+    label: String,
+    baseline_mb: f64,
+    peak_mb: f64,
+    delta_mb: f64,
 }
 
 // ---------------------------------------------------------------------------
@@ -157,6 +195,15 @@ pub fn run_bench(
     let baseline_rss = memory_stats().map(|s| s.physical_mem);
     let cpu_start = ProcessTime::now();
     let mut peak_rss: Option<usize> = baseline_rss;
+
+    // Tier 7-E: capture heap + OS-native memory baselines too. The
+    // heap counter is monotonic-ish (peak only goes up), so reset
+    // its peak before the loop so we get a "during this bench"
+    // figure rather than "since process start".
+    ALLOC.reset_peak_usage();
+    let heap_baseline = ALLOC.current_usage();
+    let os_native_baseline = memprobe::os_native_bytes();
+    let mut os_native_peak = os_native_baseline;
 
     for row in &rows {
         let row_k = row.k.unwrap_or(default_k);
@@ -211,6 +258,10 @@ pub fn run_bench(
         if let Some(s) = memory_stats() {
             peak_rss = Some(peak_rss.map_or(s.physical_mem, |p| p.max(s.physical_mem)));
         }
+        // Same idea for OS-native (phys_footprint / RssAnon).
+        if let Some(b) = memprobe::os_native_bytes() {
+            os_native_peak = Some(os_native_peak.map_or(b, |p| p.max(b)));
+        }
     }
 
     let cpu_user = cpu_start.elapsed();
@@ -230,12 +281,33 @@ pub fn run_bench(
         f64::NAN
     };
 
+    // Tier 7-E: heap final reading. peak_alloc returns bytes as usize.
+    let heap_current = ALLOC.current_usage();
+    let heap_peak = ALLOC.peak_usage();
+    let heap = Some(HeapMetrics {
+        current_mb: heap_current as f64 / 1_048_576.0,
+        peak_mb: heap_peak as f64 / 1_048_576.0,
+        delta_mb: (heap_peak.saturating_sub(heap_baseline)) as f64 / 1_048_576.0,
+    });
+
+    let os_native = match (os_native_baseline, os_native_peak) {
+        (Some(base), Some(peak)) => Some(OsNativeMetrics {
+            label: memprobe::os_native_label().to_string(),
+            baseline_mb: base as f64 / 1_048_576.0,
+            peak_mb: peak as f64 / 1_048_576.0,
+            delta_mb: (peak.saturating_sub(base)) as f64 / 1_048_576.0,
+        }),
+        _ => None,
+    };
+
     let profile = match (baseline_rss, peak_rss) {
         (Some(base), Some(peak)) => Some(ProfileMetrics {
             rss_baseline_mb: base as f64 / 1_048_576.0,
             rss_peak_mb: peak as f64 / 1_048_576.0,
             rss_delta_mb: (peak.saturating_sub(base)) as f64 / 1_048_576.0,
             cpu_user_ms: cpu_user.as_secs_f64() * 1000.0,
+            heap,
+            os_native,
         }),
         _ => None,
     };
@@ -293,9 +365,24 @@ fn format_human(s: &Summary) -> String {
     if let Some(p) = &s.profile {
         out.push_str(&format!("  CPU:      user = {:.1} ms\n", p.cpu_user_ms));
         out.push_str(&format!(
-            "  RSS:      baseline = {:.1} MB,  peak = {:.1} MB,  delta = +{:.1} MB\n",
+            "  RSS:      baseline = {:.1} MB,  peak = {:.1} MB,  delta = +{:.1} MB  (incl. mmap)\n",
             p.rss_baseline_mb, p.rss_peak_mb, p.rss_delta_mb
         ));
+        if let Some(o) = &p.os_native {
+            out.push_str(&format!(
+                "  {:<8}  baseline = {:.1} MB,  peak = {:.1} MB,  delta = +{:.1} MB\n",
+                format!("{}:", o.label),
+                o.baseline_mb,
+                o.peak_mb,
+                o.delta_mb
+            ));
+        }
+        if let Some(h) = &p.heap {
+            out.push_str(&format!(
+                "  Heap:     current = {:.1} MB,  peak = {:.1} MB,  delta = +{:.1} MB  (Rust alloc only)\n",
+                h.current_mb, h.peak_mb, h.delta_mb
+            ));
+        }
     }
     out.push('\n');
 

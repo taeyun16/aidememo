@@ -11,6 +11,13 @@ use wg_core::{
     WikiGraph,
 };
 
+// Hook into the global allocator so `wg bench` can report Rust-heap-only
+// memory use (independent of mmap'd model weights / shared libs that
+// dominate RSS). The wrapper is a thin pass-through; overhead is a single
+// atomic add per allocation in release builds.
+#[global_allocator]
+static PEAK_ALLOC: peak_alloc::PeakAlloc = peak_alloc::PeakAlloc;
+
 fn main() {
     let app = cmd::build_cli();
 

@@ -13,6 +13,7 @@ pub mod init;
 pub mod mcp_serve;
 pub mod mcp_stdio;
 pub mod mcp_tools;
+pub mod memprobe;
 pub mod model;
 pub mod project;
 pub mod recent;
