@@ -10,7 +10,7 @@ version.workspace = true
 
 [features]
 default = []
-semantic = ["model2vec-rs", "ureq"]
+semantic = ["model2vec-rs", "ureq", "simsimd"]
 semantic-adapt = ["semantic"]
 parallel = ["rayon"]
 remote = ["oneio"]
@@ -54,6 +54,12 @@ model2vec-rs = { version = "0.1", optional = true }
 # Pulled in alongside the `semantic` feature so users who opt into semantic
 # search get the choice between offline (Model2Vec) and pluggable HTTP.
 ureq = { version = "2.12", features = ["json"], optional = true }
+
+# Portable SIMD for dot/cosine/L2 with auto-dispatch (AVX2/NEON/AVX-512).
+# Replaces the scalar cosine loop in semantic_search. Same feature gate as
+# the rest of the semantic stack — offline default users get it for free
+# whenever they opt into semantic search.
+simsimd = { version = "6", optional = true }
 
 # 병렬 처리 (선택)
 rayon = { version = "1.8", optional = true }

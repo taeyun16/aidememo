@@ -264,9 +264,24 @@ mod semantic {
             return Ok(Vec::new());
         }
 
+        // Tier 6-B: batch-fetch every entity referenced by any fact in this
+        // search ONCE, into a HashMap. Without this we'd hit redb N×M times
+        // (N facts × M entity_ids per fact). With it: one read per unique
+        // entity, then constant-time lookup in fact_semantic_text.
+        let mut unique_eids: std::collections::HashSet<EntityId> = std::collections::HashSet::new();
+        for f in &facts {
+            for eid in &f.entity_ids {
+                unique_eids.insert(*eid);
+            }
+        }
+        let entity_names: std::collections::HashMap<EntityId, String> = unique_eids
+            .into_iter()
+            .filter_map(|eid| store.entity_get_by_id(eid).ok().map(|e| (eid, e.name)))
+            .collect();
+
         let texts: Vec<String> = facts
             .iter()
-            .map(|fact| fact_semantic_text(store, fact))
+            .map(|fact| fact_semantic_text_cached(fact, &entity_names))
             .collect();
         let embeddings = provider.embed_batch(&texts)?;
 
@@ -313,21 +328,27 @@ mod semantic {
     // construct a `Model2VecProvider` via `embedding::load_provider()` and
     // downcast — but right now nothing else in the crate needs raw access.
 
-    fn fact_semantic_text(store: &Store, fact: &FactRecord) -> String {
+    /// Cached variant — used by `semantic_search` after one bulk
+    /// entity fetch. The earlier `fact_semantic_text(store, fact)` would
+    /// hit redb once per (fact, entity) pair, which dominated wall time
+    /// on larger wikis. This version is pure HashMap lookups.
+    fn fact_semantic_text_cached(
+        fact: &FactRecord,
+        entity_names: &std::collections::HashMap<EntityId, String>,
+    ) -> String {
         let mut parts = vec![fact.content.clone()];
 
         if !fact.tags.is_empty() {
             parts.push(fact.tags.join(" "));
         }
 
-        let entity_names: Vec<String> = fact
+        let names: Vec<&str> = fact
             .entity_ids
             .iter()
-            .filter_map(|eid| store.entity_get_by_id(*eid).ok())
-            .map(|entity| entity.name)
+            .filter_map(|eid| entity_names.get(eid).map(|s| s.as_str()))
             .collect();
-        if !entity_names.is_empty() {
-            parts.push(entity_names.join(" "));
+        if !names.is_empty() {
+            parts.push(names.join(" "));
         }
 
         if let Some(source) = &fact.source {
@@ -337,22 +358,21 @@ mod semantic {
         parts.join("\n")
     }
 
+    /// Cosine similarity via simsimd — auto-dispatches to AVX2 / AVX-512 /
+    /// NEON depending on CPU. Falls back to a portable scalar loop if
+    /// simsimd returns `None` (e.g. mismatched lengths or empty input).
+    ///
+    /// simsimd reports cosine **distance**, not similarity, so we invert.
+    /// Range: 0 (orthogonal) → 1 (identical).
     fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
-        let mut dot = 0.0f32;
-        let mut norm_a = 0.0f32;
-        let mut norm_b = 0.0f32;
-
-        for (x, y) in a.iter().zip(b.iter()) {
-            dot += x * y;
-            norm_a += x * x;
-            norm_b += y * y;
-        }
-
-        if norm_a == 0.0 || norm_b == 0.0 {
+        use simsimd::SpatialSimilarity;
+        if a.is_empty() || b.is_empty() || a.len() != b.len() {
             return 0.0;
         }
-
-        dot / (norm_a.sqrt() * norm_b.sqrt())
+        match f32::cosine(a, b) {
+            Some(distance) => (1.0 - distance) as f32,
+            None => 0.0,
+        }
     }
 
     fn effective_weight(opts_weight: f32, config_weight: f32) -> f32 {

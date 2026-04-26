@@ -21,6 +21,9 @@ use std::path::PathBuf;
 use std::time::Instant;
 use wg_core::{Config, SearchOpts, WgError, WikiGraph};
 
+use cpu_time::ProcessTime;
+use memory_stats::memory_stats;
+
 use crate::cmd::Command;
 
 #[derive(Debug, Clone)]
@@ -89,7 +92,23 @@ struct Summary {
     mean_r_at_k: f64,
     p50_latency_ms: f64,
     p95_latency_ms: f64,
+    /// Tier 6-A: process-level resource use across the benchmark run.
+    /// `None` when measurement isn't available (memory_stats can fail in
+    /// containers / sandboxes where /proc isn't readable).
+    profile: Option<ProfileMetrics>,
     per_query: Vec<PerQuery>,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct ProfileMetrics {
+    /// Process resident set size before the benchmark started.
+    rss_baseline_mb: f64,
+    /// Peak RSS sampled across queries.
+    rss_peak_mb: f64,
+    /// Delta peak − baseline.
+    rss_delta_mb: f64,
+    /// CPU user time spent inside this process for the whole bench run.
+    cpu_user_ms: f64,
 }
 
 // ---------------------------------------------------------------------------
@@ -132,6 +151,12 @@ pub fn run_bench(
     let mut p_sum = 0f64;
     let mut r_sum = 0f64;
     let mut counted = 0usize;
+
+    // Tier 6-A: snapshot baseline RSS + start CPU-time clock so we can
+    // attribute resource cost to this whole bench run.
+    let baseline_rss = memory_stats().map(|s| s.physical_mem);
+    let cpu_start = ProcessTime::now();
+    let mut peak_rss: Option<usize> = baseline_rss;
 
     for row in &rows {
         let row_k = row.k.unwrap_or(default_k);
@@ -179,7 +204,16 @@ pub fn run_bench(
             r_at_k: r,
             latency_ms: elapsed.as_secs_f64() * 1000.0,
         });
+
+        // Sample RSS after each query. memory_stats is a syscall; doing it
+        // per-query (vs. inside a thread) keeps the code dead simple at the
+        // cost of slightly understating true peak between samples.
+        if let Some(s) = memory_stats() {
+            peak_rss = Some(peak_rss.map_or(s.physical_mem, |p| p.max(s.physical_mem)));
+        }
     }
+
+    let cpu_user = cpu_start.elapsed();
 
     latencies_us.sort_unstable();
     let p50 = percentile(&latencies_us, 50);
@@ -196,6 +230,16 @@ pub fn run_bench(
         f64::NAN
     };
 
+    let profile = match (baseline_rss, peak_rss) {
+        (Some(base), Some(peak)) => Some(ProfileMetrics {
+            rss_baseline_mb: base as f64 / 1_048_576.0,
+            rss_peak_mb: peak as f64 / 1_048_576.0,
+            rss_delta_mb: (peak.saturating_sub(base)) as f64 / 1_048_576.0,
+            cpu_user_ms: cpu_user.as_secs_f64() * 1000.0,
+        }),
+        _ => None,
+    };
+
     let summary = Summary {
         total_queries: rows.len(),
         queries_with_expected: counted,
@@ -204,6 +248,7 @@ pub fn run_bench(
         mean_r_at_k: mean_r,
         p50_latency_ms: p50,
         p95_latency_ms: p95,
+        profile,
         per_query,
     };
 
@@ -241,9 +286,18 @@ fn format_human(s: &Summary) -> String {
         ));
     }
     out.push_str(&format!(
-        "  Latency:  p50 = {:.2} ms,  p95 = {:.2} ms\n\n",
+        "  Latency:  p50 = {:.2} ms,  p95 = {:.2} ms\n",
         s.p50_latency_ms, s.p95_latency_ms
     ));
+
+    if let Some(p) = &s.profile {
+        out.push_str(&format!("  CPU:      user = {:.1} ms\n", p.cpu_user_ms));
+        out.push_str(&format!(
+            "  RSS:      baseline = {:.1} MB,  peak = {:.1} MB,  delta = +{:.1} MB\n",
+            p.rss_baseline_mb, p.rss_peak_mb, p.rss_delta_mb
+        ));
+    }
+    out.push('\n');
 
     out.push_str("Per-query:\n");
     for q in &s.per_query {
