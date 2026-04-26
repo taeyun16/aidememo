@@ -86,7 +86,7 @@ impl std::fmt::Display for FactId {
 /// `service`, `rfc`, `paper`, `incident` — without recompiling. Strings are
 /// normalized to lowercase. All variants serialize as flat lowercase strings
 /// (built-in or custom), so JSON round-trips are uniform.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum EntityType {
     /// Technology (tools, infrastructure, software)
     Technology,
@@ -101,15 +101,10 @@ pub enum EntityType {
     /// Team
     Team,
     /// Unknown/unclassified
+    #[default]
     Unknown,
     /// Custom user-defined type — e.g. `service`, `rfc`. Always lowercase.
     Custom(String),
-}
-
-impl Default for EntityType {
-    fn default() -> Self {
-        Self::Unknown
-    }
 }
 
 impl EntityType {
@@ -356,6 +351,7 @@ pub struct RelationInput {
 /// Fact type classification.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum FactType {
     Decision,
     Pattern,
@@ -363,13 +359,8 @@ pub enum FactType {
     Claim,
     Note,
     Question,
+    #[default]
     Unknown,
-}
-
-impl Default for FactType {
-    fn default() -> Self {
-        Self::Unknown
-    }
 }
 
 impl std::fmt::Display for FactType {
@@ -662,18 +653,13 @@ pub struct FactListOpts {
 /// - `Global`: broad scan — search + entity + traverse(deeper) + every fact
 ///   on the resolved entity (no recency cap). Use for "what does the wiki
 ///   know about X overall?".
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum QueryMode {
     Naive,
     Local,
+    #[default]
     Hybrid,
     Global,
-}
-
-impl Default for QueryMode {
-    fn default() -> Self {
-        QueryMode::Hybrid
-    }
 }
 
 impl QueryMode {

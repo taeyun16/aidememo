@@ -1,7 +1,7 @@
 //! `wg feedback` — record feedback for a search result.
 
 use bpaf::*;
-use std::path::PathBuf;
+use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::cmd::Command;
@@ -36,7 +36,7 @@ pub fn feedback_command() -> impl Parser<Command> {
 }
 
 pub fn run_feedback(
-    store_path: &PathBuf,
+    store_path: &Path,
     config: Config,
     sub: FeedbackSub,
 ) -> Result<String, WgError> {

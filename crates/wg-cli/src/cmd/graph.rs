@@ -5,7 +5,7 @@
 
 use bpaf::*;
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::Path;
 use wg_core::{Config, ListOpts, TraverseDirection, TraverseOpts, WgError, WikiGraph};
 
 use crate::cmd::Command;
@@ -57,7 +57,7 @@ enum Format {
     Dot,
 }
 
-pub fn run_graph(store_path: &PathBuf, config: Config, sub: GraphSub) -> Result<String, WgError> {
+pub fn run_graph(store_path: &Path, config: Config, sub: GraphSub) -> Result<String, WgError> {
     let format = match sub.format.as_deref() {
         Some("dot") | Some("DOT") | Some("graphviz") => Format::Dot,
         _ => Format::Mermaid,
@@ -160,7 +160,7 @@ fn safe_id(name: &str) -> String {
             out.push('_');
         }
     }
-    if out.chars().next().map_or(true, |c| c.is_ascii_digit()) {
+    if out.chars().next().is_none_or(|c| c.is_ascii_digit()) {
         out.insert(0, 'n');
     }
     out

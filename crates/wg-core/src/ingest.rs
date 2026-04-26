@@ -97,9 +97,7 @@ pub fn ingest_wiki(
         .follow_links(true)
         .into_iter()
         .filter_map(|e| e.ok())
-        .filter(|e| {
-            e.file_type().is_file() && e.path().extension().map_or(false, |ext| ext == "md")
-        })
+        .filter(|e| e.file_type().is_file() && e.path().extension().is_some_and(|ext| ext == "md"))
         .map(|e| e.path().to_path_buf())
         .collect();
 
@@ -440,10 +438,10 @@ fn extract_wikilinks(text: &str) -> Vec<Wikilink> {
 
         // Find all [[ ... ]] spans
         let mut start = 0;
-        while let Some(open) = memchr(b'[', line[start..].as_bytes()) {
+        while let Some(open) = memchr(b'[', &line.as_bytes()[start..]) {
             let abs = start + open;
             if line[abs..].starts_with("[[") {
-                if let Some(close) = memchr(b']', line[abs + 2..].as_bytes()) {
+                if let Some(close) = memchr(b']', &line.as_bytes()[abs + 2..]) {
                     let abs_close = abs + 2 + close;
                     let inner = &line[abs + 2..abs_close];
 

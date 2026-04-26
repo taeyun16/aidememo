@@ -9,7 +9,7 @@
 //! Exactly one operation must be selected.
 
 use bpaf::*;
-use std::path::PathBuf;
+use std::path::Path;
 use wg_core::{Config, FactId, FactUpdate, WgError, WikiGraph};
 
 use crate::cmd::Command;
@@ -69,7 +69,7 @@ pub fn edit_command() -> impl Parser<Command> {
 }
 
 pub fn run_edit(
-    store_path: &PathBuf,
+    store_path: &Path,
     config: Config,
     sub: EditSub,
     global_json: bool,

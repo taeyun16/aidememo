@@ -323,14 +323,14 @@ impl WikiGraph {
     /// Traverse the graph from a starting entity.
     pub fn traverse(&self, start: &str, opts: TraverseOpts) -> Result<TraverseResult> {
         let store = self.store.read();
-        let graph = Graph::new(&*store);
+        let graph = Graph::new(&store);
         graph.traverse(start, opts)
     }
 
     /// Find a path between two entities.
     pub fn path_find(&self, from: &str, to: &str) -> Result<Option<Vec<PathStep>>> {
         let store = self.store.read();
-        let graph = Graph::new(&*store);
+        let graph = Graph::new(&store);
         graph.path_find(from, to)
     }
 
@@ -352,7 +352,7 @@ impl WikiGraph {
     pub fn search(&self, query: &str, opts: SearchOpts) -> Result<Vec<SearchResult>> {
         use search::SearchEngine;
         let store = self.store.read();
-        let engine = SearchEngine::new(&*store, &self.config);
+        let engine = SearchEngine::new(&store, &self.config);
         engine.search(query, opts)
     }
 
@@ -362,7 +362,7 @@ impl WikiGraph {
         let provider = self.embed_provider()?;
         let store = self.store.read();
         search::hybrid_search_with_ctx(
-            &*store,
+            &store,
             query,
             opts,
             provider.as_ref(),
@@ -382,7 +382,7 @@ impl WikiGraph {
     ) -> Result<Vec<SearchResult>> {
         use search::SearchEngine;
         let store = self.store.read();
-        let engine = SearchEngine::new(&*store, &self.config);
+        let engine = SearchEngine::new(&store, &self.config);
         engine.search_with_traverse(query, start, depth, opts)
     }
 
@@ -485,7 +485,7 @@ impl WikiGraph {
     pub fn lint(&self) -> Result<Vec<LintIssue>> {
         use crate::lint::LintEngine;
         let store = self.store.read();
-        let engine = LintEngine::new(&*store);
+        let engine = LintEngine::new(&store);
         Ok(engine.lint()?.issues)
     }
 
@@ -522,7 +522,7 @@ impl WikiGraph {
     ) -> Result<ExportStats> {
         use crate::migrate::Exporter;
         let store = self.store.read();
-        let exporter = Exporter::new(&*store);
+        let exporter = Exporter::new(&store);
         exporter.export_jsonl(writer, scope)
     }
 
@@ -530,7 +530,7 @@ impl WikiGraph {
     pub fn import_jsonl(&mut self, reader: &mut dyn std::io::Read) -> Result<ImportStats> {
         use crate::migrate::Importer;
         let mut store = self.store.write();
-        let mut importer = Importer::new(&mut *store);
+        let mut importer = Importer::new(&mut store);
         importer.import_jsonl(reader)
     }
 

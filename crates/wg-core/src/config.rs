@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 /// WikiGraph configuration.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct Config {
     pub store: StoreConfig,
     pub model: ModelConfig,
@@ -21,19 +21,6 @@ pub struct Config {
     /// If unset (or the project is missing), falls back to `store.path`.
     #[serde(default)]
     pub default_project: Option<String>,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            store: StoreConfig::default(),
-            model: ModelConfig::default(),
-            search: SearchConfig::default(),
-            lint: LintConfig::default(),
-            projects: BTreeMap::new(),
-            default_project: None,
-        }
-    }
 }
 
 /// One registered project (name → store path).

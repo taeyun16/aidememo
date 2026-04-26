@@ -326,8 +326,8 @@ pub fn format_lint_report(report: &LintReport, format: Format) -> Result<String>
         }),
         Format::Table => {
             let mut output = String::new();
-            output.push_str(&format!("Graph Health Report\n"));
-            output.push_str(&format!("====================\n\n"));
+            output.push_str("Graph Health Report\n");
+            output.push_str("====================\n\n");
             output.push_str(&format!("Entities: {}\n", report.entity_count));
             output.push_str(&format!("Facts: {}\n", report.fact_count));
             output.push_str(&format!("Relations: {}\n\n", report.relation_count));

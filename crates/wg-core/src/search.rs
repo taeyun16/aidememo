@@ -251,7 +251,6 @@ mod semantic {
     use parking_lot::{Mutex, RwLock};
     use std::cmp::Ordering;
     use std::collections::{HashMap, HashSet};
-    use std::path::PathBuf;
 
     /// Cosine similarity between two i8 vectors via simsimd. Returns 0.0
     /// on size mismatch or empty input. Range mirrors the f32 path:
@@ -651,24 +650,6 @@ mod semantic {
         }
     }
 
-    fn expand_tilde(path: &str) -> PathBuf {
-        if path == "~" {
-            return home_dir().unwrap_or_else(|| PathBuf::from(path));
-        }
-
-        if let Some(rest) = path.strip_prefix("~/") {
-            if let Some(home) = home_dir() {
-                return home.join(rest);
-            }
-        }
-
-        PathBuf::from(path)
-    }
-
-    fn home_dir() -> Option<PathBuf> {
-        std::env::var_os("HOME").map(PathBuf::from)
-    }
-
     fn rrf_fusion(
         store: &Store,
         bm25_results: &[SearchResult],
@@ -746,7 +727,6 @@ mod semantic {
     }
 }
 
-#[cfg(feature = "semantic")]
 // `embed_text` was an explicit fn re-export; embedding is now done
 // through `crate::embedding::EmbeddingProvider::embed`. External callers
 // that need a one-shot embed should call:

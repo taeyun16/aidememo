@@ -111,7 +111,7 @@ pub fn run_watch(
                 let is_md = event
                     .paths
                     .iter()
-                    .any(|p| p.extension().map_or(false, |e| e == "md"));
+                    .any(|p| p.extension().is_some_and(|e| e == "md"));
                 if !is_md {
                     continue;
                 }

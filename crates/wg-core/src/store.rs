@@ -727,7 +727,7 @@ impl Store {
                     source: Box::new(e),
                 })?;
 
-        let prefix = format!("{}\0", entity_id.to_string());
+        let prefix = format!("{}\0", entity_id);
         let count = fact_by_entity
             .iter()
             .map_err(|e| WgError::StoreRead {
@@ -986,12 +986,12 @@ impl Store {
                     })?;
 
             for entity_id in &record.entity_ids {
-                let key = format!("{}\0{}", entity_id.to_string(), id.to_string());
+                let key = format!("{}\0{}", entity_id, id);
                 fact_by_entity
                     .insert(&key as &str, id.as_bytes().as_slice())
                     .map_err(|e| WgError::StoreWrite {
                         table: "fact_by_entity",
-                        key: key,
+                        key,
                         source: Box::new(e),
                     })?;
             }
@@ -1183,12 +1183,12 @@ impl Store {
                     })?;
 
             for entity_id in &record.entity_ids {
-                let key = format!("{}\0{}", entity_id.to_string(), id.to_string());
+                let key = format!("{}\0{}", entity_id, id);
                 fact_by_entity
                     .remove(&key as &str)
                     .map_err(|e| WgError::StoreWrite {
                         table: "fact_by_entity",
-                        key: key,
+                        key,
                         source: Box::new(e),
                     })?;
             }
@@ -1348,9 +1348,9 @@ impl Store {
             })?;
         drop(table);
 
-        write_txn.commit().map_err(|e| WgError::Internal {
-            0: format!("transaction commit failed: {}", e),
-        })?;
+        write_txn
+            .commit()
+            .map_err(|e| WgError::Internal(format!("transaction commit failed: {}", e)))?;
 
         Ok(())
     }
@@ -1390,9 +1390,9 @@ impl Store {
             })?;
         drop(table);
 
-        write_txn.commit().map_err(|e| WgError::Internal {
-            0: format!("transaction commit failed: {}", e),
-        })?;
+        write_txn
+            .commit()
+            .map_err(|e| WgError::Internal(format!("transaction commit failed: {}", e)))?;
 
         Ok(())
     }
@@ -1431,13 +1431,7 @@ impl Store {
         rel_type: &RelationType,
         target_id: &EntityId,
     ) -> Vec<u8> {
-        format!(
-            "{}\0{}\0{}",
-            source_id.to_string(),
-            rel_type.0,
-            target_id.to_string()
-        )
-        .into_bytes()
+        format!("{}\0{}\0{}", source_id, rel_type.0, target_id).into_bytes()
     }
 
     /// Add a new relation.
@@ -1614,7 +1608,7 @@ impl Store {
                             source: Box::new(e),
                         })?;
 
-                let prefix = format!("{}\0", entity_id.to_string());
+                let prefix = format!("{}\0", entity_id);
 
                 for entry in relations.iter().map_err(|e| WgError::StoreRead {
                     table: "relations",
@@ -1648,7 +1642,7 @@ impl Store {
                             source: Box::new(e),
                         })?;
 
-                let prefix = format!("{}\0", entity_id.to_string());
+                let prefix = format!("{}\0", entity_id);
 
                 for entry in relations_rev.iter().map_err(|e| WgError::StoreRead {
                     table: "relations_rev",
@@ -2110,9 +2104,9 @@ impl Store {
         })?;
         drop(meta);
 
-        write_txn.commit().map_err(|e| WgError::Internal {
-            0: format!("meta set commit failed: {}", e),
-        })?;
+        write_txn
+            .commit()
+            .map_err(|e| WgError::Internal(format!("meta set commit failed: {}", e)))?;
 
         Ok(())
     }

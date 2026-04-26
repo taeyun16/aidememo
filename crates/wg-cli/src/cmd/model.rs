@@ -170,11 +170,11 @@ fn model_download(config: &Config, name: &str) -> Result<String, WgError> {
                         bin
                     );
                     if !stdout.is_empty() {
-                        out.push_str("\n");
+                        out.push('\n');
                         out.push_str(&stdout);
                     }
                     if !stderr.is_empty() {
-                        out.push_str("\n");
+                        out.push('\n');
                         out.push_str(&stderr);
                     }
                     return Ok(out);
@@ -183,10 +183,10 @@ fn model_download(config: &Config, name: &str) -> Result<String, WgError> {
                 let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
                 let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
                 let message = if stderr.is_empty() { stdout } else { stderr };
-                let err = io::Error::new(
-                    io::ErrorKind::Other,
-                    format!("{} exited with status {}: {}", bin, output.status, message),
-                );
+                let err = io::Error::other(format!(
+                    "{} exited with status {}: {}",
+                    bin, output.status, message
+                ));
                 return Err(WgError::ModelDownloadFailed {
                     name: name.to_string(),
                     source: Box::new(err),
@@ -276,7 +276,7 @@ fn discover_model_dirs(root: &Path) -> Result<Vec<ModelDirEntry>, WgError> {
         }
     }
 
-    entries.sort_by(|a, b| a.display_name().cmp(&b.display_name()));
+    entries.sort_by_key(|a| a.display_name());
     Ok(entries)
 }
 

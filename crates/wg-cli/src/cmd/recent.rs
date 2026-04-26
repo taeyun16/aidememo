@@ -3,7 +3,7 @@
 //! Sugar on top of `wg fact list --last <duration>` with friendlier defaults.
 
 use bpaf::*;
-use std::path::PathBuf;
+use std::path::Path;
 use wg_core::{Config, FactListOpts, WgError, WikiGraph};
 
 use crate::cmd::Command;
@@ -47,7 +47,7 @@ pub fn recent_command() -> impl Parser<Command> {
 }
 
 pub fn run_recent(
-    store_path: &PathBuf,
+    store_path: &Path,
     config: Config,
     sub: RecentSub,
     global_json: bool,

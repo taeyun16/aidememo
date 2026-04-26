@@ -122,9 +122,8 @@ pub trait EntityFuzzyExt {
 impl EntityFuzzyExt for Store {
     fn entity_get_fuzzy(&self, name: &str) -> crate::error::Result<EntityRecord> {
         // Try exact match first
-        match self.entity_get(name) {
-            Ok(entity) => return Ok(entity),
-            Err(_) => {}
+        if let Ok(entity) = self.entity_get(name) {
+            return Ok(entity);
         }
 
         // Try fuzzy match

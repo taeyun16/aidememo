@@ -227,7 +227,7 @@ fn validate_allowed_tool(spec: &str, mcp_tools: &[String]) -> Option<Issue> {
         "TaskCreate",
         "TaskUpdate",
     ];
-    if known_builtins.iter().any(|t| *t == s) {
+    if known_builtins.contains(&s) {
         return None;
     }
     Some(Issue {

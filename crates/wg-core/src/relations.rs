@@ -179,7 +179,7 @@ fn match_pattern<'p>(gap_words: &[&str], patterns: &'p [(&'p str, &'p str)]) -> 
             }
             if &gap_words[start..start + phrase_words.len()] == phrase_words.as_slice() {
                 let plen = phrase_words.len();
-                if best.map_or(true, |(b, _)| plen > b) {
+                if best.is_none_or(|(b, _)| plen > b) {
                     best = Some((plen, *relation));
                 }
                 break;

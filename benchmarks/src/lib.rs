@@ -178,8 +178,7 @@ pub fn ingest_small(c: &mut Criterion) {
             },
             |(wiki_dir, store_dir)| {
                 let store_path = store_dir.path().join("wg.redb");
-                let mut graph =
-                    WikiGraph::open(&store_path, Config::default()).expect("open graph");
+                let graph = WikiGraph::open(&store_path, Config::default()).expect("open graph");
                 let stats = graph
                     .ingest(wiki_dir.path(), false)
                     .expect("ingest small wiki");

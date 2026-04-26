@@ -17,7 +17,7 @@
 
 use bpaf::*;
 use serde::Deserialize;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 use wg_core::{Config, SearchOpts, WgError, WikiGraph};
 
@@ -154,7 +154,7 @@ struct OsNativeMetrics {
 // ---------------------------------------------------------------------------
 
 pub fn run_bench(
-    store_path: &PathBuf,
+    store_path: &Path,
     config: Config,
     sub: BenchSub,
     global_json: bool,

@@ -3,7 +3,7 @@
 mod cmd;
 mod output;
 
-use std::path::PathBuf;
+use std::path::Path;
 use std::process::exit;
 use wg_core::{
     Config, EntityInput, EntitySort, EntityType, ExportScope, FactInput, FactListOpts, FactType,
@@ -108,7 +108,7 @@ fn main() {
     }
 }
 
-fn with_wiki<F>(path: &PathBuf, config: Config, f: F) -> Result<String, WgError>
+fn with_wiki<F>(path: &Path, config: Config, f: F) -> Result<String, WgError>
 where
     F: FnOnce(WikiGraph) -> Result<String, WgError>,
 {
@@ -116,7 +116,7 @@ where
     f(wiki)
 }
 
-fn with_wiki_mut<F>(path: &PathBuf, config: Config, f: F) -> Result<String, WgError>
+fn with_wiki_mut<F>(path: &Path, config: Config, f: F) -> Result<String, WgError>
 where
     F: FnOnce(&mut WikiGraph) -> Result<String, WgError>,
 {
@@ -133,7 +133,7 @@ fn fmt(json: bool) -> output::Format {
 }
 
 fn handle_entity(
-    path: &PathBuf,
+    path: &Path,
     config: Config,
     sub: cmd::EntitySub,
     json: bool,
@@ -238,7 +238,7 @@ fn handle_entity(
 }
 
 fn handle_fact(
-    path: &PathBuf,
+    path: &Path,
     config: Config,
     sub: cmd::FactSub,
     json: bool,
@@ -336,7 +336,7 @@ fn handle_fact(
             let since_ms = resolve_since(since.as_deref(), last.as_deref())?;
             let until_ms = resolve_until(until.as_deref())?;
             with_wiki(path, config, |wiki| {
-                let entity_id = entity.map(|n| wiki.resolve_entity(&n).ok()).flatten();
+                let entity_id = entity.and_then(|n| wiki.resolve_entity(&n).ok());
                 let facts = wiki.fact_list(FactListOpts {
                     fact_type: parse_fact_type(fact_type),
                     entity_id,
@@ -387,7 +387,7 @@ fn handle_fact(
 }
 
 fn handle_traverse(
-    path: &PathBuf,
+    path: &Path,
     config: Config,
     sub: cmd::TraverseSub,
     json: bool,
@@ -406,7 +406,7 @@ fn handle_traverse(
 }
 
 fn handle_path(
-    path: &PathBuf,
+    path: &Path,
     config: Config,
     sub: cmd::PathSub,
     json: bool,
@@ -453,7 +453,7 @@ fn handle_path(
 }
 
 fn handle_search(
-    path: &PathBuf,
+    path: &Path,
     config: Config,
     sub: cmd::SearchSub,
     json: bool,
@@ -514,7 +514,7 @@ fn handle_search(
         } else {
             output::Format::Table
         };
-        output::format_search_results(&results, &wiki, format)
+        output::format_search_results(&results, wiki, format)
     })
 }
 
@@ -539,7 +539,7 @@ fn run_search_all_projects(
     let limit = sub.limit.or(Some(default_limit));
     let mut all: Vec<(String, wg_core::SearchResult)> = Vec::new();
 
-    for (proj_name, _proj_cfg) in &config.projects {
+    for proj_name in config.projects.keys() {
         let store_path = match config.project_path(proj_name) {
             Some(p) => p,
             None => continue,
@@ -624,7 +624,7 @@ fn run_search_all_projects(
 }
 
 fn handle_query(
-    path: &PathBuf,
+    path: &Path,
     config: Config,
     sub: cmd::QuerySub,
     json: bool,
@@ -656,7 +656,7 @@ fn handle_query(
 }
 
 fn handle_lint(
-    path: &PathBuf,
+    path: &Path,
     config: Config,
     sub: cmd::LintSub,
     json: bool,
@@ -679,7 +679,7 @@ fn handle_lint(
     })
 }
 
-fn handle_export(path: &PathBuf, config: Config, sub: cmd::ExportSub) -> Result<String, WgError> {
+fn handle_export(path: &Path, config: Config, sub: cmd::ExportSub) -> Result<String, WgError> {
     with_wiki(path, config, |wiki| {
         let scope = match sub.scope.as_deref() {
             Some("entities") => ExportScope::Entities,
@@ -712,10 +712,10 @@ fn handle_export(path: &PathBuf, config: Config, sub: cmd::ExportSub) -> Result<
     })
 }
 
-fn handle_import(path: &PathBuf, config: Config, sub: cmd::ImportSub) -> Result<String, WgError> {
+fn handle_import(path: &Path, config: Config, sub: cmd::ImportSub) -> Result<String, WgError> {
     with_wiki_mut(path, config, |wiki| {
-        let content = if sub.path.is_some() {
-            std::fs::read_to_string(sub.path.as_ref().unwrap())
+        let content = if let Some(p) = sub.path.as_ref() {
+            std::fs::read_to_string(p)
                 .map_err(|e| WgError::Internal(format!("Failed to read file: {}", e)))?
         } else {
             // Read from stdin
@@ -737,7 +737,7 @@ fn handle_import(path: &PathBuf, config: Config, sub: cmd::ImportSub) -> Result<
 }
 
 fn handle_stats(
-    path: &PathBuf,
+    path: &Path,
     config: Config,
     _sub: cmd::StatsSub,
     json: bool,
@@ -748,7 +748,7 @@ fn handle_stats(
     })
 }
 
-fn handle_ingest(path: &PathBuf, config: Config, sub: cmd::IngestSub) -> Result<String, WgError> {
+fn handle_ingest(path: &Path, config: Config, sub: cmd::IngestSub) -> Result<String, WgError> {
     let wiki = WikiGraph::open(path, config)?;
     let stats = wiki.ingest(&sub.wiki_root, sub.incremental)?;
 
@@ -771,7 +771,7 @@ fn handle_ingest(path: &PathBuf, config: Config, sub: cmd::IngestSub) -> Result<
     Ok(lines.join("\n"))
 }
 
-fn handle_sync(path: &PathBuf, config: Config, sub: cmd::SyncSub) -> Result<String, WgError> {
+fn handle_sync(path: &Path, config: Config, sub: cmd::SyncSub) -> Result<String, WgError> {
     // sync is an alias for ingest --incremental
     handle_ingest(
         path,

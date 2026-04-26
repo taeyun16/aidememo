@@ -1,7 +1,7 @@
 //! `wg adapt` — train, inspect, and evaluate the search adapter.
 
 use bpaf::*;
-use std::path::PathBuf;
+use std::path::Path;
 
 use crate::cmd::Command;
 use wg_core::{AdaptEvalReport, AdaptResult, AdaptStatus, Config, WgError, WikiGraph};
@@ -36,7 +36,7 @@ pub fn adapt_command() -> impl Parser<Command> {
         .help("Search adapter commands")
 }
 
-pub fn run_adapt(store_path: &PathBuf, config: Config, sub: AdaptSub) -> Result<String, WgError> {
+pub fn run_adapt(store_path: &Path, config: Config, sub: AdaptSub) -> Result<String, WgError> {
     let wiki = WikiGraph::open(store_path, config)?;
 
     match sub {

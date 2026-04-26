@@ -5,7 +5,7 @@
 //! healthy right now" — fast, opinionated, actionable.
 
 use bpaf::*;
-use std::path::PathBuf;
+use std::path::Path;
 use wg_core::{Config, WgError, WikiGraph};
 
 use crate::cmd::Command;
@@ -25,7 +25,7 @@ pub fn doctor_command() -> impl Parser<Command> {
 }
 
 pub fn run_doctor(
-    store_path: &PathBuf,
+    store_path: &Path,
     config: Config,
     sub: DoctorSub,
     global_json: bool,
