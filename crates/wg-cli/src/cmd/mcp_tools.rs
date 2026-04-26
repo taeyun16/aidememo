@@ -236,6 +236,63 @@ fn tool_lint(wiki: &WikiGraph) -> Result<ToolCallResult, String> {
     })
 }
 
+fn tool_doctor(wiki: &WikiGraph) -> Result<ToolCallResult, String> {
+    let issues = wiki.lint().map_err(|e| e.to_string())?;
+    let stats = wiki.stats().map_err(|e| e.to_string())?;
+    let payload = json!({
+        "ok": issues.is_empty(),
+        "stats": stats,
+        "issue_count": issues.len(),
+        "issues": issues,
+    });
+    let text = serde_json::to_string_pretty(&payload).map_err(|e| e.to_string())?;
+    Ok(ToolCallResult {
+        content: vec![ContentBlock::text(text)],
+        is_error: None,
+    })
+}
+
+fn tool_recent(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String> {
+    let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
+    let last_days = args.get("last_days").and_then(|v| v.as_u64()).unwrap_or(7);
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    let since = Some(now_ms.saturating_sub(last_days * 24 * 60 * 60 * 1000));
+
+    let opts = wg_core::FactListOpts {
+        fact_type: None,
+        entity_id: None,
+        min_confidence: None,
+        limit: Some(limit),
+        offset: 0,
+        since,
+        until: None,
+    };
+    let facts = wiki.fact_list(opts).map_err(|e| e.to_string())?;
+    let text = serde_json::to_string_pretty(&facts).map_err(|e| e.to_string())?;
+    Ok(ToolCallResult {
+        content: vec![ContentBlock::text(text)],
+        is_error: None,
+    })
+}
+
+fn tool_backlinks(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String> {
+    let entity = args
+        .get("entity")
+        .and_then(|v| v.as_str())
+        .ok_or("entity required")?;
+    let relations = wiki
+        .relations_get(entity, wg_core::TraverseDirection::Reverse)
+        .map_err(|e| e.to_string())?;
+    let text = serde_json::to_string_pretty(&relations).map_err(|e| e.to_string())?;
+    Ok(ToolCallResult {
+        content: vec![ContentBlock::text(text)],
+        is_error: None,
+    })
+}
+
 fn tool_query(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String> {
     let topic = args
         .get("topic")
@@ -359,6 +416,36 @@ pub fn list_tools() -> Vec<Tool> {
             input_schema: json!({"type": "object", "properties": {}}),
         },
         Tool {
+            name: "wg_doctor".into(),
+            description: "Wiki health check: counts plus any lint issues (orphans, broken refs, stale facts). Call this first if results look wrong."
+                .into(),
+            input_schema: json!({"type": "object", "properties": {}}),
+        },
+        Tool {
+            name: "wg_recent".into(),
+            description: "Recently added/updated facts. Defaults to the last 7 days, 20 facts."
+                .into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "number", "default": 20},
+                    "last_days": {"type": "number", "default": 7}
+                }
+            }),
+        },
+        Tool {
+            name: "wg_backlinks".into(),
+            description: "Reverse relations — entities that point AT this entity. Useful for 'what depends on X?'."
+                .into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "entity": {"type": "string"}
+                },
+                "required": ["entity"]
+            }),
+        },
+        Tool {
             name: "wg_query".into(),
             description: "Unified context fetch for a topic. One call returns: hybrid search hits, the resolved entity (if any), related entities (graph traversal), and recent facts on that entity. Prefer this over chaining wg_search + wg_traverse + wg_entity_list when you want context."
                 .into(),
@@ -395,6 +482,9 @@ fn call_tool(name: &str, args: &Value, wiki: &WikiGraph) -> Result<ToolCallResul
         "wg_entity_list" => tool_entity_list(args, wiki),
         "wg_traverse" => tool_traverse(args, wiki),
         "wg_lint" => tool_lint(wiki),
+        "wg_doctor" => tool_doctor(wiki),
+        "wg_recent" => tool_recent(args, wiki),
+        "wg_backlinks" => tool_backlinks(args, wiki),
         "wg_query" => tool_query(args, wiki),
         "wg_fact_add" => tool_fact_add(args, wiki),
         _ => Err(format!("Unknown tool: {}", name)),

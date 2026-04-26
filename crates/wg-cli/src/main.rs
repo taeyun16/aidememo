@@ -42,6 +42,9 @@ fn main() {
         cmd::Command::Search(sub) => handle_search(&store_path, config, sub, json),
         cmd::Command::Query(sub) => handle_query(&store_path, config, sub, json),
         cmd::Command::Lint(sub) => handle_lint(&store_path, config, sub, json),
+        cmd::Command::Doctor(sub) => cmd::doctor::run_doctor(&store_path, config, sub, json),
+        cmd::Command::Recent(sub) => cmd::recent::run_recent(&store_path, config, sub, json),
+        cmd::Command::Edit(sub) => cmd::edit::run_edit(&store_path, config, sub, json),
         cmd::Command::Export(sub) => handle_export(&store_path, config, sub),
         cmd::Command::Import(sub) => handle_import(&store_path, config, sub),
         cmd::Command::Stats(sub) => handle_stats(&store_path, config, sub, json),
@@ -561,7 +564,7 @@ fn parse_entity_type(s: Option<String>) -> Option<EntityType> {
     })
 }
 
-fn parse_fact_type(s: Option<String>) -> Option<FactType> {
+pub(crate) fn parse_fact_type(s: Option<String>) -> Option<FactType> {
     s.map(|t| match t.to_lowercase().as_str() {
         "decision" | "decide" => FactType::Decision,
         "pattern" => FactType::Pattern,
@@ -610,7 +613,7 @@ fn parse_entity_sort(s: Option<String>) -> EntitySort {
 
 /// Parse an ISO 8601 date or RFC3339 timestamp into epoch milliseconds.
 /// Accepts: `YYYY-MM-DD` (UTC midnight) or `2024-03-15T10:00:00Z` etc.
-fn parse_iso_to_epoch_ms(s: &str) -> Result<u64, WgError> {
+pub(crate) fn parse_iso_to_epoch_ms(s: &str) -> Result<u64, WgError> {
     let s = s.trim();
     if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
         return u64::try_from(dt.timestamp_millis())
@@ -630,7 +633,7 @@ fn parse_iso_to_epoch_ms(s: &str) -> Result<u64, WgError> {
 }
 
 /// Parse a relative-duration string like `30d`, `12h`, `4w`, `1y`, `45m` into milliseconds.
-fn parse_duration_to_ms(s: &str) -> Result<u64, WgError> {
+pub(crate) fn parse_duration_to_ms(s: &str) -> Result<u64, WgError> {
     let s = s.trim();
     if s.is_empty() {
         return Err(WgError::InvalidInput("empty duration".to_string()));
@@ -665,7 +668,10 @@ fn parse_duration_to_ms(s: &str) -> Result<u64, WgError> {
 
 /// Resolve `--since` and `--last` into a single lower-bound epoch ms.
 /// `--last` takes precedence; if both are set, `--last` wins (it's the more direct intent).
-fn resolve_since(since: Option<&str>, last: Option<&str>) -> Result<Option<u64>, WgError> {
+pub(crate) fn resolve_since(
+    since: Option<&str>,
+    last: Option<&str>,
+) -> Result<Option<u64>, WgError> {
     if let Some(last) = last {
         let delta_ms = parse_duration_to_ms(last)?;
         let now = std::time::SystemTime::now()

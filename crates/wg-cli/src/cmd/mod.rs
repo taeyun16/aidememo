@@ -4,20 +4,26 @@ use bpaf::*;
 use std::path::PathBuf;
 
 pub mod adapt;
+pub mod doctor;
+pub mod edit;
 pub mod feedback;
 pub mod init;
 pub mod mcp_serve;
 pub mod mcp_stdio;
 pub mod mcp_tools;
 pub mod model;
+pub mod recent;
 pub mod watch;
 
 pub use adapt::AdaptSub;
+pub use doctor::DoctorSub;
+pub use edit::EditSub;
 pub use feedback::FeedbackSub;
 pub use init::InitSub;
 pub use mcp_serve::McpSub;
 pub use mcp_stdio::McpStdioSub;
 pub use model::ModelSub;
+pub use recent::RecentSub;
 pub use watch::WatchSub;
 
 #[derive(Debug, Clone)]
@@ -36,6 +42,9 @@ pub enum Command {
     Search(SearchSub),
     Query(QuerySub),
     Lint(LintSub),
+    Doctor(DoctorSub),
+    Recent(RecentSub),
+    Edit(EditSub),
     Export(ExportSub),
     Import(ImportSub),
     Stats(StatsSub),
@@ -210,6 +219,9 @@ pub fn build_cli() -> OptionParser<Args> {
     let model_cmd = model::model_command();
     let feedback_cmd = feedback::feedback_command();
     let adapt_cmd = adapt::adapt_command();
+    let doctor_cmd = doctor::doctor_command();
+    let recent_cmd = recent::recent_command();
+    let edit_cmd = edit::edit_command();
 
     let command = construct!([
         entity_command(),
@@ -219,6 +231,9 @@ pub fn build_cli() -> OptionParser<Args> {
         search_command(),
         query_command(),
         lint_command(),
+        doctor_cmd,
+        recent_cmd,
+        edit_cmd,
         export_command(),
         import_command(),
         stats_command(),
