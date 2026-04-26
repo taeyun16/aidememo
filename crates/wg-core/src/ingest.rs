@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
 use crate::error::WgError;
+use crate::relations::{TypedRelation, extract_typed_relations};
 use crate::store::Store;
 use crate::types::{EntityInput, EntityType, FactInput, FactType, RelationInput, RelationType};
 
@@ -56,6 +57,8 @@ pub struct ParsedFile {
     pub observed_at: Option<u64>,
     /// Extracted wikilinks.
     pub wikilinks: Vec<Wikilink>,
+    /// Typed relations extracted from prose patterns (zero-LLM).
+    pub typed_relations: Vec<TypedRelation>,
     /// Heading-anchored sections → fact candidates.
     pub sections: Vec<Section>,
     /// The raw body text (without frontmatter).
@@ -144,8 +147,46 @@ pub fn ingest_wiki(
                     }
                 };
 
-                // --- Relations from wikilinks ---
+                // --- Typed relations from prose patterns ---
+                // Track which (source, target) pairs the typed extractor produced
+                // so we can skip the catch-all `references` edge for them.
+                let mut typed_pairs: std::collections::HashSet<String> =
+                    std::collections::HashSet::new();
+
+                // Helper: ensure an entity exists (auto-create as Unknown if missing).
+                let ensure_entity = |store: &mut Store, name: &str, stats: &mut IngestStats| {
+                    if store.resolve_entity(name).is_err() {
+                        let _ = store.entity_add(EntityInput {
+                            name: name.to_string(),
+                            entity_type: Some(EntityType::Unknown),
+                            ..Default::default()
+                        });
+                        stats.entities_added += 1;
+                    }
+                };
+
+                for tr in &parsed.typed_relations {
+                    ensure_entity(store, &tr.source, &mut stats);
+                    ensure_entity(store, &tr.target, &mut stats);
+                    let rel = RelationInput {
+                        source: tr.source.clone(),
+                        target: tr.target.clone(),
+                        relation_type: RelationType::new(tr.relation_type.clone()),
+                        weight: None,
+                        evidence: Some(vec![format!("{}:{}", parsed.rel_path, tr.evidence)]),
+                    };
+                    if store.relation_add(rel).is_ok() {
+                        stats.relations_added += 1;
+                        typed_pairs.insert(format!("{}\0{}", tr.source, tr.target));
+                    }
+                }
+
+                // --- Fallback relations from any wikilink not already typed ---
                 for wl in &parsed.wikilinks {
+                    let key = format!("{}\0{}", entity_name, wl.target);
+                    if typed_pairs.contains(&key) {
+                        continue;
+                    }
                     let rel = RelationInput {
                         source: entity_name.clone(),
                         target: wl.target.clone(),
@@ -213,8 +254,9 @@ fn process_file(file_path: &Path, wiki_root: &Path) -> Result<ParsedFile, WgErro
     // Infer entity_type from directory if not set in frontmatter
     let entity_type = entity_type.or_else(|| infer_entity_type_from_path(&rel_path));
 
-    // Parse wikilinks and sections
+    // Parse wikilinks, typed relations, and sections
     let wikilinks = extract_wikilinks(&body);
+    let typed_relations = extract_typed_relations(&body);
     let sections = extract_sections(&body);
 
     Ok(ParsedFile {
@@ -225,6 +267,7 @@ fn process_file(file_path: &Path, wiki_root: &Path) -> Result<ParsedFile, WgErro
         aliases,
         observed_at,
         wikilinks,
+        typed_relations,
         sections,
         body,
     })

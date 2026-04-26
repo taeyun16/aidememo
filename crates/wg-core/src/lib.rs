@@ -9,6 +9,7 @@ pub mod index;
 pub mod ingest;
 pub mod lint;
 pub mod migrate;
+pub mod relations;
 #[cfg(feature = "s3")]
 pub mod s3;
 pub mod search;
