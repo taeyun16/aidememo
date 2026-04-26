@@ -4,10 +4,8 @@ use std::hint::black_box;
 use std::path::Path;
 use tempfile::TempDir;
 use wg_core::search::SearchEngine;
-use wg_core::{
-    Config, EntityInput, EntityType, FactInput, FactType, SearchOpts, WikiGraph,
-};
 use wg_core::store::Store;
+use wg_core::{Config, EntityInput, EntityType, FactInput, FactType, SearchOpts, WikiGraph};
 
 fn seed_retrieval_store(store: &mut Store) {
     let redis_id = store
@@ -49,6 +47,7 @@ fn seed_retrieval_store(store: &mut Store) {
             tags: Some(vec!["ha".to_string()]),
             source: Some("entities/redis.md#high-availability".to_string()),
             source_confidence: Some(0.9),
+            observed_at: None,
         })
         .expect("seed fact");
 
@@ -60,6 +59,7 @@ fn seed_retrieval_store(store: &mut Store) {
             tags: Some(vec!["scaling".to_string()]),
             source: Some("entities/redis.md#scaling".to_string()),
             source_confidence: Some(0.9),
+            observed_at: None,
         })
         .expect("seed fact");
 
@@ -71,6 +71,7 @@ fn seed_retrieval_store(store: &mut Store) {
             tags: Some(vec!["storage".to_string()]),
             source: Some("entities/postgres.md#durability".to_string()),
             source_confidence: Some(0.9),
+            observed_at: None,
         })
         .expect("seed fact");
 
@@ -82,6 +83,7 @@ fn seed_retrieval_store(store: &mut Store) {
             tags: Some(vec!["performance".to_string()]),
             source: Some("concepts/cache.md#latency".to_string()),
             source_confidence: Some(0.9),
+            observed_at: None,
         })
         .expect("seed fact");
 }
@@ -176,7 +178,8 @@ pub fn ingest_small(c: &mut Criterion) {
             },
             |(wiki_dir, store_dir)| {
                 let store_path = store_dir.path().join("wg.redb");
-                let mut graph = WikiGraph::open(&store_path, Config::default()).expect("open graph");
+                let mut graph =
+                    WikiGraph::open(&store_path, Config::default()).expect("open graph");
                 let stats = graph
                     .ingest(wiki_dir.path(), false)
                     .expect("ingest small wiki");

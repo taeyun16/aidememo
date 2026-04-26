@@ -16,16 +16,12 @@ pub struct FeedbackSub {
 }
 
 pub fn feedback_command() -> impl Parser<Command> {
-    let helpful = long("helpful")
-        .help("Mark feedback as helpful")
-        .switch();
+    let helpful = long("helpful").help("Mark feedback as helpful").switch();
     let not_helpful = long("not-helpful")
         .help("Mark feedback as not helpful")
         .switch();
-    let session_id = positional::<String>("SESSION_ID")
-        .help("Search session ID");
-    let fact_id = positional::<String>("FACT_ID")
-        .help("Fact ID from the search result");
+    let session_id = positional::<String>("SESSION_ID").help("Search session ID");
+    let fact_id = positional::<String>("FACT_ID").help("Fact ID from the search result");
 
     construct!(FeedbackSub {
         helpful,
@@ -70,7 +66,11 @@ pub fn run_feedback(
 
     Ok(format!(
         "Recorded {} feedback for session {} fact {}",
-        if sub.helpful { "helpful" } else { "not helpful" },
+        if sub.helpful {
+            "helpful"
+        } else {
+            "not helpful"
+        },
         sub.session_id,
         sub.fact_id
     ))

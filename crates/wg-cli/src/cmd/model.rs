@@ -110,11 +110,20 @@ fn model_status(config: &Config, name: &str) -> Result<String, WgError> {
 
     let mut out = String::new();
     out.push_str(&format!("Model: {}\n", name));
-    out.push_str(&format!("Configured download dir: {}\n", download_dir.display()));
+    out.push_str(&format!(
+        "Configured download dir: {}\n",
+        download_dir.display()
+    ));
     out.push_str(&format!("Configured cache dir: {}\n", cache_dir.display()));
     out.push_str(&format!("Download path: {}\n", download_path.display()));
-    out.push_str(&format!("Downloaded: {}\n", if local_present { "yes" } else { "no" }));
-    out.push_str(&format!("Cached: {}\n", if cache_present { "yes" } else { "no" }));
+    out.push_str(&format!(
+        "Downloaded: {}\n",
+        if local_present { "yes" } else { "no" }
+    ));
+    out.push_str(&format!(
+        "Cached: {}\n",
+        if cache_present { "yes" } else { "no" }
+    ));
 
     if local_present {
         let (files, bytes) = dir_stats(&download_path)?;
@@ -142,8 +151,10 @@ fn model_download(config: &Config, name: &str) -> Result<String, WgError> {
         ));
     }
 
-    fs::create_dir_all(&download_dir).map_err(|e| model_io_error("create download dir", &download_dir, e))?;
-    fs::create_dir_all(&cache_dir).map_err(|e| model_io_error("create cache dir", &cache_dir, e))?;
+    fs::create_dir_all(&download_dir)
+        .map_err(|e| model_io_error("create download dir", &download_dir, e))?;
+    fs::create_dir_all(&cache_dir)
+        .map_err(|e| model_io_error("create cache dir", &cache_dir, e))?;
 
     let mut last_error: Option<WgError> = None;
     for bin in ["hf", "huggingface-cli"] {
@@ -245,7 +256,10 @@ fn discover_model_dirs(root: &Path) -> Result<Vec<ModelDirEntry>, WgError> {
     let mut seen = BTreeSet::new();
     let mut entries = Vec::new();
 
-    for entry in walkdir::WalkDir::new(root).into_iter().filter_map(|e| e.ok()) {
+    for entry in walkdir::WalkDir::new(root)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
         if !entry.file_type().is_file() {
             continue;
         }
@@ -297,7 +311,10 @@ fn model_name_matches(name: &str, path: &Path, root: &Path) -> bool {
         .join("/");
 
     let normalized = normalize_model_name(name);
-    rel_name == name || rel_name == normalized || rel_name.contains(&normalized) || path.ends_with(name)
+    rel_name == name
+        || rel_name == normalized
+        || rel_name.contains(&normalized)
+        || path.ends_with(name)
 }
 
 fn normalize_model_name(name: &str) -> String {
@@ -312,12 +329,21 @@ fn dir_stats(path: &Path) -> Result<(usize, u64), WgError> {
     let mut files = 0usize;
     let mut bytes = 0u64;
 
-    for entry in walkdir::WalkDir::new(path).into_iter().filter_map(|e| e.ok()) {
+    for entry in walkdir::WalkDir::new(path)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
         if entry.file_type().is_file() {
             files += 1;
             bytes += entry
                 .metadata()
-                .map_err(|e| WgError::Internal(format!("failed to read metadata for {}: {}", entry.path().display(), e)))?
+                .map_err(|e| {
+                    WgError::Internal(format!(
+                        "failed to read metadata for {}: {}",
+                        entry.path().display(),
+                        e
+                    ))
+                })?
                 .len();
         }
     }
@@ -363,5 +389,10 @@ fn home_dir() -> Option<PathBuf> {
 }
 
 fn model_io_error(action: &str, path: &Path, source: io::Error) -> WgError {
-    WgError::Internal(format!("failed to {} {}: {}", action, path.display(), source))
+    WgError::Internal(format!(
+        "failed to {} {}: {}",
+        action,
+        path.display(),
+        source
+    ))
 }

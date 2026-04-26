@@ -50,6 +50,10 @@ pub struct ParsedFile {
     pub tags: Vec<String>,
     /// Frontmatter: aliases.
     pub aliases: Vec<String>,
+    /// Frontmatter: when the fact(s) in this file were actually observed/decided
+    /// (epoch ms). Parsed from `date`, `decided_at`, or `observed_at` keys.
+    /// Applied to all facts extracted from this file unless overridden.
+    pub observed_at: Option<u64>,
     /// Extracted wikilinks.
     pub wikilinks: Vec<Wikilink>,
     /// Heading-anchored sections → fact candidates.
@@ -168,6 +172,7 @@ pub fn ingest_wiki(
                         tags: None,
                         source,
                         source_confidence: Some(0.5), // auto-extracted
+                        observed_at: parsed.observed_at,
                     };
                     let _ = store.fact_add(fact_input);
                     stats.facts_added += 1;
@@ -203,7 +208,7 @@ fn process_file(file_path: &Path, wiki_root: &Path) -> Result<ParsedFile, WgErro
     let (frontmatter, body) = extract_frontmatter(&content);
 
     // Parse frontmatter
-    let (entity_type, tags, aliases) = parse_frontmatter(&frontmatter, &rel_path);
+    let (entity_type, tags, aliases, observed_at) = parse_frontmatter(&frontmatter, &rel_path);
 
     // Infer entity_type from directory if not set in frontmatter
     let entity_type = entity_type.or_else(|| infer_entity_type_from_path(&rel_path));
@@ -218,6 +223,7 @@ fn process_file(file_path: &Path, wiki_root: &Path) -> Result<ParsedFile, WgErro
         entity_type,
         tags,
         aliases,
+        observed_at,
         wikilinks,
         sections,
         body,
@@ -247,14 +253,20 @@ fn extract_frontmatter(content: &str) -> (String, String) {
 }
 
 /// Parse frontmatter key:value pairs.
-/// Supports: type, tags, aliases, sources.
+/// Supports: type, tags, aliases, date/decided_at/observed_at.
+///
+/// Date keys are parsed as ISO 8601 (YYYY-MM-DD or RFC3339) and converted to epoch ms.
+/// First non-empty date key wins, in priority order: `observed_at`, `decided_at`, `date`.
 fn parse_frontmatter(
     frontmatter: &str,
     _rel_path: &str,
-) -> (Option<EntityType>, Vec<String>, Vec<String>) {
+) -> (Option<EntityType>, Vec<String>, Vec<String>, Option<u64>) {
     let mut entity_type = None;
     let mut tags = Vec::new();
     let mut aliases = Vec::new();
+    let mut date: Option<u64> = None;
+    let mut decided_at: Option<u64> = None;
+    let mut observed_at: Option<u64> = None;
 
     for line in frontmatter.lines() {
         let line = line.trim();
@@ -264,7 +276,8 @@ fn parse_frontmatter(
 
         if let Some((key, val)) = line.split_once(':') {
             let key = key.trim();
-            let val = val.trim();
+            // Strip surrounding quotes that YAML often adds for date strings.
+            let val = val.trim().trim_matches('"').trim_matches('\'').trim();
 
             match key {
                 "type" => {
@@ -276,12 +289,53 @@ fn parse_frontmatter(
                 "aliases" => {
                     aliases = parse_list_field(val);
                 }
+                "date" => {
+                    date = parse_iso8601_to_epoch_ms(val);
+                }
+                "decided_at" => {
+                    decided_at = parse_iso8601_to_epoch_ms(val);
+                }
+                "observed_at" => {
+                    observed_at = parse_iso8601_to_epoch_ms(val);
+                }
                 _ => {}
             }
         }
     }
 
-    (entity_type, tags, aliases)
+    let observed = observed_at.or(decided_at).or(date);
+
+    (entity_type, tags, aliases, observed)
+}
+
+/// Parse a frontmatter date string into epoch milliseconds.
+///
+/// Accepts:
+/// - `YYYY-MM-DD` (interpreted as 00:00:00 UTC)
+/// - RFC3339 (`2024-03-15T10:00:00Z`, `2024-03-15T10:00:00+09:00`)
+///
+/// Returns `None` if the string can't be parsed; ingest should skip the field
+/// rather than fail the file.
+fn parse_iso8601_to_epoch_ms(s: &str) -> Option<u64> {
+    let s = s.trim();
+    if s.is_empty() {
+        return None;
+    }
+
+    // Try RFC3339 first (most specific).
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
+        let ms = dt.timestamp_millis();
+        return u64::try_from(ms).ok();
+    }
+
+    // Fall back to date-only.
+    if let Ok(d) = chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d") {
+        let dt = d.and_hms_opt(0, 0, 0)?.and_utc();
+        let ms = dt.timestamp_millis();
+        return u64::try_from(ms).ok();
+    }
+
+    None
 }
 
 fn parse_entity_type(s: &str) -> Option<EntityType> {
@@ -540,9 +594,64 @@ port: 6379
         let fm = r#"type: concept
 tags: [caching, performance]
 aliases: cache, memory-cache"#;
-        let (et, tags, aliases) = parse_frontmatter(fm, "");
+        let (et, tags, aliases, observed) = parse_frontmatter(fm, "");
         assert!(matches!(et, Some(EntityType::Concept)));
         assert_eq!(tags, vec!["caching", "performance"]);
         assert_eq!(aliases, vec!["cache", "memory-cache"]);
+        assert!(observed.is_none());
+    }
+
+    #[test]
+    fn test_parse_frontmatter_date_only() {
+        let fm = "type: technology\ndate: 2024-03-15";
+        let (_, _, _, observed) = parse_frontmatter(fm, "");
+        // 2024-03-15T00:00:00Z = 1710460800 seconds = 1710460800000 ms
+        assert_eq!(observed, Some(1_710_460_800_000));
+    }
+
+    #[test]
+    fn test_parse_frontmatter_decided_at_overrides_date() {
+        let fm = "date: 2024-01-01\ndecided_at: 2024-06-15";
+        let (_, _, _, observed) = parse_frontmatter(fm, "");
+        // decided_at wins over date
+        let decided = parse_iso8601_to_epoch_ms("2024-06-15");
+        assert_eq!(observed, decided);
+    }
+
+    #[test]
+    fn test_parse_frontmatter_observed_at_wins() {
+        let fm = "date: 2024-01-01\ndecided_at: 2024-06-15\nobserved_at: 2024-12-31";
+        let (_, _, _, observed) = parse_frontmatter(fm, "");
+        let expected = parse_iso8601_to_epoch_ms("2024-12-31");
+        assert_eq!(observed, expected);
+    }
+
+    #[test]
+    fn test_parse_frontmatter_quoted_date() {
+        let fm = "date: \"2024-03-15\"";
+        let (_, _, _, observed) = parse_frontmatter(fm, "");
+        assert_eq!(observed, Some(1_710_460_800_000));
+    }
+
+    #[test]
+    fn test_parse_frontmatter_rfc3339() {
+        let fm = "observed_at: 2024-03-15T10:30:00Z";
+        let (_, _, _, observed) = parse_frontmatter(fm, "");
+        // 2024-03-15T10:30:00Z = 1710498600 seconds
+        assert_eq!(observed, Some(1_710_498_600_000));
+    }
+
+    #[test]
+    fn test_parse_frontmatter_invalid_date_yields_none() {
+        let fm = "date: not-a-date";
+        let (_, _, _, observed) = parse_frontmatter(fm, "");
+        assert!(observed.is_none());
+    }
+
+    #[test]
+    fn test_parse_iso8601_handles_timezone() {
+        // KST (+09:00) — 2024-03-15T09:00:00+09:00 == 2024-03-15T00:00:00Z
+        let ms = parse_iso8601_to_epoch_ms("2024-03-15T09:00:00+09:00").unwrap();
+        assert_eq!(ms, 1_710_460_800_000);
     }
 }

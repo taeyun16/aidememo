@@ -1,6 +1,6 @@
 //! Elixir NIF bindings for WikiGraph.
 
-use rustler::{Env, Encoder, NifResult, NifStruct, ResourceArc, Return, Term};
+use rustler::{Encoder, Env, NifResult, NifStruct, ResourceArc, Return, Term};
 use std::sync::Arc;
 use wg_core::{Config, EntityId, FactInput, FactType, ListOpts, SearchOpts, WikiGraph};
 
@@ -164,6 +164,7 @@ fn fact_add(
             tags: None,
             source: None,
             source_confidence: Some(confidence),
+            observed_at: None,
         })
         .map_err(|_| rustler::Error::BadArg)?;
     Ok(id.to_string())
@@ -175,7 +176,4 @@ fn lint(wrapper: ResourceArc<WgNif>) -> NifResult<Vec<LintIssueNif>> {
     Ok(issues.into_iter().map(to_lint_issue).collect())
 }
 
-rustler::init!(
-    "Elixir.WgNif",
-    load = load
-);
+rustler::init!("Elixir.WgNif", load = load);

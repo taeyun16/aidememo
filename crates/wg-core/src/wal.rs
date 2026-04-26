@@ -51,22 +51,22 @@ impl WALSegment {
         let mut lines = Vec::with_capacity(self.record_count());
         for session in &self.search_sessions {
             lines.push(
-                serde_json::to_string(&WALLine::SearchSession(session.clone())).map_err(|source| {
-                    WgError::Serialize {
+                serde_json::to_string(&WALLine::SearchSession(session.clone())).map_err(
+                    |source| WgError::Serialize {
                         context: "wal segment search session".to_string(),
                         source,
-                    }
-                })?,
+                    },
+                )?,
             );
         }
         for feedback in &self.search_feedback {
             lines.push(
-                serde_json::to_string(&WALLine::SearchFeedback(feedback.clone())).map_err(|source| {
-                    WgError::Serialize {
+                serde_json::to_string(&WALLine::SearchFeedback(feedback.clone())).map_err(
+                    |source| WgError::Serialize {
                         context: "wal segment search feedback".to_string(),
                         source,
-                    }
-                })?,
+                    },
+                )?,
             );
         }
         Ok(lines.join("\n"))
@@ -80,10 +80,11 @@ impl WALSegment {
             if line.trim().is_empty() {
                 continue;
             }
-            let entry: WALLine = serde_json::from_str(line).map_err(|source| WgError::Deserialize {
-                context: format!("wal line {}", idx + 1),
-                source,
-            })?;
+            let entry: WALLine =
+                serde_json::from_str(line).map_err(|source| WgError::Deserialize {
+                    context: format!("wal line {}", idx + 1),
+                    source,
+                })?;
             match entry {
                 WALLine::SearchSession(session) => search_sessions.push(session),
                 WALLine::SearchFeedback(feedback) => search_feedback.push(feedback),
@@ -98,24 +99,30 @@ impl WALSegment {
         })
     }
 
-    pub fn from_records(search_sessions: Vec<SearchSession>, search_feedback: Vec<SearchFeedback>) -> Self {
+    pub fn from_records(
+        search_sessions: Vec<SearchSession>,
+        search_feedback: Vec<SearchFeedback>,
+    ) -> Self {
         Self::new(search_sessions, search_feedback)
     }
 }
 
 pub fn wal_append(segment: WALSegment) -> Result<SegmentId> {
     let db = wal_db()?;
-    let write_txn = db.begin_write().map_err(|source| WgError::TransactionBegin {
-        source: Box::new(source),
-    })?;
+    let write_txn = db
+        .begin_write()
+        .map_err(|source| WgError::TransactionBegin {
+            source: Box::new(source),
+        })?;
     {
-        let mut table = write_txn
-            .open_table(WAL_SEGMENTS_TABLE)
-            .map_err(|source| WgError::StoreWrite {
-                table: "wal_segments",
-                key: segment.segment_id.to_string(),
-                source: Box::new(source),
-            })?;
+        let mut table =
+            write_txn
+                .open_table(WAL_SEGMENTS_TABLE)
+                .map_err(|source| WgError::StoreWrite {
+                    table: "wal_segments",
+                    key: segment.segment_id.to_string(),
+                    source: Box::new(source),
+                })?;
         let bytes = serde_json::to_vec(&segment).map_err(|source| WgError::Serialize {
             context: "wal segment".to_string(),
             source,
@@ -138,9 +145,11 @@ pub fn wal_append(segment: WALSegment) -> Result<SegmentId> {
 
 pub fn wal_segments() -> Result<Vec<WALSegment>> {
     let db = wal_db()?;
-    let read_txn = db.begin_read().map_err(|source| WgError::TransactionBegin {
-        source: Box::new(source),
-    })?;
+    let read_txn = db
+        .begin_read()
+        .map_err(|source| WgError::TransactionBegin {
+            source: Box::new(source),
+        })?;
     let table = match read_txn.open_table(WAL_SEGMENTS_TABLE) {
         Ok(table) => table,
         Err(_) => return Ok(Vec::new()),
@@ -159,12 +168,11 @@ pub fn wal_segments() -> Result<Vec<WALSegment>> {
         })?;
         let id_bytes: [u8; 16] = key.value().try_into().unwrap_or([0; 16]);
         let id = Ulid::from_bytes(id_bytes);
-        let segment: WALSegment = serde_json::from_slice(value.value()).map_err(|source| {
-            WgError::Deserialize {
+        let segment: WALSegment =
+            serde_json::from_slice(value.value()).map_err(|source| WgError::Deserialize {
                 context: format!("wal segment {id}"),
                 source,
-            }
-        })?;
+            })?;
         segments.push(segment);
     }
 
@@ -187,22 +195,27 @@ pub fn wal_compact(segment_ids: Vec<SegmentId>) -> Result<WALSegment> {
     }
 
     if matched == 0 {
-        return Err(WgError::InvalidInput("no WAL segments matched compaction request".to_string()));
+        return Err(WgError::InvalidInput(
+            "no WAL segments matched compaction request".to_string(),
+        ));
     }
 
     let compacted = WALSegment::new(combined_sessions, combined_feedback);
     let db = wal_db()?;
-    let write_txn = db.begin_write().map_err(|source| WgError::TransactionBegin {
-        source: Box::new(source),
-    })?;
+    let write_txn = db
+        .begin_write()
+        .map_err(|source| WgError::TransactionBegin {
+            source: Box::new(source),
+        })?;
     {
-        let mut table = write_txn
-            .open_table(WAL_SEGMENTS_TABLE)
-            .map_err(|source| WgError::StoreWrite {
-                table: "wal_segments",
-                key: compacted.segment_id.to_string(),
-                source: Box::new(source),
-            })?;
+        let mut table =
+            write_txn
+                .open_table(WAL_SEGMENTS_TABLE)
+                .map_err(|source| WgError::StoreWrite {
+                    table: "wal_segments",
+                    key: compacted.segment_id.to_string(),
+                    source: Box::new(source),
+                })?;
 
         for id in &segment_ids {
             table.remove(id.to_bytes().as_slice()).ok();
@@ -291,7 +304,8 @@ mod tests {
             }],
         );
         let jsonl = segment.jsonl().unwrap();
-        let roundtrip = WALSegment::from_jsonl(segment.segment_id, segment.created_at, &jsonl).unwrap();
+        let roundtrip =
+            WALSegment::from_jsonl(segment.segment_id, segment.created_at, &jsonl).unwrap();
         assert_eq!(roundtrip.record_count(), 2);
         assert_eq!(roundtrip.search_sessions.len(), 1);
         assert_eq!(roundtrip.search_feedback.len(), 1);

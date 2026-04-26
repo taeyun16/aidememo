@@ -4,9 +4,7 @@ use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use std::path::Path;
 use std::sync::Arc;
-use wg_core::{
-    Config, EntityId, FactInput, FactType, ListOpts, SearchOpts, WikiGraph,
-};
+use wg_core::{Config, EntityId, FactInput, FactType, ListOpts, SearchOpts, WikiGraph};
 
 fn to_json<T: serde::Serialize>(value: &T) -> napi::Result<String> {
     serde_json::to_string(value).map_err(|e| Error::from_reason(e.to_string()))
@@ -98,6 +96,7 @@ impl WgStore {
             tags: None,
             source: None,
             source_confidence: confidence.map(|v| v as f32),
+            observed_at: None,
         };
         let id = self
             .wiki

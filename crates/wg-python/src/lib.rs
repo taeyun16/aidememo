@@ -28,7 +28,10 @@ fn parse_entity_ids(entity_ids: Vec<String>) -> PyResult<Vec<EntityId>> {
         .collect()
 }
 
-fn entity_to_dict<'py>(py: Python<'py>, entity: &wg_core::EntitySummary) -> PyResult<Bound<'py, PyDict>> {
+fn entity_to_dict<'py>(
+    py: Python<'py>,
+    entity: &wg_core::EntitySummary,
+) -> PyResult<Bound<'py, PyDict>> {
     let dict = PyDict::new(py);
     dict.set_item("id", entity.id.to_string())?;
     dict.set_item("name", &entity.name)?;
@@ -38,7 +41,10 @@ fn entity_to_dict<'py>(py: Python<'py>, entity: &wg_core::EntitySummary) -> PyRe
     Ok(dict)
 }
 
-fn search_result_to_dict<'py>(py: Python<'py>, result: &wg_core::SearchResult) -> PyResult<Bound<'py, PyDict>> {
+fn search_result_to_dict<'py>(
+    py: Python<'py>,
+    result: &wg_core::SearchResult,
+) -> PyResult<Bound<'py, PyDict>> {
     let dict = PyDict::new(py);
     dict.set_item("fact_id", result.fact_id.to_string())?;
     dict.set_item("content", &result.content)?;
@@ -50,7 +56,10 @@ fn search_result_to_dict<'py>(py: Python<'py>, result: &wg_core::SearchResult) -
     Ok(dict)
 }
 
-fn lint_issue_to_dict<'py>(py: Python<'py>, issue: &wg_core::LintIssue) -> PyResult<Bound<'py, PyDict>> {
+fn lint_issue_to_dict<'py>(
+    py: Python<'py>,
+    issue: &wg_core::LintIssue,
+) -> PyResult<Bound<'py, PyDict>> {
     let dict = PyDict::new(py);
     dict.set_item("severity", issue.severity.to_string())?;
     dict.set_item("code", &issue.code)?;
@@ -125,6 +134,7 @@ impl PyWikiGraph {
                 tags: None,
                 source: None,
                 source_confidence: confidence.map(|v| v as f32),
+                observed_at: None,
             })
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
         Ok(id.to_string())

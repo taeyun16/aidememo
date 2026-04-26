@@ -938,6 +938,9 @@ impl Store {
         if let Some(confidence) = input.source_confidence {
             record.source_confidence = confidence;
         }
+        if let Some(observed_at) = input.observed_at {
+            record.observed_at = Some(observed_at);
+        }
 
         let write_txn = self
             .db
@@ -1255,6 +1258,21 @@ impl Store {
                 }
             }
 
+            // Time filter: prefer observed_at (real-world time) over created_at (DB insertion).
+            if opts.since.is_some() || opts.until.is_some() {
+                let ts = record.observed_at.unwrap_or(record.created_at);
+                if let Some(since) = opts.since {
+                    if ts < since {
+                        continue;
+                    }
+                }
+                if let Some(until) = opts.until {
+                    if ts > until {
+                        continue;
+                    }
+                }
+            }
+
             results.push(record);
         }
 
@@ -1284,6 +1302,7 @@ impl Store {
                 fact_type: None,
                 tags: None,
                 source: None,
+                observed_at: None,
             },
         )?;
 
@@ -1740,6 +1759,7 @@ mod tests {
                 tags: Some(vec!["ha".to_string()]),
                 source: Some("entities/redis.md#ha".to_string()),
                 source_confidence: Some(0.8),
+                observed_at: None,
             })
             .unwrap();
 
@@ -1761,6 +1781,7 @@ mod tests {
                     fact_type: None,
                     tags: None,
                     source: None,
+                    observed_at: None,
                 },
             )
             .unwrap();
@@ -1843,6 +1864,70 @@ mod tests {
 
         let stats2 = store.stats().unwrap();
         assert_eq!(stats2.entity_count, 1);
+    }
+
+    #[test]
+    fn test_fact_list_time_filter() {
+        let mut store = create_test_store();
+
+        store
+            .entity_add(EntityInput {
+                name: "Redis".to_string(),
+                entity_type: Some(EntityType::Technology),
+                ..Default::default()
+            })
+            .unwrap();
+        let redis_id = store.resolve_entity("Redis").unwrap();
+
+        // Three facts spanning different observed_at times.
+        let make = |content: &str, observed_at: Option<u64>| FactInput {
+            content: content.to_string(),
+            fact_type: Some(FactType::Decision),
+            entity_ids: Some(vec![redis_id]),
+            tags: None,
+            source: None,
+            source_confidence: Some(0.5),
+            observed_at,
+        };
+
+        // 2024-01-01, 2024-06-15, 2024-12-31 (UTC midnight, ms)
+        let jan = 1_704_067_200_000;
+        let jun = 1_718_409_600_000;
+        let dec = 1_735_603_200_000;
+
+        store.fact_add(make("jan", Some(jan))).unwrap();
+        store.fact_add(make("jun", Some(jun))).unwrap();
+        store.fact_add(make("dec", Some(dec))).unwrap();
+        // One with no observed_at — falls back to created_at (now), should be > dec.
+        store.fact_add(make("now", None)).unwrap();
+
+        // since-only: keeps jun, dec, now
+        let r = store
+            .fact_list(FactListOpts {
+                since: Some(jun),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(r.len(), 3);
+
+        // until-only: keeps jan, jun
+        let r = store
+            .fact_list(FactListOpts {
+                until: Some(jun),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(r.len(), 2);
+
+        // Window jun..=dec: keeps jun, dec
+        let r = store
+            .fact_list(FactListOpts {
+                since: Some(jun),
+                until: Some(dec),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(r.len(), 2);
     }
 }
 

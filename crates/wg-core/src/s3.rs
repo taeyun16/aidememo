@@ -5,7 +5,7 @@
 //! and segment payloads are compressed as `.jsonl.zst`.
 
 use crate::error::{Result, WgError};
-use crate::wal::{wal_compact, WALSegment};
+use crate::wal::{WALSegment, wal_compact};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -50,7 +50,11 @@ impl S3Manifest {
             Vec::new()
         };
 
-        Ok(Self { bucket, root, manifest })
+        Ok(Self {
+            bucket,
+            root,
+            manifest,
+        })
     }
 
     pub fn append_entry(&mut self, entry: ManifestEntry) -> Result<()> {
@@ -69,20 +73,21 @@ impl S3Manifest {
 
 pub fn download_segment(segment_id: SegmentId) -> Result<String> {
     let root = current_bucket_root();
-    let compressed = std::fs::read(segment_path(&root, segment_id)).map_err(|source| {
-        WgError::StoreRead {
+    let compressed =
+        std::fs::read(segment_path(&root, segment_id)).map_err(|source| WgError::StoreRead {
             table: "segments",
             key: segment_id.to_string(),
             source: Box::new(source),
-        }
-    })?;
+        })?;
 
-    let decompressed = decode_all(&compressed[..]).map_err(|source| WgError::Internal(format!(
-        "failed to decompress segment {segment_id}: {source}"
-    )))?;
-    String::from_utf8(decompressed).map_err(|source| WgError::Internal(format!(
-        "segment {segment_id} is not valid UTF-8: {source}"
-    )))
+    let decompressed = decode_all(&compressed[..]).map_err(|source| {
+        WgError::Internal(format!(
+            "failed to decompress segment {segment_id}: {source}"
+        ))
+    })?;
+    String::from_utf8(decompressed).map_err(|source| {
+        WgError::Internal(format!("segment {segment_id} is not valid UTF-8: {source}"))
+    })
 }
 
 pub fn flush_segments_to_manifest(segments: Vec<WALSegment>) -> Result<ManifestEntry> {
@@ -126,7 +131,10 @@ pub fn flush_segments_to_manifest(segments: Vec<WALSegment>) -> Result<ManifestE
 
 fn persist_segment(root: &Path, segment: &WALSegment) -> Result<PathBuf> {
     let compressed = encode_all(segment.jsonl()?.as_bytes(), 0).map_err(|source| {
-        WgError::Internal(format!("failed to compress segment {}: {source}", segment.segment_id))
+        WgError::Internal(format!(
+            "failed to compress segment {}: {source}",
+            segment.segment_id
+        ))
     })?;
     let path = segment_path(root, segment.segment_id);
     std::fs::write(&path, compressed).map_err(|source| WgError::StoreWrite {
@@ -149,10 +157,11 @@ fn load_manifest(path: &Path) -> Result<Manifest> {
         if line.trim().is_empty() {
             continue;
         }
-        let entry: ManifestEntry = serde_json::from_str(line).map_err(|source| WgError::Deserialize {
-            context: format!("manifest line {}", idx + 1),
-            source,
-        })?;
+        let entry: ManifestEntry =
+            serde_json::from_str(line).map_err(|source| WgError::Deserialize {
+                context: format!("manifest line {}", idx + 1),
+                source,
+            })?;
         manifest.push(entry);
     }
     Ok(manifest)
@@ -177,7 +186,9 @@ fn persist_manifest(path: &Path, manifest: &Manifest) -> Result<()> {
 
 fn bucket_root(bucket: &str) -> PathBuf {
     if let Some(rest) = bucket.strip_prefix("s3://") {
-        return std::env::temp_dir().join("wg-s3").join(sanitize_bucket(rest));
+        return std::env::temp_dir()
+            .join("wg-s3")
+            .join(sanitize_bucket(rest));
     }
 
     let path = PathBuf::from(bucket);
@@ -185,7 +196,9 @@ fn bucket_root(bucket: &str) -> PathBuf {
         return path;
     }
 
-    std::env::temp_dir().join("wg-s3").join(sanitize_bucket(bucket))
+    std::env::temp_dir()
+        .join("wg-s3")
+        .join(sanitize_bucket(bucket))
 }
 
 fn current_bucket_root() -> PathBuf {
@@ -197,7 +210,13 @@ fn current_bucket_root() -> PathBuf {
 fn sanitize_bucket(bucket: &str) -> String {
     bucket
         .chars()
-        .map(|ch| if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == '.' { ch } else { '_' })
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == '.' {
+                ch
+            } else {
+                '_'
+            }
+        })
         .collect()
 }
 

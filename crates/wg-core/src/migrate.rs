@@ -202,6 +202,7 @@ impl<'a> Importer<'a> {
                             tags: Some(record.tags),
                             source: record.source,
                             source_confidence: Some(record.source_confidence),
+                            observed_at: record.observed_at,
                         };
                         if self.store.fact_add(input).is_ok() {
                             stats.facts_imported += 1;

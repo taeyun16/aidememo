@@ -61,6 +61,10 @@ impl<'a> SearchEngine<'a> {
                     continue;
                 }
 
+                if !matches_time_window(&fact, opts.since, opts.until) {
+                    continue;
+                }
+
                 #[cfg(feature = "semantic")]
                 {
                     results.push(build_search_result(
@@ -121,6 +125,26 @@ fn matches_entity_filter(fact: &FactRecord, entity_filter: Option<&Vec<EntityId>
     }
 }
 
+/// Check whether a fact's timestamp falls within `[since, until]` (inclusive).
+/// Prefers `observed_at` (real-world time) over `created_at` (DB insertion).
+fn matches_time_window(fact: &FactRecord, since: Option<u64>, until: Option<u64>) -> bool {
+    if since.is_none() && until.is_none() {
+        return true;
+    }
+    let ts = fact.observed_at.unwrap_or(fact.created_at);
+    if let Some(s) = since {
+        if ts < s {
+            return false;
+        }
+    }
+    if let Some(u) = until {
+        if ts > u {
+            return false;
+        }
+    }
+    true
+}
+
 #[cfg(feature = "semantic")]
 fn build_search_result(
     store: &Store,
@@ -145,6 +169,8 @@ fn build_search_result(
         source: fact.source,
         score,
         rank,
+        created_at: fact.created_at,
+        observed_at: fact.observed_at,
         session_id,
     }
 }
@@ -172,6 +198,8 @@ fn build_search_result(
         source: fact.source,
         score,
         rank,
+        created_at: fact.created_at,
+        observed_at: fact.observed_at,
     }
 }
 
@@ -217,6 +245,8 @@ mod semantic {
         let mut facts = store.fact_list(FactListOpts {
             limit: None,
             offset: 0,
+            since: opts.since,
+            until: opts.until,
             ..Default::default()
         })?;
 
@@ -257,7 +287,14 @@ mod semantic {
         for (rank, (idx, score)) in scored.into_iter().enumerate() {
             let fact = facts[idx].clone();
             let fact_id = fact.id;
-            results.push(build_search_result(store, fact, fact_id, score, rank + 1, None));
+            results.push(build_search_result(
+                store,
+                fact,
+                fact_id,
+                score,
+                rank + 1,
+                None,
+            ));
         }
 
         Ok(results)
@@ -432,6 +469,8 @@ mod semantic {
                     .map(|entity| entity.name)
                     .collect();
                 result.source = fact.source;
+                result.created_at = fact.created_at;
+                result.observed_at = fact.observed_at;
             }
             result.score = entry.score;
             result.rank = rank + 1;
@@ -484,6 +523,7 @@ mod tests {
                 tags: Some(vec!["ha".to_string()]),
                 source: Some("entities/redis.md".to_string()),
                 source_confidence: Some(0.8),
+                observed_at: None,
             })
             .unwrap();
 
@@ -495,6 +535,7 @@ mod tests {
                 tags: Some(vec!["scaling".to_string()]),
                 source: Some("entities/redis.md".to_string()),
                 source_confidence: Some(0.7),
+                observed_at: None,
             })
             .unwrap();
 

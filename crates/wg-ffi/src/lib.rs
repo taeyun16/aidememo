@@ -48,7 +48,9 @@ fn ptr_to_string(value: *const c_char) -> Result<String, String> {
         return Err("null pointer".to_string());
     }
     let cstr = unsafe { CStr::from_ptr(value) };
-    cstr.to_str().map(|s| s.to_string()).map_err(|e| e.to_string())
+    cstr.to_str()
+        .map(|s| s.to_string())
+        .map_err(|e| e.to_string())
 }
 
 /// WikiGraph FFI wrapper.
@@ -150,6 +152,7 @@ pub extern "C" fn wg_fact_add(
                 tags: None,
                 source: None,
                 source_confidence: Some(confidence),
+                observed_at: None,
             })
             .map_err(|e| e.to_string())?;
         Ok(id.to_string())
