@@ -91,8 +91,12 @@ impl std::fmt::Display for FactId {
 }
 
 /// Entity type classification.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+///
+/// `Custom(String)` lets each wiki define domain-specific types — e.g.
+/// `service`, `rfc`, `paper`, `incident` — without recompiling. Strings are
+/// normalized to lowercase. All variants serialize as flat lowercase strings
+/// (built-in or custom), so JSON round-trips are uniform.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EntityType {
     /// Technology (tools, infrastructure, software)
     Technology,
@@ -108,11 +112,55 @@ pub enum EntityType {
     Team,
     /// Unknown/unclassified
     Unknown,
+    /// Custom user-defined type — e.g. `service`, `rfc`. Always lowercase.
+    Custom(String),
 }
 
 impl Default for EntityType {
     fn default() -> Self {
         Self::Unknown
+    }
+}
+
+impl EntityType {
+    /// Parse a string into an EntityType, recognizing built-in variants and
+    /// falling back to `Custom(s)` for anything else.
+    pub fn parse(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "technology" | "tech" => EntityType::Technology,
+            "concept" => EntityType::Concept,
+            "comparison" | "compare" => EntityType::Comparison,
+            "query" | "question" => EntityType::Query,
+            "person" => EntityType::Person,
+            "team" => EntityType::Team,
+            "" | "unknown" => EntityType::Unknown,
+            other => EntityType::Custom(other.to_string()),
+        }
+    }
+}
+
+impl serde::Serialize for EntityType {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> std::result::Result<S::Ok, S::Error> {
+        s.collect_str(self)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for EntityType {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
+        // Accept two forms for backward compatibility:
+        //   1. "service"                 — flat lowercase string (current).
+        //   2. {"custom": "service"}     — legacy tagged form from earlier
+        //                                  versions of this enum.
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Either {
+            Flat(String),
+            Tagged { custom: String },
+        }
+        match Either::deserialize(d)? {
+            Either::Flat(s) => Ok(EntityType::parse(&s)),
+            Either::Tagged { custom } => Ok(EntityType::parse(&custom)),
+        }
     }
 }
 
@@ -126,6 +174,7 @@ impl std::fmt::Display for EntityType {
             EntityType::Person => write!(f, "person"),
             EntityType::Team => write!(f, "team"),
             EntityType::Unknown => write!(f, "unknown"),
+            EntityType::Custom(s) => write!(f, "{}", s),
         }
     }
 }
@@ -351,6 +400,15 @@ pub struct FactRecord {
     /// or set explicitly via `wg fact add --observed-at`.
     #[serde(default)]
     pub observed_at: Option<u64>,
+    /// When this fact was superseded (epoch ms). `None` means still current.
+    /// Set via `wg fact supersede <old> <new>`. Filter with `--current` on
+    /// list / search / query to hide superseded facts.
+    #[serde(default)]
+    pub superseded_at: Option<u64>,
+    /// The fact that replaced this one (if any). Forms a chain so callers can
+    /// follow `latest_of(fact_id)` through history.
+    #[serde(default)]
+    pub superseded_by: Option<FactId>,
     /// Number of times accessed.
     pub access_count: u32,
     /// Last access timestamp (epoch ms).
@@ -376,6 +434,8 @@ impl FactRecord {
             created_at: now,
             updated_at: now,
             observed_at: None,
+            superseded_at: None,
+            superseded_by: None,
             access_count: 0,
             last_accessed_at: now,
         }
@@ -401,6 +461,12 @@ impl FactRecord {
         }
         if let Some(observed_at) = input.observed_at {
             self.observed_at = Some(observed_at);
+        }
+        if let Some(ts) = input.superseded_at {
+            self.superseded_at = if ts == 0 { None } else { Some(ts) };
+        }
+        if let Some(by) = input.superseded_by {
+            self.superseded_by = Some(by);
         }
         self.updated_at = now;
     }
@@ -445,6 +511,12 @@ pub struct FactUpdate {
     pub source: Option<String>,
     #[serde(default)]
     pub observed_at: Option<u64>,
+    /// If set, marks the fact as superseded at this epoch ms. Use `Some(0)` to
+    /// reset (un-supersede); any non-zero value sets the timestamp.
+    #[serde(default)]
+    pub superseded_at: Option<u64>,
+    #[serde(default)]
+    pub superseded_by: Option<FactId>,
 }
 
 /// Options for listing entities.
@@ -541,6 +613,8 @@ pub struct SearchOpts {
     /// Search session to attribute results to (enables feedback tracking).
     #[cfg(feature = "semantic")]
     pub session_id: Option<String>,
+    /// If `true`, exclude superseded facts.
+    pub current_only: bool,
 }
 
 /// Options for listing facts.
@@ -556,6 +630,8 @@ pub struct FactListOpts {
     pub since: Option<u64>,
     /// Upper-bound timestamp (inclusive, epoch ms). Same source as `since`.
     pub until: Option<u64>,
+    /// If `true`, exclude superseded facts (those with `superseded_at` set).
+    pub current_only: bool,
 }
 
 /// Options for `WikiGraph::query` — a unified context fetch (search + traverse + recent facts).

@@ -1273,6 +1273,11 @@ impl Store {
                 }
             }
 
+            // Current-only filter: skip facts that have been superseded.
+            if opts.current_only && record.superseded_at.is_some() {
+                continue;
+            }
+
             results.push(record);
         }
 
@@ -1303,6 +1308,8 @@ impl Store {
                 tags: None,
                 source: None,
                 observed_at: None,
+                superseded_at: None,
+                superseded_by: None,
             },
         )?;
 
@@ -1782,6 +1789,8 @@ mod tests {
                     tags: None,
                     source: None,
                     observed_at: None,
+                    superseded_at: None,
+                    superseded_by: None,
                 },
             )
             .unwrap();

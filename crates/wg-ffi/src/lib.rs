@@ -490,6 +490,7 @@ pub extern "C" fn wg_fact_list(
             offset: 0,
             since: None,
             until: None,
+            current_only: false,
         };
         let facts = s.wiki.fact_list(opts).map_err(|e| e.to_string())?;
         json_serialize(&facts)

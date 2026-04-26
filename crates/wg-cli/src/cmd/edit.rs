@@ -152,6 +152,8 @@ pub fn run_edit(
                     tags: None,
                     source: None,
                     observed_at: None,
+                    superseded_at: None,
+                    superseded_by: None,
                 },
             )?;
 

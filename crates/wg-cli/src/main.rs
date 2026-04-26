@@ -69,7 +69,7 @@ fn main() {
         cmd::Command::Feedback(sub) => cmd::feedback::run_feedback(&store_path, config, sub),
         cmd::Command::Adapt(sub) => cmd::adapt::run_adapt(&store_path, config, sub),
         cmd::Command::Init(sub) => cmd::init::run_init(sub.wiki_root, sub.no_ingest),
-        cmd::Command::Watch(sub) => cmd::watch::run_watch(sub.wiki_root, sub.interval),
+        cmd::Command::Watch(sub) => cmd::watch::run_watch(sub.wiki_root, sub.interval, sub.search),
         cmd::Command::McpServe(sub) => cmd::mcp_serve::run_mcp_serve(sub.port, sub.wiki_root),
         cmd::Command::Mcp(sub) => cmd::mcp_stdio::run_mcp(sub.wiki_root),
     };
@@ -280,6 +280,7 @@ fn handle_fact(
                     offset: 0,
                     since: since_ms,
                     until: until_ms,
+                    current_only: false,
                 })?;
                 output::format_fact_list(&facts, &wiki, fmt(json))
             })
@@ -303,6 +304,19 @@ fn handle_fact(
                 if helpful { "helpful" } else { "not helpful" },
                 id
             ))
+        }),
+        cmd::FactSub::Supersede { old_id, new_id } => with_wiki_mut(path, config, |wiki| {
+            let parse = |s: &str| {
+                wg_core::FactId(
+                    wg_core::ulid::Ulid::from_string(s)
+                        .map_err(|_| WgError::InvalidInput(format!("Invalid fact ID: {s}")))
+                        .unwrap_or_default(),
+                )
+            };
+            let old = parse(&old_id);
+            let new = parse(&new_id);
+            wiki.fact_supersede(&old, &new)?;
+            Ok(format!("Superseded {old_id} by {new_id}"))
         }),
     }
 }
@@ -395,6 +409,7 @@ fn handle_search(
             since: since_ms,
             until: until_ms,
             session_id: Some(session_id.clone()),
+            current_only: false,
         };
 
         let results = if let Some(ref start) = sub.traverse_from {
@@ -606,15 +621,7 @@ fn handle_model(config: Config, sub: cmd::ModelSub) -> Result<String, WgError> {
 // Helper functions
 
 fn parse_entity_type(s: Option<String>) -> Option<EntityType> {
-    s.map(|t| match t.to_lowercase().as_str() {
-        "technology" | "tech" => EntityType::Technology,
-        "concept" => EntityType::Concept,
-        "comparison" | "compare" => EntityType::Comparison,
-        "query" | "question" => EntityType::Query,
-        "person" => EntityType::Person,
-        "team" => EntityType::Team,
-        _ => EntityType::Unknown,
-    })
+    s.map(|t| EntityType::parse(&t))
 }
 
 pub(crate) fn parse_fact_type(s: Option<String>) -> Option<FactType> {

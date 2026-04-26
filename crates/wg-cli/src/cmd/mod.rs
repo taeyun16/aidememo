@@ -134,6 +134,10 @@ pub enum FactSub {
         helpful: bool,
         id: String,
     },
+    Supersede {
+        old_id: String,
+        new_id: String,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -495,7 +499,14 @@ fn fact_command() -> impl Parser<Command> {
         .command("feedback")
         .help("Record fact feedback");
 
-    construct!([add, get, list, delete, feedback])
+    let old_id = positional::<String>("OLD_ID");
+    let new_id = positional::<String>("NEW_ID");
+    let supersede = construct!(FactSub::Supersede { old_id, new_id })
+        .to_options()
+        .command("supersede")
+        .help("Mark OLD_ID as superseded by NEW_ID (validity window)");
+
+    construct!([add, get, list, delete, feedback, supersede])
         .map(Command::Fact)
         .to_options()
         .command("fact")

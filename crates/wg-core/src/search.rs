@@ -65,6 +65,10 @@ impl<'a> SearchEngine<'a> {
                     continue;
                 }
 
+                if opts.current_only && fact.superseded_at.is_some() {
+                    continue;
+                }
+
                 #[cfg(feature = "semantic")]
                 {
                     results.push(build_search_result(
@@ -247,6 +251,7 @@ mod semantic {
             offset: 0,
             since: opts.since,
             until: opts.until,
+            current_only: opts.current_only,
             ..Default::default()
         })?;
 

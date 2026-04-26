@@ -167,6 +167,36 @@ impl WikiGraph {
         self.store.write().fact_feedback(id, helpful)
     }
 
+    /// Mark `old_id` as superseded by `new_id`. Sets `old.superseded_at = now`
+    /// and `old.superseded_by = new_id`. Errors if either ID doesn't exist or
+    /// `old_id` is already superseded.
+    pub fn fact_supersede(&self, old_id: &FactId, new_id: &FactId) -> Result<()> {
+        let old = self.fact_get(old_id)?;
+        if old.superseded_at.is_some() {
+            return Err(WgError::InvalidInput(format!(
+                "fact {old_id} already superseded"
+            )));
+        }
+        // Verify the new fact exists.
+        let _ = self.fact_get(new_id)?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        self.fact_update(
+            old_id,
+            FactUpdate {
+                content: None,
+                fact_type: None,
+                tags: None,
+                source: None,
+                observed_at: None,
+                superseded_at: Some(now),
+                superseded_by: Some(*new_id),
+            },
+        )
+    }
+
     /// Record a search session.
     pub fn search_session_add(&self, session: &SearchSession) -> Result<()> {
         self.store.write().search_session_add(session)

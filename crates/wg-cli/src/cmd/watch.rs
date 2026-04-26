@@ -8,12 +8,15 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use crate::cmd::Command;
-use wg_core::{Config, WgError, WikiGraph};
+use wg_core::{Config, SearchOpts, WgError, WikiGraph};
 
 #[derive(Debug, Clone)]
 pub struct WatchSub {
     /// Polling interval in seconds (default: 5).
     pub interval: Option<u64>,
+    /// Optional search query — if set, prints fresh top-N hits after each
+    /// re-ingest instead of just the ingest stats.
+    pub search: Option<String>,
     pub wiki_root: PathBuf,
 }
 
@@ -26,18 +29,30 @@ pub fn watch_command() -> impl Parser<Command> {
         .argument::<u64>("SECS")
         .optional();
 
+    let search = long("search")
+        .help("Live-search topic — prints fresh top hits after each re-ingest")
+        .argument::<String>("QUERY")
+        .optional();
+
     construct!(WatchSub {
         interval,
+        search,
         wiki_root,
     })
     .map(Command::Watch)
     .to_options()
     .command("watch")
-    .help("Watch wiki files and automatically re-ingest on changes")
+    .help("Watch wiki files and re-ingest (with optional --search)")
 }
 
 /// Run `wg watch` — monitor the wiki root and re-ingest on file changes.
-pub fn run_watch(wiki_root: PathBuf, interval_secs: Option<u64>) -> Result<String, WgError> {
+/// If `search_query` is set, also re-runs that hybrid search after each
+/// ingest and prints the top-5 hits.
+pub fn run_watch(
+    wiki_root: PathBuf,
+    interval_secs: Option<u64>,
+    search_query: Option<String>,
+) -> Result<String, WgError> {
     use notify::{RecommendedWatcher, RecursiveMode, Watcher};
     use std::sync::mpsc;
 
@@ -114,6 +129,9 @@ pub fn run_watch(wiki_root: PathBuf, interval_secs: Option<u64>) -> Result<Strin
                 match wiki.ingest(&wiki_root, true) {
                     Ok(stats) => {
                         println!("[wg watch] re-ingested: {}", format_watch_stats(&stats));
+                        if let Some(ref q) = search_query {
+                            print_search_snapshot(&wiki, q);
+                        }
                     }
                     Err(e) => {
                         eprintln!("[wg watch] ingest error: {}", e);
@@ -147,4 +165,27 @@ fn format_watch_stats(stats: &wg_core::IngestStats) -> String {
         "+{} entities, +{} relations, +{} facts ({} files scanned)",
         stats.entities_added, stats.relations_added, stats.facts_added, stats.files_scanned
     )
+}
+
+fn print_search_snapshot(wiki: &WikiGraph, query: &str) {
+    let opts = SearchOpts {
+        limit: Some(5),
+        current_only: true,
+        ..Default::default()
+    };
+    match wiki.hybrid_search(query, opts) {
+        Ok(results) if !results.is_empty() => {
+            println!("[wg watch] search '{query}' (top 5):");
+            for r in &results {
+                let snippet: String = r.content.chars().take(70).collect();
+                println!("  {}. {}  (score={:.3})", r.rank, snippet, r.score);
+            }
+        }
+        Ok(_) => {
+            println!("[wg watch] search '{query}': no current matches");
+        }
+        Err(e) => {
+            eprintln!("[wg watch] search error: {e}");
+        }
+    }
 }

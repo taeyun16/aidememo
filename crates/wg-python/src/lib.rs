@@ -294,6 +294,7 @@ impl PyWikiGraph {
             offset: 0,
             since: None,
             until: None,
+            current_only: false,
         };
         let facts = self.0.fact_list(opts).map_err(map_err)?;
         to_py(py, &facts)

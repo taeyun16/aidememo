@@ -66,6 +66,7 @@ pub fn run_recent(
         offset: 0,
         since,
         until: None,
+        current_only: false,
     };
     let facts = wiki.fact_list(opts)?;
 
