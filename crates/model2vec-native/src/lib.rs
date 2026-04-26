@@ -171,18 +171,17 @@ impl StaticModel {
         lens.sort_unstable();
         let median_token_length = lens.get(lens.len() / 2).copied().unwrap_or(1);
 
-        // Resolve UNK so we can drop those tokens from the pool. If the
-        // model doesn't declare one, we leave them in (matches upstream).
-        let spec = tokenizer
-            .to_string(false)
-            .map_err(|e| Error::Tokenizer(e.to_string()))?;
-        let spec_v: Value = serde_json::from_str(&spec).unwrap_or(Value::Null);
-        let unk_token = spec_v
-            .get("model")
-            .and_then(|m| m.get("unk_token"))
-            .and_then(Value::as_str)
-            .unwrap_or("[UNK]");
-        let unk_token_id = tokenizer.token_to_id(unk_token);
+        // Resolve UNK so we can drop those tokens from the pool.
+        // Upstream model2vec-rs serialized the tokenizer back to JSON
+        // here just to read `model.unk_token` — that costs ~19 MB of
+        // peak heap on a 500k-vocab multilingual tokenizer (dhat).
+        // Tokenizers expose `tokenizer.token_to_id` directly, so we
+        // probe a short list of conventional UNK strings instead.
+        // Exact match wins; absence is fine (we just don't filter UNK,
+        // matching the original "no UNK declared" branch).
+        let unk_token_id = ["[UNK]", "<unk>", "<UNK>", "[unk]"]
+            .iter()
+            .find_map(|tok| tokenizer.token_to_id(tok));
 
         // mmap the weights file. The Mmap holds an Arc<File> internally.
         let file = std::fs::File::open(mdl_path).map_err(|e| Error::Io(mdl_path.into(), e))?;

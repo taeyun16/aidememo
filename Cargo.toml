@@ -42,3 +42,13 @@ strip = true
 [profile.dev]
 opt-level = 0
 debug = false
+
+# Optimized build that keeps debuginfo + symbols. Use this for
+# heap/CPU profiling — `cargo build -p wg-cli --release-debug --features dhat-heap`.
+# dhat needs unstripped frames to attribute allocations correctly.
+[profile.release-debug]
+inherits = "release"
+debug = "full"
+strip = false
+lto = false        # full LTO inlines through allocations and confuses dhat
+codegen-units = 16

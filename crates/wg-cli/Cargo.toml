@@ -26,6 +26,12 @@ memory-stats = "1.2"
 cpu-time = "1.0"
 peak_alloc = "0.3"
 
+# Heap profiler. Off by default — enable with `--features dhat-heap` to
+# build a binary that emits dhat-heap.json with full alloc backtraces.
+# When this feature is on, peak_alloc is replaced as the global
+# allocator (only one #[global_allocator] is allowed at link time).
+dhat = { version = "0.3", optional = true }
+
 # OS-native physical-memory metrics. macOS reports phys_footprint
 # (compressed + swapped, excludes shared mmap pages); Linux exposes
 # RssAnon via /proc/self/status, which excludes mmap'd files.
@@ -47,3 +53,11 @@ notify = "6.1"
 tokio = { version = "1.35", features = ["full"] }
 axum = "0.7"
 tokio-stream = "0.1"
+
+[features]
+default = []
+# Replace the GlobalAlloc with dhat's instrumented allocator. The bin
+# emits dhat-heap.json on exit (or when the Profiler guard drops),
+# which https://nnethercote.github.io/dh_view/dh_view.html renders
+# into a treemap of "live bytes by allocation site".
+dhat-heap = ["dep:dhat"]

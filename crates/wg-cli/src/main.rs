@@ -15,10 +15,24 @@ use wg_core::{
 // memory use (independent of mmap'd model weights / shared libs that
 // dominate RSS). The wrapper is a thin pass-through; overhead is a single
 // atomic add per allocation in release builds.
+//
+// `dhat-heap` feature swaps in dhat::Alloc instead — same #[global_allocator]
+// slot, only one allocator per binary, so the two are mutually exclusive.
+#[cfg(not(feature = "dhat-heap"))]
 #[global_allocator]
 static PEAK_ALLOC: peak_alloc::PeakAlloc = peak_alloc::PeakAlloc;
 
+#[cfg(feature = "dhat-heap")]
+#[global_allocator]
+static DHAT_ALLOC: dhat::Alloc = dhat::Alloc;
+
 fn main() {
+    // dhat profiler: held for the entire process lifetime. On drop it
+    // writes dhat-heap.json to the cwd. Use the online dh_view tool to
+    // render allocation site → live-bytes treemap.
+    #[cfg(feature = "dhat-heap")]
+    let _dhat = dhat::Profiler::new_heap();
+
     let app = cmd::build_cli();
 
     let args = app.run();
