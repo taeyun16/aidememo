@@ -1,3 +1,8 @@
+---
+kind: doc
+title: Hermes Agent 설정 가이드
+---
+
 # Setup Guide: Hermes Agent에서 wg 사용하기
 
 ## 개요

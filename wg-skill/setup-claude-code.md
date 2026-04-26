@@ -1,3 +1,8 @@
+---
+kind: doc
+title: Claude Code 설정 가이드
+---
+
 # Claude Code 에서 wg 사용하기
 
 `wg`는 Claude Code의 MCP / Skill / Slash command 시스템 셋 다 지원합니다.

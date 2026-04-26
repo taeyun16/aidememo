@@ -1,9 +1,6 @@
 ---
-name: wg-agent
-description: Wiki-Graph (wg) CLI + Rust crate project — structured wiki indexing for LLM workflows
-category: project-specific
-tags: [rust, wiki-graph, redb, bm25, bpaf, local-ai]
-version: 0.1.0
+kind: doc
+title: Wiki-Graph 전체 API 참조
 ---
 
 # Wiki-Graph Agent Guide

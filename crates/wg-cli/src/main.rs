@@ -60,7 +60,7 @@ fn main() {
         cmd::Command::Graph(sub) => cmd::graph::run_graph(&store_path, config, sub),
         cmd::Command::Project(sub) => cmd::project::run_project(config, sub),
         cmd::Command::Bench(sub) => cmd::bench::run_bench(&store_path, config, sub, json),
-        cmd::Command::Skill(sub) => cmd::skill::run_skill(sub),
+        cmd::Command::Skill(sub) => cmd::skill::run_skill(sub, json),
         cmd::Command::Export(sub) => handle_export(&store_path, config, sub),
         cmd::Command::Import(sub) => handle_import(&store_path, config, sub),
         cmd::Command::Stats(sub) => handle_stats(&store_path, config, sub, json),

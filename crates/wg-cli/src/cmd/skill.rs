@@ -22,17 +22,16 @@ use wg_core::WgError;
 
 #[derive(Debug, Clone)]
 pub enum SkillSub {
-    Check { path: PathBuf, json: bool },
+    Check { path: PathBuf },
 }
 
 pub fn skill_command() -> impl Parser<Command> {
-    let json = long("json").short('j').help("Output as JSON").switch();
     let path = positional::<PathBuf>("PATH").help("SKILL.md file or directory of skills");
 
-    let check = construct!(SkillSub::Check { json, path })
+    let check = construct!(SkillSub::Check { path })
         .to_options()
         .command("check")
-        .help("Validate a SKILL.md file or directory of skills");
+        .help("Validate a SKILL.md file or directory of skills (use global --json for JSON)");
 
     construct!([check])
         .map(Command::Skill)
@@ -58,9 +57,17 @@ pub struct Issue {
     pub message: String,
 }
 
+#[derive(Debug, serde::Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum FileKind {
+    Skill,
+    Doc,
+}
+
 #[derive(Debug, serde::Serialize)]
 pub struct FileReport {
     pub path: String,
+    pub kind: FileKind,
     pub ok: bool,
     pub issues: Vec<Issue>,
 }
@@ -68,6 +75,8 @@ pub struct FileReport {
 #[derive(Debug, serde::Serialize)]
 pub struct CheckSummary {
     pub total_files: usize,
+    pub skills_checked: usize,
+    pub docs_skipped: usize,
     pub passing: usize,
     pub error_count: usize,
     pub warning_count: usize,
@@ -80,6 +89,9 @@ pub struct CheckSummary {
 
 #[derive(Debug, Default)]
 struct SkillFm {
+    /// `kind: skill` (default) or `kind: doc` — docs are skipped from
+    /// validation. Other values are treated like `doc` (non-skill, skipped).
+    kind: Option<String>,
     name: Option<String>,
     description: Option<String>,
     when_to_use: Option<Vec<String>>,
@@ -155,6 +167,7 @@ fn parse_skill_frontmatter(fm: &str) -> SkillFm {
             // Scalar value.
             let v = unquote(value);
             match key.as_str() {
+                "kind" => out.kind = Some(v),
                 "name" => out.name = Some(v),
                 "description" => out.description = Some(v),
                 "allowed-tools" | "allowed_tools" => {
@@ -241,6 +254,7 @@ fn check_one(path: &Path) -> std::io::Result<FileReport> {
             });
             return Ok(FileReport {
                 path: path.display().to_string(),
+                kind: FileKind::Skill,
                 ok: false,
                 issues,
             });
@@ -248,6 +262,18 @@ fn check_one(path: &Path) -> std::io::Result<FileReport> {
     };
 
     let fm = parse_skill_frontmatter(fm_text);
+
+    // `kind: doc` (or any kind != "skill") marks the file as documentation —
+    // we don't validate it as a skill. Use `kind: skill` (or omit `kind`) to
+    // opt in to skill validation.
+    if matches!(fm.kind.as_deref(), Some(k) if k != "skill") {
+        return Ok(FileReport {
+            path: path.display().to_string(),
+            kind: FileKind::Doc,
+            ok: true,
+            issues: Vec::new(),
+        });
+    }
 
     // Required fields
     match &fm.name {
@@ -333,6 +359,7 @@ fn check_one(path: &Path) -> std::io::Result<FileReport> {
     let has_error = issues.iter().any(|i| i.severity == Severity::Error);
     Ok(FileReport {
         path: path.display().to_string(),
+        kind: FileKind::Skill,
         ok: !has_error,
         issues,
     })
@@ -360,9 +387,9 @@ fn collect_files(path: &Path) -> std::io::Result<Vec<PathBuf>> {
 // Runner
 // ---------------------------------------------------------------------------
 
-pub fn run_skill(sub: SkillSub) -> Result<String, WgError> {
+pub fn run_skill(sub: SkillSub, json: bool) -> Result<String, WgError> {
     match sub {
-        SkillSub::Check { path, json } => {
+        SkillSub::Check { path } => {
             let files = collect_files(&path)
                 .map_err(|e| WgError::FileRead(path.clone(), format!("read skill path: {}", e)))?;
             if files.is_empty() {
@@ -377,9 +404,19 @@ pub fn run_skill(sub: SkillSub) -> Result<String, WgError> {
                     check_one(f).map_err(|e| WgError::FileRead(f.clone(), e.to_string()))?;
                 reports.push(report);
             }
+            let skills_checked = reports
+                .iter()
+                .filter(|r| matches!(r.kind, FileKind::Skill))
+                .count();
+            let docs_skipped = reports.len() - skills_checked;
             let summary = CheckSummary {
                 total_files: reports.len(),
-                passing: reports.iter().filter(|r| r.ok).count(),
+                skills_checked,
+                docs_skipped,
+                passing: reports
+                    .iter()
+                    .filter(|r| matches!(r.kind, FileKind::Skill) && r.ok)
+                    .count(),
                 error_count: reports
                     .iter()
                     .flat_map(|r| &r.issues)
@@ -407,18 +444,26 @@ pub fn run_skill(sub: SkillSub) -> Result<String, WgError> {
 fn format_human(s: &CheckSummary) -> String {
     let mut out = String::new();
     out.push_str(&format!(
-        "wg skill check — {} file(s)  ({} passing, {} error(s), {} warning(s))\n\n",
-        s.total_files, s.passing, s.error_count, s.warning_count
+        "wg skill check — {} file(s)  ({} skill(s) passing, {} doc(s) skipped, {} error(s), {} warning(s))\n\n",
+        s.total_files, s.passing, s.docs_skipped, s.error_count, s.warning_count
     ));
     for f in &s.files {
-        let mark = if f.ok { "✓" } else { "✗" };
-        out.push_str(&format!("{} {}\n", mark, f.path));
+        let mark = match (&f.kind, f.ok) {
+            (FileKind::Doc, _) => "·",
+            (FileKind::Skill, true) => "✓",
+            (FileKind::Skill, false) => "✗",
+        };
+        let tag = match f.kind {
+            FileKind::Doc => " (doc, skipped)",
+            FileKind::Skill => "",
+        };
+        out.push_str(&format!("{} {}{}\n", mark, f.path, tag));
         for i in &f.issues {
-            let tag = match i.severity {
+            let prefix = match i.severity {
                 Severity::Error => "  [error]",
                 Severity::Warning => "  [warn ]",
             };
-            out.push_str(&format!("{} [{}] {}\n", tag, i.code, i.message));
+            out.push_str(&format!("{} [{}] {}\n", prefix, i.code, i.message));
         }
         if !f.issues.is_empty() {
             out.push('\n');
@@ -519,6 +564,32 @@ mod tests {
             "{:?}",
             issues
         );
+    }
+
+    #[test]
+    fn kind_doc_skips_validation() {
+        // No `name`/`description` — would normally error — but `kind: doc` means
+        // skip and pass.
+        let body = "---\nkind: doc\ntitle: Some setup guide\n---\n\nany body";
+        let report = check_one_str(body);
+        assert_eq!(report.kind, FileKind::Doc);
+        assert!(report.ok);
+        assert!(report.issues.is_empty(), "{:?}", report.issues);
+    }
+
+    #[test]
+    fn kind_skill_explicit_still_validates() {
+        let body = "---\nkind: skill\nname: wg\ndescription: A long enough description for the skill.\nallowed-tools: [Bash(wg:*)]\n---\n\nbody body body body body body body body body body";
+        let report = check_one_str(body);
+        assert_eq!(report.kind, FileKind::Skill);
+        assert!(report.ok, "{:?}", report.issues);
+    }
+
+    fn check_one_str(content: &str) -> FileReport {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("SKILL.md");
+        std::fs::write(&path, content).unwrap();
+        check_one(&path).unwrap()
     }
 
     #[test]

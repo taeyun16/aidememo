@@ -1,3 +1,8 @@
+---
+kind: doc
+title: Codex CLI 설정 가이드
+---
+
 # Codex CLI 에서 wg 사용하기
 
 OpenAI Codex CLI는 `~/.codex/config.toml`에서 stdio MCP 서버를 그대로 받습니다.
