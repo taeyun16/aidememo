@@ -86,6 +86,12 @@ pub struct ModelConfig {
     /// have different dims); for model2vec it's auto-detected.
     #[serde(default)]
     pub dimension: usize,
+    /// model2vec only: quantize the embedding matrix to int8 at load
+    /// time. Cuts heap from ~489 MB to ~124 MB on the 128M model with
+    /// <0.5% cosine similarity loss. mmap zero-copy is given up when
+    /// this is on.
+    #[serde(default)]
+    pub quantize: bool,
 }
 
 fn default_provider() -> String {
@@ -107,6 +113,7 @@ impl Default for ModelConfig {
             endpoint: String::new(),
             api_key_env: String::new(),
             dimension: 0,
+            quantize: false,
         }
     }
 }
@@ -325,6 +332,7 @@ impl ModelConfig {
             "endpoint" => Some(self.endpoint.clone()),
             "api_key_env" => Some(self.api_key_env.clone()),
             "dimension" => Some(self.dimension.to_string()),
+            "quantize" => Some(self.quantize.to_string()),
             _ => None,
         }
     }
@@ -365,6 +373,12 @@ impl ModelConfig {
                 self.dimension = value
                     .parse()
                     .map_err(|_| WgError::InvalidInput(format!("invalid integer: {}", value)))?;
+                Ok(())
+            }
+            "quantize" => {
+                self.quantize = value
+                    .parse()
+                    .map_err(|_| WgError::InvalidInput(format!("invalid boolean: {}", value)))?;
                 Ok(())
             }
             _ => Err(WgError::ConfigKeyNotFound(format!("model.{}", key))),

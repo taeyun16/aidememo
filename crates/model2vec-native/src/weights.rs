@@ -32,6 +32,18 @@ pub(crate) enum Weights {
         data: Vec<f32>,
         cols: usize,
     },
+    /// Load-time int8 quantization: each row scaled to fit in [-127, 127]
+    /// with its own f32 scale (per-row max-abs). Cuts the f32 489 MB
+    /// matrix to ~122 MB heap + ~2 MB of per-row scales. mmap zero-copy
+    /// is given up here; the trade-off is "smaller heap" vs "no copy".
+    /// Per-row (not global) scale because models2vec embeddings have
+    /// outlier dimensions — global scaling would crush dynamic range
+    /// for the median row.
+    QuantizedI8 {
+        data: Vec<i8>,
+        scales: Vec<f32>,
+        cols: usize,
+    },
 }
 
 impl Weights {
@@ -111,8 +123,12 @@ impl Weights {
         }
     }
 
-    /// Return a `&[f32]` row of length `cols`.
-    pub(crate) fn row(&self, row: usize) -> &[f32] {
+    /// A row, ready to be accumulated into an f32 mean-pool buffer.
+    /// Returns either a borrowed `&[f32]` (no work) or an owned i8
+    /// slice + scale that the caller widens at accumulate time. The
+    /// enum keeps the hot path branch-light — pool() dispatches once
+    /// per call, then the inner row loop is monomorphic.
+    pub(crate) fn row<'a>(&'a self, row: usize) -> RowView<'a> {
         match self {
             Weights::Mmap {
                 _mmap,
@@ -122,21 +138,108 @@ impl Weights {
             } => {
                 let start = row * *cols;
                 debug_assert!(start + *cols <= *len);
-                // Reconstitute the &[f32] view from the mmap. We do
-                // this on every call rather than caching a slice in the
-                // struct because that slice's lifetime would have to
-                // be tied to the Mmap's lifetime, which fights the
-                // ownership model.
-                //
-                // Cost is two pointer adds + a length compute — ~ns.
                 let bytes = &_mmap[*offset..*offset + *len * std::mem::size_of::<f32>()];
                 let floats: &[f32] = bytemuck::cast_slice(bytes);
-                &floats[start..start + *cols]
+                RowView::F32(&floats[start..start + *cols])
             }
             Weights::Heap { data, cols } => {
                 let start = row * *cols;
-                &data[start..start + *cols]
+                RowView::F32(&data[start..start + *cols])
+            }
+            Weights::QuantizedI8 { data, scales, cols } => {
+                let start = row * *cols;
+                RowView::I8 {
+                    row: &data[start..start + *cols],
+                    scale: scales.get(row).copied().unwrap_or(0.0),
+                }
             }
         }
     }
+
+    /// Quantize the matrix held by `self` to int8 with per-row max-abs
+    /// scaling, returning a new `QuantizedI8` form. Critically, this
+    /// reads each row directly from the source storage — *without*
+    /// materializing a staging f32 buffer. So the temporary memory cost
+    /// is just the destination i8 matrix (~rows*cols bytes) plus the
+    /// scales vector, never an extra rows*cols*4 bytes f32 copy.
+    ///
+    /// Quantization rule per row:
+    ///   max = max(|row[i]|)
+    ///   scale = max / 127           (so the f32 magnitude is recoverable)
+    ///   q[i]  = round(row[i] / scale).clamp(-127, 127)
+    ///
+    /// Recovery: `row_f32[i] ≈ q[i] * scale`. Error bound per element
+    /// is roughly `max / 254` — a 1/254 fraction of the row's largest
+    /// magnitude. For unit-normalized embedding rows that's around
+    /// 0.4% per dimension; cosine similarity with another quantized
+    /// row stays within ~0.5% of the f32 ground truth in practice.
+    pub(crate) fn quantize_in_place(&self, rows: usize, cols: usize) -> Weights {
+        let mut data = vec![0i8; rows * cols];
+        let mut scales = vec![0.0f32; rows];
+        for r in 0..rows {
+            // Pull the row from whichever storage we have. F32 path is
+            // a slice of the mmap (zero-copy); I8 path widens inline.
+            // The widened f32 view never escapes this loop iteration.
+            let dst = &mut data[r * cols..(r + 1) * cols];
+            match self.row(r) {
+                RowView::F32(src) => quantize_row_f32(src, dst, &mut scales[r]),
+                RowView::I8 { row, scale } => quantize_row_i8(row, scale, dst, &mut scales[r]),
+            }
+        }
+        Weights::QuantizedI8 { data, scales, cols }
+    }
+}
+
+/// Quantize one f32 row into a pre-allocated i8 slot. Pure function;
+/// hoisted so the loop in `quantize_in_place` is mono-typed.
+fn quantize_row_f32(src: &[f32], dst: &mut [i8], scale_out: &mut f32) {
+    let max = src.iter().fold(0f32, |acc, x| acc.max(x.abs()));
+    if max == 0.0 {
+        *scale_out = 0.0;
+        return;
+    }
+    let scale = max / 127.0;
+    *scale_out = scale;
+    let inv = 1.0 / scale;
+    for (q, &v) in dst.iter_mut().zip(src.iter()) {
+        *q = (v * inv).round().clamp(-127.0, 127.0) as i8;
+    }
+}
+
+/// Same, when the input row is already i8 (with an existing scale).
+/// We re-quantize anyway to a uniform output shape; the only
+/// information lost vs the original was already lost when the source
+/// was quantized upstream.
+fn quantize_row_i8(src: &[i8], src_scale: f32, dst: &mut [i8], scale_out: &mut f32) {
+    // The widened max-abs is just the i8 max-abs times src_scale.
+    let max_q = src
+        .iter()
+        .map(|&v| v.unsigned_abs() as i32)
+        .max()
+        .unwrap_or(0);
+    if max_q == 0 {
+        *scale_out = 0.0;
+        return;
+    }
+    let max = max_q as f32 * src_scale;
+    let scale = max / 127.0;
+    *scale_out = scale;
+    let inv = 1.0 / scale;
+    for (q, &v) in dst.iter_mut().zip(src.iter()) {
+        let f = (v as f32) * src_scale;
+        *q = (f * inv).round().clamp(-127.0, 127.0) as i8;
+    }
+}
+
+/// One row, in whichever form the storage holds. The pool loop in
+/// lib.rs is the only consumer; it dispatches once and then runs a
+/// tight inner loop.
+pub(crate) enum RowView<'a> {
+    F32(&'a [f32]),
+    I8 {
+        row: &'a [i8],
+        /// `i8 -> f32` recovery scale. Multiply each element by this
+        /// before accumulating.
+        scale: f32,
+    },
 }

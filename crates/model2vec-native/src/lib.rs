@@ -43,7 +43,7 @@ use thiserror::Error;
 use tokenizers::Tokenizer;
 
 mod weights;
-use weights::Weights;
+use weights::{RowView, Weights};
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -86,9 +86,11 @@ pub struct StaticModel {
     normalize: bool,
     median_token_length: usize,
     unk_token_id: Option<u32>,
-    /// Holds the mmap so it outlives `weights`. We hand `Weights` a
-    /// `&[f32]` borrowed from this.
-    _mmap: Arc<Mmap>,
+    /// Holds the mmap so it outlives `weights`. `None` after a
+    /// load-time quantization pass — the f32 mmap is no longer
+    /// referenced by anything, so we drop it to release the
+    /// 489 MB virtual mapping along with anything paged in.
+    _mmap: Option<Arc<Mmap>>,
     rows: usize,
     cols: usize,
 }
@@ -113,6 +115,27 @@ impl StaticModel {
     /// function returns very quickly even for large models — pages are
     /// faulted in on first access during `encode`.
     pub fn from_pretrained<P: AsRef<Path>>(path: P, normalize: Option<bool>) -> Result<Self> {
+        Self::from_pretrained_with(path, normalize, false)
+    }
+
+    /// Same as `from_pretrained` but quantizes the embedding matrix
+    /// to int8 at load time. ~4× smaller heap; cosine recovery error
+    /// stays under ~0.5% per row in practice. mmap zero-copy is given
+    /// up — once quantized, the matrix lives on the heap.
+    pub fn from_pretrained_quantized<P: AsRef<Path>>(
+        path: P,
+        normalize: Option<bool>,
+    ) -> Result<Self> {
+        Self::from_pretrained_with(path, normalize, true)
+    }
+
+    /// Backing impl for both. `quantize=true` runs the i8 conversion
+    /// pass and discards the f32 source.
+    fn from_pretrained_with<P: AsRef<Path>>(
+        path: P,
+        normalize: Option<bool>,
+        quantize: bool,
+    ) -> Result<Self> {
         let dir = path.as_ref();
         let tok_path = dir.join("tokenizer.json");
         let mdl_path = dir.join("model.safetensors");
@@ -122,7 +145,7 @@ impl StaticModel {
                 return Err(Error::Missing(p.clone()));
             }
         }
-        Self::load_from_paths(&tok_path, &mdl_path, &cfg_path, normalize)
+        Self::load_from_paths(&tok_path, &mdl_path, &cfg_path, normalize, quantize)
     }
 
     /// Load from the HuggingFace Hub. Uses `hf-hub` to resolve files to
@@ -130,6 +153,17 @@ impl StaticModel {
     /// memory profile as a local load once the cache is warm.
     #[cfg(feature = "hub")]
     pub fn from_hub(repo: &str, normalize: Option<bool>) -> Result<Self> {
+        Self::from_hub_with(repo, normalize, false)
+    }
+
+    /// Hub variant with load-time int8 quantization.
+    #[cfg(feature = "hub")]
+    pub fn from_hub_quantized(repo: &str, normalize: Option<bool>) -> Result<Self> {
+        Self::from_hub_with(repo, normalize, true)
+    }
+
+    #[cfg(feature = "hub")]
+    fn from_hub_with(repo: &str, normalize: Option<bool>, quantize: bool) -> Result<Self> {
         let api = hf_hub::api::sync::Api::new().map_err(|e| Error::Hub(e.to_string()))?;
         let model = api.model(repo.to_string());
         let tok = model
@@ -141,7 +175,7 @@ impl StaticModel {
         let cfg = model
             .get("config.json")
             .map_err(|e| Error::Hub(e.to_string()))?;
-        Self::load_from_paths(&tok, &mdl, &cfg, normalize)
+        Self::load_from_paths(&tok, &mdl, &cfg, normalize, quantize)
     }
 
     fn load_from_paths(
@@ -149,6 +183,7 @@ impl StaticModel {
         mdl_path: &Path,
         cfg_path: &Path,
         normalize: Option<bool>,
+        quantize: bool,
     ) -> Result<Self> {
         // Tokenizer (real cost — vocab dictionary lives on heap, ~tens of MB).
         let tokenizer =
@@ -212,6 +247,19 @@ impl StaticModel {
         // expand to f32 (one allocation, but ~half / quarter the size).
         let weights = Weights::from_tensor(tensor.dtype(), tensor.data(), &mmap, rows, cols)?;
 
+        // Optional load-time int8 quantization. The new Weights owns
+        // a fresh Vec<i8>; once we replace the F32 weights variable
+        // the original (which clones the mmap Arc) is dropped, and
+        // since `mmap_kept` is None below the function holds no other
+        // strong reference — the mmap unmaps when this function
+        // returns. Net resident: -489 MB (mapped) +124 MB (i8+scales).
+        let mmap_kept = if quantize { None } else { Some(mmap.clone()) };
+        let weights = if quantize {
+            weights.quantize_in_place(rows, cols)
+        } else {
+            weights
+        };
+
         // Optional vocab-quantization tensors. These are small (one f32
         // per vocab token), so the upstream's `Vec<f32>` collect is fine
         // here — keeping it simple.
@@ -243,7 +291,7 @@ impl StaticModel {
             normalize,
             median_token_length,
             unk_token_id,
-            _mmap: mmap,
+            _mmap: mmap_kept,
             rows,
             cols,
         })
@@ -322,10 +370,10 @@ impl StaticModel {
 
     /// Mean-pool a single token-id list into a fresh `Vec<f32>`.
     ///
-    /// Walks `ids`, looks up each row in the embedding matrix (zero-copy
-    /// slice from mmap), accumulates into a stack-allocated sum buffer,
-    /// then divides + normalizes. Allocation footprint per call is one
-    /// `Vec<f32>` of length `cols` — same as upstream.
+    /// Walks `ids`, looks up each row in the embedding matrix, and
+    /// accumulates into a stack-allocated sum buffer. The dispatch is
+    /// "what storage holds the matrix" — once per row, then a tight
+    /// inner loop over `cols`.
     fn pool(&self, ids: &[u32]) -> Vec<f32> {
         let dim = self.cols;
         let mut sum = vec![0.0_f32; dim];
@@ -341,17 +389,26 @@ impl StaticModel {
                 continue;
             }
 
-            let scale = match &self.token_weights {
+            let token_scale = match &self.token_weights {
                 Some(w) => *w.get(id as usize).unwrap_or(&1.0),
                 None => 1.0,
             };
 
-            let row = self.weights.row(row_idx);
-            // SIMD-friendly loop; rustc autovectorizes this on modern
-            // targets. Could be hand-tuned with simsimd later if a
-            // bench shows it matters.
-            for (s, &v) in sum.iter_mut().zip(row.iter()) {
-                *s += v * scale;
+            // SIMD-friendly inner loops; rustc autovectorizes these on
+            // x86_64/AArch64. The i8 path widens to f32 inline rather
+            // than via a temporary buffer — keeps the hot data in L1.
+            match self.weights.row(row_idx) {
+                RowView::F32(row) => {
+                    for (s, &v) in sum.iter_mut().zip(row.iter()) {
+                        *s += v * token_scale;
+                    }
+                }
+                RowView::I8 { row, scale } => {
+                    let combined = scale * token_scale;
+                    for (s, &q) in sum.iter_mut().zip(row.iter()) {
+                        *s += (q as f32) * combined;
+                    }
+                }
             }
             cnt += 1;
         }

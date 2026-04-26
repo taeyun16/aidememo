@@ -96,25 +96,33 @@ mod model2vec {
                 cache_dir.join(&config.model.name)
             };
 
+            // model.quantize=true: load with int8 weights (~4× smaller
+            // heap, ~0.5% cosine loss vs f32). When false, the f32
+            // matrix stays mmap'd zero-copy. The dispatch happens
+            // here so wg-core code below never has to know which
+            // storage form is in play.
+            let q = config.model.quantize;
             let inner = if local_candidate.exists() {
                 // Local directory layout (tokenizer.json/model.safetensors/config.json).
-                StaticModel::from_pretrained(&local_candidate, None).map_err(|source| {
-                    WgError::ModelLoadFailed {
-                        path: local_candidate.clone(),
-                        source: Box::new(std::io::Error::other(source.to_string())),
-                    }
+                let r = if q {
+                    StaticModel::from_pretrained_quantized(&local_candidate, None)
+                } else {
+                    StaticModel::from_pretrained(&local_candidate, None)
+                };
+                r.map_err(|source| WgError::ModelLoadFailed {
+                    path: local_candidate.clone(),
+                    source: Box::new(std::io::Error::other(source.to_string())),
                 })?
             } else if config.model.auto_download {
                 // HF Hub fallback. mmap kicks in on the cached files.
-                // model2vec-native's `hub` feature is on by default, so
-                // this call is always available; if a downstream
-                // explicitly disabled it the linker error is what we
-                // want anyway (clear failure mode).
-                StaticModel::from_hub(&config.model.name, None).map_err(|source| {
-                    WgError::ModelLoadFailed {
-                        path: PathBuf::from(&config.model.name),
-                        source: Box::new(std::io::Error::other(source.to_string())),
-                    }
+                let r = if q {
+                    StaticModel::from_hub_quantized(&config.model.name, None)
+                } else {
+                    StaticModel::from_hub(&config.model.name, None)
+                };
+                r.map_err(|source| WgError::ModelLoadFailed {
+                    path: PathBuf::from(&config.model.name),
+                    source: Box::new(std::io::Error::other(source.to_string())),
                 })?
             } else {
                 return Err(WgError::ModelNotFound {

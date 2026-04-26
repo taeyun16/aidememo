@@ -53,6 +53,35 @@ fn loads_real_model_and_encodes() {
 }
 
 #[test]
+fn quantized_load_close_to_f32() {
+    // Cosine between f32 and i8-quantized encodings of the same text
+    // should be very high (>0.99). This catches gross quantization
+    // bugs without pretending to be a relevance test.
+    let dir = match cache_path() {
+        Some(p) => p,
+        None => return,
+    };
+
+    let f32_model = model2vec_native::StaticModel::from_pretrained(&dir, None).expect("load f32");
+    let i8_model =
+        model2vec_native::StaticModel::from_pretrained_quantized(&dir, None).expect("load i8");
+
+    let text = "Redis Sentinel provides high availability";
+    let a = f32_model.encode_single(text);
+    let b = i8_model.encode_single(text);
+
+    let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
+    let na = a.iter().map(|x| x * x).sum::<f32>().sqrt();
+    let nb = b.iter().map(|x| x * x).sum::<f32>().sqrt();
+    let cos = dot / (na * nb + 1e-12);
+    assert!(
+        cos > 0.99,
+        "cosine(f32, i8) = {} — quantization loss too large",
+        cos
+    );
+}
+
+#[test]
 fn batch_encode_matches_single() {
     let dir = match cache_path() {
         Some(p) => p,
