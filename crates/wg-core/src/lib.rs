@@ -1,5 +1,6 @@
 //! WikiGraph — Structured index engine for LLM wikis.
 
+pub mod adapt;
 pub mod config;
 pub mod error;
 pub mod fuzzy;
@@ -8,12 +9,11 @@ pub mod index;
 pub mod ingest;
 pub mod lint;
 pub mod migrate;
+#[cfg(feature = "s3")]
+pub mod s3;
 pub mod search;
 pub mod store;
 pub mod types;
-pub mod adapt;
-#[cfg(feature = "s3")]
-pub mod s3;
 #[cfg(feature = "s3")]
 pub mod wal;
 
@@ -271,6 +271,60 @@ impl WikiGraph {
         ))
     }
 
+    // === Query (unified context fetch) ===
+
+    /// Fetch a coherent context dossier for `topic` in a single call.
+    ///
+    /// Always runs hybrid search. If `topic` resolves to an entity (by name
+    /// or alias), additionally returns the entity record, related entities
+    /// reachable within `opts.depth` hops, and the most recent facts attached
+    /// to that entity.
+    ///
+    /// This collapses what would otherwise be 3–4 separate calls (search →
+    /// entity_get → traverse → fact_list) into one round trip — useful for
+    /// LLM agents and MCP clients minimizing context-window spend.
+    #[cfg(feature = "semantic")]
+    pub fn query(&self, topic: &str, opts: types::QueryOpts) -> Result<types::QueryResult> {
+        let search = self.hybrid_search(
+            topic,
+            SearchOpts {
+                limit: Some(opts.search_limit),
+                since: opts.since,
+                ..Default::default()
+            },
+        )?;
+
+        let entity = self.entity_get(topic).ok();
+
+        let (related, recent_facts) = if let Some(ref e) = entity {
+            let traverse = self.traverse(
+                &e.name,
+                TraverseOpts {
+                    depth: opts.depth,
+                    relation_types: None,
+                    direction: TraverseDirection::Both,
+                },
+            )?;
+            let recent = self.fact_list(FactListOpts {
+                entity_id: Some(e.id),
+                limit: Some(opts.recent_limit),
+                since: opts.since,
+                ..Default::default()
+            })?;
+            (traverse.entities, recent)
+        } else {
+            (Vec::new(), Vec::new())
+        };
+
+        Ok(types::QueryResult {
+            topic: topic.to_string(),
+            entity,
+            search,
+            related,
+            recent_facts,
+        })
+    }
+
     // === Lint ===
 
     /// Run graph health checks.
@@ -344,10 +398,68 @@ pub use types::{
     AdaptEvalReport, AdaptResult, AdaptStatus, EntityId, EntityInput, EntityRecord, EntitySort,
     EntitySummary, EntityType, EntityUpdate, ExportScope, ExportStats, FactId, FactInput,
     FactListOpts, FactRecord, FactType, FactUpdate, ImportStats, LintIssue, LintReport,
-    LintSeverity, ListOpts, PathStep, RelationInput, RelationRecord, RelationType,
-    SearchFeedback, SearchOpts, SearchResult, SearchSession, StoreStats, TraverseDirection,
-    TraverseOpts, TraverseResult,
+    LintSeverity, ListOpts, PathStep, QueryOpts, QueryResult, RelationInput, RelationRecord,
+    RelationType, SearchFeedback, SearchOpts, SearchResult, SearchSession, StoreStats,
+    TraverseDirection, TraverseOpts, TraverseResult,
 };
 
 #[cfg(feature = "semantic")]
 pub use types::VectorRecord;
+
+#[cfg(all(test, feature = "semantic"))]
+mod query_tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    fn fresh_wiki() -> (WikiGraph, tempfile::TempDir) {
+        let dir = tempdir().unwrap();
+        let wiki = WikiGraph::open(&dir.path().join("test.redb"), Config::default()).unwrap();
+        (wiki, dir)
+    }
+
+    #[test]
+    fn query_resolves_entity_and_returns_search_traverse_recent() {
+        let (wiki, _dir) = fresh_wiki();
+
+        wiki.entity_add(EntityInput {
+            name: "Redis".into(),
+            entity_type: Some(EntityType::Technology),
+            tags: Some(vec!["cache".into()]),
+            ..Default::default()
+        })
+        .unwrap();
+        let redis_id = wiki.resolve_entity("Redis").unwrap();
+
+        wiki.add_fact(FactInput {
+            content: "Redis Sentinel provides high availability".into(),
+            fact_type: Some(FactType::Decision),
+            entity_ids: Some(vec![redis_id]),
+            tags: None,
+            source: None,
+            source_confidence: None,
+            observed_at: None,
+        })
+        .unwrap();
+
+        let result = wiki.query("Redis", QueryOpts::default()).unwrap();
+
+        assert_eq!(result.topic, "Redis");
+        assert!(result.entity.is_some());
+        assert_eq!(result.entity.as_ref().unwrap().name, "Redis");
+        assert!(
+            !result.recent_facts.is_empty(),
+            "expected recent facts for Redis"
+        );
+    }
+
+    #[test]
+    fn query_unknown_topic_returns_search_only() {
+        let (wiki, _dir) = fresh_wiki();
+        let result = wiki
+            .query("nonexistent-topic-xyz", QueryOpts::default())
+            .unwrap();
+        assert!(result.entity.is_none());
+        assert!(result.related.is_empty());
+        assert!(result.recent_facts.is_empty());
+    }
+}

@@ -341,10 +341,16 @@ pub struct FactRecord {
     pub source_confidence: f32,
     /// Relevance score (0-1): updated via feedback.
     pub relevance_score: f32,
-    /// Creation timestamp (epoch ms).
+    /// Creation timestamp (epoch ms): when the fact was inserted into the store.
     pub created_at: u64,
     /// Last update timestamp (epoch ms).
     pub updated_at: u64,
+    /// Observed timestamp (epoch ms): when the fact was actually observed/decided
+    /// in the real world. Distinct from `created_at` (DB insertion time).
+    /// Sourced from frontmatter `date`/`decided_at`/`observed_at` during ingest,
+    /// or set explicitly via `wg fact add --observed-at`.
+    #[serde(default)]
+    pub observed_at: Option<u64>,
     /// Number of times accessed.
     pub access_count: u32,
     /// Last access timestamp (epoch ms).
@@ -369,6 +375,7 @@ impl FactRecord {
             relevance_score: 0.5,
             created_at: now,
             updated_at: now,
+            observed_at: None,
             access_count: 0,
             last_accessed_at: now,
         }
@@ -391,6 +398,9 @@ impl FactRecord {
         }
         if let Some(source) = input.source {
             self.source = Some(source);
+        }
+        if let Some(observed_at) = input.observed_at {
+            self.observed_at = Some(observed_at);
         }
         self.updated_at = now;
     }
@@ -420,6 +430,10 @@ pub struct FactInput {
     pub source: Option<String>,
     #[serde(default)]
     pub source_confidence: Option<f32>,
+    /// When the fact was actually observed/decided (epoch ms).
+    /// Distinct from creation time. Optional.
+    #[serde(default)]
+    pub observed_at: Option<u64>,
 }
 
 /// Input for updating a fact.
@@ -429,6 +443,8 @@ pub struct FactUpdate {
     pub fact_type: Option<FactType>,
     pub tags: Option<Vec<String>>,
     pub source: Option<String>,
+    #[serde(default)]
+    pub observed_at: Option<u64>,
 }
 
 /// Options for listing entities.
@@ -497,6 +513,13 @@ pub struct SearchResult {
     pub source: Option<String>,
     pub score: f32,
     pub rank: usize,
+    /// When the fact was inserted into the store (epoch ms).
+    #[serde(default)]
+    pub created_at: u64,
+    /// When the fact was actually observed/decided in the real world (epoch ms).
+    /// Sourced from frontmatter or `--observed-at`. Optional.
+    #[serde(default)]
+    pub observed_at: Option<u64>,
     /// The search session this result belongs to (if tracked).
     #[cfg(feature = "semantic")]
     pub session_id: Option<String>,
@@ -510,6 +533,11 @@ pub struct SearchOpts {
     pub entity_filter: Option<Vec<EntityId>>,
     pub bm25_weight: f32,
     pub semantic_weight: f32,
+    /// Lower-bound timestamp (inclusive, epoch ms). Compares against
+    /// `observed_at` if present, else `created_at`.
+    pub since: Option<u64>,
+    /// Upper-bound timestamp (inclusive, epoch ms). Same source as `since`.
+    pub until: Option<u64>,
     /// Search session to attribute results to (enables feedback tracking).
     #[cfg(feature = "semantic")]
     pub session_id: Option<String>,
@@ -523,6 +551,54 @@ pub struct FactListOpts {
     pub min_confidence: Option<f32>,
     pub limit: Option<usize>,
     pub offset: usize,
+    /// Lower-bound timestamp (inclusive, epoch ms). Compares against
+    /// `observed_at` if present, else `created_at`.
+    pub since: Option<u64>,
+    /// Upper-bound timestamp (inclusive, epoch ms). Same source as `since`.
+    pub until: Option<u64>,
+}
+
+/// Options for `WikiGraph::query` — a unified context fetch (search + traverse + recent facts).
+#[derive(Debug, Clone)]
+pub struct QueryOpts {
+    /// Max search hits to include (default 10).
+    pub search_limit: usize,
+    /// Traverse depth when the topic resolves to an entity (default 2).
+    pub depth: u32,
+    /// Max recent facts to include (default 10).
+    pub recent_limit: usize,
+    /// Lower-bound timestamp for search/recent (epoch ms). `None` = no bound.
+    pub since: Option<u64>,
+}
+
+impl Default for QueryOpts {
+    fn default() -> Self {
+        Self {
+            search_limit: 10,
+            depth: 2,
+            recent_limit: 10,
+            since: None,
+        }
+    }
+}
+
+/// Result of a unified `WikiGraph::query` call.
+///
+/// Composes hybrid search + entity resolution + graph traversal + recent
+/// facts in a single pass. Designed for LLM agents that need a coherent
+/// context dossier without making 3-4 round trips.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QueryResult {
+    /// The topic that was queried.
+    pub topic: String,
+    /// The resolved entity, if `topic` matched an entity name or alias.
+    pub entity: Option<EntityRecord>,
+    /// Top hybrid-search hits (BM25 + semantic).
+    pub search: Vec<SearchResult>,
+    /// Related entities reachable from the resolved entity (empty if `entity` is None).
+    pub related: Vec<EntitySummary>,
+    /// Recent facts attached to the resolved entity (empty if `entity` is None).
+    pub recent_facts: Vec<FactRecord>,
 }
 
 /// Store statistics.
@@ -711,3 +787,59 @@ pub struct AdaptStatus {
 
 #[cfg(feature = "semantic")]
 pub use semantic_types::*;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fact_record_new_has_no_observed_at() {
+        let f = FactRecord::new("x".into(), FactType::Note, vec![]);
+        assert!(f.observed_at.is_none());
+        assert!(f.created_at > 0);
+    }
+
+    #[test]
+    fn fact_record_serde_roundtrip_with_observed_at() {
+        let mut f = FactRecord::new("x".into(), FactType::Decision, vec![]);
+        f.observed_at = Some(1_700_000_000_000);
+        let bytes = serde_json::to_vec(&f).unwrap();
+        let back: FactRecord = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(back.observed_at, Some(1_700_000_000_000));
+        assert_eq!(back.content, "x");
+    }
+
+    #[test]
+    fn fact_record_deserializes_legacy_record_without_observed_at() {
+        // Simulate a record written by an older wg version (no observed_at field).
+        let legacy = serde_json::json!({
+            "id": FactId::new(),
+            "content": "legacy",
+            "fact_type": "note",
+            "entity_ids": [],
+            "tags": [],
+            "source": null,
+            "source_confidence": 0.5,
+            "relevance_score": 0.5,
+            "created_at": 1_700_000_000_000u64,
+            "updated_at": 1_700_000_000_000u64,
+            "access_count": 0,
+            "last_accessed_at": 1_700_000_000_000u64,
+        });
+        let bytes = serde_json::to_vec(&legacy).unwrap();
+        let f: FactRecord = serde_json::from_slice(&bytes).unwrap();
+        assert!(f.observed_at.is_none());
+        assert_eq!(f.content, "legacy");
+    }
+
+    #[test]
+    fn fact_update_sets_observed_at() {
+        let mut f = FactRecord::new("x".into(), FactType::Note, vec![]);
+        let upd = FactUpdate {
+            observed_at: Some(1_700_000_000_000),
+            ..Default::default()
+        };
+        f.update(upd);
+        assert_eq!(f.observed_at, Some(1_700_000_000_000));
+    }
+}

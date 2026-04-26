@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "wg": {
+      "type": "stdio",
+      "command": "./target/debug/wg",
+      "args": ["mcp"]
+    }
+  }
+}

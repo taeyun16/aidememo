@@ -6,20 +6,24 @@ use std::path::PathBuf;
 pub mod adapt;
 pub mod feedback;
 pub mod init;
-pub mod watch;
 pub mod mcp_serve;
+pub mod mcp_stdio;
+pub mod mcp_tools;
 pub mod model;
+pub mod watch;
 
 pub use adapt::AdaptSub;
 pub use feedback::FeedbackSub;
 pub use init::InitSub;
 pub use mcp_serve::McpSub;
+pub use mcp_stdio::McpStdioSub;
 pub use model::ModelSub;
 pub use watch::WatchSub;
 
 #[derive(Debug, Clone)]
 pub struct Args {
     pub store_path: Option<PathBuf>,
+    pub json: bool,
     pub command: Command,
 }
 
@@ -30,6 +34,7 @@ pub enum Command {
     Traverse(TraverseSub),
     Path(PathSub),
     Search(SearchSub),
+    Query(QuerySub),
     Lint(LintSub),
     Export(ExportSub),
     Import(ImportSub),
@@ -43,6 +48,7 @@ pub enum Command {
     Init(InitSub),
     Watch(WatchSub),
     McpServe(McpSub),
+    Mcp(McpStdioSub),
 }
 
 #[derive(Debug, Clone)]
@@ -90,6 +96,7 @@ pub enum FactSub {
         tags: Option<Vec<String>>,
         source: Option<String>,
         confidence: Option<f32>,
+        observed_at: Option<String>,
         content: String,
     },
     Get {
@@ -99,6 +106,9 @@ pub enum FactSub {
         fact_type: Option<String>,
         entity: Option<String>,
         min_confidence: Option<f32>,
+        since: Option<String>,
+        until: Option<String>,
+        last: Option<String>,
         limit: Option<usize>,
     },
     Delete {
@@ -128,6 +138,9 @@ pub struct SearchSub {
     pub traverse_from: Option<String>,
     pub traverse_depth: Option<u32>,
     pub min_confidence: Option<f32>,
+    pub since: Option<String>,
+    pub until: Option<String>,
+    pub last: Option<String>,
     pub limit: Option<usize>,
     pub query: String,
 }
@@ -135,6 +148,15 @@ pub struct SearchSub {
 #[derive(Debug, Clone)]
 pub struct LintSub {
     pub json: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct QuerySub {
+    pub limit: Option<usize>,
+    pub depth: Option<u32>,
+    pub recent_limit: Option<usize>,
+    pub last: Option<String>,
+    pub topic: String,
 }
 
 #[derive(Debug, Clone)]
@@ -176,9 +198,15 @@ pub fn build_cli() -> OptionParser<Args> {
         .argument::<PathBuf>("PATH")
         .optional();
 
+    let json = long("json")
+        .short('j')
+        .help("Output JSON for read commands (entity, fact, search, traverse, path, stats, lint)")
+        .switch();
+
     let init_cmd = init::init_command();
     let watch_cmd = watch::watch_command();
     let mcp_serve_cmd = mcp_serve::mcp_serve_command();
+    let mcp_cmd = mcp_stdio::mcp_command();
     let model_cmd = model::model_command();
     let feedback_cmd = feedback::feedback_command();
     let adapt_cmd = adapt::adapt_command();
@@ -189,6 +217,7 @@ pub fn build_cli() -> OptionParser<Args> {
         traverse_command(),
         path_command(),
         search_command(),
+        query_command(),
         lint_command(),
         export_command(),
         import_command(),
@@ -202,10 +231,12 @@ pub fn build_cli() -> OptionParser<Args> {
         init_cmd,
         watch_cmd,
         mcp_serve_cmd,
+        mcp_cmd,
     ]);
 
     construct!(Args {
         store_path,
+        json,
         command,
     })
     .to_options()
@@ -351,12 +382,17 @@ fn fact_command() -> impl Parser<Command> {
         .help("Source confidence (0.0-1.0)")
         .argument::<f32>("CONFIDENCE")
         .optional();
+    let observed_at = long("observed-at")
+        .help("When the fact was actually observed/decided (YYYY-MM-DD or RFC3339)")
+        .argument::<String>("DATE")
+        .optional();
     let add = construct!(FactSub::Add {
         fact_type,
         entities,
         tags,
         source,
         confidence,
+        observed_at,
         content,
     })
     .to_options()
@@ -383,6 +419,18 @@ fn fact_command() -> impl Parser<Command> {
         .help("Minimum source confidence")
         .argument::<f32>("CONFIDENCE")
         .optional();
+    let since = long("since")
+        .help("Lower-bound date (YYYY-MM-DD or RFC3339). Compares observed_at if present, else created_at.")
+        .argument::<String>("DATE")
+        .optional();
+    let until = long("until")
+        .help("Upper-bound date (YYYY-MM-DD or RFC3339)")
+        .argument::<String>("DATE")
+        .optional();
+    let last = long("last")
+        .help("Relative window from now: e.g. 30d, 12h, 4w")
+        .argument::<String>("DURATION")
+        .optional();
     let limit = long("limit")
         .short('l')
         .help("Maximum number of results")
@@ -392,6 +440,9 @@ fn fact_command() -> impl Parser<Command> {
         fact_type,
         entity,
         min_confidence,
+        since,
+        until,
+        last,
         limit,
     })
     .to_options()
@@ -462,6 +513,18 @@ fn search_command() -> impl Parser<Command> {
         .help("Minimum source confidence")
         .argument::<f32>("CONFIDENCE")
         .optional();
+    let since = long("since")
+        .help("Lower-bound date (YYYY-MM-DD or RFC3339). Compares observed_at if present, else created_at.")
+        .argument::<String>("DATE")
+        .optional();
+    let until = long("until")
+        .help("Upper-bound date (YYYY-MM-DD or RFC3339)")
+        .argument::<String>("DATE")
+        .optional();
+    let last = long("last")
+        .help("Relative window from now: e.g. 30d, 12h, 4w")
+        .argument::<String>("DURATION")
+        .optional();
     let limit = long("limit")
         .short('l')
         .help("Maximum number of results")
@@ -474,6 +537,9 @@ fn search_command() -> impl Parser<Command> {
         traverse_from,
         traverse_depth,
         min_confidence,
+        since,
+        until,
+        last,
         limit,
         query,
     })
@@ -492,6 +558,41 @@ fn lint_command() -> impl Parser<Command> {
         .to_options()
         .command("lint")
         .help("Check graph health")
+}
+
+fn query_command() -> impl Parser<Command> {
+    let limit = long("limit")
+        .short('l')
+        .help("Search hits to include (default 10)")
+        .argument::<usize>("LIMIT")
+        .optional();
+    let depth = long("depth")
+        .short('d')
+        .help("Traverse depth when topic is an entity (default 2)")
+        .argument::<u32>("DEPTH")
+        .optional();
+    let recent_limit = long("recent-limit")
+        .help("Recent facts to include (default 10)")
+        .argument::<usize>("N")
+        .optional();
+    let last = long("last")
+        .help("Restrict search/recent to last N: e.g. 30d, 12h, 4w")
+        .argument::<String>("DURATION")
+        .optional();
+    let topic = positional::<String>("TOPIC");
+
+    construct!(QuerySub {
+        limit,
+        depth,
+        recent_limit,
+        last,
+        topic
+    })
+    .map(Command::Query)
+    .to_options()
+    .command("query")
+    .short('q')
+    .help("Unified context fetch: search + traverse + recent facts")
 }
 
 fn export_command() -> impl Parser<Command> {
@@ -582,4 +683,3 @@ fn config_command() -> impl Parser<Command> {
         .command("config")
         .help("Configuration management")
 }
-
