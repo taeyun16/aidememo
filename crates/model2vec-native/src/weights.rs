@@ -44,6 +44,19 @@ pub(crate) enum Weights {
         scales: Vec<f32>,
         cols: usize,
     },
+    /// Quantized matrix that lives on a separate `model.q8.safetensors`
+    /// sidecar file, mmap'd zero-copy. Same data layout as
+    /// `QuantizedI8`, but file-backed — restores macOS's lazy paging
+    /// semantics and avoids the heap-RSS spike. Created the first
+    /// time `from_pretrained_quantized` runs against a model that
+    /// doesn't have a sidecar yet; reused on every subsequent load.
+    MmapI8 {
+        _mmap: Arc<Mmap>,
+        data_offset: usize,
+        scales_offset: usize,
+        cols: usize,
+        rows: usize,
+    },
 }
 
 impl Weights {
@@ -153,6 +166,29 @@ impl Weights {
                     scale: scales.get(row).copied().unwrap_or(0.0),
                 }
             }
+            Weights::MmapI8 {
+                _mmap,
+                data_offset,
+                scales_offset,
+                cols,
+                rows,
+            } => {
+                let row_idx = row;
+                debug_assert!(row_idx < *rows);
+                let start = *data_offset + row_idx * *cols;
+                let end = start + *cols;
+                // i8 mmap is bytemuck-castable from u8 since the wire
+                // format is two's-complement (same on every Rust target).
+                let i8_slice: &[i8] =
+                    bytemuck::cast_slice(&_mmap[*data_offset..*data_offset + rows * cols]);
+                let scales_bytes =
+                    &_mmap[*scales_offset..*scales_offset + rows * std::mem::size_of::<f32>()];
+                let scales: &[f32] = bytemuck::cast_slice(scales_bytes);
+                RowView::I8 {
+                    row: &i8_slice[(start - *data_offset)..(end - *data_offset)],
+                    scale: scales.get(row_idx).copied().unwrap_or(0.0),
+                }
+            }
         }
     }
 
@@ -242,4 +278,100 @@ pub(crate) enum RowView<'a> {
         /// before accumulating.
         scale: f32,
     },
+}
+
+/// Serialize a quantized matrix (i8 weights + per-row f32 scales) to
+/// a safetensors file at `path`. The file format mirrors what we'd
+/// otherwise build at load time, so subsequent loads can mmap it
+/// directly via `Weights::MmapI8`.
+///
+/// Layout (one safetensors file, two tensors):
+///   - "embeddings": dtype=I8, shape=[rows, cols]
+///   - "scales":     dtype=F32, shape=[rows]
+///
+/// Atomic write: serialize to `path.tmp` first then rename. Avoids
+/// half-written sidecars if the process is killed mid-write.
+pub(crate) fn save_sidecar_i8(
+    path: &std::path::Path,
+    rows: usize,
+    cols: usize,
+    data: &[i8],
+    scales: &[f32],
+) -> Result<(), Error> {
+    use safetensors::serialize_to_file;
+    use safetensors::tensor::TensorView;
+    use std::collections::HashMap;
+
+    let data_bytes: &[u8] = bytemuck::cast_slice(data);
+    let scales_bytes: &[u8] = bytemuck::cast_slice(scales);
+
+    let emb = TensorView::new(Dtype::I8, vec![rows, cols], data_bytes)
+        .map_err(|e| Error::SafeTensors(format!("build i8 tensor: {e}")))?;
+    let sc = TensorView::new(Dtype::F32, vec![rows], scales_bytes)
+        .map_err(|e| Error::SafeTensors(format!("build scales tensor: {e}")))?;
+
+    // Mark the file with our format tag so future readers can sanity-
+    // check what they're looking at.
+    let mut meta = HashMap::new();
+    meta.insert("format".to_string(), "wg-q8/v1".to_string());
+    meta.insert("rows".to_string(), rows.to_string());
+    meta.insert("cols".to_string(), cols.to_string());
+
+    let tmp = path.with_extension("safetensors.tmp");
+    serialize_to_file(vec![("embeddings", emb), ("scales", sc)], &Some(meta), &tmp)
+        .map_err(|e| Error::SafeTensors(format!("write {}: {e}", tmp.display())))?;
+
+    std::fs::rename(&tmp, path).map_err(|e| Error::Io(path.to_path_buf(), e))?;
+    Ok(())
+}
+
+/// Open an existing sidecar file and build an `MmapI8` weights view
+/// over it. The caller already verified the file exists and looks
+/// plausible (size, dtype) — this just wires the offsets up.
+pub(crate) fn load_sidecar_i8(path: &std::path::Path) -> Result<Weights, Error> {
+    use safetensors::SafeTensors;
+
+    let file = std::fs::File::open(path).map_err(|e| Error::Io(path.to_path_buf(), e))?;
+    let mmap = unsafe { Mmap::map(&file) }.map_err(|e| Error::Mmap(path.to_path_buf(), e))?;
+    let mmap = Arc::new(mmap);
+
+    let safet =
+        SafeTensors::deserialize(&mmap[..]).map_err(|e| Error::SafeTensors(e.to_string()))?;
+
+    let emb = safet
+        .tensor("embeddings")
+        .map_err(|_| Error::MissingTensor(path.to_path_buf()))?;
+    let sc = safet
+        .tensor("scales")
+        .map_err(|_| Error::MissingTensor(path.to_path_buf()))?;
+
+    if emb.dtype() != Dtype::I8 {
+        return Err(Error::SafeTensors(format!(
+            "embeddings tensor in {} is not I8",
+            path.display()
+        )));
+    }
+    if sc.dtype() != Dtype::F32 {
+        return Err(Error::SafeTensors(format!(
+            "scales tensor in {} is not F32",
+            path.display()
+        )));
+    }
+
+    let (rows, cols) = match emb.shape() {
+        [r, c] => (*r, *c),
+        _ => return Err(Error::NotMatrix(path.to_path_buf())),
+    };
+
+    let mmap_base = mmap.as_ptr() as usize;
+    let data_offset = (emb.data().as_ptr() as usize).saturating_sub(mmap_base);
+    let scales_offset = (sc.data().as_ptr() as usize).saturating_sub(mmap_base);
+
+    Ok(Weights::MmapI8 {
+        _mmap: mmap,
+        data_offset,
+        scales_offset,
+        cols,
+        rows,
+    })
 }

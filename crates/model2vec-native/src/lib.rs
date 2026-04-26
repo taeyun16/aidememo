@@ -242,27 +242,10 @@ impl StaticModel {
             _ => return Err(Error::NotMatrix(mdl_path.into())),
         };
 
-        // Build a Weights view that borrows from the mmap. For F32 LE
-        // we can keep it strictly zero-copy; for F16/I8 we have to
-        // expand to f32 (one allocation, but ~half / quarter the size).
-        let weights = Weights::from_tensor(tensor.dtype(), tensor.data(), &mmap, rows, cols)?;
-
-        // Optional load-time int8 quantization. The new Weights owns
-        // a fresh Vec<i8>; once we replace the F32 weights variable
-        // the original (which clones the mmap Arc) is dropped, and
-        // since `mmap_kept` is None below the function holds no other
-        // strong reference — the mmap unmaps when this function
-        // returns. Net resident: -489 MB (mapped) +124 MB (i8+scales).
-        let mmap_kept = if quantize { None } else { Some(mmap.clone()) };
-        let weights = if quantize {
-            weights.quantize_in_place(rows, cols)
-        } else {
-            weights
-        };
-
-        // Optional vocab-quantization tensors. These are small (one f32
-        // per vocab token), so the upstream's `Vec<f32>` collect is fine
-        // here — keeping it simple.
+        // Pull the optional vocab-quantization tensors out of the f32
+        // mmap into owned Vec<f32>/Vec<u32>. Cheap (one row per vocab
+        // token) and lets us drop the f32 mmap below if we're going
+        // the sidecar route.
         let token_weights = match safet.tensor("weights") {
             Ok(t) => Some(decode_weights_tensor(t.dtype(), t.data())?),
             Err(_) => None,
@@ -281,6 +264,61 @@ impl StaticModel {
                 Some(v)
             }
             Err(_) => None,
+        };
+
+        // Sidecar fast-path: a previous run already wrote model.q8.safetensors.
+        // Drop the f32 mmap, mmap the i8 sidecar instead, return early.
+        // From here on `safet` (which borrowed from the f32 mmap) is unused.
+        let sidecar = mdl_path.with_file_name("model.q8.safetensors");
+        if quantize && sidecar.exists() {
+            drop(safet);
+            drop(mmap);
+            let weights = weights::load_sidecar_i8(&sidecar)?;
+            return Ok(Self {
+                tokenizer,
+                weights,
+                token_weights,
+                token_mapping,
+                normalize,
+                median_token_length,
+                unk_token_id,
+                _mmap: None,
+                rows,
+                cols,
+            });
+        }
+
+        // Build a Weights view that borrows from the mmap. For F32 LE
+        // we can keep it strictly zero-copy; for F16/I8 we have to
+        // expand to f32 (one allocation, but ~half / quarter the size).
+        let weights = Weights::from_tensor(tensor.dtype(), tensor.data(), &mmap, rows, cols)?;
+
+        // Optional load-time int8 quantization. The new Weights owns
+        // a fresh Vec<i8>; once we replace the F32 weights variable
+        // the original (which clones the mmap Arc) is dropped. The
+        // sidecar write below means the next load skips this branch
+        // entirely and mmaps the cached file instead.
+        let mmap_kept = if quantize { None } else { Some(mmap.clone()) };
+        let weights = if quantize {
+            let q = weights.quantize_in_place(rows, cols);
+            if let Weights::QuantizedI8 {
+                ref data,
+                ref scales,
+                cols: q_cols,
+            } = q
+            {
+                if let Err(e) = weights::save_sidecar_i8(&sidecar, rows, q_cols, data, scales) {
+                    // Non-fatal: the in-memory matrix is fine; we just
+                    // won't have a cache for next time.
+                    eprintln!(
+                        "warning: failed to write q8 sidecar {}: {e}",
+                        sidecar.display()
+                    );
+                }
+            }
+            q
+        } else {
+            weights
         };
 
         Ok(Self {
