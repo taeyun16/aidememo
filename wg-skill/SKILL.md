@@ -1,11 +1,17 @@
 ---
 name: wg
 description: Local knowledge-graph wiki tool. Use to search, traverse, and append facts to a private markdown wiki indexed with BM25 + semantic vectors. Ideal when the user asks "what do we know about X", wants to record decisions/conventions, or needs context from prior project notes.
-when_to_use:
-  - User asks "what do we know about ...", "do we have notes on ...", "search the wiki"
-  - User states a decision/convention worth recording ("we decided X", "always do Y")
-  - You need persistent context across conversations beyond CLAUDE.md
-allowed-tools: Bash(wg:*), Bash(./target/debug/wg:*)
+license: MIT OR Apache-2.0
+compatibility: Requires the wg CLI binary on PATH (cargo install wg-cli, or build from https://github.com/aspect-build/wg). Optionally registers as an MCP server (`wg mcp` for stdio, `wg mcp-serve` for HTTP).
+allowed-tools: Bash(wg:*)
+metadata:
+  homepage: https://github.com/aspect-build/wg
+  version: "1.0"
+  claude:
+    when_to_use:
+      - 'User asks "what do we know about ...", "do we have notes on ...", "search the wiki"'
+      - 'User states a decision/convention worth recording ("we decided X", "always do Y")'
+      - 'You need persistent context across conversations beyond CLAUDE.md'
 ---
 
 # wg — Wiki-Graph
@@ -49,5 +55,20 @@ repo root, or `claude mcp add wg -- wg mcp`), use the MCP tools `wg_query`
 
 ## Install
 
-`/wg-skill/setup-claude-code.md` and `/wg-skill/setup-codex.md` cover the full
-install. The full API + internals reference is in `REFERENCE.md`.
+If `wg` is on your PATH, the binary self-installs into the agent of your
+choice:
+
+```bash
+wg skill install --target claude     # → ~/.claude/skills/wg/
+wg skill install --target hermes     # → ~/.hermes/skills/wg/
+wg skill install --target openclaw   # → ~/.openclaw/skills/wg/
+
+wg mcp-install --target claude       # claude mcp add wg -- wg mcp
+wg mcp-install --target codex        # writes [mcp_servers.wg] in ~/.codex/config.toml
+wg mcp-install --target cursor       # writes mcpServers.wg in ~/.cursor/mcp.json
+```
+
+`wg mcp-install --list-targets` and `wg skill install --list-targets` show
+every supported agent and the path each would write. Hand-rolled setup steps
+are in `setup-claude-code.md`, `setup-codex.md`, and `setup-hermes.md`. The
+full API + internals reference is in `REFERENCE.md`.

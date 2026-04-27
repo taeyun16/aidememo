@@ -10,6 +10,7 @@ pub mod edit;
 pub mod feedback;
 pub mod graph;
 pub mod init;
+pub mod mcp_install;
 pub mod mcp_serve;
 pub mod mcp_stdio;
 pub mod mcp_tools;
@@ -27,6 +28,7 @@ pub use edit::EditSub;
 pub use feedback::FeedbackSub;
 pub use graph::GraphSub;
 pub use init::InitSub;
+pub use mcp_install::McpInstallSub;
 pub use mcp_serve::McpSub;
 pub use mcp_stdio::McpStdioSub;
 pub use model::ModelSub;
@@ -72,6 +74,7 @@ pub enum Command {
     Watch(WatchSub),
     McpServe(McpSub),
     Mcp(McpStdioSub),
+    McpInstall(McpInstallSub),
 }
 
 #[derive(Debug, Clone)]
@@ -252,6 +255,7 @@ pub fn build_cli() -> OptionParser<Args> {
     let watch_cmd = watch::watch_command();
     let mcp_serve_cmd = mcp_serve::mcp_serve_command();
     let mcp_cmd = mcp_stdio::mcp_command();
+    let mcp_install_cmd = mcp_install::mcp_install_command();
     let model_cmd = model::model_command();
     let feedback_cmd = feedback::feedback_command();
     let adapt_cmd = adapt::adapt_command();
@@ -291,6 +295,7 @@ pub fn build_cli() -> OptionParser<Args> {
         watch_cmd,
         mcp_serve_cmd,
         mcp_cmd,
+        mcp_install_cmd,
     ]);
 
     construct!(Args {

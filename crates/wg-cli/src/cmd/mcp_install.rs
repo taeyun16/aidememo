@@ -1,0 +1,469 @@
+//! `wg mcp-install` — register the wg MCP server with a target agent.
+//!
+//! Each agent has a different surface for MCP registration:
+//!
+//! | target   | mechanism                                                        |
+//! |----------|------------------------------------------------------------------|
+//! | claude   | shells out to `claude mcp add wg -- wg mcp`                      |
+//! | hermes   | shells out to `hermes mcp add wg --command wg --args mcp`        |
+//! | openclaw | shells out to `openclaw mcp set wg '{"command":"wg",...}'`       |
+//! | codex    | edits `~/.codex/config.toml` to add `[mcp_servers.wg]`           |
+//! | cursor   | edits `~/.cursor/mcp.json` to add `{"mcpServers": {"wg": ...}}`  |
+//!
+//! For shell-out targets, the agent's own CLI is the source of truth
+//! for *where* the entry lands — we just invoke it. For file-edit
+//! targets, we read the existing config, merge in `wg`, and write it
+//! back atomically (stage to `.tmp`, rename).
+//!
+//! Use `--print` to preview the action without executing, and
+//! `--force` to overwrite an existing `wg` entry.
+
+use bpaf::*;
+use std::path::PathBuf;
+use std::process::Command as ProcessCommand;
+
+use crate::cmd::Command;
+use wg_core::WgError;
+
+#[derive(Debug, Clone)]
+pub struct McpInstallSub {
+    pub target: String,
+    pub force: bool,
+    pub print: bool,
+    pub list_targets: bool,
+}
+
+pub fn mcp_install_command() -> impl Parser<Command> {
+    let target = long("target")
+        .help("Target agent: claude, hermes, openclaw, codex, cursor (or 'list')")
+        .argument::<String>("TARGET")
+        .fallback("claude".to_string());
+    let force = long("force")
+        .help("Overwrite an existing `wg` MCP entry")
+        .switch();
+    let print = long("print")
+        .help("Print the action that would be taken without executing")
+        .switch();
+    let list_targets = long("list-targets")
+        .help("Print supported agents and the registration mechanism each uses")
+        .switch();
+
+    construct!(McpInstallSub {
+        target,
+        force,
+        print,
+        list_targets
+    })
+    .map(Command::McpInstall)
+    .to_options()
+    .command("mcp-install")
+    .help("Register the wg MCP server with an agent (claude / hermes / openclaw / codex / cursor)")
+}
+
+// ---------------------------------------------------------------------------
+// Reports
+// ---------------------------------------------------------------------------
+
+#[derive(serde::Serialize)]
+struct InstallReport {
+    target: String,
+    method: String,
+    detail: String,
+    overwrote: bool,
+}
+
+#[derive(serde::Serialize)]
+struct TargetEntry {
+    target: &'static str,
+    method: &'static str,
+    detail: String,
+}
+
+const SUPPORTED: &[(&str, &str, &str)] = &[
+    ("claude", "shell-out", "claude mcp add wg -- wg mcp"),
+    (
+        "hermes",
+        "shell-out",
+        "hermes mcp add wg --command wg --args mcp",
+    ),
+    (
+        "openclaw",
+        "shell-out",
+        "openclaw mcp set wg '{\"command\":\"wg\",\"args\":[\"mcp\"]}'",
+    ),
+    (
+        "codex",
+        "file-edit",
+        "edit ~/.codex/config.toml: add [mcp_servers.wg]",
+    ),
+    (
+        "cursor",
+        "file-edit",
+        "edit ~/.cursor/mcp.json: add mcpServers.wg",
+    ),
+];
+
+// ---------------------------------------------------------------------------
+// Runner
+// ---------------------------------------------------------------------------
+
+pub fn run_mcp_install(sub: McpInstallSub, json: bool) -> Result<String, WgError> {
+    if sub.list_targets || sub.target == "list" {
+        let entries: Vec<TargetEntry> = SUPPORTED
+            .iter()
+            .map(|(t, m, d)| TargetEntry {
+                target: t,
+                method: m,
+                detail: (*d).to_string(),
+            })
+            .collect();
+        if json {
+            return serde_json::to_string_pretty(&entries).map_err(|e| WgError::Serialize {
+                context: "mcp-install --list-targets".to_string(),
+                source: e,
+            });
+        }
+        let mut out = String::from("Supported MCP install targets:\n");
+        for e in entries {
+            out.push_str(&format!("  {:<10} ({}) {}\n", e.target, e.method, e.detail));
+        }
+        return Ok(out);
+    }
+
+    let report = match sub.target.as_str() {
+        "claude" | "claude-code" => install_via_cli(
+            "claude",
+            &["mcp", "add", "wg", "--", "wg", "mcp"],
+            sub.force,
+            sub.print,
+        )?,
+        "hermes" => install_via_cli(
+            "hermes",
+            &["mcp", "add", "wg", "--command", "wg", "--args", "mcp"],
+            sub.force,
+            sub.print,
+        )?,
+        "openclaw" => install_via_cli(
+            "openclaw",
+            &["mcp", "set", "wg", r#"{"command":"wg","args":["mcp"]}"#],
+            sub.force,
+            sub.print,
+        )?,
+        "codex" => install_codex(sub.force, sub.print)?,
+        "cursor" => install_cursor(sub.force, sub.print)?,
+        other => {
+            return Err(WgError::InvalidInput(format!(
+                "unknown target `{}` — supported: {}",
+                other,
+                SUPPORTED
+                    .iter()
+                    .map(|(t, _, _)| *t)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )));
+        }
+    };
+
+    if json {
+        return serde_json::to_string_pretty(&report).map_err(|e| WgError::Serialize {
+            context: "mcp-install".to_string(),
+            source: e,
+        });
+    }
+
+    let verb = if sub.print {
+        "Would run"
+    } else if report.overwrote {
+        "Updated"
+    } else {
+        "Registered"
+    };
+    Ok(format!(
+        "{verb} wg MCP server for {} ({})\n  {}\n",
+        report.target, report.method, report.detail
+    ))
+}
+
+// ---------------------------------------------------------------------------
+// Shell-out targets (claude / hermes / openclaw)
+// ---------------------------------------------------------------------------
+
+fn install_via_cli(
+    bin: &str,
+    args: &[&str],
+    _force: bool,
+    print: bool,
+) -> Result<InstallReport, WgError> {
+    let cmdline = format!("{} {}", bin, args.join(" "));
+    let target = bin.to_string();
+
+    if print {
+        return Ok(InstallReport {
+            target,
+            method: "shell-out".to_string(),
+            detail: cmdline,
+            overwrote: false,
+        });
+    }
+
+    let out = ProcessCommand::new(bin).args(args).output().map_err(|e| {
+        WgError::InvalidInput(format!(
+            "could not run `{}` — is the {} CLI on your PATH? (raw error: {})",
+            bin, bin, e
+        ))
+    })?;
+
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        return Err(WgError::Internal(format!(
+            "`{}` exited with {}: {}",
+            cmdline,
+            out.status,
+            stderr.trim()
+        )));
+    }
+
+    Ok(InstallReport {
+        target,
+        method: "shell-out".to_string(),
+        detail: cmdline,
+        overwrote: false,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Codex — edit ~/.codex/config.toml
+// ---------------------------------------------------------------------------
+
+fn codex_config_path() -> Result<PathBuf, WgError> {
+    let home =
+        dirs::home_dir().ok_or_else(|| WgError::Internal("could not resolve $HOME".to_string()))?;
+    Ok(home.join(".codex/config.toml"))
+}
+
+fn install_codex(force: bool, print: bool) -> Result<InstallReport, WgError> {
+    let path = codex_config_path()?;
+    let detail = format!(
+        "{} ([mcp_servers.wg] command=wg args=[\"mcp\"])",
+        path.display()
+    );
+
+    if print {
+        return Ok(InstallReport {
+            target: "codex".to_string(),
+            method: "file-edit".to_string(),
+            detail,
+            overwrote: false,
+        });
+    }
+
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| WgError::Internal(format!("create {}: {e}", parent.display())))?;
+    }
+
+    let existing = std::fs::read_to_string(&path).unwrap_or_default();
+    let mut doc: toml::Value = if existing.trim().is_empty() {
+        toml::Value::Table(toml::value::Table::new())
+    } else {
+        existing
+            .parse::<toml::Value>()
+            .map_err(|e| WgError::Internal(format!("parse {}: {e}", path.display())))?
+    };
+
+    let table = doc
+        .as_table_mut()
+        .ok_or_else(|| WgError::Internal(format!("{} is not a TOML table", path.display())))?;
+    let servers = table
+        .entry("mcp_servers".to_string())
+        .or_insert_with(|| toml::Value::Table(toml::value::Table::new()));
+    let servers_table = servers
+        .as_table_mut()
+        .ok_or_else(|| WgError::Internal("mcp_servers must be a TOML table".to_string()))?;
+
+    let already = servers_table.contains_key("wg");
+    if already && !force {
+        return Err(WgError::InvalidInput(format!(
+            "[mcp_servers.wg] already exists in {} — pass --force to overwrite",
+            path.display()
+        )));
+    }
+
+    let mut wg_entry = toml::value::Table::new();
+    wg_entry.insert("command".to_string(), toml::Value::String("wg".to_string()));
+    wg_entry.insert(
+        "args".to_string(),
+        toml::Value::Array(vec![toml::Value::String("mcp".to_string())]),
+    );
+    servers_table.insert("wg".to_string(), toml::Value::Table(wg_entry));
+
+    let serialized = toml::to_string_pretty(&doc)
+        .map_err(|e| WgError::Internal(format!("serialize codex config: {e}")))?;
+    write_atomically(&path, &serialized)?;
+
+    Ok(InstallReport {
+        target: "codex".to_string(),
+        method: "file-edit".to_string(),
+        detail,
+        overwrote: already,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Cursor — edit ~/.cursor/mcp.json
+// ---------------------------------------------------------------------------
+
+fn cursor_config_path() -> Result<PathBuf, WgError> {
+    let home =
+        dirs::home_dir().ok_or_else(|| WgError::Internal("could not resolve $HOME".to_string()))?;
+    Ok(home.join(".cursor/mcp.json"))
+}
+
+fn install_cursor(force: bool, print: bool) -> Result<InstallReport, WgError> {
+    let path = cursor_config_path()?;
+    let detail = format!("{} (mcpServers.wg)", path.display());
+
+    if print {
+        return Ok(InstallReport {
+            target: "cursor".to_string(),
+            method: "file-edit".to_string(),
+            detail,
+            overwrote: false,
+        });
+    }
+
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| WgError::Internal(format!("create {}: {e}", parent.display())))?;
+    }
+
+    let existing = std::fs::read_to_string(&path).unwrap_or_default();
+    let mut doc: serde_json::Value = if existing.trim().is_empty() {
+        serde_json::json!({})
+    } else {
+        serde_json::from_str(&existing)
+            .map_err(|e| WgError::Internal(format!("parse {}: {e}", path.display())))?
+    };
+
+    let obj = doc
+        .as_object_mut()
+        .ok_or_else(|| WgError::Internal(format!("{} is not a JSON object", path.display())))?;
+    let servers = obj
+        .entry("mcpServers".to_string())
+        .or_insert_with(|| serde_json::json!({}));
+    let servers_obj = servers
+        .as_object_mut()
+        .ok_or_else(|| WgError::Internal("mcpServers must be a JSON object".to_string()))?;
+
+    let already = servers_obj.contains_key("wg");
+    if already && !force {
+        return Err(WgError::InvalidInput(format!(
+            "mcpServers.wg already exists in {} — pass --force to overwrite",
+            path.display()
+        )));
+    }
+    servers_obj.insert(
+        "wg".to_string(),
+        serde_json::json!({"command": "wg", "args": ["mcp"]}),
+    );
+
+    let serialized = serde_json::to_string_pretty(&doc)
+        .map_err(|e| WgError::Internal(format!("serialize cursor config: {e}")))?;
+    write_atomically(&path, &serialized)?;
+
+    Ok(InstallReport {
+        target: "cursor".to_string(),
+        method: "file-edit".to_string(),
+        detail,
+        overwrote: already,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Atomic write helper
+// ---------------------------------------------------------------------------
+
+fn write_atomically(path: &std::path::Path, contents: &str) -> Result<(), WgError> {
+    let tmp = path.with_extension("tmp");
+    std::fs::write(&tmp, contents)
+        .map_err(|e| WgError::Internal(format!("write {}: {e}", tmp.display())))?;
+    std::fs::rename(&tmp, path)
+        .map_err(|e| WgError::Internal(format!("rename {}: {e}", path.display())))?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn print_mode_for_claude_returns_command() {
+        let report = install_via_cli(
+            "claude",
+            &["mcp", "add", "wg", "--", "wg", "mcp"],
+            false,
+            true,
+        )
+        .unwrap();
+        assert_eq!(report.target, "claude");
+        assert!(report.detail.contains("mcp add wg"));
+        assert!(!report.overwrote);
+    }
+
+    #[test]
+    fn unknown_target_errors() {
+        let sub = McpInstallSub {
+            target: "noexist".to_string(),
+            force: false,
+            print: true,
+            list_targets: false,
+        };
+        let err = run_mcp_install(sub, false).unwrap_err();
+        assert!(err.to_string().contains("unknown target"));
+    }
+
+    #[test]
+    fn codex_writes_fresh_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        // Inline the merge logic — we can't easily redirect HOME.
+        let mut doc = toml::Value::Table(toml::value::Table::new());
+        let servers = doc
+            .as_table_mut()
+            .unwrap()
+            .entry("mcp_servers".to_string())
+            .or_insert_with(|| toml::Value::Table(toml::value::Table::new()));
+        let mut wg = toml::value::Table::new();
+        wg.insert("command".into(), toml::Value::String("wg".into()));
+        wg.insert(
+            "args".into(),
+            toml::Value::Array(vec![toml::Value::String("mcp".into())]),
+        );
+        servers
+            .as_table_mut()
+            .unwrap()
+            .insert("wg".into(), toml::Value::Table(wg));
+
+        let s = toml::to_string_pretty(&doc).unwrap();
+        std::fs::write(&path, &s).unwrap();
+        let parsed: toml::Value = std::fs::read_to_string(&path).unwrap().parse().unwrap();
+        assert_eq!(parsed["mcp_servers"]["wg"]["command"].as_str(), Some("wg"));
+    }
+
+    #[test]
+    fn cursor_writes_fresh_config() {
+        let mut doc = serde_json::json!({});
+        let obj = doc.as_object_mut().unwrap();
+        obj.insert("mcpServers".into(), serde_json::json!({}));
+        obj["mcpServers"].as_object_mut().unwrap().insert(
+            "wg".into(),
+            serde_json::json!({"command": "wg", "args": ["mcp"]}),
+        );
+        assert_eq!(doc["mcpServers"]["wg"]["command"], "wg");
+        assert_eq!(doc["mcpServers"]["wg"]["args"][0], "mcp");
+    }
+}

@@ -1,17 +1,27 @@
-//! `wg skill check` — validate Claude Code skill files (SKILL.md format).
+//! `wg skill check` — validate Agent Skills (SKILL.md) files.
 //!
-//! Inspired by gbrain's `skillify check`. Reads a SKILL.md file (or every
-//! `*.md` under a directory) and reports frontmatter / content issues.
+//! Conforms to the agentskills.io open standard so a skill that passes
+//! here is portable to Claude Code, OpenAI Codex, GitHub Copilot,
+//! Hermes Agent, OpenClaw, and VS Code without per-platform editing.
+//! The spec is at <https://agentskills.io/specification>.
 //!
-//! Validation rules:
+//! Validation rules (matching the open spec):
 //! - Frontmatter (YAML between `---` markers) must exist and parse.
 //! - Required fields: `name`, `description`.
-//! - Recommended fields: `when_to_use`, `allowed-tools` (warns if missing).
-//! - `allowed-tools` items: each must be either `Bash(...)` / `Bash(...:...)`
-//!   or a known MCP tool name (`wg_search`, `wg_query`, …). Unknown names
-//!   warn so users catch typos.
-//! - `name` must be lowercase, alphanumeric + `-`/`_`.
+//! - `name`: 1–64 chars, lowercase ASCII + digits + hyphens; must not
+//!   start/end with a hyphen, must not contain consecutive hyphens.
+//! - `description`: 1–1024 chars (warns if outside the bound).
+//! - Optional but recognized: `license`, `compatibility`, `metadata`,
+//!   `allowed-tools`.
+//! - `allowed-tools` items: each must be either `Bash(...)` /
+//!   `Bash(...:...)` or a known MCP tool name (`wg_search`,
+//!   `wg_query`, …). Unknown names warn so users catch typos.
 //! - Body (after frontmatter) must be ≥ 50 chars.
+//!
+//! `when_to_use` is *not* in the open spec — it's a Claude Code
+//! extension. We still recognize it (so legacy skills don't break)
+//! but no longer warn when it's missing; the spec puts that
+//! information in the description text or under `metadata`.
 
 use bpaf::*;
 use std::path::{Path, PathBuf};
@@ -20,9 +30,22 @@ use crate::cmd::Command;
 use crate::cmd::mcp_tools::list_tools;
 use wg_core::WgError;
 
+// Bundled skill — included at compile time so `wg skill install`
+// works on a fresh machine without the source tree present.
+const BUNDLED_SKILL_MD: &str = include_str!("../../../../wg-skill/SKILL.md");
+const BUNDLED_REFERENCE_MD: &str = include_str!("../../../../wg-skill/REFERENCE.md");
+
 #[derive(Debug, Clone)]
 pub enum SkillSub {
-    Check { path: PathBuf },
+    Check {
+        path: PathBuf,
+    },
+    Install {
+        target: String,
+        dest: Option<PathBuf>,
+        force: bool,
+        list_targets: bool,
+    },
 }
 
 pub fn skill_command() -> impl Parser<Command> {
@@ -33,11 +56,39 @@ pub fn skill_command() -> impl Parser<Command> {
         .command("check")
         .help("Validate a SKILL.md file or directory of skills (use global --json for JSON)");
 
-    construct!([check])
+    let target = long("target")
+        .help(
+            "Target agent: claude, hermes, openclaw, or 'list' (also via --list-targets). \
+             Use --dest to override the default install path.",
+        )
+        .argument::<String>("TARGET")
+        .fallback("claude".to_string());
+    let dest = long("dest")
+        .help("Override install directory (defaults to the agent's standard skills path)")
+        .argument::<PathBuf>("DIR")
+        .optional();
+    let force = long("force")
+        .help("Overwrite an existing installation without prompting")
+        .switch();
+    let list_targets = long("list-targets")
+        .help("Print supported agents and the directory each install would write to")
+        .switch();
+
+    let install = construct!(SkillSub::Install {
+        target,
+        dest,
+        force,
+        list_targets
+    })
+    .to_options()
+    .command("install")
+    .help("Install the bundled wg skill into an agent's skills directory");
+
+    construct!([check, install])
         .map(Command::Skill)
         .to_options()
         .command("skill")
-        .help("Skill management (Claude Code SKILL.md files)")
+        .help("Manage Agent Skills (agentskills.io SKILL.md files)")
 }
 
 // ---------------------------------------------------------------------------
@@ -94,6 +145,18 @@ struct SkillFm {
     kind: Option<String>,
     name: Option<String>,
     description: Option<String>,
+    /// agentskills.io optional spec field — environment requirements.
+    #[allow(dead_code)]
+    compatibility: Option<String>,
+    /// agentskills.io optional spec field — license string or file ref.
+    #[allow(dead_code)]
+    license: Option<String>,
+    /// True if a top-level `metadata:` block was seen. We don't parse
+    /// the nested keys; presence is enough to suppress legacy
+    /// `missing-when-to-use` warnings (clients can park trigger hints
+    /// under `metadata.claude.when_to_use`).
+    has_metadata: bool,
+    /// Legacy Claude Code extension; not in the open spec.
     when_to_use: Option<Vec<String>>,
     allowed_tools: Option<Vec<String>>,
 }
@@ -124,6 +187,11 @@ fn parse_skill_frontmatter(fm: &str) -> SkillFm {
     let mut out = SkillFm::default();
     let mut current_list_key: Option<String> = None;
     let mut current_list: Vec<String> = Vec::new();
+    // Tracks whether the current top-level key is a YAML mapping
+    // block (e.g. `metadata:` followed by indented `key: value`
+    // lines). We don't parse the nested keys — we just mark
+    // `has_metadata` and treat the indented lines as opaque.
+    let mut current_block_key: Option<String> = None;
 
     let commit_list = |fm: &mut SkillFm, key: &str, items: Vec<String>| match key {
         "when_to_use" => fm.when_to_use = Some(items),
@@ -137,10 +205,19 @@ fn parse_skill_frontmatter(fm: &str) -> SkillFm {
             continue;
         }
 
-        // Indented list item under previous key.
+        // Indented list item under previous key (sequence form).
         if line.starts_with("  - ") || line.starts_with("- ") {
             let item = line.trim_start_matches(' ').trim_start_matches('-').trim();
             current_list.push(unquote(item));
+            current_block_key = None;
+            continue;
+        }
+
+        // Indented mapping line (`  key: value`) — opaque to us, but
+        // it confirms the parent is a mapping block (e.g. `metadata`).
+        if line.starts_with("  ") {
+            // We only care that *something* nested showed up; the
+            // parent key was already noted on its trigger line.
             continue;
         }
 
@@ -149,13 +226,21 @@ fn parse_skill_frontmatter(fm: &str) -> SkillFm {
             if let Some(prev_key) = current_list_key.take() {
                 commit_list(&mut out, &prev_key, std::mem::take(&mut current_list));
             }
+            current_block_key = None;
             let key = line[..idx].trim().to_string();
             let value = line[idx + 1..].trim();
 
             if value.is_empty() {
-                // Block-style list follows on next lines.
-                current_list_key = Some(key);
+                // Block follows on indented lines. Could be a list
+                // (`when_to_use:` then `- items`) or a mapping
+                // (`metadata:` then `  key: value`). We classify
+                // lazily — the next non-empty line tells us.
+                current_list_key = Some(key.clone());
                 current_list.clear();
+                if key == "metadata" {
+                    out.has_metadata = true;
+                }
+                current_block_key = Some(key);
                 continue;
             }
             if value.starts_with('[') {
@@ -170,9 +255,11 @@ fn parse_skill_frontmatter(fm: &str) -> SkillFm {
                 "kind" => out.kind = Some(v),
                 "name" => out.name = Some(v),
                 "description" => out.description = Some(v),
+                "license" => out.license = Some(v),
+                "compatibility" => out.compatibility = Some(v),
                 "allowed-tools" | "allowed_tools" => {
                     // Tools can also be a single line like
-                    // `Bash(wg:*), Bash(./target/debug/wg:*)`.
+                    // `Bash(wg:*), Bash(other:*)`.
                     let items: Vec<String> = v
                         .split(',')
                         .map(|s| s.trim().to_string())
@@ -187,6 +274,7 @@ fn parse_skill_frontmatter(fm: &str) -> SkillFm {
     if let Some(prev_key) = current_list_key {
         commit_list(&mut out, &prev_key, current_list);
     }
+    let _ = current_block_key;
     out
 }
 
@@ -196,6 +284,61 @@ fn parse_skill_frontmatter(fm: &str) -> SkillFm {
 
 fn known_mcp_tool_names() -> Vec<String> {
     list_tools().into_iter().map(|t| t.name).collect()
+}
+
+/// agentskills.io `name` rules. Returns `None` if the name conforms.
+fn validate_skill_name(name: &str) -> Option<Issue> {
+    if name.is_empty() {
+        return Some(Issue {
+            severity: Severity::Error,
+            code: "empty-name".into(),
+            message: "`name` is empty".into(),
+        });
+    }
+    if name.len() > 64 {
+        return Some(Issue {
+            severity: Severity::Warning,
+            code: "name-too-long".into(),
+            message: format!(
+                "`name` is {} chars; agentskills.io spec caps it at 64",
+                name.len()
+            ),
+        });
+    }
+    if name.starts_with('-') || name.ends_with('-') {
+        return Some(Issue {
+            severity: Severity::Warning,
+            code: "name-format".into(),
+            message: format!(
+                "`name` must not start or end with a hyphen (agentskills.io spec); got `{}`",
+                name
+            ),
+        });
+    }
+    if name.contains("--") {
+        return Some(Issue {
+            severity: Severity::Warning,
+            code: "name-format".into(),
+            message: format!(
+                "`name` must not contain consecutive hyphens (agentskills.io spec); got `{}`",
+                name
+            ),
+        });
+    }
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+    {
+        return Some(Issue {
+            severity: Severity::Warning,
+            code: "name-format".into(),
+            message: format!(
+                "`name` must be lowercase ASCII letters, digits, and hyphens only (agentskills.io spec); got `{}`",
+                name
+            ),
+        });
+    }
+    None
 }
 
 fn validate_allowed_tool(spec: &str, mcp_tools: &[String]) -> Option<Issue> {
@@ -275,7 +418,7 @@ fn check_one(path: &Path) -> std::io::Result<FileReport> {
         });
     }
 
-    // Required fields
+    // Required fields — agentskills.io spec rules.
     match &fm.name {
         None => issues.push(Issue {
             severity: Severity::Error,
@@ -283,25 +426,8 @@ fn check_one(path: &Path) -> std::io::Result<FileReport> {
             message: "frontmatter is missing required `name` field".into(),
         }),
         Some(name) => {
-            if name.is_empty() {
-                issues.push(Issue {
-                    severity: Severity::Error,
-                    code: "empty-name".into(),
-                    message: "`name` is empty".into(),
-                });
-            } else if !name
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-                || name.chars().next().is_some_and(|c| !c.is_ascii_lowercase())
-            {
-                issues.push(Issue {
-                    severity: Severity::Warning,
-                    code: "name-format".into(),
-                    message: format!(
-                        "`name` should be lowercase ASCII (a-z, 0-9, -, _) starting with a letter; got `{}`",
-                        name
-                    ),
-                });
+            if let Some(issue) = validate_skill_name(name) {
+                issues.push(issue);
             }
         }
     }
@@ -320,16 +446,28 @@ fn check_one(path: &Path) -> std::io::Result<FileReport> {
                 d.len()
             ),
         }),
+        Some(d) if d.len() > 1024 => issues.push(Issue {
+            severity: Severity::Warning,
+            code: "long-description".into(),
+            message: format!(
+                "`description` is {} chars; agentskills.io spec caps it at 1024",
+                d.len()
+            ),
+        }),
         Some(_) => {}
     }
 
-    // Recommended fields
-    if fm.when_to_use.is_none() {
+    // `when_to_use` is a Claude Code extension, not in the open
+    // spec. Only nudge users about it when nothing else (description
+    // text or a `metadata:` block) is carrying that information.
+    if fm.when_to_use.is_none()
+        && !fm.has_metadata
+        && fm.description.as_deref().is_some_and(|d| d.len() < 200)
+    {
         issues.push(Issue {
             severity: Severity::Warning,
             code: "missing-when-to-use".into(),
-            message: "consider adding `when_to_use:` so the agent knows when to invoke this skill"
-                .into(),
+            message: "short description and no `metadata:` / `when_to_use:` — agents may struggle to know when to invoke this skill".into(),
         });
     }
 
@@ -387,8 +525,149 @@ fn collect_files(path: &Path) -> std::io::Result<Vec<PathBuf>> {
 // Runner
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// `wg skill install` — write the bundled skill into an agent's
+// skills directory.
+// ---------------------------------------------------------------------------
+
+/// Where each agent picks up SKILL.md files. Stable as of April 2026.
+fn target_skills_dir(target: &str) -> Option<PathBuf> {
+    let home = dirs::home_dir()?;
+    match target {
+        // Claude Code reads `~/.claude/skills/<name>/SKILL.md`.
+        "claude" | "claude-code" => Some(home.join(".claude/skills/wg")),
+        // Hermes Agent (Nous Research) reads `~/.hermes/skills/`.
+        // The agent also accepts the cross-tool `~/.agents/skills/`
+        // path; we pick the namespaced one to avoid stomping on
+        // OpenClaw if a user has both.
+        "hermes" => Some(home.join(".hermes/skills/wg")),
+        // OpenClaw discovers from `~/.openclaw/skills/`,
+        // `~/.agents/skills/`, and workspace-level locations.
+        "openclaw" => Some(home.join(".openclaw/skills/wg")),
+        // Cross-tool shared location — both Hermes and OpenClaw
+        // accept this. Useful when a user runs both.
+        "agents" | "shared" => Some(home.join(".agents/skills/wg")),
+        _ => None,
+    }
+}
+
+fn supported_targets() -> &'static [&'static str] {
+    &["claude", "hermes", "openclaw", "agents"]
+}
+
+#[derive(serde::Serialize)]
+struct InstallReport {
+    target: String,
+    dest: String,
+    files: Vec<String>,
+    overwrote: bool,
+}
+
+#[derive(serde::Serialize)]
+struct TargetEntry {
+    target: &'static str,
+    path: String,
+}
+
+fn run_install(
+    target: String,
+    dest: Option<PathBuf>,
+    force: bool,
+    list_targets: bool,
+    json: bool,
+) -> Result<String, WgError> {
+    if list_targets || target == "list" {
+        let entries: Vec<TargetEntry> = supported_targets()
+            .iter()
+            .map(|t| TargetEntry {
+                target: t,
+                path: target_skills_dir(t)
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| "<HOME unknown>".to_string()),
+            })
+            .collect();
+        if json {
+            return serde_json::to_string_pretty(&entries).map_err(|e| WgError::Serialize {
+                context: "skill install --list-targets".to_string(),
+                source: e,
+            });
+        }
+        let mut out = String::from("Supported targets:\n");
+        for e in entries {
+            out.push_str(&format!("  {:<10}  {}\n", e.target, e.path));
+        }
+        return Ok(out);
+    }
+
+    let resolved_dest = match dest {
+        Some(d) => d,
+        None => target_skills_dir(&target).ok_or_else(|| {
+            WgError::InvalidInput(format!(
+                "unknown target `{}` — supported: {} (or pass --dest)",
+                target,
+                supported_targets().join(", ")
+            ))
+        })?,
+    };
+
+    let already_exists = resolved_dest.exists();
+    if already_exists && !force {
+        return Err(WgError::InvalidInput(format!(
+            "{} already exists; pass --force to overwrite",
+            resolved_dest.display()
+        )));
+    }
+
+    std::fs::create_dir_all(&resolved_dest)
+        .map_err(|e| WgError::Internal(format!("create {}: {e}", resolved_dest.display())))?;
+
+    let skill_path = resolved_dest.join("SKILL.md");
+    std::fs::write(&skill_path, BUNDLED_SKILL_MD)
+        .map_err(|e| WgError::Internal(format!("write {}: {e}", skill_path.display())))?;
+
+    let ref_path = resolved_dest.join("REFERENCE.md");
+    std::fs::write(&ref_path, BUNDLED_REFERENCE_MD)
+        .map_err(|e| WgError::Internal(format!("write {}: {e}", ref_path.display())))?;
+
+    let report = InstallReport {
+        target: target.clone(),
+        dest: resolved_dest.display().to_string(),
+        files: vec!["SKILL.md".to_string(), "REFERENCE.md".to_string()],
+        overwrote: already_exists,
+    };
+
+    if json {
+        return serde_json::to_string_pretty(&report).map_err(|e| WgError::Serialize {
+            context: "skill install".to_string(),
+            source: e,
+        });
+    }
+
+    let verb = if already_exists {
+        "Updated"
+    } else {
+        "Installed"
+    };
+    let mut out = format!(
+        "{verb} wg skill for {} → {}\n",
+        target,
+        resolved_dest.display()
+    );
+    out.push_str("  SKILL.md\n  REFERENCE.md\n\n");
+    out.push_str("Next: register the MCP server with `wg mcp install --target ");
+    out.push_str(&target);
+    out.push_str("` (or run `wg mcp` directly from your agent's tool config).\n");
+    Ok(out)
+}
+
 pub fn run_skill(sub: SkillSub, json: bool) -> Result<String, WgError> {
     match sub {
+        SkillSub::Install {
+            target,
+            dest,
+            force,
+            list_targets,
+        } => run_install(target, dest, force, list_targets, json),
         SkillSub::Check { path } => {
             let files = collect_files(&path)
                 .map_err(|e| WgError::FileRead(path.clone(), format!("read skill path: {}", e)))?;
