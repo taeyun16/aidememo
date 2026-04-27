@@ -319,6 +319,58 @@ fn fact_add(
     Ok(id.to_string())
 }
 
+/// Single item for `fact_add_many`. Pass each item as an Elixir map
+/// with these keys; an empty `entity_ids` / `tags` / `source` /
+/// `fact_type` skips the corresponding field, and `confidence <= 0`
+/// inherits the default.
+#[derive(rustler::NifMap)]
+struct FactAddManyItem {
+    content: String,
+    entity_ids: Vec<String>,
+    fact_type: String,
+    tags: Vec<String>,
+    source: String,
+    confidence: f32,
+}
+
+#[rustler::nif]
+fn fact_add_many(
+    handle: ResourceArc<WgNif>,
+    items: Vec<FactAddManyItem>,
+) -> NifResult<Vec<String>> {
+    let mut inputs = Vec::with_capacity(items.len());
+    for item in items {
+        let entity_ids = if item.entity_ids.is_empty() {
+            None
+        } else {
+            Some(
+                item.entity_ids
+                    .iter()
+                    .map(|s| parse_entity_id(s))
+                    .collect::<NifResult<Vec<_>>>()?,
+            )
+        };
+        inputs.push(FactInput {
+            content: item.content,
+            fact_type: parse_fact_type(&item.fact_type),
+            entity_ids,
+            tags: opt_vec(item.tags),
+            source: opt_str(item.source),
+            source_confidence: if item.confidence > 0.0 {
+                Some(item.confidence)
+            } else {
+                None
+            },
+            observed_at: None,
+        });
+    }
+    let ids = handle
+        .wiki
+        .fact_add_many(inputs)
+        .map_err(|_| rustler::Error::BadArg)?;
+    Ok(ids.iter().map(|id| id.to_string()).collect())
+}
+
 #[rustler::nif]
 fn fact_get(handle: ResourceArc<WgNif>, fact_id: String) -> NifResult<String> {
     let id = parse_fact_id(&fact_id)?;

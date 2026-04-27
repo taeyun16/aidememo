@@ -118,6 +118,17 @@ pub struct FactAddArgs {
     pub confidence: Option<f64>,
 }
 
+/// Single item in a `factAddMany` batch.
+#[napi(object)]
+pub struct FactAddManyItem {
+    pub content: String,
+    pub entity_ids: Option<Vec<String>>,
+    pub fact_type: Option<String>,
+    pub tags: Option<Vec<String>>,
+    pub source: Option<String>,
+    pub confidence: Option<f64>,
+}
+
 #[napi(object)]
 pub struct FactListArgs {
     pub entity: Option<String>,
@@ -305,6 +316,35 @@ impl WgStore {
         };
         let id = self.wiki.fact_add(input).map_err(err)?;
         Ok(id.to_string())
+    }
+
+    /// Insert many facts in one redb write transaction. Returns the
+    /// new fact ULIDs in input order. All-or-nothing — if any item
+    /// fails to validate, no facts land.
+    #[napi]
+    pub fn fact_add_many(&self, items: Vec<FactAddManyItem>) -> napi::Result<Vec<String>> {
+        let mut inputs = Vec::with_capacity(items.len());
+        for item in items {
+            let entity_ids = match item.entity_ids {
+                Some(ids) => Some(
+                    ids.iter()
+                        .map(|s| parse_entity_id(s))
+                        .collect::<napi::Result<Vec<_>>>()?,
+                ),
+                None => None,
+            };
+            inputs.push(FactInput {
+                content: item.content,
+                fact_type: item.fact_type.as_deref().and_then(parse_fact_type),
+                entity_ids,
+                tags: item.tags,
+                source: item.source,
+                source_confidence: item.confidence.map(|v| v as f32),
+                observed_at: None,
+            });
+        }
+        let ids = self.wiki.fact_add_many(inputs).map_err(err)?;
+        Ok(ids.iter().map(|id| id.to_string()).collect())
     }
 
     #[napi]

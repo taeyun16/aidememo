@@ -14,7 +14,7 @@
 //! ```
 
 use pyo3::prelude::*;
-use pyo3::types::PyModule;
+use pyo3::types::{PyDict, PyModule};
 use pythonize::pythonize;
 use std::path::Path;
 use std::sync::Arc;
@@ -279,6 +279,66 @@ impl PyWikiGraph {
         };
         let id = self.0.fact_add(input).map_err(map_err)?;
         Ok(id.to_string())
+    }
+
+    /// Insert many facts in one redb write transaction.
+    ///
+    /// Each item is a dict with the same keys `fact_add` accepts:
+    /// `content` (required), `entity_ids`, `fact_type`, `tags`,
+    /// `source`, `confidence`. Returns the new fact ULIDs in input
+    /// order. All-or-nothing — if one item fails to validate, no
+    /// facts land.
+    fn fact_add_many<'py>(&self, items: Vec<Bound<'py, PyDict>>) -> PyResult<Vec<String>> {
+        let mut inputs = Vec::with_capacity(items.len());
+        for item in items {
+            let content: String = match item.get_item("content")? {
+                Some(v) => v.extract()?,
+                None => return Err(err("each item needs a 'content' field")),
+            };
+            let entity_ids = match item.get_item("entity_ids")? {
+                Some(v) if !v.is_none() => {
+                    let names: Vec<String> = v.extract()?;
+                    Some(
+                        names
+                            .iter()
+                            .map(|s| parse_entity_id(s))
+                            .collect::<PyResult<Vec<_>>>()?,
+                    )
+                }
+                _ => None,
+            };
+            let fact_type = match item.get_item("fact_type")? {
+                Some(v) if !v.is_none() => {
+                    let s: String = v.extract()?;
+                    parse_fact_type(&s)
+                }
+                _ => None,
+            };
+            let tags = match item.get_item("tags")? {
+                Some(v) if !v.is_none() => Some(v.extract::<Vec<String>>()?),
+                _ => None,
+            };
+            let source = match item.get_item("source")? {
+                Some(v) if !v.is_none() => Some(v.extract::<String>()?),
+                _ => None,
+            };
+            let confidence = match item.get_item("confidence")? {
+                Some(v) if !v.is_none() => Some(v.extract::<f32>()?),
+                _ => None,
+            };
+
+            inputs.push(FactInput {
+                content,
+                fact_type,
+                entity_ids,
+                tags,
+                source,
+                source_confidence: confidence,
+                observed_at: None,
+            });
+        }
+        let ids = self.0.fact_add_many(inputs).map_err(map_err)?;
+        Ok(ids.iter().map(|id| id.to_string()).collect())
     }
 
     /// Get a fact by ID.

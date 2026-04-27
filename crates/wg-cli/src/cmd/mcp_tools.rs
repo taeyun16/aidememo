@@ -410,6 +410,68 @@ fn parse_fact_id(s: &str) -> Result<wg_core::FactId, String> {
         .map_err(|_| format!("invalid fact ID: {s}"))
 }
 
+fn tool_fact_add_many(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String> {
+    let items = args
+        .get("items")
+        .and_then(|v| v.as_array())
+        .ok_or("items array required")?;
+    if items.is_empty() {
+        return Ok(ToolCallResult {
+            content: vec![ContentBlock::text("No items to add.".to_string())],
+            is_error: None,
+        });
+    }
+    let mut inputs = Vec::with_capacity(items.len());
+    for (i, item) in items.iter().enumerate() {
+        let obj = item
+            .as_object()
+            .ok_or_else(|| format!("items[{i}] must be an object"))?;
+        let content = obj
+            .get("content")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| format!("items[{i}].content is required"))?
+            .to_string();
+        let entity_ids = obj
+            .get("entities")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str())
+                    .filter_map(|n| wiki.resolve_entity(n).ok())
+                    .collect::<Vec<_>>()
+            })
+            .filter(|v| !v.is_empty());
+        let tags = obj
+            .get("tags")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect::<Vec<_>>()
+            })
+            .filter(|v| !v.is_empty());
+        inputs.push(wg_core::types::FactInput {
+            content,
+            fact_type: None,
+            entity_ids,
+            tags,
+            source: None,
+            source_confidence: None,
+            observed_at: None,
+        });
+    }
+    let count = inputs.len();
+    let ids = wiki.fact_add_many(inputs).map_err(|e| e.to_string())?;
+    let id_strs: Vec<String> = ids.iter().map(|id| id.to_string()).collect();
+    Ok(ToolCallResult {
+        content: vec![ContentBlock::text(format!(
+            "Added {count} facts:\n{}",
+            id_strs.join("\n")
+        ))],
+        is_error: None,
+    })
+}
+
 fn tool_fact_supersede(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String> {
     let old_id = args
         .get("old_id")
@@ -630,6 +692,35 @@ pub fn list_tools() -> Vec<Tool> {
             }),
         },
         Tool {
+            name: "wg_fact_add_many".into(),
+            description: "Add many facts to the wiki graph in a single \
+                transaction. Use this for bulk imports — a single \
+                `wg_fact_add_many` call is dramatically faster than \
+                many sequential `wg_fact_add` calls because the disk \
+                fsync cost is paid once per batch instead of once per \
+                fact. Each item is an object with the same shape as \
+                wg_fact_add's args."
+                .into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "items": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "content": {"type": "string"},
+                                "entities": {"type": "array", "items": {"type": "string"}},
+                                "tags": {"type": "array", "items": {"type": "string"}}
+                            },
+                            "required": ["content"]
+                        }
+                    }
+                },
+                "required": ["items"]
+            }),
+        },
+        Tool {
             name: "wg_fact_supersede".into(),
             description: "Mark an old fact as superseded by a new one. The old \
                 fact stays in the store but won't appear in current_only \
@@ -678,6 +769,7 @@ fn call_tool(name: &str, args: &Value, wiki: &WikiGraph) -> Result<ToolCallResul
         "wg_query" => tool_query(args, wiki),
         "wg_entity_describe" => tool_entity_describe(args, wiki),
         "wg_fact_add" => tool_fact_add(args, wiki),
+        "wg_fact_add_many" => tool_fact_add_many(args, wiki),
         "wg_fact_supersede" => tool_fact_supersede(args, wiki),
         "wg_fact_edit" => tool_fact_edit(args, wiki),
         _ => Err(format!("Unknown tool: {}", name)),
@@ -881,5 +973,42 @@ mod tests {
         let names: Vec<String> = list_tools().into_iter().map(|t| t.name).collect();
         assert!(names.contains(&"wg_fact_supersede".to_string()));
         assert!(names.contains(&"wg_fact_edit".to_string()));
+        assert!(names.contains(&"wg_fact_add_many".to_string()));
+    }
+
+    #[test]
+    fn fact_add_many_inserts_a_batch() {
+        let (_dir, wiki) = open_temp_wiki();
+        wiki.entity_add(EntityInput {
+            name: "Redis".to_string(),
+            ..Default::default()
+        })
+        .ok();
+
+        let result = tool_fact_add_many(
+            &json!({
+                "items": [
+                    {"content": "Redis 6 is in production", "entities": ["Redis"]},
+                    {"content": "Redis 7 introduces functions", "entities": ["Redis"]},
+                    {"content": "Redis Sentinel handles HA"}
+                ]
+            }),
+            &wiki,
+        )
+        .unwrap();
+        assert_eq!(result.is_error, None);
+        let text = result
+            .content
+            .first()
+            .and_then(|b| b.text.as_deref())
+            .unwrap_or("");
+        assert!(text.starts_with("Added 3 facts:"));
+    }
+
+    #[test]
+    fn fact_add_many_rejects_missing_content() {
+        let (_dir, wiki) = open_temp_wiki();
+        let err = tool_fact_add_many(&json!({"items": [{}]}), &wiki).unwrap_err();
+        assert!(err.contains("content is required"));
     }
 }

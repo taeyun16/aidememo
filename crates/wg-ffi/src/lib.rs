@@ -481,6 +481,100 @@ pub extern "C" fn wg_fact_add(
     })
 }
 
+/// Insert many facts in one redb write transaction. `items_json` is a
+/// JSON array of objects with the same keys as `wg_fact_add`'s args:
+/// `content` (required), `entity_ids`, `fact_type`, `tags`, `source`,
+/// `confidence`. Returns `{"ids":[...]}` on success.
+#[unsafe(no_mangle)]
+pub extern "C" fn wg_fact_add_many(
+    store: *const WgStore,
+    items_json: *const c_char,
+) -> *mut c_char {
+    return_json(|| {
+        let s = store_ref(store)?;
+        let raw = ptr_to_str(items_json)?;
+        let parsed: serde_json::Value =
+            serde_json::from_str(raw).map_err(|e| format!("invalid items_json: {e}"))?;
+        let arr = parsed
+            .as_array()
+            .ok_or_else(|| "items_json must be a JSON array".to_string())?;
+
+        let mut inputs = Vec::with_capacity(arr.len());
+        for (i, item) in arr.iter().enumerate() {
+            let obj = item
+                .as_object()
+                .ok_or_else(|| format!("items_json[{i}] must be a JSON object"))?;
+            let content = obj
+                .get("content")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| format!("items_json[{i}].content is required"))?
+                .to_string();
+            let entity_ids = match obj.get("entity_ids") {
+                Some(v) if !v.is_null() => {
+                    let arr = v
+                        .as_array()
+                        .ok_or_else(|| format!("items_json[{i}].entity_ids must be an array"))?;
+                    let ids: Result<Vec<EntityId>, String> = arr
+                        .iter()
+                        .map(|x| {
+                            let s = x.as_str().ok_or_else(|| {
+                                format!("items_json[{i}].entity_ids must be strings")
+                            })?;
+                            EntityId::parse(s).ok_or_else(|| format!("invalid entity id: {s}"))
+                        })
+                        .collect();
+                    let ids = ids?;
+                    if ids.is_empty() { None } else { Some(ids) }
+                }
+                _ => None,
+            };
+            let fact_type = obj
+                .get("fact_type")
+                .and_then(|v| v.as_str())
+                .and_then(parse_fact_type);
+            let tags = match obj.get("tags") {
+                Some(v) if !v.is_null() => {
+                    let arr = v
+                        .as_array()
+                        .ok_or_else(|| format!("items_json[{i}].tags must be an array"))?;
+                    let tags: Result<Vec<String>, String> = arr
+                        .iter()
+                        .map(|x| {
+                            x.as_str()
+                                .map(|s| s.to_string())
+                                .ok_or_else(|| format!("items_json[{i}].tags must be strings"))
+                        })
+                        .collect();
+                    let tags = tags?;
+                    if tags.is_empty() { None } else { Some(tags) }
+                }
+                _ => None,
+            };
+            let source = obj
+                .get("source")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(String::from);
+            let confidence = obj
+                .get("confidence")
+                .and_then(|v| v.as_f64())
+                .map(|v| v as f32);
+            inputs.push(FactInput {
+                content,
+                fact_type,
+                entity_ids,
+                tags,
+                source,
+                source_confidence: confidence,
+                observed_at: None,
+            });
+        }
+        let ids = s.wiki.fact_add_many(inputs).map_err(|e| e.to_string())?;
+        let id_strs: Vec<String> = ids.iter().map(|id| id.to_string()).collect();
+        Ok(json!({ "ids": id_strs }).to_string())
+    })
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn wg_fact_get(store: *const WgStore, fact_id: *const c_char) -> *mut c_char {
     return_json(|| {
