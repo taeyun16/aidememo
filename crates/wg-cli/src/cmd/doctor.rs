@@ -51,11 +51,14 @@ pub fn run_doctor(
     sub: DoctorSub,
     global_json: bool,
 ) -> Result<String, WgError> {
+    let memory = collect_memory(store_path, &config);
     let wiki = WikiGraph::open(store_path, config)?;
     let issues = wiki.lint()?;
     let stats = wiki.stats()?;
+    let memory = memory.with_counts(stats.fact_count);
     let agents = collect_agent_integration();
-    let fixes = collect_fix_suggestions(&agents);
+    let mut fixes = collect_fix_suggestions(&agents);
+    fixes.extend(memory.advisories());
 
     // `--fix --shell` short-circuits to a pipe-friendly view: just
     // the bare commands, one per line, nothing else. Designed for
@@ -79,6 +82,7 @@ pub fn run_doctor(
             "issue_count": issues.len(),
             "issues": issues,
             "agents": agents,
+            "memory": memory,
             // Always emitted in JSON: tooling that consumes this
             // shouldn't have to re-derive the suggestion list.
             "fixes": fixes,
@@ -96,6 +100,7 @@ pub fn run_doctor(
         stats.entity_count, stats.fact_count, stats.relation_count
     ));
 
+    out.push_str(&format_memory(&memory));
     out.push_str(&format_agent_integration(&agents));
 
     if sub.fix {
@@ -302,6 +307,263 @@ fn format_fix_suggestions(fixes: &[FixSuggestion]) -> String {
     out
 }
 
+// ---------------------------------------------------------------------------
+// Memory + disk footprint
+// ---------------------------------------------------------------------------
+
+/// Snapshot of the wiki's on-disk artifacts and an estimate of how
+/// much RAM a fully-loaded WikiGraph uses. Numbers come from
+/// `std::fs::metadata` for disk and a count × per-entry-size table
+/// for RAM (see `MEMORY_PER_FACT_*` and `model_load_bytes`). Estimates,
+/// not measurements — we don't read RSS to keep the doctor portable.
+#[derive(Debug, serde::Serialize)]
+pub(crate) struct MemoryReport {
+    pub disk: Vec<MemoryEntry>,
+    pub ram_estimate: Vec<MemoryEntry>,
+    pub ram_total_bytes: u64,
+    /// Mirrors the model name from config so the JSON consumer can
+    /// surface "you're loading X" without re-reading the config.
+    pub model_name: String,
+    /// Whether `model.quantize = true` was set; surfaces in advisories.
+    pub model_quantize: bool,
+    /// `Some(true)` when `search.semantic_index = "hnsw"` and the
+    /// sidecar is present, `Some(false)` when configured but missing,
+    /// `None` when the user opted out of HNSW.
+    pub hnsw_sidecar_present: Option<bool>,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub(crate) struct MemoryEntry {
+    pub name: String,
+    pub bytes: u64,
+    /// Free-form one-line annotation (path on disk, "N facts × X B",
+    /// model id, etc).
+    pub detail: String,
+}
+
+/// Per-fact RAM cost of the BM25 inverted index, drawn from PLAN.md
+/// §9.1's "1만 fact 기준 ~5 MB" estimate.
+const MEMORY_PER_FACT_BM25: u64 = 500;
+
+/// Per-fact cost of a quantized fact embedding sitting in
+/// `fact_embed_cache`: 256 i8 dims + serde overhead.
+const MEMORY_PER_FACT_EMBED_CACHE: u64 = 272;
+
+/// Per-fact cost of the in-memory HNSW (graph node + the f32 vector
+/// it points at). PLAN.md §9.1 budgets ~1 KB/fact at 256 dims.
+const MEMORY_PER_FACT_HNSW: u64 = 1024;
+
+impl MemoryReport {
+    /// `collect_memory` runs *before* `WikiGraph::open` so it doesn't
+    /// have a fact_count yet — its `ram_estimate` is seeded with just
+    /// the model load row. `with_counts` then prepends the
+    /// per-fact-scaled rows (bm25, embed cache, hnsw runtime) so the
+    /// final order in the report is bm25 → embed → hnsw → model load.
+    fn with_counts(mut self, fact_count: u64) -> Self {
+        let bm25 = MemoryEntry {
+            name: "bm25 index".into(),
+            bytes: fact_count * MEMORY_PER_FACT_BM25,
+            detail: format!("{} facts × ~{} B", fact_count, MEMORY_PER_FACT_BM25),
+        };
+        let embed = MemoryEntry {
+            name: "fact embed cache".into(),
+            bytes: fact_count * MEMORY_PER_FACT_EMBED_CACHE,
+            detail: format!(
+                "{} facts × ~{} B (i8)",
+                fact_count, MEMORY_PER_FACT_EMBED_CACHE
+            ),
+        };
+        let hnsw = MemoryEntry {
+            name: "hnsw runtime".into(),
+            bytes: match self.hnsw_sidecar_present {
+                Some(true) => fact_count * MEMORY_PER_FACT_HNSW,
+                _ => 0,
+            },
+            detail: match self.hnsw_sidecar_present {
+                Some(true) => format!("{} facts × ~{} B", fact_count, MEMORY_PER_FACT_HNSW),
+                Some(false) => "configured but sidecar missing — run `wg vector-rebuild`".into(),
+                None => "n/a (semantic_index != hnsw)".into(),
+            },
+        };
+
+        // collect_memory left exactly one entry in `ram_estimate`: the
+        // model load row. Prepend the per-fact rows.
+        let model = self.ram_estimate.pop().unwrap_or_else(|| MemoryEntry {
+            name: "model load".into(),
+            bytes: 0,
+            detail: "unknown".into(),
+        });
+        self.ram_estimate = vec![bm25, embed, hnsw, model];
+        self.ram_total_bytes = self.ram_estimate.iter().map(|e| e.bytes).sum();
+        self
+    }
+
+    /// Surface advisories for the fix-suggestions block when the
+    /// memory picture suggests an obvious tweak (`model.quantize` for
+    /// large models, `wg vector-rebuild` for missing sidecar).
+    fn advisories(&self) -> Vec<FixSuggestion> {
+        let mut out = Vec::new();
+        if let Some(model_entry) = self.ram_estimate.iter().find(|e| e.name == "model load") {
+            if model_entry.bytes >= 100 * 1024 * 1024 && !self.model_quantize {
+                out.push(FixSuggestion {
+                    target: "wg",
+                    kind: "memory",
+                    command: "wg config set model.quantize true".to_string(),
+                    reason: format!(
+                        "{} loads {:.0} MB into RAM; int8 quantize cuts that ~3.9×",
+                        self.model_name,
+                        model_entry.bytes as f64 / (1024.0 * 1024.0)
+                    ),
+                });
+            }
+        }
+        if self.hnsw_sidecar_present == Some(false) {
+            out.push(FixSuggestion {
+                target: "wg",
+                kind: "memory",
+                command: "wg vector-rebuild".to_string(),
+                reason: "search.semantic_index = hnsw but sidecar is missing".to_string(),
+            });
+        }
+        out
+    }
+}
+
+impl Clone for MemoryEntry {
+    fn clone(&self) -> Self {
+        Self {
+            name: self.name.clone(),
+            bytes: self.bytes,
+            detail: self.detail.clone(),
+        }
+    }
+}
+
+fn collect_memory(store_path: &Path, config: &Config) -> MemoryReport {
+    let mut disk: Vec<MemoryEntry> = Vec::new();
+    if let Ok(meta) = std::fs::metadata(store_path) {
+        disk.push(MemoryEntry {
+            name: "redb store".into(),
+            bytes: meta.len(),
+            detail: store_path.display().to_string(),
+        });
+    }
+    let hnsw_path = store_path.with_extension("hnsw.bin");
+    let hnsw_present = hnsw_path.exists();
+    if hnsw_present {
+        if let Ok(meta) = std::fs::metadata(&hnsw_path) {
+            disk.push(MemoryEntry {
+                name: "hnsw sidecar".into(),
+                bytes: meta.len(),
+                detail: hnsw_path.display().to_string(),
+            });
+        }
+    }
+
+    let model_bytes_unquantized = model_load_bytes(&config.model.name);
+    let model_bytes = if config.model.quantize {
+        // `quantize` field doc cites ~3.9× shrink (489 MB → 124 MB on
+        // 128M); apply the same factor here for the estimate.
+        model_bytes_unquantized.map(|b| (b as f64 / 3.9) as u64)
+    } else {
+        model_bytes_unquantized
+    };
+    let model_detail = match (model_bytes_unquantized, config.model.quantize) {
+        (Some(_), true) => format!("{} (quantized)", config.model.name),
+        (Some(_), false) => config.model.name.clone(),
+        (None, _) => format!("{} (unknown size)", config.model.name),
+    };
+
+    let hnsw_sidecar_present = if config.search.semantic_index == "hnsw" {
+        Some(hnsw_present)
+    } else {
+        None
+    };
+
+    // Stash just the model entry in `ram_estimate` so `with_counts`
+    // can read it back; counts-dependent rows get added then.
+    let ram_estimate = vec![MemoryEntry {
+        name: "model load".into(),
+        bytes: model_bytes.unwrap_or(0),
+        detail: model_detail,
+    }];
+
+    MemoryReport {
+        disk,
+        ram_estimate,
+        ram_total_bytes: 0, // recomputed in `with_counts`
+        model_name: config.model.name.clone(),
+        model_quantize: config.model.quantize,
+        hnsw_sidecar_present,
+    }
+}
+
+/// Best-effort RAM footprint for a Model2Vec model by name, mapping
+/// the well-known potion lineup. Returns `None` for unrecognized
+/// model names so doctor can print "unknown" instead of guessing.
+fn model_load_bytes(name: &str) -> Option<u64> {
+    let lower = name.to_lowercase();
+    let mb = match () {
+        _ if lower.contains("multilingual-32m") => 32,
+        _ if lower.contains("multilingual-128m") || lower.contains("base-128m") => 128,
+        _ if lower.contains("base-32m") => 32,
+        _ if lower.contains("base-8m") => 8,
+        _ if lower.contains("base-4m") || lower.contains("base-2m") => 4,
+        _ => return None,
+    };
+    Some(mb * 1024 * 1024)
+}
+
+fn format_bytes(bytes: u64) -> String {
+    const KB: u64 = 1024;
+    const MB: u64 = KB * 1024;
+    const GB: u64 = MB * 1024;
+    if bytes >= GB {
+        format!("{:.2} GB", bytes as f64 / GB as f64)
+    } else if bytes >= MB {
+        format!("{:.1} MB", bytes as f64 / MB as f64)
+    } else if bytes >= KB {
+        format!("{:.1} KB", bytes as f64 / KB as f64)
+    } else {
+        format!("{} B", bytes)
+    }
+}
+
+fn format_memory(memory: &MemoryReport) -> String {
+    let mut out = String::from("Memory:\n");
+
+    if !memory.disk.is_empty() {
+        out.push_str("  disk\n");
+        for entry in &memory.disk {
+            out.push_str(&format!(
+                "    {:<18}  {:>9}   ({})\n",
+                entry.name,
+                format_bytes(entry.bytes),
+                entry.detail
+            ));
+        }
+    }
+
+    if !memory.ram_estimate.is_empty() {
+        out.push_str("  ram (estimate)\n");
+        for entry in &memory.ram_estimate {
+            out.push_str(&format!(
+                "    {:<18}  ~{:>8}   ({})\n",
+                entry.name,
+                format_bytes(entry.bytes),
+                entry.detail
+            ));
+        }
+        out.push_str(&format!(
+            "    {:<18}  ~{:>8}\n",
+            "total",
+            format_bytes(memory.ram_total_bytes)
+        ));
+    }
+    out.push('\n');
+    out
+}
+
 fn format_agent_integration(agents: &[AgentStatus]) -> String {
     let mut out = String::from("Agent integration:\n");
     for a in agents {
@@ -325,4 +587,104 @@ fn format_agent_integration(agents: &[AgentStatus]) -> String {
         "    legend:  ✓ installed   — not installed   ? cli unavailable / could not check\n\n",
     );
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+    use tempfile::TempDir;
+
+    fn config_with_model(name: &str, quantize: bool, semantic_index: &str) -> Config {
+        let mut c = Config::default();
+        c.model.name = name.to_string();
+        c.model.quantize = quantize;
+        c.search.semantic_index = semantic_index.to_string();
+        c
+    }
+
+    #[test]
+    fn model_load_bytes_known_models() {
+        assert_eq!(
+            model_load_bytes("minishlab/potion-base-4M"),
+            Some(4 * 1024 * 1024)
+        );
+        assert_eq!(
+            model_load_bytes("minishlab/potion-base-8M"),
+            Some(8 * 1024 * 1024)
+        );
+        assert_eq!(
+            model_load_bytes("minishlab/potion-multilingual-32M"),
+            Some(32 * 1024 * 1024)
+        );
+        assert_eq!(
+            model_load_bytes("minishlab/potion-multilingual-128M"),
+            Some(128 * 1024 * 1024)
+        );
+    }
+
+    #[test]
+    fn model_load_bytes_unknown_returns_none() {
+        assert_eq!(model_load_bytes("openai/text-embedding-3-small"), None);
+        assert_eq!(model_load_bytes(""), None);
+    }
+
+    #[test]
+    fn collect_memory_quantize_advisory_fires_on_large_model() {
+        let dir = TempDir::new().unwrap();
+        let store_path: PathBuf = dir.path().join("wiki.redb");
+        std::fs::write(&store_path, vec![0u8; 64]).unwrap();
+        let cfg = config_with_model("minishlab/potion-multilingual-128M", false, "hnsw");
+        let mem = collect_memory(&store_path, &cfg).with_counts(0);
+        let advisories = mem.advisories();
+        assert!(
+            advisories
+                .iter()
+                .any(|a| a.command.contains("model.quantize true")),
+            "expected quantize advisory, got {:?}",
+            advisories
+        );
+        // hnsw sidecar missing → also advises rebuild.
+        assert!(
+            advisories.iter().any(|a| a.command == "wg vector-rebuild"),
+            "expected vector-rebuild advisory when sidecar is absent"
+        );
+    }
+
+    #[test]
+    fn collect_memory_no_advisory_for_small_model() {
+        let dir = TempDir::new().unwrap();
+        let store_path = dir.path().join("wiki.redb");
+        std::fs::write(&store_path, vec![0u8; 64]).unwrap();
+        let cfg = config_with_model("minishlab/potion-base-8M", false, "bm25");
+        let mem = collect_memory(&store_path, &cfg).with_counts(0);
+        assert!(
+            mem.advisories().is_empty(),
+            "expected no advisories for an 8M model on bm25, got {:?}",
+            mem.advisories()
+        );
+    }
+
+    #[test]
+    fn collect_memory_with_counts_sums_per_fact_estimates() {
+        let dir = TempDir::new().unwrap();
+        let store_path = dir.path().join("wiki.redb");
+        std::fs::write(&store_path, vec![0u8; 64]).unwrap();
+        // hnsw sidecar present so the runtime row contributes.
+        std::fs::write(dir.path().join("wiki.hnsw.bin"), vec![0u8; 16]).unwrap();
+        let cfg = config_with_model("minishlab/potion-base-8M", false, "hnsw");
+        let mem = collect_memory(&store_path, &cfg).with_counts(1_000);
+
+        // bm25 + embed + hnsw + model_load = sum
+        let want_bm25 = 1_000 * MEMORY_PER_FACT_BM25;
+        let want_embed = 1_000 * MEMORY_PER_FACT_EMBED_CACHE;
+        let want_hnsw = 1_000 * MEMORY_PER_FACT_HNSW;
+        let want_model = 8 * 1024 * 1024;
+        assert_eq!(
+            mem.ram_total_bytes,
+            want_bm25 + want_embed + want_hnsw + want_model
+        );
+        // model row order is last.
+        assert_eq!(mem.ram_estimate.last().unwrap().name, "model load");
+    }
 }

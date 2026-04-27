@@ -611,10 +611,13 @@ fn doctor_fix_shell_emits_only_commands_one_per_line() {
     let lines: Vec<&str> = stdout.lines().collect();
     assert!(!lines.is_empty(), "expected at least one fix line");
     for line in &lines {
-        // Every line should look like a wg subcommand invocation —
-        // no shell-prompt prefixes, no comments, no blanks.
+        // Every line should look like a `wg <subcommand>` invocation
+        // — no shell-prompt prefixes, no comments, no blanks. We
+        // allow any `wg ...` because doctor's fix list now also
+        // emits config / vector-rebuild advisories alongside the
+        // skill / mcp-install ones.
         assert!(
-            line.starts_with("wg skill install ") || line.starts_with("wg mcp-install "),
+            line.starts_with("wg "),
             "unexpected line in --shell output: {:?}",
             line
         );
