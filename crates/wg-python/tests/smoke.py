@@ -50,6 +50,22 @@ def main() -> None:
         facts = g.fact_list(entity="Redis", limit=10)
         assert len(facts) == 1
 
+        # Batch insert — single redb write txn for the whole list.
+        many_ids = g.fact_add_many([
+            {"content": "Redis Cluster shards keys by hash slot",
+             "entity_ids": [eid_redis], "fact_type": "pattern"},
+            {"content": "Redis 7 introduces Functions and ACL improvements",
+             "entity_ids": [eid_redis], "fact_type": "note", "confidence": 0.85},
+            {"content": "Postgres logical replication is the default",
+             "entity_ids": [eid_postgres], "fact_type": "convention"},
+        ])
+        assert len(many_ids) == 3
+        assert all(isinstance(x, str) for x in many_ids)
+        # The new facts are findable.
+        for fid_ in many_ids:
+            rec = g.fact_get(fid_)
+            assert rec["id"] == fid_
+
         # Relations
         g.relation_add("Redis", "Postgres", "alternative_to")
         rels = g.relations_get("Redis", direction="forward")

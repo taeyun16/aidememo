@@ -106,6 +106,38 @@ defmodule WgNif do
     )
   end
 
+  @doc """
+  Insert N facts in one redb write transaction.
+
+  `items` is a list of maps with the same keys as `fact_add/3`'s opts
+  (`content`, `entity_ids`, `fact_type`, `tags`, `source`,
+  `confidence`); each map is normalized to the `FactAddManyItem`
+  shape the NIF expects, with sane defaults so callers can omit
+  fields that don't apply.
+
+      WgNif.fact_add_many(g, [
+        %{content: "Redis 7 introduces Functions"},
+        %{content: "Postgres uses logical replication", fact_type: "convention"},
+      ])
+
+  Returns the new fact ULIDs in input order. All-or-nothing.
+  """
+  def fact_add_many(handle, items) do
+    Native.fact_add_many(
+      handle,
+      Enum.map(items, fn item ->
+        %{
+          content: Map.fetch!(item, :content),
+          entity_ids: Map.get(item, :entity_ids, []),
+          fact_type: Map.get(item, :fact_type, ""),
+          tags: Map.get(item, :tags, []),
+          source: Map.get(item, :source, ""),
+          confidence: :erlang.float(Map.get(item, :confidence, 0.0))
+        }
+      end)
+    )
+  end
+
   def fact_get(handle, fact_id), do: Native.fact_get(handle, fact_id) |> Jason.decode!()
 
   def fact_list(handle, opts \\ []) do

@@ -100,6 +100,21 @@ int main(void) {
     CHECK(contains(r, "Redis Sentinel"), "fact_list");
     wg_free_string(r);
 
+    /* Batch insert via wg_fact_add_many — JSON array of items. */
+    char items_json[1024];
+    snprintf(
+        items_json, sizeof(items_json),
+        "[{\"content\":\"Redis Cluster shards by hash slot\","
+        "\"entity_ids\":[\"%s\"],\"fact_type\":\"pattern\"},"
+        "{\"content\":\"Redis 7 introduces Functions and ACL improvements\","
+        "\"entity_ids\":[\"%s\"],\"fact_type\":\"note\",\"confidence\":0.85}]",
+        redis_id, redis_id);
+    char* batch = wg_fact_add_many(g, items_json);
+    CHECK(contains(batch, "\"ids\""), "fact_add_many returns ids");
+    /* Should hold exactly two ULIDs (52 chars total). */
+    CHECK(contains(batch, "01"), "fact_add_many ids look like ULIDs");
+    wg_free_string(batch);
+
     /* Relations. */
     r = wg_relation_add(g, "Redis", "Postgres", "alternative_to");
     CHECK(contains(r, "\"ok\":true"), "relation_add");

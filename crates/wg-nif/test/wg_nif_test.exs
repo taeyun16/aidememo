@@ -48,6 +48,37 @@ defmodule WgNifTest do
     facts = WgNif.fact_list(g, entity: "Redis", limit: 10)
     assert length(facts) == 1
 
+    # Batch insert — single redb write txn for the whole list.
+    eid_postgres = WgNif.resolve_entity(g, "Postgres")
+
+    many_ids =
+      WgNif.fact_add_many(g, [
+        %{
+          content: "Redis Cluster shards by hash slot",
+          entity_ids: [eid_redis],
+          fact_type: "pattern"
+        },
+        %{
+          content: "Redis 7 introduces Functions and ACL improvements",
+          entity_ids: [eid_redis],
+          fact_type: "note",
+          confidence: 0.85
+        },
+        %{
+          content: "Postgres logical replication is the default",
+          entity_ids: [eid_postgres],
+          fact_type: "convention"
+        }
+      ])
+
+    assert length(many_ids) == 3
+    assert Enum.all?(many_ids, &is_binary/1)
+
+    for id <- many_ids do
+      rec = WgNif.fact_get(g, id)
+      assert rec["id"] == id
+    end
+
     # Relations
     :ok = WgNif.relation_add(g, "Redis", "Postgres", "alternative_to")
     rels = WgNif.relations_get(g, "Redis", direction: "forward")

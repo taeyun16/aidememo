@@ -41,6 +41,8 @@ defmodule WgNif.Native do
   def fact_add(_h, _content, _ids, _type, _tags, _source, _confidence),
     do: :erlang.nif_error(:nif_not_loaded)
 
+  def fact_add_many(_h, _items), do: :erlang.nif_error(:nif_not_loaded)
+
   def fact_get(_h, _id), do: :erlang.nif_error(:nif_not_loaded)
 
   def fact_list(_h, _entity, _type, _limit, _current_only),

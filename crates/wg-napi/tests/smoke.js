@@ -46,6 +46,20 @@ function main() {
     const facts = JSON.parse(g.factList({ entity: 'Redis', limit: 10 }));
     if (facts.length !== 1) throw new Error(`expected 1 fact, got ${facts.length}`);
 
+    // Batch insert — single redb write txn for the whole array.
+    const manyIds = g.factAddMany([
+      { content: 'Redis Cluster shards by hash slot', entityIds: [eidRedis], factType: 'pattern' },
+      { content: 'Redis 7 introduces Functions and ACL improvements',
+        entityIds: [eidRedis], factType: 'note', confidence: 0.85 },
+      { content: 'Postgres logical replication is the default',
+        entityIds: [g.resolveEntity('Postgres')], factType: 'convention' },
+    ]);
+    if (manyIds.length !== 3) throw new Error(`expected 3 batch ids, got ${manyIds.length}`);
+    for (const id of manyIds) {
+      const rec = JSON.parse(g.factGet(id));
+      if (rec.id !== id) throw new Error(`fact_get round-trip failed for ${id}`);
+    }
+
     // Relations
     g.relationAdd('Redis', 'Postgres', 'alternative_to');
     const rels = JSON.parse(g.relationsGet('Redis', 'forward'));
