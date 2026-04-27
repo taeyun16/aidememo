@@ -19,6 +19,7 @@ use crate::cmd::skill::{supported_targets, target_skills_dir};
 pub struct DoctorSub {
     pub json: bool,
     pub fix: bool,
+    pub shell: bool,
 }
 
 pub fn doctor_command() -> impl Parser<Command> {
@@ -30,7 +31,14 @@ pub fn doctor_command() -> impl Parser<Command> {
              lines you want into your shell.",
         )
         .switch();
-    construct!(DoctorSub { json, fix })
+    let shell = long("shell")
+        .help(
+            "With --fix, emit only the install commands (one per line, no \
+             decoration) so the output can be piped into a shell. Pairs \
+             with --fix; ignored otherwise.",
+        )
+        .switch();
+    construct!(DoctorSub { json, fix, shell })
         .map(Command::Doctor)
         .to_options()
         .command("doctor")
@@ -48,6 +56,20 @@ pub fn run_doctor(
     let stats = wiki.stats()?;
     let agents = collect_agent_integration();
     let fixes = collect_fix_suggestions(&agents);
+
+    // `--fix --shell` short-circuits to a pipe-friendly view: just
+    // the bare commands, one per line, nothing else. Designed for
+    // `wg doctor --fix --shell | sh`. We deliberately omit a trailing
+    // newline because `main.rs` adds one via `println!`; emitting our
+    // own here would leave an empty final line that breaks `lines()`-
+    // based downstream parsers.
+    if sub.fix && sub.shell {
+        return Ok(fixes
+            .iter()
+            .map(|f| f.command.as_str())
+            .collect::<Vec<_>>()
+            .join("\n"));
+    }
 
     if sub.json || global_json {
         let payload = serde_json::json!({

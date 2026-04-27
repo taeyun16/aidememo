@@ -583,6 +583,68 @@ fn doctor_json_includes_fixes_array() {
 }
 
 #[test]
+fn doctor_fix_shell_emits_only_commands_one_per_line() {
+    // `wg doctor --fix --shell | sh` is the documented quick-fix
+    // pipeline, so the contract is: every non-empty line is a
+    // valid command, no decoration, no headers, no comments. We
+    // exercise the same isolated home as the gap-suggestion test
+    // so the expected command set is stable.
+    let home = tempfile::tempdir().unwrap();
+    let store = home.path().join("wiki.redb");
+
+    let out = Command::new(wg_bin())
+        .env_remove("WG_STORE")
+        .env("HOME", home.path())
+        .env("PATH", "/nonexistent")
+        .args([
+            "--store",
+            store.to_str().unwrap(),
+            "doctor",
+            "--fix",
+            "--shell",
+        ])
+        .output()
+        .expect("doctor --fix --shell");
+    assert!(out.status.success());
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert!(!lines.is_empty(), "expected at least one fix line");
+    for line in &lines {
+        // Every line should look like a wg subcommand invocation —
+        // no shell-prompt prefixes, no comments, no blanks.
+        assert!(
+            line.starts_with("wg skill install ") || line.starts_with("wg mcp-install "),
+            "unexpected line in --shell output: {:?}",
+            line
+        );
+        assert!(
+            !line.contains('#'),
+            "comment leaked into --shell output: {:?}",
+            line
+        );
+    }
+
+    // Sanity: same set of commands as `--fix` (without --shell)
+    // would suggest, just stripped of decoration.
+    let plain = Command::new(wg_bin())
+        .env_remove("WG_STORE")
+        .env("HOME", home.path())
+        .env("PATH", "/nonexistent")
+        .args(["--store", store.to_str().unwrap(), "doctor", "--fix"])
+        .output()
+        .expect("doctor --fix");
+    let plain_stdout = String::from_utf8_lossy(&plain.stdout);
+    for line in &lines {
+        assert!(
+            plain_stdout.contains(line),
+            "command `{}` from --shell missing in --fix human output",
+            line
+        );
+    }
+}
+
+#[test]
 fn doctor_human_output_includes_agent_section() {
     let home = tempfile::tempdir().unwrap();
     let store = home.path().join("wiki.redb");
