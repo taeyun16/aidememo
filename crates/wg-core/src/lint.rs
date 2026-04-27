@@ -125,19 +125,78 @@ fn check_orphans(entities: &[EntitySummary], relations: &[RelationRecord]) -> Ve
 }
 
 /// Flag pairs of entities with very similar names (possible aliases
-/// the user forgot to merge). Cheap length pre-filter prunes pairs
-/// whose lengths can't reach the 0.9 threshold; on real wikis with
-/// diverse names this drops most comparisons. Synthetic stress tests
-/// where every name shares a prefix won't benefit, but the trigram
-/// similarity itself is still O(min(|a|,|b|)) which keeps the inner
-/// cost tight.
+/// the user forgot to merge).
+///
+/// Optimization layers, applied in order:
+/// 1. Build a `trigram → entity-indices` inverted map (one pass per
+///    entity). For each pair to even be a candidate they must share
+///    at least 4 trigrams — a name can share fewer than four trigrams
+///    with another name only if the name pair is too short or too
+///    different to ever clear the 0.9 similarity threshold.
+/// 2. Prune candidate pairs whose length ratio can't reach 0.9 (cheap
+///    div + cmp, drops most pairs on real wikis with diverse names).
+/// 3. Run `trigram::similarity` only on the surviving pairs.
+///
+/// The trigram-blocking step turns the O(N²) all-pairs scan into
+/// roughly O(N × avg_postings_per_trigram) for diverse-name corpora.
+/// It still degrades to O(N²) when every name shares a long prefix
+/// (e.g. synthetic `Entity_0..N` benchmarks), but that's an
+/// adversarial input — real wikis don't have it.
 fn check_duplicates(entities: &[EntitySummary]) -> Vec<LintIssue> {
-    let mut issues = Vec::new();
+    if entities.len() < 2 {
+        return Vec::new();
+    }
+
     let lowered: Vec<String> = entities.iter().map(|e| e.name.to_lowercase()).collect();
     let lens: Vec<usize> = lowered.iter().map(|s| s.len()).collect();
 
+    // Per-entity trigram set (deduped). Pair is a candidate only if
+    // they share ≥ MIN_SHARED trigrams.
+    const MIN_SHARED: usize = 4;
+    let trigrams_per: Vec<HashSet<[u8; 3]>> = lowered.iter().map(|s| trigrams_of(s)).collect();
+
+    // Inverted index: trigram -> indices that contain it.
+    let mut postings: HashMap<[u8; 3], Vec<usize>> = HashMap::new();
+    for (i, trigs) in trigrams_per.iter().enumerate() {
+        for t in trigs {
+            postings.entry(*t).or_default().push(i);
+        }
+    }
+
+    // For each entity i, count trigram overlap with later entities j.
+    // Avoids the (j > i) duplicate-pair problem and lets us use a
+    // simple `Vec<u32>` as a counting buffer.
+    let mut shared_count = vec![0u32; entities.len()];
+    let mut touched: Vec<usize> = Vec::new();
+    let mut issues = Vec::new();
+
     for i in 0..entities.len() {
-        for j in (i + 1)..entities.len() {
+        // Reset the shared-count buffer for this row.
+        for &j in &touched {
+            shared_count[j] = 0;
+        }
+        touched.clear();
+
+        for t in &trigrams_per[i] {
+            if let Some(idxs) = postings.get(t) {
+                for &j in idxs {
+                    if j <= i {
+                        continue;
+                    }
+                    if shared_count[j] == 0 {
+                        touched.push(j);
+                    }
+                    shared_count[j] += 1;
+                }
+            }
+        }
+
+        for &j in &touched {
+            if (shared_count[j] as usize) < MIN_SHARED {
+                continue;
+            }
+            // Length-ratio prune (cheap, also caught by trigram count
+            // for very short names but useful for medium-length pairs).
             let len_i = lens[i] as f64;
             let len_j = lens[j] as f64;
             let (lo, hi) = if len_i < len_j {
@@ -148,6 +207,7 @@ fn check_duplicates(entities: &[EntitySummary]) -> Vec<LintIssue> {
             if hi == 0.0 || lo / hi < 0.9 {
                 continue;
             }
+
             let sim = trigram::similarity(&lowered[i], &lowered[j]);
             if sim > 0.9 {
                 issues.push(LintIssue {
@@ -165,6 +225,27 @@ fn check_duplicates(entities: &[EntitySummary]) -> Vec<LintIssue> {
     }
 
     issues
+}
+
+/// Padded byte-trigram set for similarity blocking. Pads with two
+/// space bytes on each side so prefix/suffix trigrams participate.
+/// Operates on raw bytes, so non-ASCII names produce trigrams that
+/// straddle UTF-8 boundaries — that's fine for *blocking* (the
+/// authoritative similarity check still uses `trigram::similarity`).
+fn trigrams_of(s: &str) -> HashSet<[u8; 3]> {
+    let mut out = HashSet::new();
+    let bytes = s.as_bytes();
+    if bytes.is_empty() {
+        return out;
+    }
+    let mut padded = Vec::with_capacity(bytes.len() + 4);
+    padded.extend_from_slice(b"  ");
+    padded.extend_from_slice(bytes);
+    padded.extend_from_slice(b"  ");
+    for w in padded.windows(3) {
+        out.insert([w[0], w[1], w[2]]);
+    }
+    out
 }
 
 /// Surface entities that have ≥2 *current* facts of an "atomic"
@@ -386,5 +467,55 @@ mod tests {
             .filter(|i| i.code == "conflict")
             .collect();
         assert!(conflicts.is_empty());
+    }
+
+    #[test]
+    fn duplicate_detector_catches_near_identical_names() {
+        // Trigram blocking shouldn't drop true near-duplicates. We
+        // bypass `entity_add` (which already runs a fuzzy check) by
+        // calling lint's free function directly with two manually
+        // constructed `EntitySummary`s.
+        let entities = vec![
+            EntitySummary {
+                id: EntityId::new(),
+                name: "Customer Order Pipeline Service".to_string(),
+                entity_type: EntityType::Custom("service".into()),
+                fact_count: 0,
+                tags: vec![],
+            },
+            EntitySummary {
+                id: EntityId::new(),
+                name: "Customer Order Pipeline Services".to_string(),
+                entity_type: EntityType::Custom("service".into()),
+                fact_count: 0,
+                tags: vec![],
+            },
+        ];
+        let issues = check_duplicates(&entities);
+        assert_eq!(issues.len(), 1, "expected one duplicate, got {:?}", issues);
+        assert_eq!(issues[0].code, "duplicate");
+    }
+
+    #[test]
+    fn duplicate_detector_does_not_false_positive_on_diverse_names() {
+        // Trigram blocking should prune unrelated names; the
+        // similarity check should also reject them.
+        let entities: Vec<EntitySummary> =
+            ["Redis", "Postgres", "Kafka", "MongoDB", "Elasticsearch"]
+                .iter()
+                .map(|name| EntitySummary {
+                    id: EntityId::new(),
+                    name: (*name).to_string(),
+                    entity_type: EntityType::Technology,
+                    fact_count: 0,
+                    tags: vec![],
+                })
+                .collect();
+        let issues = check_duplicates(&entities);
+        assert!(
+            issues.is_empty(),
+            "no duplicates expected, got {:?}",
+            issues
+        );
     }
 }
