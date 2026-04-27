@@ -154,7 +154,7 @@ crates/wg-cli/src/
 | `wg mcp` | stdio (newline-delimited JSON-RPC) | local agents (Claude Code, Codex CLI) |
 | `wg mcp-serve --port 3000` | HTTP POST `/mcp` + SSE `/sse` | browser/remote clients |
 
-**9 tools** (preferred order in agent prompts):
+**12 tools** (preferred order in agent prompts):
 
 | Tool | When |
 |---|---|
@@ -166,7 +166,10 @@ crates/wg-cli/src/
 | `wg_backlinks` | Reverse walk — "what depends on X?" |
 | `wg_doctor` | Health snapshot |
 | `wg_lint` | Raw issues |
+| `wg_entity_describe` | Set / clear an entity's prose summary |
 | `wg_fact_add` | Append a new fact |
+| `wg_fact_supersede` | Mark old fact replaced by a new one (validity-window invalidate) |
+| `wg_fact_edit` | Patch a fact's content (append / prepend / find+replace / content) |
 
 Tool schemas live in `cmd/mcp_tools.rs::list_tools()`.
 

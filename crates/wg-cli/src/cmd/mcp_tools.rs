@@ -404,6 +404,109 @@ fn tool_fact_add(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, Strin
     })
 }
 
+fn parse_fact_id(s: &str) -> Result<wg_core::FactId, String> {
+    wg_core::ulid::Ulid::from_string(s)
+        .map(wg_core::FactId)
+        .map_err(|_| format!("invalid fact ID: {s}"))
+}
+
+fn tool_fact_supersede(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String> {
+    let old_id = args
+        .get("old_id")
+        .and_then(|v| v.as_str())
+        .ok_or("old_id required")?;
+    let new_id = args
+        .get("new_id")
+        .and_then(|v| v.as_str())
+        .ok_or("new_id required")?;
+    let old = parse_fact_id(old_id)?;
+    let new = parse_fact_id(new_id)?;
+    wiki.fact_supersede(&old, &new).map_err(|e| e.to_string())?;
+    Ok(ToolCallResult {
+        content: vec![ContentBlock::text(format!(
+            "Superseded {old_id} by {new_id}"
+        ))],
+        is_error: None,
+    })
+}
+
+fn tool_fact_edit(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String> {
+    let id = args
+        .get("id")
+        .and_then(|v| v.as_str())
+        .ok_or("id required")?;
+    let fact_id = parse_fact_id(id)?;
+
+    let append = args.get("append").and_then(|v| v.as_str());
+    let prepend = args.get("prepend").and_then(|v| v.as_str());
+    let find = args.get("find").and_then(|v| v.as_str());
+    let replace = args.get("replace").and_then(|v| v.as_str());
+    let content = args.get("content").and_then(|v| v.as_str());
+
+    let mut ops = 0;
+    if append.is_some() {
+        ops += 1;
+    }
+    if prepend.is_some() {
+        ops += 1;
+    }
+    if find.is_some() || replace.is_some() {
+        ops += 1;
+    }
+    if content.is_some() {
+        ops += 1;
+    }
+    if ops == 0 {
+        return Err("no edit op (use append / prepend / find+replace / content)".into());
+    }
+    if ops > 1 {
+        return Err("specify exactly one edit op".into());
+    }
+    if find.is_some() != replace.is_some() {
+        return Err("find and replace must be used together".into());
+    }
+
+    let current = wiki.fact_get(&fact_id).map_err(|e| e.to_string())?;
+    let original = current.content.clone();
+    let mut new_content = current.content;
+
+    if let Some(extra) = append {
+        let sep = if new_content.is_empty() || new_content.ends_with('\n') {
+            ""
+        } else {
+            "\n"
+        };
+        new_content.push_str(sep);
+        new_content.push_str(extra);
+    } else if let Some(extra) = prepend {
+        let sep = if extra.ends_with('\n') { "" } else { "\n" };
+        new_content = format!("{extra}{sep}{new_content}");
+    } else if let (Some(f), Some(r)) = (find, replace) {
+        if !new_content.contains(f) {
+            return Err(format!("find substring not present: {f:?}"));
+        }
+        new_content = new_content.replace(f, r);
+    } else if let Some(full) = content {
+        new_content = full.to_string();
+    }
+
+    wiki.fact_update(
+        &fact_id,
+        wg_core::FactUpdate {
+            content: Some(new_content.clone()),
+            ..Default::default()
+        },
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok(ToolCallResult {
+        content: vec![ContentBlock::text(format!(
+            "Updated fact {id}\n  before: {original}\n  after:  {new_content}"
+        ))],
+        is_error: None,
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Tool list & dispatch
 // ---------------------------------------------------------------------------
@@ -526,6 +629,40 @@ pub fn list_tools() -> Vec<Tool> {
                 "required": ["content"]
             }),
         },
+        Tool {
+            name: "wg_fact_supersede".into(),
+            description: "Mark an old fact as superseded by a new one. The old \
+                fact stays in the store but won't appear in current_only \
+                queries — use this when a decision was overturned or a value \
+                changed.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "old_id": {"type": "string", "description": "ULID of the fact being replaced"},
+                    "new_id": {"type": "string", "description": "ULID of the replacement fact (must already exist; create it first via wg_fact_add)"}
+                },
+                "required": ["old_id", "new_id"]
+            }),
+        },
+        Tool {
+            name: "wg_fact_edit".into(),
+            description: "Edit a fact's content in place. Choose exactly one of \
+                append / prepend / find+replace / content. Use this for typo \
+                fixes or clarifications — for semantic changes use \
+                wg_fact_supersede instead so the timeline is preserved.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "id":      {"type": "string", "description": "Fact ULID"},
+                    "append":  {"type": "string", "description": "Text to append (newline-joined)"},
+                    "prepend": {"type": "string", "description": "Text to prepend (newline-joined)"},
+                    "find":    {"type": "string", "description": "Substring to find (must use with replace)"},
+                    "replace": {"type": "string", "description": "Replacement text (must use with find)"},
+                    "content": {"type": "string", "description": "Replace the entire content"}
+                },
+                "required": ["id"]
+            }),
+        },
     ]
 }
 
@@ -541,6 +678,8 @@ fn call_tool(name: &str, args: &Value, wiki: &WikiGraph) -> Result<ToolCallResul
         "wg_query" => tool_query(args, wiki),
         "wg_entity_describe" => tool_entity_describe(args, wiki),
         "wg_fact_add" => tool_fact_add(args, wiki),
+        "wg_fact_supersede" => tool_fact_supersede(args, wiki),
+        "wg_fact_edit" => tool_fact_edit(args, wiki),
         _ => Err(format!("Unknown tool: {}", name)),
     }
 }
@@ -605,5 +744,142 @@ pub fn dispatch(req: JsonRpcRequest, wiki: &WikiGraph) -> Option<JsonRpcResponse
             -32601,
             &format!("Method not found: {}", req.method),
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+    use tempfile::TempDir;
+    use wg_core::{Config, FactInput, FactType, types::EntityInput};
+
+    fn open_temp_wiki() -> (TempDir, WikiGraph) {
+        let dir = TempDir::new().unwrap();
+        let mut config = Config::default();
+        config.store.path = dir.path().join("store").to_string_lossy().into_owned();
+        let wiki = WikiGraph::open(&PathBuf::from(&config.store.path), config).unwrap();
+        (dir, wiki)
+    }
+
+    fn add_fact(wiki: &WikiGraph, content: &str, entity: &str) -> wg_core::FactId {
+        wiki.entity_add(EntityInput {
+            name: entity.to_string(),
+            ..Default::default()
+        })
+        .ok();
+        let id = wiki.resolve_entity(entity).unwrap();
+        wiki.add_fact(FactInput {
+            content: content.to_string(),
+            fact_type: Some(FactType::Decision),
+            entity_ids: Some(vec![id]),
+            ..Default::default()
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn fact_supersede_marks_old_and_succeeds() {
+        let (_dir, wiki) = open_temp_wiki();
+        let old = add_fact(&wiki, "use Redis 6", "Redis");
+        let new = add_fact(&wiki, "use Redis 7", "Redis");
+
+        let result = tool_fact_supersede(
+            &json!({"old_id": old.0.to_string(), "new_id": new.0.to_string()}),
+            &wiki,
+        )
+        .unwrap();
+        assert_eq!(result.is_error, None);
+
+        let old_record = wiki.fact_get(&old).unwrap();
+        assert!(old_record.superseded_at.is_some());
+        assert_eq!(old_record.superseded_by, Some(new));
+    }
+
+    #[test]
+    fn fact_supersede_rejects_invalid_ids() {
+        let (_dir, wiki) = open_temp_wiki();
+        let err = tool_fact_supersede(
+            &json!({"old_id": "not-a-ulid", "new_id": "also-bad"}),
+            &wiki,
+        )
+        .unwrap_err();
+        assert!(err.contains("invalid fact ID"));
+    }
+
+    #[test]
+    fn fact_edit_append_updates_content() {
+        let (_dir, wiki) = open_temp_wiki();
+        let id = add_fact(&wiki, "first line", "Redis");
+
+        tool_fact_edit(
+            &json!({"id": id.0.to_string(), "append": "second line"}),
+            &wiki,
+        )
+        .unwrap();
+
+        let updated = wiki.fact_get(&id).unwrap();
+        assert_eq!(updated.content, "first line\nsecond line");
+    }
+
+    #[test]
+    fn fact_edit_find_replace_updates_content() {
+        let (_dir, wiki) = open_temp_wiki();
+        let id = add_fact(&wiki, "use Redis 6", "Redis");
+
+        tool_fact_edit(
+            &json!({
+                "id": id.0.to_string(),
+                "find": "Redis 6",
+                "replace": "Redis 7"
+            }),
+            &wiki,
+        )
+        .unwrap();
+
+        let updated = wiki.fact_get(&id).unwrap();
+        assert_eq!(updated.content, "use Redis 7");
+    }
+
+    #[test]
+    fn fact_edit_rejects_zero_ops() {
+        let (_dir, wiki) = open_temp_wiki();
+        let id = add_fact(&wiki, "x", "Redis");
+
+        let err = tool_fact_edit(&json!({"id": id.0.to_string()}), &wiki).unwrap_err();
+        assert!(err.contains("no edit op"));
+    }
+
+    #[test]
+    fn fact_edit_rejects_multiple_ops() {
+        let (_dir, wiki) = open_temp_wiki();
+        let id = add_fact(&wiki, "x", "Redis");
+
+        let err = tool_fact_edit(
+            &json!({
+                "id": id.0.to_string(),
+                "append": "a",
+                "content": "b"
+            }),
+            &wiki,
+        )
+        .unwrap_err();
+        assert!(err.contains("exactly one"));
+    }
+
+    #[test]
+    fn fact_edit_rejects_find_without_replace() {
+        let (_dir, wiki) = open_temp_wiki();
+        let id = add_fact(&wiki, "x", "Redis");
+
+        let err = tool_fact_edit(&json!({"id": id.0.to_string(), "find": "x"}), &wiki).unwrap_err();
+        assert!(err.contains("find and replace"));
+    }
+
+    #[test]
+    fn list_tools_includes_new_write_tools() {
+        let names: Vec<String> = list_tools().into_iter().map(|t| t.name).collect();
+        assert!(names.contains(&"wg_fact_supersede".to_string()));
+        assert!(names.contains(&"wg_fact_edit".to_string()));
     }
 }
