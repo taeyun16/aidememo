@@ -5640,6 +5640,7 @@ dependencies = [
  "criterion",
  "instant-distance",
  "parking_lot",
+ "redb",
  "serde",
  "serde_json",
  "simsimd",

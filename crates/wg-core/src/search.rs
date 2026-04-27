@@ -331,6 +331,16 @@ mod semantic {
         fact_cache: &RwLock<HashMap<FactId, QuantizedEmbedding>>,
         bm25_index: &RwLock<Bm25IndexState>,
     ) -> Result<Vec<SearchResult>> {
+        let profile = std::env::var("WG_SEARCH_PROFILE").is_ok();
+        let phase = |label: &str, t0: std::time::Instant| {
+            if profile {
+                eprintln!(
+                    "[search/bm25-prefilter] {label}: {:.2}ms",
+                    t0.elapsed().as_secs_f64() * 1000.0
+                );
+            }
+        };
+
         let config = store.config();
         let engine = SearchEngine::new(store, config, bm25_index);
 
@@ -346,7 +356,9 @@ mod semantic {
             limit: Some(limit.max(prefilter).max(1)),
             ..opts.clone()
         };
+        let t = std::time::Instant::now();
         let bm25_results = engine.search(query, bm25_opts)?;
+        phase("bm25_search", t);
 
         // Tier 7-D: graph-aware prefilter. Take the entities surfaced
         // by BM25 hits, walk N hops outward, and pull facts attached
@@ -356,6 +368,7 @@ mod semantic {
         // misses (e.g. a fact about "PostgreSQL replication" is a
         // strong candidate when the user searched for "Redis" and
         // those entities are linked in the graph).
+        let t = std::time::Instant::now();
         let semantic_candidates: Option<Vec<FactId>> = if prefilter > 0 {
             let mut ids: Vec<FactId> = bm25_results
                 .iter()
@@ -376,7 +389,9 @@ mod semantic {
         } else {
             None
         };
+        phase("graph_prefilter", t);
 
+        let t = std::time::Instant::now();
         let semantic_results = semantic_search(
             store,
             query,
@@ -386,18 +401,23 @@ mod semantic {
             fact_cache,
             semantic_candidates.as_deref(),
         )?;
+        phase("semantic_search", t);
 
         let bm25_weight = effective_weight(opts.bm25_weight, config.search.bm25_weight);
         let semantic_weight = effective_weight(opts.semantic_weight, config.search.semantic_weight);
 
-        Ok(rrf_fusion(
+        let t = std::time::Instant::now();
+        let fused = rrf_fusion(
             store,
             &bm25_results,
             Some(semantic_results.as_slice()),
             bm25_weight,
             semantic_weight,
             limit,
-        ))
+        );
+        phase("rrf_fusion", t);
+
+        Ok(fused)
     }
 
     /// HNSW-backed hybrid search. Replaces the BM25 prefilter step
