@@ -11,7 +11,7 @@ from __future__ import annotations
 import argparse
 from typing import Any
 
-from hermes_wg.client import WgClient
+from hermes_wg.client import CLIENT_ERRORS, WgClient
 from hermes_wg.tools import to_pretty_json
 
 
@@ -67,7 +67,7 @@ def _handler_factory(client: WgClient):
             else:
                 print(f"unknown subcommand: {args.subcmd}")
                 return 2
-        except Exception as exc:  # noqa: BLE001
+        except CLIENT_ERRORS as exc:
             print(f"hermes wg {args.subcmd} failed: {exc}")
             return 1
         return 0

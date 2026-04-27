@@ -94,3 +94,55 @@ jobs:
              -lpthread -ldl -lm \
              -o target/wg-ffi-smoke
           target/wg-ffi-smoke
+
+  hermes-plugin:
+    # The plugin is pure Python (the WgClient shells to the wg CLI by
+    # default, with an optional in-process wg-python binding) so we
+    # test it across the Python versions Hermes Agent itself supports
+    # — 3.10 is the minimum, 3.12 the current stable. Building wg-cli
+    # first lets the e2e smoke step exercise the JSON-fastpath /
+    # legacy-fallback behaviour against a real binary instead of just
+    # mocked subprocesses.
+    name: hermes-wg plugin (py${{ matrix.python }})
+    strategy:
+      matrix:
+        python: ["3.10", "3.12"]
+      fail-fast: false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: build wg CLI
+        run: cargo build -p wg-cli
+      - name: install plugin
+        working-directory: plugins/hermes
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[test]"
+      - name: pytest
+        working-directory: plugins/hermes
+        run: pytest -q
+      - name: e2e smoke against real wg binary
+        working-directory: plugins/hermes
+        env:
+          PATH: ${{ github.workspace }}/target/debug:${{ env.PATH }}
+        run: |
+          python - <<'PY'
+          import os, shutil, tempfile
+          from hermes_wg.client import WgClient
+          tmp = tempfile.mkdtemp(prefix="wg-ci-")
+          try:
+              c = WgClient(store_path=os.path.join(tmp, "wiki.redb"))
+              assert c.backend == "cli", f"expected cli backend, got {c.backend}"
+              fid = c.fact_add("CI smoke fact", entities=["ci"], fact_type="note")
+              assert len(fid) == 26, f"expected 26-char ULID, got {fid!r}"
+              recent = c.recent(last="1h", limit=5)
+              assert len(recent) == 1, f"expected 1 recent fact, got {len(recent)}"
+              print("OK: hermes-wg e2e smoke passed")
+          finally:
+              shutil.rmtree(tmp, ignore_errors=True)
+          PY

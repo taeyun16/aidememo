@@ -24,7 +24,12 @@ from pathlib import Path
 from typing import Any
 
 from hermes_wg import cli, hooks, slash, tools
-from hermes_wg.client import WgClient, WgUnavailable, default_skills_path
+from hermes_wg.client import (
+    HERMES_API_ERRORS,
+    WgClient,
+    WgUnavailable,
+    default_skills_path,
+)
 
 log = logging.getLogger("hermes_wg")
 
@@ -47,7 +52,7 @@ def _load_config(ctx: Any) -> dict:
     try:
         with path.open(encoding="utf-8") as fh:
             doc = yaml.safe_load(fh) or {}
-    except Exception as exc:  # noqa: BLE001
+    except (OSError, yaml.YAMLError) as exc:
         log.warning("could not read %s: %s", path, exc)
         return {}
     if not isinstance(doc, dict):
@@ -85,5 +90,5 @@ def register(ctx: Any) -> None:
                 path=skill_dir,
                 description="Wiki-Graph: local knowledge graph for persistent context across sessions.",
             )
-        except Exception as exc:  # noqa: BLE001
+        except HERMES_API_ERRORS as exc:
             log.warning("register_skill failed (non-fatal): %s", exc)

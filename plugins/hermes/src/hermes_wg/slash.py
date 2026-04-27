@@ -13,7 +13,7 @@ from __future__ import annotations
 import shlex
 from typing import Any
 
-from hermes_wg.client import WgClient
+from hermes_wg.client import CLIENT_ERRORS, WgClient
 from hermes_wg.tools import to_pretty_json
 
 
@@ -24,7 +24,7 @@ def _wg_handler(client: WgClient):
             return "Usage: /wg <topic>  — gathers search + traverse + recent for the topic."
         try:
             ctx = client.query(topic, limit=5, depth=2, recent_limit=5)
-        except Exception as exc:  # noqa: BLE001 — surface any failure to the user
+        except CLIENT_ERRORS as exc:
             return f"wg_query failed: {exc}"
         return to_pretty_json(ctx)
 
@@ -43,7 +43,7 @@ def _wg_add_handler(client: WgClient):
             fid = client.fact_add(
                 content, entities=entities, fact_type=fact_type, tags=tags
             )
-        except Exception as exc:  # noqa: BLE001
+        except CLIENT_ERRORS as exc:
             return f"wg_fact_add failed: {exc}"
         link = ", ".join(entities) if entities else "(no entities)"
         return f"Recorded {fid}  — type={fact_type}, entities={link}"
@@ -56,7 +56,7 @@ def _wg_recent_handler(client: WgClient):
         last = raw_args.strip() or "7d"
         try:
             facts = client.recent(last=last, limit=10)
-        except Exception as exc:  # noqa: BLE001
+        except CLIENT_ERRORS as exc:
             return f"wg_recent failed: {exc}"
         if not facts:
             return f"No facts in the last {last}."

@@ -12,6 +12,15 @@ keeps false positives (and wiki noise) low. Operators who prefer
 recall over precision can lower ``confidence_floor`` in the plugin
 config.
 
+The recorder runs in one of three modes:
+- ``auto_record: true`` (default) — every detection is written
+  immediately as a wg fact.
+- ``dry_run: true`` — detections are logged + appended to
+  ``$HERMES_STATE_DIR/wg-pending.jsonl`` for offline review, but
+  nothing is written to wg. Useful when first turning the plugin
+  on, to audit precision before trusting writes.
+- ``auto_record: false`` — recorder is disabled entirely.
+
 Both hooks degrade gracefully — any exception during ingest of
 context or recording of facts is logged to stderr but never
 propagates back into Hermes's session lifecycle, since a noisy
@@ -20,13 +29,50 @@ plugin should never break the agent.
 
 from __future__ import annotations
 
+import json
 import logging
+import os
+import time
+from pathlib import Path
 from typing import Any
 
-from hermes_wg.client import WgClient
-from hermes_wg.decisions import detect
+from hermes_wg.client import CLIENT_ERRORS, HERMES_API_ERRORS, WgClient
+from hermes_wg.decisions import DetectedFact, detect
 
 log = logging.getLogger("hermes_wg")
+
+
+def _pending_log_path() -> Path:
+    """Where dry-run detections accumulate. Honors ``HERMES_STATE_DIR``
+    for users who relocate Hermes state, falling back to
+    ``~/.hermes/state``."""
+    env = os.environ.get("HERMES_STATE_DIR")
+    base = Path(env) if env else Path.home() / ".hermes" / "state"
+    return base / "wg-pending.jsonl"
+
+
+def _append_pending(detections: list[DetectedFact], path: Path | None = None) -> Path:
+    """Write each detection as one JSONL line. Returns the path so
+    callers can include it in user-facing messaging."""
+    target = path or _pending_log_path()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    now_ms = int(time.time() * 1000)
+    with target.open("a", encoding="utf-8") as fh:
+        for d in detections:
+            fh.write(
+                json.dumps(
+                    {
+                        "ts_ms": now_ms,
+                        "content": d.content,
+                        "fact_type": d.fact_type,
+                        "confidence": d.confidence,
+                        "source_line": d.source_line,
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+            )
+    return target
 
 
 def _format_recent_block(facts: list[dict]) -> str | None:
@@ -65,7 +111,7 @@ def make_on_session_start(client: WgClient, last: str = "7d", limit: int = 10):
     def on_session_start(ctx: Any = None, **_kwargs: Any) -> None:
         try:
             facts = client.recent(last=last, limit=limit)
-        except Exception as exc:  # noqa: BLE001 — never break sessions
+        except CLIENT_ERRORS as exc:
             log.warning("wg recent failed at session start: %s", exc)
             return
         block = _format_recent_block(facts)
@@ -81,7 +127,7 @@ def make_on_session_start(client: WgClient, last: str = "7d", limit: int = 10):
 
                 inject = get_plugin_context().inject_message
             inject(block, role="system")
-        except Exception as exc:  # noqa: BLE001
+        except (ImportError, *HERMES_API_ERRORS) as exc:
             log.warning("wg session-start inject_message failed: %s", exc)
 
     return on_session_start
@@ -91,14 +137,19 @@ def make_on_session_end(
     client: WgClient,
     *,
     enable_auto_record: bool = True,
+    dry_run: bool = False,
     confidence_floor: float = 0.85,
     default_entities: list[str] | None = None,
+    pending_path: Path | None = None,
 ):
     """Build the ``on_session_end`` callback.
 
-    ``enable_auto_record`` defaults to ``True`` but is gated by the
-    plugin config; ``confidence_floor`` controls the precision /
-    recall trade-off of the decision detector.
+    ``enable_auto_record`` defaults to ``True`` and is gated by the
+    plugin config. When ``dry_run`` is on, detections are appended
+    to ``pending_path`` (default ``~/.hermes/state/wg-pending.jsonl``)
+    instead of being written to wg — operators can audit precision
+    before trusting the auto-writer. ``confidence_floor`` controls
+    the precision / recall trade-off of the decision detector.
     """
 
     def on_session_end(ctx: Any = None, transcript: str | None = None, **_kwargs: Any) -> None:
@@ -123,6 +174,26 @@ def make_on_session_end(
         if not detections:
             return
 
+        if dry_run:
+            try:
+                path = _append_pending(detections, pending_path)
+            except OSError as exc:
+                log.warning("wg dry-run could not write pending log: %s", exc)
+                return
+            log.info(
+                "wg dry-run captured %d detection(s) (logged to %s — review with `wg fact list --tag auto-recorded` after committing)",
+                len(detections),
+                path,
+            )
+            for d in detections:
+                log.info(
+                    "  [%s, %.2f] %s",
+                    d.fact_type,
+                    d.confidence,
+                    d.content,
+                )
+            return
+
         for d in detections:
             try:
                 client.fact_add(
@@ -131,7 +202,7 @@ def make_on_session_end(
                     fact_type=d.fact_type,
                     tags=["auto-recorded", "hermes-session"],
                 )
-            except Exception as exc:  # noqa: BLE001
+            except CLIENT_ERRORS as exc:
                 log.warning("wg fact_add (auto-record) failed: %s", exc)
 
     return on_session_end
@@ -148,8 +219,11 @@ def register_all(ctx: Any, client: WgClient, config: dict | None = None) -> None
     last = cfg.get("recent_window", "7d")
     limit = int(cfg.get("recent_limit", 10))
     auto_record = bool(cfg.get("auto_record", True))
+    dry_run = bool(cfg.get("dry_run", False))
     floor = float(cfg.get("confidence_floor", 0.85))
     default_entities = cfg.get("default_entities")
+    pending_path_cfg = cfg.get("pending_log")
+    pending_path = Path(pending_path_cfg) if pending_path_cfg else None
 
     ctx.register_hook(
         "on_session_start",
@@ -160,7 +234,9 @@ def register_all(ctx: Any, client: WgClient, config: dict | None = None) -> None
         make_on_session_end(
             client,
             enable_auto_record=auto_record,
+            dry_run=dry_run,
             confidence_floor=floor,
             default_entities=default_entities,
+            pending_path=pending_path,
         ),
     )

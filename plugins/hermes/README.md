@@ -33,8 +33,10 @@ plugins:
     recent_window: 7d               # session_start auto-context window
     recent_limit: 10
     auto_record: true               # session_end fact auto-recorder
+    dry_run: false                  # if true, log detections to wg-pending.jsonl instead of writing
     confidence_floor: 0.85          # higher = stricter (fewer false positives)
     default_entities: []            # entities to attach to auto-recorded facts
+    pending_log: ~/.hermes/state/wg-pending.jsonl  # dry-run audit log
 ```
 
 The plugin needs **either** `wg-python` (in-process binding) **or** the
@@ -69,8 +71,17 @@ floor, modest 7-day window, auto-record on).
 | `recent_window` | `7d` | How far back the session-start preamble looks. |
 | `recent_limit` | `10` | Max facts in the preamble. |
 | `auto_record` | `true` | Toggle the `on_session_end` recorder. |
+| `dry_run` | `false` | When `true`, detections are appended to `pending_log` instead of being written to wg. Useful for auditing precision before trusting writes. |
 | `confidence_floor` | `0.85` | 0.7–1.0; lower = more captures (and more noise). |
 | `default_entities` | `[]` | Entities to attach to auto-recorded facts. |
+| `pending_log` | `~/.hermes/state/wg-pending.jsonl` | Override the dry-run audit log path. |
+
+### Recommended onboarding flow
+
+For a wiki you care about, switch on `dry_run: true` for the first
+few sessions, inspect `~/.hermes/state/wg-pending.jsonl`, and
+adjust `confidence_floor` until the captures look right. Then flip
+`dry_run` off — your reviewed pattern will keep matching.
 
 ## Development
 

@@ -7,6 +7,7 @@ Hermes install.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -158,3 +159,99 @@ def test_slash_wg_add_records_fact(fake_ctx: FakeCtx) -> None:
 def test_slash_wg_add_usage_when_empty(fake_ctx: FakeCtx) -> None:
     handler = next(c for c in fake_ctx.commands if c["name"] == "wg-add")["handler"]
     assert "Usage" in handler("")
+
+
+def test_dry_run_writes_pending_log_instead_of_calling_fact_add(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """When ``dry_run`` is on, detections accumulate to a JSONL log
+    and ``client.fact_add`` is *not* invoked."""
+    from hermes_wg.client import WgClient
+    from hermes_wg.hooks import make_on_session_end
+
+    fact_add_calls: list[tuple] = []
+
+    def stub_fact_add(self, *args, **kwargs):
+        fact_add_calls.append((args, kwargs))
+        return "STUB"
+
+    monkeypatch.setattr(WgClient, "__init__", lambda self, *_a, **_kw: None)
+    monkeypatch.setattr(WgClient, "fact_add", stub_fact_add)
+    monkeypatch.setattr("hermes_wg.client.WgClient._has_cli", staticmethod(lambda: True))
+
+    pending = tmp_path / "wg-pending.jsonl"
+    on_end = make_on_session_end(
+        WgClient(),
+        enable_auto_record=True,
+        dry_run=True,
+        confidence_floor=0.85,
+        pending_path=pending,
+    )
+
+    transcript = (
+        "Decision: use HNSW as the default semantic index\n"
+        "결정: 영어 wiki에서도 multilingual-128M로 가자\n"
+    )
+    on_end(transcript=transcript)
+
+    assert fact_add_calls == [], "dry_run must not call fact_add"
+    assert pending.exists()
+    lines = pending.read_text(encoding="utf-8").strip().splitlines()
+    assert len(lines) == 2
+    payload = json.loads(lines[0])
+    assert payload["fact_type"] == "decision"
+    assert "HNSW" in payload["content"]
+    assert payload["confidence"] >= 0.85
+    assert "ts_ms" in payload
+
+
+def test_dry_run_default_is_false(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    """Without an explicit ``dry_run: true`` config, the recorder
+    behaves as before — calling ``fact_add`` for each detection."""
+    from hermes_wg.client import WgClient
+    from hermes_wg.hooks import make_on_session_end
+
+    fact_add_calls: list[tuple] = []
+
+    def stub_fact_add(self, *args, **kwargs):
+        fact_add_calls.append((args, kwargs))
+        return "STUB-ID"
+
+    monkeypatch.setattr(WgClient, "__init__", lambda self, *_a, **_kw: None)
+    monkeypatch.setattr(WgClient, "fact_add", stub_fact_add)
+    monkeypatch.setattr("hermes_wg.client.WgClient._has_cli", staticmethod(lambda: True))
+
+    pending = tmp_path / "wg-pending.jsonl"
+    on_end = make_on_session_end(
+        WgClient(),
+        enable_auto_record=True,
+        confidence_floor=0.85,
+        pending_path=pending,
+    )
+
+    on_end(transcript="Decision: ship the dry-run flag this week, soon")
+
+    assert len(fact_add_calls) == 1
+    assert not pending.exists()
+
+
+def test_dry_run_still_skipped_when_auto_record_off(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """``auto_record=False`` short-circuits before dry_run kicks in,
+    so neither path side-effects."""
+    from hermes_wg.client import WgClient
+    from hermes_wg.hooks import make_on_session_end
+
+    monkeypatch.setattr(WgClient, "__init__", lambda self, *_a, **_kw: None)
+    monkeypatch.setattr("hermes_wg.client.WgClient._has_cli", staticmethod(lambda: True))
+
+    pending = tmp_path / "wg-pending.jsonl"
+    on_end = make_on_session_end(
+        WgClient(),
+        enable_auto_record=False,
+        dry_run=True,
+        pending_path=pending,
+    )
+    on_end(transcript="Decision: this should be ignored entirely.")
+    assert not pending.exists()

@@ -27,6 +27,34 @@ class WgUnavailable(RuntimeError):
     """Neither ``wg-python`` nor the ``wg`` CLI is reachable."""
 
 
+# Exception tuples used across the plugin. Centralising them here
+# keeps catch sites narrow without making readers chase imports.
+#
+# CLIENT_ERRORS — anything the WgClient calls can raise: our own
+# WgUnavailable for subprocess / binding failures, OSError for file-
+# system or signal issues, JSONDecodeError when an old wg binary
+# returns prose to a `--json` request, and RuntimeError as the umbrella
+# the PyO3 binding raises for backend-side problems.
+CLIENT_ERRORS: tuple[type[BaseException], ...] = (
+    WgUnavailable,
+    OSError,
+    json.JSONDecodeError,
+    RuntimeError,
+)
+
+# HERMES_API_ERRORS — what we expect the Hermes plugin host to throw
+# when our calls don't fit. AttributeError covers a method moving or
+# disappearing across Hermes versions; TypeError covers signature
+# drift; ValueError / FileNotFoundError are the documented failure
+# modes of `ctx.register_skill`.
+HERMES_API_ERRORS: tuple[type[BaseException], ...] = (
+    AttributeError,
+    TypeError,
+    ValueError,
+    FileNotFoundError,
+)
+
+
 class WgClient:
     """Bidirectional adapter for wg.
 
