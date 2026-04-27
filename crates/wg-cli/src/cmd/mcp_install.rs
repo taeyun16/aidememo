@@ -36,7 +36,11 @@ pub struct McpInstallSub {
 
 pub fn mcp_install_command() -> impl Parser<Command> {
     let target = long("target")
-        .help("Target agent: claude, hermes, openclaw, codex, cursor (or 'list')")
+        .help(
+            "Target agent: claude, hermes, openclaw, codex, cursor, opencode \
+             (or 'list'). pi is intentionally not supported — pi rejects MCP \
+             upstream; use `wg skill install --target pi` instead.",
+        )
         .argument::<String>("TARGET")
         .fallback("claude".to_string());
     let force = long("force")
@@ -66,7 +70,10 @@ pub fn mcp_install_command() -> impl Parser<Command> {
     .map(Command::McpInstall)
     .to_options()
     .command("mcp-install")
-    .help("Register the wg MCP server with an agent (claude / hermes / openclaw / codex / cursor)")
+    .help(
+        "Register the wg MCP server with an agent (claude / hermes / \
+         openclaw / codex / cursor / opencode)",
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -119,6 +126,11 @@ const SUPPORTED: &[(&str, &str, &str)] = &[
         "cursor",
         "file-edit",
         "edit ~/.cursor/mcp.json: add mcpServers.wg",
+    ),
+    (
+        "opencode",
+        "file-edit",
+        "edit ~/.config/opencode/opencode.json: add mcp.wg",
     ),
 ];
 
@@ -173,6 +185,16 @@ pub fn run_mcp_install(sub: McpInstallSub, json: bool) -> Result<String, WgError
         )?,
         "codex" => install_codex(sub.force, sub.print)?,
         "cursor" => install_cursor(sub.force, sub.print)?,
+        "opencode" => install_opencode(sub.force, sub.print)?,
+        "pi" => {
+            return Err(WgError::InvalidInput(
+                "pi has no MCP support by upstream design — pi rejects MCP \
+                 because the protocol's tool descriptions consume too much \
+                 of the context window. Use `wg skill install --target pi` \
+                 instead to merge wg's skill into ~/.config/pi/AGENTS.md."
+                    .to_string(),
+            ));
+        }
         other => {
             return Err(WgError::InvalidInput(format!(
                 "unknown target `{}` — supported: {}",
@@ -392,6 +414,85 @@ fn install_codex(force: bool, print: bool) -> Result<InstallReport, WgError> {
 // Cursor — edit ~/.cursor/mcp.json
 // ---------------------------------------------------------------------------
 
+pub(crate) fn opencode_config_path() -> Result<PathBuf, WgError> {
+    let home =
+        dirs::home_dir().ok_or_else(|| WgError::Internal("could not resolve $HOME".to_string()))?;
+    // opencode reads `~/.config/opencode/opencode.json` as the global
+    // config (project configs sit at `./opencode.json`).
+    Ok(home.join(".config/opencode/opencode.json"))
+}
+
+fn install_opencode(force: bool, print: bool) -> Result<InstallReport, WgError> {
+    let path = opencode_config_path()?;
+    let detail = format!("{} (mcp.wg)", path.display());
+
+    if print {
+        return Ok(InstallReport {
+            target: "opencode".to_string(),
+            method: "file-edit".to_string(),
+            detail,
+            overwrote: false,
+            verified: None,
+        });
+    }
+
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| WgError::Internal(format!("create {}: {e}", parent.display())))?;
+    }
+
+    let existing = std::fs::read_to_string(&path).unwrap_or_default();
+    let mut doc: serde_json::Value = if existing.trim().is_empty() {
+        // Drop the schema URL upstream embeds in fresh configs so
+        // `opencode tui` / `opencode mcp list` recognize the file.
+        serde_json::json!({"$schema": "https://opencode.ai/config.json"})
+    } else {
+        serde_json::from_str(&existing)
+            .map_err(|e| WgError::Internal(format!("parse {}: {e}", path.display())))?
+    };
+
+    let obj = doc
+        .as_object_mut()
+        .ok_or_else(|| WgError::Internal(format!("{} is not a JSON object", path.display())))?;
+    // opencode keys MCP servers under `mcp` (singular), not
+    // `mcpServers` like cursor. Each entry needs a `type` discriminant
+    // and a single `command` array (binary + args, no separate args).
+    let servers = obj
+        .entry("mcp".to_string())
+        .or_insert_with(|| serde_json::json!({}));
+    let servers_obj = servers
+        .as_object_mut()
+        .ok_or_else(|| WgError::Internal("mcp must be a JSON object".to_string()))?;
+
+    let already = servers_obj.contains_key("wg");
+    if already && !force {
+        return Err(WgError::InvalidInput(format!(
+            "mcp.wg already exists in {} — pass --force to overwrite",
+            path.display()
+        )));
+    }
+    servers_obj.insert(
+        "wg".to_string(),
+        serde_json::json!({
+            "type": "local",
+            "command": ["wg", "mcp"],
+            "enabled": true,
+        }),
+    );
+
+    let serialized = serde_json::to_string_pretty(&doc)
+        .map_err(|e| WgError::Internal(format!("serialize opencode config: {e}")))?;
+    write_atomically(&path, &serialized)?;
+
+    Ok(InstallReport {
+        target: "opencode".to_string(),
+        method: "file-edit".to_string(),
+        detail,
+        overwrote: already,
+        verified: Some(true),
+    })
+}
+
 pub(crate) fn cursor_config_path() -> Result<PathBuf, WgError> {
     let home =
         dirs::home_dir().ok_or_else(|| WgError::Internal("could not resolve $HOME".to_string()))?;
@@ -592,5 +693,23 @@ mod tests {
         );
         assert_eq!(doc["mcpServers"]["wg"]["command"], "wg");
         assert_eq!(doc["mcpServers"]["wg"]["args"][0], "mcp");
+    }
+
+    #[test]
+    fn opencode_target_in_supported_list() {
+        let names: Vec<&str> = SUPPORTED.iter().map(|(t, _, _)| *t).collect();
+        assert!(names.contains(&"opencode"));
+        // pi must NOT be in the MCP install matrix — it rejects MCP
+        // upstream and is skill-only.
+        assert!(!names.contains(&"pi"));
+    }
+
+    #[test]
+    fn opencode_install_print_describes_the_path() {
+        let report = install_opencode(false, /*print*/ true).unwrap();
+        assert_eq!(report.target, "opencode");
+        assert_eq!(report.method, "file-edit");
+        assert!(report.detail.contains("opencode.json"));
+        assert!(report.detail.contains("mcp.wg"));
     }
 }

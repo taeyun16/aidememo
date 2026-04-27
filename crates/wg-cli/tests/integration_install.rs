@@ -409,7 +409,9 @@ fn doctor_reports_agent_matrix_with_no_installs() {
         .collect();
     assert_eq!(
         names,
-        vec!["claude", "hermes", "openclaw", "codex", "cursor"]
+        vec![
+            "claude", "hermes", "openclaw", "codex", "cursor", "opencode", "pi"
+        ]
     );
 
     // With $PATH stripped, every shell-out target reports `null`

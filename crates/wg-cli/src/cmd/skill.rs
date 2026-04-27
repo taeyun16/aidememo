@@ -552,7 +552,118 @@ pub(crate) fn target_skills_dir(target: &str) -> Option<PathBuf> {
 }
 
 pub(crate) fn supported_targets() -> &'static [&'static str] {
-    &["claude", "hermes", "openclaw", "agents"]
+    &["claude", "hermes", "openclaw", "agents", "opencode", "pi"]
+}
+
+/// Path to the AGENTS.md-style file an agent reads for global rules.
+/// Used by agents that follow the agents.md spec rather than the
+/// `~/.<agent>/skills/<name>/SKILL.md` directory pattern. `opencode`
+/// (sst/opencode) is the canonical example; `pi` (Mario Zechner's
+/// pi-coding-agent) rejects MCP and uses a CLI-tool + README model,
+/// but it also reads agents.md, so writing the same content there
+/// gives pi visibility without MCP.
+pub(crate) fn target_agents_md_path(target: &str) -> Option<PathBuf> {
+    let home = dirs::home_dir()?;
+    match target {
+        "opencode" => Some(home.join(".config/opencode/AGENTS.md")),
+        "pi" => Some(home.join(".config/pi/AGENTS.md")),
+        _ => None,
+    }
+}
+
+/// Markers we wrap the wg-skill section in inside an AGENTS.md file
+/// so re-running `wg skill install --force` can replace just our
+/// block instead of stomping the whole file. Stable across versions
+/// so an older marker keeps replacing correctly.
+const WG_AGENTS_BEGIN: &str = "<!-- BEGIN wg-skill -->";
+const WG_AGENTS_END: &str = "<!-- END wg-skill -->";
+
+fn install_into_agents_md(
+    target: &str,
+    path: PathBuf,
+    force: bool,
+    json: bool,
+) -> Result<String, WgError> {
+    let block = format!(
+        "{WG_AGENTS_BEGIN}\n\n# wg — Wiki-Graph (auto-installed)\n\
+         <!-- to update, run: wg skill install --target {target} --force -->\n\n\
+         {}\n\
+         {WG_AGENTS_END}\n",
+        BUNDLED_SKILL_MD
+    );
+
+    let existing = std::fs::read_to_string(&path).unwrap_or_default();
+    let already = existing.contains(WG_AGENTS_BEGIN);
+    if already && !force {
+        return Err(WgError::InvalidInput(format!(
+            "{} already has a wg-skill section — pass --force to overwrite",
+            path.display()
+        )));
+    }
+
+    let merged = if already {
+        // Splice between markers. `splitn(2, ...)` keeps the trailing
+        // text after `END` intact even if the user added their own
+        // sections below ours.
+        let mut prefix = String::new();
+        let mut suffix = String::new();
+        if let Some((before, rest)) = existing.split_once(WG_AGENTS_BEGIN) {
+            prefix = before.to_string();
+            if let Some((_, after)) = rest.split_once(WG_AGENTS_END) {
+                suffix = after.to_string();
+            }
+        }
+        let mut merged = prefix.trim_end().to_string();
+        if !merged.is_empty() {
+            merged.push_str("\n\n");
+        }
+        merged.push_str(&block);
+        if !suffix.trim().is_empty() {
+            merged.push('\n');
+            merged.push_str(suffix.trim_start());
+        }
+        merged
+    } else if existing.trim().is_empty() {
+        block.clone()
+    } else {
+        format!("{}\n\n{}", existing.trim_end(), block)
+    };
+
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| WgError::Internal(format!("create {}: {e}", parent.display())))?;
+    }
+    std::fs::write(&path, &merged)
+        .map_err(|e| WgError::Internal(format!("write {}: {e}", path.display())))?;
+
+    let report = InstallReport {
+        target: target.to_string(),
+        dest: path.display().to_string(),
+        files: vec!["AGENTS.md".to_string()],
+        overwrote: already,
+    };
+    if json {
+        return serde_json::to_string_pretty(&report).map_err(|e| WgError::Serialize {
+            context: "skill install (agents.md)".to_string(),
+            source: e,
+        });
+    }
+    let verb = if already { "Updated" } else { "Installed" };
+    let mut out = format!(
+        "{verb} wg skill section in {} (agents.md format)\n",
+        path.display()
+    );
+    if target == "pi" {
+        out.push_str(
+            "Note: pi has no MCP support upstream — this writes only a \
+             skill section, no MCP registration.\n",
+        );
+    } else {
+        out.push_str(&format!(
+            "Next: register the MCP server with `wg mcp-install --target {target}`.\n"
+        ));
+    }
+    Ok(out)
 }
 
 #[derive(serde::Serialize)]
@@ -579,11 +690,14 @@ fn run_install(
     if list_targets || target == "list" {
         let entries: Vec<TargetEntry> = supported_targets()
             .iter()
-            .map(|t| TargetEntry {
-                target: t,
-                path: target_skills_dir(t)
+            .map(|t| {
+                // Directory-based targets first, AGENTS.md targets
+                // second. Only one path applies per target.
+                let path = target_skills_dir(t)
                     .map(|p| p.display().to_string())
-                    .unwrap_or_else(|| "<HOME unknown>".to_string()),
+                    .or_else(|| target_agents_md_path(t).map(|p| p.display().to_string()))
+                    .unwrap_or_else(|| "<HOME unknown>".to_string());
+                TargetEntry { target: t, path }
             })
             .collect();
         if json {
@@ -597,6 +711,17 @@ fn run_install(
             out.push_str(&format!("  {:<10}  {}\n", e.target, e.path));
         }
         return Ok(out);
+    }
+
+    // Agents.md-style targets (opencode, pi) drop the skill into a
+    // single AGENTS.md file rather than a `~/.x/skills/<name>/`
+    // directory. Hand off to that path before falling through to
+    // the directory-based install below. `--dest` still wins so an
+    // operator can point a custom file.
+    if dest.is_none() {
+        if let Some(agents_path) = target_agents_md_path(&target) {
+            return install_into_agents_md(&target, agents_path, force, json);
+        }
     }
 
     let resolved_dest = match dest {
@@ -877,5 +1002,57 @@ mod tests {
             "---\nname: wg\ndescription: A long enough description that makes sense to readers.\nallowed-tools: [Bash(wg:*)]\n---\n\ntoo short",
         );
         assert!(codes(&issues).contains(&"thin-body"));
+    }
+
+    #[test]
+    fn install_into_agents_md_creates_a_new_file_with_marker() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(".config/opencode/AGENTS.md");
+        let out = install_into_agents_md("opencode", path.clone(), false, false).unwrap();
+        assert!(out.contains("Installed wg skill section"));
+        let body = std::fs::read_to_string(&path).unwrap();
+        assert!(body.contains(WG_AGENTS_BEGIN));
+        assert!(body.contains(WG_AGENTS_END));
+        assert!(body.contains("# wg — Wiki-Graph"));
+    }
+
+    #[test]
+    fn install_into_agents_md_force_replaces_marker_block_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(".config/pi/AGENTS.md");
+
+        // Pre-populate with user content above and below the wg block,
+        // plus an "old" wg block.
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            format!(
+                "# My project notes\n\nUser content above.\n\n{WG_AGENTS_BEGIN}\nOLD wg content\n{WG_AGENTS_END}\n\nUser content below.\n"
+            ),
+        )
+        .unwrap();
+
+        // Re-running without --force should fail with a useful message.
+        let err = install_into_agents_md("pi", path.clone(), false, false).unwrap_err();
+        assert!(format!("{err}").contains("--force"));
+
+        // With --force, our block is replaced; user content stays.
+        install_into_agents_md("pi", path.clone(), true, false).unwrap();
+        let body = std::fs::read_to_string(&path).unwrap();
+        assert!(body.contains("User content above"));
+        assert!(body.contains("User content below"));
+        assert!(!body.contains("OLD wg content"));
+        assert!(body.contains("# wg — Wiki-Graph"));
+        // Exactly one wg block in the merged file.
+        assert_eq!(body.matches(WG_AGENTS_BEGIN).count(), 1);
+        assert_eq!(body.matches(WG_AGENTS_END).count(), 1);
+    }
+
+    #[test]
+    fn install_into_agents_md_pi_message_calls_out_no_mcp() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(".config/pi/AGENTS.md");
+        let out = install_into_agents_md("pi", path, false, false).unwrap();
+        assert!(out.contains("pi has no MCP support"));
     }
 }

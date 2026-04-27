@@ -8,12 +8,14 @@
 //! `wg mcp-install --list-targets` would have written.
 
 use bpaf::*;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use wg_core::{Config, WgError, WikiGraph};
 
 use crate::cmd::Command;
-use crate::cmd::mcp_install::{codex_config_path, cursor_config_path, verify_registered};
-use crate::cmd::skill::{supported_targets, target_skills_dir};
+use crate::cmd::mcp_install::{
+    codex_config_path, cursor_config_path, opencode_config_path, verify_registered,
+};
+use crate::cmd::skill::{supported_targets, target_agents_md_path, target_skills_dir};
 
 #[derive(Debug, Clone)]
 pub struct DoctorSub {
@@ -165,26 +167,49 @@ pub(crate) struct AgentStatus {
     mcp_registered: Option<bool>,
 }
 
-const AGENTS: &[&str] = &["claude", "hermes", "openclaw", "codex", "cursor"];
+const AGENTS: &[&str] = &[
+    "claude", "hermes", "openclaw", "codex", "cursor", "opencode", "pi",
+];
 
 fn collect_agent_integration() -> Vec<AgentStatus> {
     AGENTS
         .iter()
-        .map(|target| AgentStatus {
-            target,
-            skill_path: skill_path_for(target).map(|p| p.display().to_string()),
-            skill_installed: skill_path_for(target).map(|p| p.join("SKILL.md").exists()),
-            mcp_detail: mcp_detail_for(target),
-            mcp_registered: check_mcp(target),
+        .map(|target| {
+            let (skill_path, skill_installed) = skill_status_for(target);
+            AgentStatus {
+                target,
+                skill_path,
+                skill_installed,
+                mcp_detail: mcp_detail_for(target),
+                mcp_registered: check_mcp(target),
+            }
         })
         .collect()
 }
 
-fn skill_path_for(target: &str) -> Option<PathBuf> {
+/// Resolve the skill destination for an agent and probe whether
+/// wg's bundled skill is already there. Two shapes:
+/// * directory targets (claude / hermes / openclaw / agents) — the
+///   skill lives at `<dir>/SKILL.md`;
+/// * agents.md targets (opencode / pi) — the skill is a section
+///   inside a single `AGENTS.md` file, so we probe for our marker
+///   instead of an `exists()` on the whole file.
+fn skill_status_for(target: &str) -> (Option<String>, Option<bool>) {
     if !supported_targets().contains(&target) {
-        return None;
+        return (None, None);
     }
-    target_skills_dir(target)
+    if let Some(dir) = target_skills_dir(target) {
+        let installed = dir.join("SKILL.md").exists();
+        return (Some(dir.display().to_string()), Some(installed));
+    }
+    if let Some(file) = target_agents_md_path(target) {
+        let installed = std::fs::read_to_string(&file)
+            .ok()
+            .map(|c| c.contains("<!-- BEGIN wg-skill -->"))
+            .unwrap_or(false);
+        return (Some(file.display().to_string()), Some(installed));
+    }
+    (None, None)
 }
 
 fn mcp_detail_for(target: &str) -> String {
@@ -198,6 +223,12 @@ fn mcp_detail_for(target: &str) -> String {
         "cursor" => cursor_config_path()
             .map(|p| p.display().to_string())
             .unwrap_or_else(|_| "~/.cursor/mcp.json".to_string()),
+        "opencode" => opencode_config_path()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|_| "~/.config/opencode/opencode.json".to_string()),
+        // pi rejects MCP upstream — record the fact in the matrix
+        // instead of leaving it as "(unknown)".
+        "pi" => "(no MCP — pi only consumes skills)".to_string(),
         _ => "(unknown)".to_string(),
     }
 }
@@ -207,8 +238,26 @@ fn check_mcp(target: &str) -> Option<bool> {
         "claude" | "hermes" | "openclaw" => verify_registered(target, "wg"),
         "codex" => check_codex_config(),
         "cursor" => check_cursor_config(),
+        "opencode" => check_opencode_config(),
+        // pi has no MCP; report `None` (n/a) rather than false.
         _ => None,
     }
+}
+
+fn check_opencode_config() -> Option<bool> {
+    let path = opencode_config_path().ok()?;
+    if !path.exists() {
+        return Some(false);
+    }
+    let body = std::fs::read_to_string(&path).ok()?;
+    let parsed: serde_json::Value = serde_json::from_str(&body).ok()?;
+    Some(
+        parsed
+            .get("mcp")
+            .and_then(|s| s.as_object())
+            .map(|s| s.contains_key("wg"))
+            .unwrap_or(false),
+    )
 }
 
 fn check_codex_config() -> Option<bool> {
