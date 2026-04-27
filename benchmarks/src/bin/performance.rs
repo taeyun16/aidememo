@@ -278,6 +278,34 @@ fn run_scale(scale: usize, rows: &mut Vec<Row>) {
     });
     eprintln!("{:.2}s", op_t0.elapsed().as_secs_f64());
 
+    eprint!("  fact_add_many(100)... ");
+    let op_t0 = Instant::now();
+    // fact_add_many: amortized cost per fact when batched. Each rep
+    // inserts a 100-fact batch and reports the *per-fact* time so the
+    // number is directly comparable to the single fact_add row above.
+    const BATCH: usize = 100;
+    let batch_times_per_fact: Vec<f64> = time_n(20, || {
+        let inputs: Vec<FactInput> = (0..BATCH)
+            .map(|i| FactInput {
+                content: format!("Batch synthetic fact {i} on replication and tuning."),
+                fact_type: Some(FactType::Note),
+                entity_ids: Some(vec![owner]),
+                source_confidence: Some(0.5),
+                ..Default::default()
+            })
+            .collect();
+        let _ = wiki.fact_add_many(inputs).expect("fact_add_many");
+    })
+    .into_iter()
+    .map(|t| t / BATCH as f64)
+    .collect();
+    rows.push(Row {
+        scale,
+        op: "fact_add_many",
+        stats: stats(&batch_times_per_fact),
+    });
+    eprintln!("{:.2}s", op_t0.elapsed().as_secs_f64());
+
     eprint!("  lint... ");
     let op_t0 = Instant::now();
     // lint (warm). Duplicate detection is O(entities²) with trigram
@@ -423,6 +451,11 @@ fn target_p95(op: &str, scale: usize) -> Option<f64> {
         ("search_bm25", [0.5, 1.0, 3.0, 10.0, 15.0]),
         ("search_hybrid", [1.0, 2.0, 5.0, 15.0, 20.0]),
         ("fact_add", [0.5, 0.5, 1.0, 1.0, 1.0]),
+        // fact_add_many is reported per-fact, so same target as
+        // single-fact insert. The whole point of the batch path is
+        // that one fsync covers many facts, so per-fact cost should
+        // sit well under the single-call target.
+        ("fact_add_many", [0.5, 0.5, 1.0, 1.0, 1.0]),
         ("lint", [5.0, 10.0, 50.0, 200.0, 500.0]),
     ];
     table.iter().find(|(o, _)| *o == op).map(|(_, t)| t[idx])

@@ -375,6 +375,27 @@ impl WikiGraph {
         self.add_fact(input)
     }
 
+    /// Insert N facts in one redb write transaction. Use this for
+    /// bulk imports — the per-commit fsync (≈3-5 ms on macOS APFS)
+    /// is paid once for the batch instead of once per fact.
+    /// All-or-nothing: a serialization or write failure aborts the
+    /// transaction and no facts land. Returned ids are in the same
+    /// order as the inputs.
+    pub fn fact_add_many(&self, inputs: Vec<FactInput>) -> Result<Vec<FactId>> {
+        if inputs.is_empty() {
+            return Ok(Vec::new());
+        }
+        let ids = {
+            let mut store = self.store.write();
+            store.fact_add_many(inputs)?
+        };
+        // BM25 re-uses the same dirty mark whether the batch added
+        // 1 or 1000 facts; the next search rebuilds against the
+        // post-batch state.
+        self.bm25_mark_dirty();
+        Ok(ids)
+    }
+
     /// Get a fact by ID.
     pub fn fact_get(&self, id: &FactId) -> Result<FactRecord> {
         self.store.read().fact_get(id)

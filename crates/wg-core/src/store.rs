@@ -936,25 +936,49 @@ impl Store {
 
     /// Add a new fact.
     pub fn fact_add(&mut self, input: FactInput) -> Result<FactId> {
-        let id = FactId::new();
-        let mut record = FactRecord::new(
-            input.content.clone(),
-            input.fact_type.unwrap_or_default(),
-            input.entity_ids.unwrap_or_default(),
-        );
-        record.id = id;
+        // Single-item path delegates to the batch path so there's
+        // exactly one place that knows how to write a fact.
+        let mut ids = self.fact_add_many(vec![input])?;
+        ids.pop()
+            .ok_or_else(|| WgError::InvalidInput("fact_add_many returned no ids".to_string()))
+    }
 
-        if let Some(tags) = input.tags {
-            record.tags = tags;
+    /// Insert N facts in a single redb write transaction. Amortizes
+    /// the per-commit fsync over the whole batch — at the same scale,
+    /// one-by-one `fact_add` pays ~3-5 ms per fsync on macOS APFS;
+    /// `fact_add_many` pays it once for the whole vec.
+    ///
+    /// All-or-nothing: a serialization or write failure aborts the
+    /// transaction and no facts land. The returned `Vec<FactId>` is
+    /// in the same order as `inputs`.
+    pub fn fact_add_many(&mut self, inputs: Vec<FactInput>) -> Result<Vec<FactId>> {
+        if inputs.is_empty() {
+            return Ok(Vec::new());
         }
-        if let Some(source) = input.source {
-            record.source = Some(source);
-        }
-        if let Some(confidence) = input.source_confidence {
-            record.source_confidence = confidence;
-        }
-        if let Some(observed_at) = input.observed_at {
-            record.observed_at = Some(observed_at);
+
+        let mut records: Vec<FactRecord> = Vec::with_capacity(inputs.len());
+        for input in inputs {
+            let id = FactId::new();
+            let mut record = FactRecord::new(
+                input.content.clone(),
+                input.fact_type.unwrap_or_default(),
+                input.entity_ids.unwrap_or_default(),
+            );
+            record.id = id;
+
+            if let Some(tags) = input.tags {
+                record.tags = tags;
+            }
+            if let Some(source) = input.source {
+                record.source = Some(source);
+            }
+            if let Some(confidence) = input.source_confidence {
+                record.source_confidence = confidence;
+            }
+            if let Some(observed_at) = input.observed_at {
+                record.observed_at = Some(observed_at);
+            }
+            records.push(record);
         }
 
         let write_txn = self
@@ -964,51 +988,48 @@ impl Store {
                 source: Box::new(e),
             })?;
 
-        // Serialize record
-        let record_bytes = serde_json::to_vec(&record).map_err(|e| WgError::Serialize {
-            context: format!("fact {:?}", id),
-            source: e,
-        })?;
-
-        // Insert into facts table
         {
             let mut facts = write_txn
                 .open_table(FACTS_TABLE)
                 .map_err(|e| WgError::StoreWrite {
                     table: "facts",
-                    key: id.to_string(),
+                    key: "<batch>".to_string(),
                     source: Box::new(e),
                 })?;
-
-            facts
-                .insert(id.as_bytes().as_slice(), record_bytes.as_slice())
-                .map_err(|e| WgError::StoreWrite {
-                    table: "facts",
-                    key: id.to_string(),
-                    source: Box::new(e),
-                })?;
-        }
-
-        // Insert into fact_by_entity index for each entity
-        {
             let mut fact_by_entity =
                 write_txn
                     .open_table(FACT_BY_ENTITY_TABLE)
                     .map_err(|e| WgError::StoreWrite {
                         table: "fact_by_entity",
-                        key: "insert".to_string(),
+                        key: "<batch>".to_string(),
                         source: Box::new(e),
                     })?;
 
-            for entity_id in &record.entity_ids {
-                let key = format!("{}\0{}", entity_id, id);
-                fact_by_entity
-                    .insert(&key as &str, id.as_bytes().as_slice())
+            for record in &records {
+                let id = record.id;
+                let record_bytes = serde_json::to_vec(record).map_err(|e| WgError::Serialize {
+                    context: format!("fact {:?}", id),
+                    source: e,
+                })?;
+
+                facts
+                    .insert(id.as_bytes().as_slice(), record_bytes.as_slice())
                     .map_err(|e| WgError::StoreWrite {
-                        table: "fact_by_entity",
-                        key,
+                        table: "facts",
+                        key: id.to_string(),
                         source: Box::new(e),
                     })?;
+
+                for entity_id in &record.entity_ids {
+                    let key = format!("{}\0{}", entity_id, id);
+                    fact_by_entity
+                        .insert(&key as &str, id.as_bytes().as_slice())
+                        .map_err(|e| WgError::StoreWrite {
+                            table: "fact_by_entity",
+                            key,
+                            source: Box::new(e),
+                        })?;
+                }
             }
         }
 
@@ -1018,7 +1039,7 @@ impl Store {
             source: Box::new(e),
         })?;
 
-        Ok(id)
+        Ok(records.into_iter().map(|r| r.id).collect())
     }
 
     /// Get a fact by ID.
@@ -1940,6 +1961,50 @@ mod tests {
 
         let stats2 = store.stats().unwrap();
         assert_eq!(stats2.entity_count, 1);
+    }
+
+    #[test]
+    fn fact_add_many_inserts_all_in_one_txn() {
+        let mut store = create_test_store();
+        store
+            .entity_add(EntityInput {
+                name: "Redis".to_string(),
+                entity_type: Some(EntityType::Technology),
+                ..Default::default()
+            })
+            .unwrap();
+        let redis_id = store.resolve_entity("Redis").unwrap();
+
+        let inputs: Vec<FactInput> = (0..10)
+            .map(|i| FactInput {
+                content: format!("fact {i}"),
+                fact_type: Some(FactType::Note),
+                entity_ids: Some(vec![redis_id]),
+                source_confidence: Some(0.5),
+                ..Default::default()
+            })
+            .collect();
+
+        let ids = store.fact_add_many(inputs).unwrap();
+        assert_eq!(ids.len(), 10);
+
+        // Each fact is stored and findable by id.
+        for id in &ids {
+            let record = store.fact_get(id).unwrap();
+            assert!(record.content.starts_with("fact "));
+        }
+
+        // The fact_by_entity index has one entry per fact for Redis,
+        // so count_entity_facts must return 10.
+        let count = store.count_entity_facts(&redis_id).unwrap();
+        assert_eq!(count, 10);
+    }
+
+    #[test]
+    fn fact_add_many_empty_input_is_noop() {
+        let mut store = create_test_store();
+        let ids = store.fact_add_many(vec![]).unwrap();
+        assert!(ids.is_empty());
     }
 
     #[test]
