@@ -52,3 +52,11 @@ path = "src/bin/fsync_probe.rs"
 [[bin]]
 name = "search_profile"
 path = "src/bin/search_profile.rs"
+
+[[bin]]
+name = "miracl_ingest"
+path = "src/bin/miracl_ingest.rs"
+
+[[bin]]
+name = "miracl_rerank_bench"
+path = "src/bin/miracl_rerank_bench.rs"

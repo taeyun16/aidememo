@@ -17,7 +17,10 @@
     see `.notes/bench-tei-overhead.md`) candidates are scored by
     `POST /rerank`; the rerank score replaces the per-row score,
     slots beyond top-K stay in RRF order. Reranker errors are
-    non-fatal — wg logs once and serves RRF.
+    non-fatal — wg logs once and serves RRF. Measured impact on
+    MIRACL/ko (`.notes/bench-rerank-miracl-ko.md`): MRR@10 +5.8 %,
+    nDCG@10 +4.6 %, R@10 unchanged; p50 latency 9 ms → 765 ms (85×).
+    Use only when the precision win is worth the latency hit.
   - On Apple Silicon, install TEI natively via `cargo install
     --git github.com/huggingface/text-embeddings-inference
     --features metal text-embeddings-router` — the `cpu-1.9`
