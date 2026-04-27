@@ -135,6 +135,19 @@ pub struct SearchConfig {
     /// Bounds the worst-case candidate pool size.
     #[serde(default = "default_graph_fact_cap")]
     pub graph_fact_cap: usize,
+    /// Tier 8: which semantic candidate path to use.
+    ///   - `"bm25"`  (default) — top-`semantic_prefilter` BM25 hits
+    ///                 + graph expansion → semantic re-rank.
+    ///                 Cheap; ties on accuracy when fact text shares
+    ///                 keywords with the query.
+    ///   - `"hnsw"` — HNSW ANN over fact embeddings.
+    ///                 Closes the recall gap on languages where BM25
+    ///                 tokenization is weak (Korean, Japanese, etc.).
+    ///                 Requires `wg vector-rebuild` once after the
+    ///                 store is populated; rebuild is automatic if
+    ///                 the sidecar's model name no longer matches.
+    #[serde(default = "default_semantic_index")]
+    pub semantic_index: String,
 }
 
 fn default_semantic_prefilter() -> usize {
@@ -153,6 +166,10 @@ fn default_graph_fact_cap() -> usize {
     50
 }
 
+fn default_semantic_index() -> String {
+    "bm25".to_string()
+}
+
 impl Default for SearchConfig {
     fn default() -> Self {
         Self {
@@ -164,6 +181,7 @@ impl Default for SearchConfig {
             graph_prefilter: default_true(),
             graph_depth: default_graph_depth(),
             graph_fact_cap: default_graph_fact_cap(),
+            semantic_index: default_semantic_index(),
         }
     }
 }
@@ -384,6 +402,7 @@ impl SearchConfig {
             "graph_prefilter" => Some(self.graph_prefilter.to_string()),
             "graph_depth" => Some(self.graph_depth.to_string()),
             "graph_fact_cap" => Some(self.graph_fact_cap.to_string()),
+            "semantic_index" => Some(self.semantic_index.clone()),
             _ => None,
         }
     }
@@ -436,6 +455,17 @@ impl SearchConfig {
                 self.graph_fact_cap = value
                     .parse()
                     .map_err(|_| WgError::InvalidInput(format!("invalid integer: {}", value)))?;
+                Ok(())
+            }
+            "semantic_index" => {
+                let v = value.trim().to_ascii_lowercase();
+                if v != "bm25" && v != "hnsw" {
+                    return Err(WgError::InvalidInput(format!(
+                        "search.semantic_index must be 'bm25' or 'hnsw', got '{}'",
+                        value
+                    )));
+                }
+                self.semantic_index = v;
                 Ok(())
             }
             _ => Err(WgError::ConfigKeyNotFound(format!("search.{}", key))),

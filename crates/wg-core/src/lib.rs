@@ -16,6 +16,8 @@ pub mod s3;
 pub mod search;
 pub mod store;
 pub mod types;
+#[cfg(feature = "semantic")]
+pub mod vector_index;
 #[cfg(feature = "s3")]
 pub mod wal;
 
@@ -44,6 +46,10 @@ pub struct WikiGraph {
     // Use interior mutability pattern - Store itself uses Arc<Database>
     // For mutable operations, we use RwLock
     store: Arc<RwLock<Store>>,
+    /// Absolute path to the redb file. Captured at `open` time so
+    /// sidecars (HNSW index, i8 quant cache, etc.) live next to it
+    /// regardless of how the caller spelled the path.
+    store_path: std::path::PathBuf,
     config: Arc<Config>,
     /// Tier 7-A: lazy-loaded embedding provider, reused across all
     /// search calls. Without this `load_provider` was called per
@@ -66,6 +72,14 @@ pub struct WikiGraph {
     fact_embed_cache: Arc<
         parking_lot::RwLock<std::collections::HashMap<types::FactId, search::QuantizedEmbedding>>,
     >,
+    /// Tier 8: HNSW ANN index over fact embeddings. Loaded lazily
+    /// from `wiki.hnsw.bin` next to the redb store on first
+    /// search; rebuilt on demand via `vector_index_rebuild()` or
+    /// when the sidecar's model name doesn't match the active
+    /// provider. `None` means "not built yet" → fall back to the
+    /// BM25-prefilter path so the system still works.
+    #[cfg(feature = "semantic")]
+    vector_index: Arc<parking_lot::RwLock<Option<vector_index::HnswIndex>>>,
 }
 
 impl WikiGraph {
@@ -83,6 +97,7 @@ impl WikiGraph {
         let store = Store::open(path, config.clone())?;
         Ok(Self {
             store: Arc::new(RwLock::new(store)),
+            store_path: path.to_path_buf(),
             config: Arc::new(config),
             #[cfg(feature = "semantic")]
             provider: OnceLock::new(),
@@ -92,6 +107,8 @@ impl WikiGraph {
             ))),
             #[cfg(feature = "semantic")]
             fact_embed_cache: Arc::new(parking_lot::RwLock::new(std::collections::HashMap::new())),
+            #[cfg(feature = "semantic")]
+            vector_index: Arc::new(parking_lot::RwLock::new(None)),
         })
     }
 
@@ -111,6 +128,77 @@ impl WikiGraph {
             .get()
             .expect("just set or already populated")
             .clone())
+    }
+
+    /// Where the HNSW sidecar lives. Sits next to the redb store
+    /// (using the path the caller passed to `open`, not the config
+    /// path which may be a default placeholder).
+    #[cfg(feature = "semantic")]
+    fn hnsw_sidecar_path(&self) -> std::path::PathBuf {
+        self.store_path.with_extension("hnsw.bin")
+    }
+
+    /// Get-or-load-or-build the HNSW index. Three paths:
+    ///   1. already loaded → return Arc clone
+    ///   2. sidecar exists + model matches → load from disk
+    ///   3. otherwise → return None (caller falls back to BM25 prefilter)
+    ///
+    /// Loading is cheap (bincode of a graph + Vec<f32> table). This
+    /// is the lazy entry point — `vector_index_rebuild` is the
+    /// explicit one.
+    #[cfg(feature = "semantic")]
+    fn vector_index_get(
+        &self,
+        provider: &dyn embedding::EmbeddingProvider,
+    ) -> Option<std::sync::Arc<parking_lot::RwLock<Option<vector_index::HnswIndex>>>> {
+        // Already loaded?
+        if self.vector_index.read().is_some() {
+            return Some(self.vector_index.clone());
+        }
+        // Try sidecar
+        let path = self.hnsw_sidecar_path();
+        match vector_index::HnswIndex::load_from(&path) {
+            Ok(Some(idx)) if idx.matches_provider(&provider.name(), provider.dimension()) => {
+                *self.vector_index.write() = Some(idx);
+                Some(self.vector_index.clone())
+            }
+            _ => None,
+        }
+    }
+
+    /// Build the HNSW index from every fact in the store, persist
+    /// it as `wiki.hnsw.bin`, and replace the in-memory copy.
+    /// Idempotent + safe to call repeatedly; cost is dominated by
+    /// the embedding inference (≈1 ms per fact for model2vec, much
+    /// more for HTTP-based providers).
+    #[cfg(feature = "semantic")]
+    pub fn vector_index_rebuild(&self) -> Result<usize> {
+        let provider = self.embed_provider()?;
+        let facts = self.fact_list(FactListOpts {
+            limit: None,
+            ..Default::default()
+        })?;
+        if facts.is_empty() {
+            *self.vector_index.write() = None;
+            // Remove a stale sidecar if it exists; otherwise harmless.
+            let _ = std::fs::remove_file(self.hnsw_sidecar_path());
+            return Ok(0);
+        }
+
+        let texts: Vec<String> = facts.iter().map(|f| f.content.clone()).collect();
+        let embeddings = provider.embed_batch(&texts)?;
+
+        let entries: Vec<(types::FactId, Vec<f32>)> = facts
+            .into_iter()
+            .zip(embeddings)
+            .map(|(f, v)| (f.id, v))
+            .collect();
+        let count = entries.len();
+
+        let idx = vector_index::HnswIndex::build(&provider.name(), provider.dimension(), entries);
+        idx.save_to(&self.hnsw_sidecar_path())?;
+        *self.vector_index.write() = Some(idx);
+        Ok(count)
     }
 
     /// Close the WikiGraph store.
@@ -341,8 +429,22 @@ impl WikiGraph {
     /// Parses frontmatter, wikilinks, and heading-anchored sections,
     /// then writes entities, relations, and facts to the store.
     pub fn ingest(&self, wiki_root: &Path, incremental: bool) -> Result<ingest::IngestStats> {
-        let mut store = self.store.write();
-        ingest::ingest_wiki(wiki_root, &mut store, incremental)
+        let stats = {
+            let mut store = self.store.write();
+            ingest::ingest_wiki(wiki_root, &mut store, incremental)?
+        };
+        // Auto-rebuild the HNSW index if the user opted into the
+        // "hnsw" semantic path. Failure is non-fatal — the BM25
+        // fallback in hybrid_search will still serve results, and
+        // operators can retry with `wg vector-rebuild` (TODO) or
+        // by re-ingesting.
+        #[cfg(feature = "semantic")]
+        if self.config.search.semantic_index == "hnsw" {
+            if let Err(e) = self.vector_index_rebuild() {
+                eprintln!("wg: HNSW index rebuild after ingest failed: {e}");
+            }
+        }
+        Ok(stats)
     }
 
     // === Search ===
@@ -360,6 +462,36 @@ impl WikiGraph {
     #[cfg(feature = "semantic")]
     pub fn hybrid_search(&self, query: &str, opts: SearchOpts) -> Result<Vec<SearchResult>> {
         let provider = self.embed_provider()?;
+
+        // Try the HNSW path when configured. If the sidecar is
+        // missing, model-mismatched, or fails to load for any
+        // reason, fall through to the BM25-prefilter path so the
+        // search still works (just without the +recall benefit).
+        // Operators can run `wg vector-rebuild` to fix the sidecar.
+        if self.config.search.semantic_index == "hnsw" {
+            let _ = self.vector_index_get(provider.as_ref());
+            let guard = self.vector_index.read();
+            if let Some(idx) = guard.as_ref() {
+                let store = self.store.read();
+                return search::hybrid_search_with_hnsw(
+                    &store,
+                    query,
+                    opts,
+                    provider.as_ref(),
+                    &self.query_embed_cache,
+                    idx,
+                );
+            }
+            // Index unavailable — log via stderr and fall through.
+            // We don't error out because BM25 prefilter is a valid
+            // fallback that produces useful results.
+            eprintln!(
+                "wg: semantic_index=hnsw configured but no sidecar at {}; \
+                 falling back to BM25 prefilter. Run `wg vector-rebuild`.",
+                self.hnsw_sidecar_path().display()
+            );
+        }
+
         let store = self.store.read();
         search::hybrid_search_with_ctx(
             &store,

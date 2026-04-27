@@ -10,7 +10,7 @@ version.workspace = true
 
 [features]
 default = []
-semantic = ["model2vec-native", "ureq", "simsimd"]
+semantic = ["model2vec-native", "ureq", "simsimd", "instant-distance", "bincode"]
 semantic-adapt = ["semantic"]
 parallel = ["rayon"]
 remote = ["oneio"]
@@ -64,6 +64,18 @@ ureq = { version = "2.12", features = ["json"], optional = true }
 # the rest of the semantic stack — offline default users get it for free
 # whenever they opt into semantic search.
 simsimd = { version = "6", optional = true }
+
+# HNSW ANN index. Used as an alternative semantic candidate path
+# when search.semantic_index = "hnsw" — replaces the BM25 prefilter
+# top-50 with O(log N) graph traversal. Earned its keep on
+# MIRACL/ko: +2.5pp R@10 vs BM25-prefilter, lower latency on
+# corpora >= ~5k facts. See .notes/bench-hnsw.md.
+instant-distance = { version = "0.6", features = ["with-serde"], optional = true }
+
+# Compact binary serialization for the HNSW sidecar (model.hnsw.bin).
+# JSON would balloon the file ~3-4×; bincode round-trips Vec<f32>
+# at native float speed.
+bincode = { version = "1.3", optional = true }
 
 # LRU cache for query embeddings (Tier 7-A). Repeated queries skip the
 # Model2Vec inference entirely. Tiny dep, well-maintained.

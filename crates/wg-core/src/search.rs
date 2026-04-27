@@ -365,6 +365,82 @@ mod semantic {
         ))
     }
 
+    /// HNSW-backed hybrid search. Replaces the BM25 prefilter step
+    /// with a vector-index lookup; everything downstream (semantic
+    /// re-rank, RRF, graph prefilter) still applies. Same accuracy
+    /// as `prefilter=0` (brute force) at lower latency, which is
+    /// the whole point.
+    pub fn hybrid_search_with_hnsw(
+        store: &Store,
+        query: &str,
+        opts: SearchOpts,
+        provider: &dyn EmbeddingProvider,
+        query_cache: &Mutex<LruCache<String, Vec<f32>>>,
+        index: &crate::vector_index::HnswIndex,
+    ) -> Result<Vec<SearchResult>> {
+        let config = store.config();
+        let engine = SearchEngine::new(store, config);
+
+        let limit = opts.limit.unwrap_or(config.search.default_limit);
+        // We still run BM25 — its scores feed into RRF fusion alongside
+        // semantic. HNSW only changes which facts the *semantic* side
+        // scores, not which facts BM25 nominates.
+        let bm25_opts = SearchOpts {
+            limit: Some(limit),
+            ..opts.clone()
+        };
+        let bm25_results = engine.search(query, bm25_opts)?;
+
+        // Embed the query (cached) and pull top candidates from the
+        // index. We over-fetch (cap × 2) to mirror the BM25 path's
+        // habit of pulling more than `limit` so the re-rank has
+        // headroom.
+        let query_embedding = {
+            let mut cache = query_cache.lock();
+            if let Some(v) = cache.get(query) {
+                v.clone()
+            } else {
+                let v = provider.embed(query)?;
+                cache.put(query.to_string(), v.clone());
+                v
+            }
+        };
+        let mut q_norm = query_embedding.clone();
+        crate::vector_index::l2_normalize(&mut q_norm);
+        let cap = config.search.semantic_prefilter.max(limit) * 2;
+        let hnsw_ids = index.search(&q_norm, cap);
+
+        // Run the existing semantic_search on this candidate slate.
+        // We reuse the same fact_embed_cache (it doubles as a query
+        // cache for repeated facts) — but pass an empty one because
+        // the HNSW path is the authoritative ranking and we don't
+        // want quantized re-scoring to perturb it. The semantic
+        // step still walks the candidates and scores them so that
+        // RRF fusion has consistent ranks.
+        let empty_cache: RwLock<HashMap<FactId, QuantizedEmbedding>> = RwLock::new(HashMap::new());
+        let semantic_results = semantic_search(
+            store,
+            query,
+            &opts,
+            provider,
+            query_cache,
+            &empty_cache,
+            Some(&hnsw_ids),
+        )?;
+
+        let bm25_weight = effective_weight(opts.bm25_weight, config.search.bm25_weight);
+        let semantic_weight = effective_weight(opts.semantic_weight, config.search.semantic_weight);
+
+        Ok(rrf_fusion(
+            store,
+            &bm25_results,
+            Some(semantic_results.as_slice()),
+            bm25_weight,
+            semantic_weight,
+            limit,
+        ))
+    }
+
     fn semantic_search(
         store: &Store,
         query: &str,
@@ -733,7 +809,7 @@ mod semantic {
 //   let p = wg_core::embedding::load_provider(config)?;
 //   let v = p.embed(text)?;
 #[cfg(feature = "semantic")]
-pub use semantic::{hybrid_search, hybrid_search_with_ctx};
+pub use semantic::{hybrid_search, hybrid_search_with_ctx, hybrid_search_with_hnsw};
 
 #[cfg(test)]
 mod tests {
