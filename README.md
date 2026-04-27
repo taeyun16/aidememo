@@ -148,6 +148,7 @@ file.
 - **MCP server** — stdio (preferred) and HTTP/SSE transports, 13 tools
 - **Native bindings** — embed wg directly in Python / Node / Elixir / C
 - **Adaptive ranking** — record search feedback, retrain ranker offline
+- **TEI integration** — opt into HuggingFace text-embeddings-inference for embeddings (`model.provider = "tei"`) and/or cross-encoder reranking (`rerank.provider = "tei"`); reranker failure falls back to RRF
 
 ## Performance
 

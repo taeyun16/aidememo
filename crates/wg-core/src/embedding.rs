@@ -45,7 +45,7 @@ pub trait EmbeddingProvider: Send + Sync {
 /// The set of providers wg knows how to construct from `Config`. Useful
 /// for `wg model providers` and for help-text auto-listing.
 pub fn known_providers() -> &'static [&'static str] {
-    &["model2vec", "openai"]
+    &["model2vec", "openai", "tei"]
 }
 
 /// Build a provider from `config.model`. Errors if the provider name is
@@ -63,6 +63,7 @@ pub fn load_provider(config: &Config) -> Result<Box<dyn EmbeddingProvider>> {
         "openai" | "openai-compat" | "openai-compatible" | "ollama" => Ok(Box::new(
             openai::OpenAICompatibleProvider::from_config(config)?,
         )),
+        "tei" | "text-embeddings-inference" => Ok(Box::new(tei::TeiProvider::from_config(config)?)),
         other => Err(WgError::InvalidInput(format!(
             "unknown embedding provider '{other}' — expected one of {:?}",
             known_providers()
@@ -258,6 +259,176 @@ mod openai {
                 .into_json()
                 .map_err(|e| WgError::Internal(format!("embedding response parse: {e}")))?;
             Ok(parsed.data.into_iter().map(|d| d.embedding).collect())
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// HuggingFace text-embeddings-inference (native)
+// ---------------------------------------------------------------------------
+//
+// TEI is also reachable through the `openai` provider via its
+// `/v1/embeddings` compat endpoint, but the native `/embed` endpoint
+// is faster (no OpenAI envelope to parse) and `/info` lets us
+// auto-discover the model id, dim, and max input length without the
+// user having to edit `model.dimension` by hand.
+
+#[cfg(feature = "semantic")]
+mod tei {
+    use super::{Config, EmbeddingProvider, Result, WgError};
+    use serde::Deserialize;
+
+    pub struct TeiProvider {
+        embed_endpoint: String,
+        api_key: Option<String>,
+        dimension: usize,
+        nice_name: String,
+        max_input_length: Option<usize>,
+    }
+
+    impl TeiProvider {
+        pub fn from_config(config: &Config) -> Result<Self> {
+            let endpoint = config.model.endpoint.trim();
+            if endpoint.is_empty() {
+                return Err(WgError::InvalidInput(
+                    "model.endpoint is required for the tei provider \
+                     (e.g. http://localhost:8080 — point at the TEI base URL, \
+                     not /v1/embeddings)"
+                        .into(),
+                ));
+            }
+            let base = endpoint.trim_end_matches('/').to_string();
+            // If the user accidentally pasted /v1/embeddings or /embed, strip
+            // it — TEI's native endpoint set is at the root.
+            let base = base
+                .trim_end_matches("/v1/embeddings")
+                .trim_end_matches("/embed")
+                .trim_end_matches('/')
+                .to_string();
+            let embed_endpoint = format!("{base}/embed");
+            let info_endpoint = format!("{base}/info");
+            let api_key = if config.model.api_key_env.trim().is_empty() {
+                None
+            } else {
+                std::env::var(&config.model.api_key_env).ok()
+            };
+
+            // Auto-discover model id + dimension via /info. Falls back
+            // to whatever the user configured in `model.dimension` if
+            // /info isn't reachable — the operator may know the
+            // dimension and want to skip the round-trip on every
+            // process start.
+            let (model_id, max_input_length, discovered_dim) = fetch_info(
+                &info_endpoint,
+                api_key.as_deref(),
+            )
+            .unwrap_or((config.model.name.clone(), None, None));
+
+            let dimension = if let Some(d) = discovered_dim {
+                d
+            } else if config.model.dimension > 0 {
+                config.model.dimension
+            } else {
+                // Probe /embed once with a single token to learn the dim.
+                probe_dimension(&embed_endpoint, api_key.as_deref())?
+            };
+
+            let nice_name = format!("tei({})", model_id);
+
+            Ok(Self {
+                embed_endpoint,
+                api_key,
+                dimension,
+                nice_name,
+                max_input_length,
+            })
+        }
+    }
+
+    /// `GET /info`. Some TEI builds don't include `dimension` in the
+    /// response; we extract whatever's there and fall back to a probe
+    /// on the embed endpoint when needed.
+    #[derive(Debug, Deserialize)]
+    struct InfoResponse {
+        #[serde(default)]
+        model_id: String,
+        #[serde(default)]
+        max_input_length: Option<usize>,
+        #[serde(default)]
+        dimension: Option<usize>,
+    }
+
+    fn fetch_info(
+        url: &str,
+        api_key: Option<&str>,
+    ) -> std::result::Result<(String, Option<usize>, Option<usize>), ureq::Error> {
+        let mut req = ureq::get(url);
+        if let Some(key) = api_key {
+            req = req.set("Authorization", &format!("Bearer {key}"));
+        }
+        let resp = req.call()?;
+        let parsed: InfoResponse = resp.into_json()?;
+        Ok((parsed.model_id, parsed.max_input_length, parsed.dimension))
+    }
+
+    fn probe_dimension(embed_endpoint: &str, api_key: Option<&str>) -> Result<usize> {
+        let body = serde_json::json!({"inputs": "."});
+        let mut req = ureq::post(embed_endpoint).set("Content-Type", "application/json");
+        if let Some(key) = api_key {
+            req = req.set("Authorization", &format!("Bearer {key}"));
+        }
+        let resp = req.send_json(body).map_err(|e| {
+            WgError::Internal(format!(
+                "tei dimension probe failed at {embed_endpoint}: {e}"
+            ))
+        })?;
+        let vectors: Vec<Vec<f32>> = resp
+            .into_json()
+            .map_err(|e| WgError::Internal(format!("tei dimension probe parse: {e}")))?;
+        vectors
+            .into_iter()
+            .next()
+            .map(|v| v.len())
+            .ok_or_else(|| WgError::Internal("tei /embed returned an empty array".into()))
+    }
+
+    impl EmbeddingProvider for TeiProvider {
+        fn name(&self) -> String {
+            self.nice_name.clone()
+        }
+        fn dimension(&self) -> usize {
+            self.dimension
+        }
+        fn embed(&self, text: &str) -> Result<Vec<f32>> {
+            let mut v = self.embed_batch(&[text.to_string()])?;
+            Ok(v.pop().unwrap_or_default())
+        }
+        fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+            if texts.is_empty() {
+                return Ok(Vec::new());
+            }
+            // TEI accepts both a string and an array of strings under
+            // `inputs`. We always send the array form so the response
+            // shape is uniform regardless of batch size.
+            let body = if let Some(max_len) = self.max_input_length {
+                serde_json::json!({"inputs": texts, "truncate": true, "truncate_direction": "Right", "max_input_length": max_len})
+            } else {
+                serde_json::json!({"inputs": texts, "truncate": true})
+            };
+            let mut req = ureq::post(&self.embed_endpoint).set("Content-Type", "application/json");
+            if let Some(key) = &self.api_key {
+                req = req.set("Authorization", &format!("Bearer {key}"));
+            }
+            let resp = req.send_json(body).map_err(|e| {
+                WgError::Internal(format!(
+                    "tei embed request to {} failed: {e}",
+                    self.embed_endpoint
+                ))
+            })?;
+            let parsed: Vec<Vec<f32>> = resp
+                .into_json()
+                .map_err(|e| WgError::Internal(format!("tei /embed response parse: {e}")))?;
+            Ok(parsed)
         }
     }
 }

@@ -11,6 +11,8 @@ pub mod ingest;
 pub mod lint;
 pub mod migrate;
 pub mod relations;
+#[cfg(feature = "semantic")]
+pub mod rerank;
 #[cfg(feature = "s3")]
 pub mod s3;
 pub mod search;
@@ -89,6 +91,16 @@ pub struct WikiGraph {
     /// flip `dirty = true`; `SearchEngine::ensure_index` rebuilds
     /// on the next search and clears the flag.
     bm25_index: Arc<parking_lot::RwLock<index::Bm25IndexState>>,
+    /// Optional cross-encoder reranker that runs after RRF fusion
+    /// when `rerank.provider` is set. Lazy-initialized like
+    /// `provider`: `None` until the first `hybrid_search` call,
+    /// either `Some(reranker)` or stays absent thereafter (we
+    /// remember "configured-but-failed-to-construct" as `None` so
+    /// we don't keep retrying). When the user disables rerank in
+    /// config the field stays `None` and `apply_rerank` is never
+    /// called.
+    #[cfg(feature = "semantic")]
+    reranker: OnceLock<Option<Arc<dyn rerank::Reranker>>>,
 }
 
 impl WikiGraph {
@@ -119,7 +131,30 @@ impl WikiGraph {
             #[cfg(feature = "semantic")]
             vector_index: Arc::new(parking_lot::RwLock::new(None)),
             bm25_index: Arc::new(parking_lot::RwLock::new(index::Bm25IndexState::new())),
+            #[cfg(feature = "semantic")]
+            reranker: OnceLock::new(),
         })
+    }
+
+    /// Lazy-load (or return) the configured reranker. Returns `None`
+    /// when reranking is disabled in config (`rerank.provider = ""`)
+    /// or when the reranker construction failed — in the latter case
+    /// we cache the `None` so we don't keep retrying every search.
+    #[cfg(feature = "semantic")]
+    fn reranker(&self) -> Option<Arc<dyn rerank::Reranker>> {
+        if let Some(slot) = self.reranker.get() {
+            return slot.clone();
+        }
+        let resolved = match rerank::load_reranker(&self.config) {
+            Ok(Some(r)) => Some(Arc::from(r)),
+            Ok(None) => None,
+            Err(e) => {
+                eprintln!("wg: reranker disabled — failed to construct: {e}");
+                None
+            }
+        };
+        let _ = self.reranker.set(resolved.clone());
+        resolved
     }
 
     /// Mark the cached BM25 inverted index as stale. Call from any
@@ -559,41 +594,55 @@ impl WikiGraph {
         // reason, fall through to the BM25-prefilter path so the
         // search still works (just without the +recall benefit).
         // Operators can run `wg vector-rebuild` to fix the sidecar.
-        if self.config.search.semantic_index == "hnsw" {
+        let mut results = if self.config.search.semantic_index == "hnsw" && {
             let _ = self.vector_index_get(provider.as_ref());
+            self.vector_index.read().is_some()
+        } {
             let guard = self.vector_index.read();
-            if let Some(idx) = guard.as_ref() {
-                let store = self.store.read();
-                return search::hybrid_search_with_hnsw(
-                    &store,
-                    query,
-                    opts,
-                    provider.as_ref(),
-                    &self.query_embed_cache,
-                    idx,
-                    &self.bm25_index,
+            let idx = guard.as_ref().expect("checked is_some above");
+            let store = self.store.read();
+            search::hybrid_search_with_hnsw(
+                &store,
+                query,
+                opts,
+                provider.as_ref(),
+                &self.query_embed_cache,
+                idx,
+                &self.bm25_index,
+            )?
+        } else {
+            if self.config.search.semantic_index == "hnsw" {
+                // Index unavailable — log via stderr and fall through.
+                // We don't error out because BM25 prefilter is a valid
+                // fallback that produces useful results.
+                eprintln!(
+                    "wg: semantic_index=hnsw configured but no sidecar at {}; \
+                     falling back to BM25 prefilter. Run `wg vector-rebuild`.",
+                    self.hnsw_sidecar_path().display()
                 );
             }
-            // Index unavailable — log via stderr and fall through.
-            // We don't error out because BM25 prefilter is a valid
-            // fallback that produces useful results.
-            eprintln!(
-                "wg: semantic_index=hnsw configured but no sidecar at {}; \
-                 falling back to BM25 prefilter. Run `wg vector-rebuild`.",
-                self.hnsw_sidecar_path().display()
-            );
+            let store = self.store.read();
+            search::hybrid_search_with_ctx(
+                &store,
+                query,
+                opts,
+                provider.as_ref(),
+                &self.query_embed_cache,
+                &self.fact_embed_cache,
+                &self.bm25_index,
+            )?
+        };
+
+        // Optional cross-encoder rerank of the top-K. `apply_rerank`
+        // logs and falls through on reranker failure, so a flaky
+        // reranker degrades to RRF order rather than failing the
+        // search.
+        if let Some(reranker) = self.reranker() {
+            let top_k = self.config.rerank.top_k;
+            rerank::apply_rerank(&mut results, query, reranker.as_ref(), top_k);
         }
 
-        let store = self.store.read();
-        search::hybrid_search_with_ctx(
-            &store,
-            query,
-            opts,
-            provider.as_ref(),
-            &self.query_embed_cache,
-            &self.fact_embed_cache,
-            &self.bm25_index,
-        )
+        Ok(results)
     }
 
     /// Search with graph traversal scope.

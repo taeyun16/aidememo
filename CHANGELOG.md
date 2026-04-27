@@ -4,6 +4,20 @@
 
 ### Added
 
+- **TEI integration** — first-class support for HuggingFace
+  text-embeddings-inference, both as embedding source and as a
+  cross-encoder reranker:
+  - `model.provider = "tei"` uses TEI's native `/embed` endpoint
+    and auto-discovers model id + dimension via `GET /info`
+    (falls back to a one-shot probe if `/info` isn't available).
+    The existing OpenAI-compat path (`model.provider = "openai"`)
+    still works for TEI's `/v1/embeddings`.
+  - `rerank.provider = "tei"` enables an optional cross-encoder
+    rerank pass after RRF fusion. Top `rerank.top_k` (default 32)
+    candidates are scored by `POST /rerank`; the rerank score
+    replaces the per-row score, slots beyond top-K stay in RRF
+    order. Reranker errors are non-fatal — wg logs once and
+    serves RRF.
 - **Bulk insert: `fact_add_many`** — single redb write transaction
   amortizes the per-commit fsync across the whole batch. ~70× faster
   per fact at typical batch sizes than sequential `fact_add`. Exposed

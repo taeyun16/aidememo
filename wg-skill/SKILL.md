@@ -44,6 +44,14 @@ wg lint --json                                  # graph health (orphan / duplica
 wg doctor [--json] [--fix]                      # health + memory/disk + agent integration
 wg vector-rebuild                               # rebuild HNSW after a model swap
 wg stats --json
+
+# Optional: HuggingFace text-embeddings-inference (TEI)
+wg config set model.provider tei                 # native /embed + auto /info dimension
+wg config set model.endpoint http://localhost:8080
+wg config set rerank.provider tei                # cross-encoder rerank of top-K results
+wg config set rerank.endpoint http://localhost:8081
+wg config set rerank.model BAAI/bge-reranker-base
+wg config set rerank.top_k 32
 ```
 
 `wg query <topic>` collapses the "what do we know about X" workflow into one

@@ -75,6 +75,15 @@ wg config get/set/list
 # can lose recent commits. About 10× faster than the default.
 wg config set store.durability eventual    # opt in
 wg config set store.durability immediate   # default (recommended)
+
+# HuggingFace text-embeddings-inference (TEI):
+#   model.provider = "tei"         # native /embed + /info dimension auto-discover
+#   model.endpoint = "http://host:8080"
+#   rerank.provider = "tei"        # cross-encoder rerank of top-K (BGE-reranker, etc.)
+#   rerank.endpoint = "http://host:8081"
+#   rerank.model    = "BAAI/bge-reranker-base"
+#   rerank.top_k    = 32
+# Reranker failure is non-fatal — wg falls back to RRF order with a warning.
 ```
 
 ### Multi-project

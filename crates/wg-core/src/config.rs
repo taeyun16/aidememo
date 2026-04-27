@@ -14,6 +14,10 @@ pub struct Config {
     pub model: ModelConfig,
     pub search: SearchConfig,
     pub lint: LintConfig,
+    /// Optional cross-encoder reranker for `hybrid_search` results.
+    /// Disabled by default; set `rerank.provider = "tei"` to enable.
+    #[serde(default)]
+    pub rerank: RerankConfig,
     /// Named projects (multi-store support). Empty by default.
     #[serde(default)]
     pub projects: BTreeMap<String, ProjectConfig>,
@@ -265,6 +269,103 @@ impl Default for LintConfig {
     }
 }
 
+/// Optional cross-encoder reranker that runs after RRF fusion in
+/// `hybrid_search`. Default state is "disabled" — `provider = ""`.
+/// Set `rerank.provider = "tei"` and `rerank.endpoint = ...` to
+/// enable.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct RerankConfig {
+    /// Reranker provider name. Empty string disables reranking.
+    /// Currently only `"tei"` (HuggingFace text-embeddings-inference,
+    /// `/rerank` endpoint) is supported.
+    #[serde(default)]
+    pub provider: String,
+    /// Base URL of the reranker server. The `/rerank` path is added
+    /// internally; both `http://host:8081` and the explicit
+    /// `http://host:8081/rerank` form are accepted.
+    #[serde(default)]
+    pub endpoint: String,
+    /// Reranker model id (e.g. `BAAI/bge-reranker-base`). Free-form;
+    /// shown in the doctor / health output and not validated.
+    #[serde(default)]
+    pub model: String,
+    /// Env var name that holds an `Authorization: Bearer ...` token
+    /// for the reranker endpoint. Empty means no auth header.
+    #[serde(default)]
+    pub api_key_env: String,
+    /// How many of the top RRF candidates to send to the reranker.
+    /// Lower values = faster (cross-encoders cost ~ms per pair); 32
+    /// is the typical sweet spot for "polish the head of the list."
+    #[serde(default = "default_rerank_top_k")]
+    pub top_k: usize,
+}
+
+fn default_rerank_top_k() -> usize {
+    32
+}
+
+impl Default for RerankConfig {
+    fn default() -> Self {
+        Self {
+            provider: String::new(),
+            endpoint: String::new(),
+            model: String::new(),
+            api_key_env: String::new(),
+            top_k: default_rerank_top_k(),
+        }
+    }
+}
+
+impl RerankConfig {
+    fn get(&self, key: &str) -> Option<String> {
+        match key {
+            "provider" => Some(self.provider.clone()),
+            "endpoint" => Some(self.endpoint.clone()),
+            "model" => Some(self.model.clone()),
+            "api_key_env" => Some(self.api_key_env.clone()),
+            "top_k" => Some(self.top_k.to_string()),
+            _ => None,
+        }
+    }
+
+    fn set(&mut self, key: &str, value: &str) -> Result<()> {
+        match key {
+            "provider" => {
+                let v = value.trim().to_string();
+                // Validate against the known set so a typo doesn't
+                // silently disable rerank at search time.
+                if !matches!(v.as_str(), "" | "tei" | "text-embeddings-inference") {
+                    return Err(WgError::InvalidInput(format!(
+                        "rerank.provider must be one of [\"\", \"tei\"], got '{value}'"
+                    )));
+                }
+                self.provider = v;
+                Ok(())
+            }
+            "endpoint" => {
+                self.endpoint = value.trim().to_string();
+                Ok(())
+            }
+            "model" => {
+                self.model = value.trim().to_string();
+                Ok(())
+            }
+            "api_key_env" => {
+                self.api_key_env = value.trim().to_string();
+                Ok(())
+            }
+            "top_k" => {
+                self.top_k = value
+                    .trim()
+                    .parse::<usize>()
+                    .map_err(|e| WgError::InvalidInput(format!("rerank.top_k: {e}")))?;
+                Ok(())
+            }
+            _ => Err(WgError::ConfigKeyNotFound(format!("rerank.{}", key))),
+        }
+    }
+}
+
 impl Config {
     /// Resolve the store path for a named project.
     ///
@@ -349,6 +450,7 @@ impl Config {
             ["model", k] => self.model.get(k),
             ["search", k] => self.search.get(k),
             ["lint", k] => self.lint.get(k),
+            ["rerank", k] => self.rerank.get(k),
             _ => None,
         }
     }
@@ -361,6 +463,7 @@ impl Config {
             ["model", k] => self.model.set(k, value),
             ["search", k] => self.search.set(k, value),
             ["lint", k] => self.lint.set(k, value),
+            ["rerank", k] => self.rerank.set(k, value),
             _ => Err(WgError::ConfigKeyNotFound(key.to_string())),
         }
     }
@@ -664,5 +767,45 @@ mod tests {
             .set("store.durability", "fast")
             .expect_err("garbage should be rejected");
         assert!(format!("{err}").contains("immediate"));
+    }
+
+    #[test]
+    fn rerank_default_is_disabled() {
+        let cfg = Config::default();
+        assert_eq!(cfg.rerank.provider, "");
+        assert_eq!(cfg.rerank.top_k, 32);
+        assert_eq!(cfg.get("rerank.provider"), Some(String::new()));
+        assert_eq!(cfg.get("rerank.top_k"), Some("32".to_string()));
+    }
+
+    #[test]
+    fn rerank_set_accepts_tei_and_clears_with_empty_string() {
+        let mut cfg = Config::default();
+        cfg.set("rerank.provider", "tei").unwrap();
+        assert_eq!(cfg.rerank.provider, "tei");
+        // Empty string disables — the check / search path treats it
+        // as "no reranker configured."
+        cfg.set("rerank.provider", "").unwrap();
+        assert_eq!(cfg.rerank.provider, "");
+    }
+
+    #[test]
+    fn rerank_set_rejects_unknown_provider() {
+        let mut cfg = Config::default();
+        let err = cfg
+            .set("rerank.provider", "cohere")
+            .expect_err("only tei is supported");
+        assert!(format!("{err}").contains("tei"));
+    }
+
+    #[test]
+    fn rerank_set_top_k_parses_integer() {
+        let mut cfg = Config::default();
+        cfg.set("rerank.top_k", "16").unwrap();
+        assert_eq!(cfg.rerank.top_k, 16);
+        let err = cfg
+            .set("rerank.top_k", "lots")
+            .expect_err("non-integer must error");
+        assert!(format!("{err}").contains("rerank.top_k"));
     }
 }
