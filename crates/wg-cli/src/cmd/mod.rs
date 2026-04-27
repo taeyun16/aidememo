@@ -17,6 +17,7 @@ pub mod mcp_stdio;
 pub mod mcp_tools;
 pub mod memprobe;
 pub mod model;
+pub mod pending;
 pub mod project;
 pub mod recent;
 pub mod skill;
@@ -34,6 +35,7 @@ pub use mcp_install::McpInstallSub;
 pub use mcp_serve::McpSub;
 pub use mcp_stdio::McpStdioSub;
 pub use model::ModelSub;
+pub use pending::PendingSub;
 pub use project::ProjectSub;
 pub use recent::RecentSub;
 pub use skill::SkillSub;
@@ -78,6 +80,7 @@ pub enum Command {
     Mcp(McpStdioSub),
     McpInstall(McpInstallSub),
     Completions(CompletionsSub),
+    Pending(PendingSub),
 }
 
 #[derive(Debug, Clone)]
@@ -260,6 +263,7 @@ pub fn build_cli() -> OptionParser<Args> {
     let mcp_cmd = mcp_stdio::mcp_command();
     let mcp_install_cmd = mcp_install::mcp_install_command();
     let completions_cmd = completions::completions_command();
+    let pending_cmd = pending::pending_command();
     let model_cmd = model::model_command();
     let feedback_cmd = feedback::feedback_command();
     let adapt_cmd = adapt::adapt_command();
@@ -301,6 +305,7 @@ pub fn build_cli() -> OptionParser<Args> {
         mcp_cmd,
         mcp_install_cmd,
         completions_cmd,
+        pending_cmd,
     ]);
 
     construct!(Args {

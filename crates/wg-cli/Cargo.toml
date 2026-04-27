@@ -51,6 +51,11 @@ notify = "6.1"
 dirs = "6.0"
 toml = "0.8"
 
+# `wg pending review` TUI. Pinned to the same versions our other
+# CLI tools track so we don't fragment terminal handling.
+ratatui = "0.30"
+crossterm = "0.29"
+
 # Async runtime + HTTP (for MCP server)
 tokio = { version = "1.35", features = ["full"] }
 axum = "0.7"

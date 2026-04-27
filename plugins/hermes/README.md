@@ -79,13 +79,25 @@ floor, modest 7-day window, auto-record on).
 ### Recommended onboarding flow
 
 For a wiki you care about, switch on `dry_run: true` for the first
-few sessions, then audit and selectively commit captures from chat:
+few sessions, then audit and selectively commit captures.
+
+**From chat (Hermes session):**
 
 ```text
 /wg-pending                     → list every detection (numbered)
 /wg-pending commit 3            → commit only entry #3
 /wg-pending commit all          → commit all and clear the log
 /wg-pending clear all           → discard everything
+```
+
+**From a terminal (any agent — even non-Hermes):**
+
+```bash
+wg pending review               # opens an interactive checklist TUI
+                                #   space  cycle (commit / discard / —)
+                                #   a      mark all for commit
+                                #   c, ⏎   apply selections and exit
+                                #   q, Esc cancel without changes
 ```
 
 Failed commits are kept in the pending log so you can retry. Once

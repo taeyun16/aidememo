@@ -97,6 +97,7 @@ fn main() {
         cmd::Command::Mcp(sub) => cmd::mcp_stdio::run_mcp(sub.wiki_root),
         cmd::Command::McpInstall(sub) => cmd::mcp_install::run_mcp_install(sub, json),
         cmd::Command::Completions(sub) => cmd::completions::run_completions(sub),
+        cmd::Command::Pending(sub) => cmd::pending::run_pending_review(sub),
     };
 
     match result {
