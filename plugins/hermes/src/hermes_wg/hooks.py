@@ -83,14 +83,18 @@ def make_on_session_start(client: WgClient, last: str = "7d", limit: int = 10):
         if not block:
             return
         try:
-            # Hermes injects via the ctx passed at register-time; some
-            # versions also expose `ctx.inject_message` on the hook
-            # callback directly. Probe both.
+            # Hermes registers the hook callback bare — `ctx` here is
+            # whatever Hermes passes (usually `None` in v0.11). The
+            # module-level plugin manager owns the singleton ctx that
+            # the rest of the surface uses, so we re-resolve it lazily
+            # on first inject. `get_plugin_manager` is the public
+            # accessor; older fallback names (`get_plugin_context`)
+            # don't exist in 0.11 and would otherwise raise ImportError.
             inject = getattr(ctx, "inject_message", None) if ctx is not None else None
             if inject is None:
-                from hermes_cli.plugins import get_plugin_context  # type: ignore
+                from hermes_cli.plugins import get_plugin_manager  # type: ignore
 
-                inject = get_plugin_context().inject_message
+                inject = get_plugin_manager().inject_message
             inject(block, role="system")
         except (ImportError, *HERMES_API_ERRORS) as exc:
             log.warning("wg session-start inject_message failed: %s", exc)
