@@ -475,8 +475,8 @@ impl WikiGraph {
         // Auto-rebuild the HNSW index if the user opted into the
         // "hnsw" semantic path. Failure is non-fatal — the BM25
         // fallback in hybrid_search will still serve results, and
-        // operators can retry with `wg vector-rebuild` (TODO) or
-        // by re-ingesting.
+        // operators can retry with `wg vector-rebuild` or by
+        // re-ingesting.
         #[cfg(feature = "semantic")]
         if self.config.search.semantic_index == "hnsw" {
             if let Err(e) = self.vector_index_rebuild() {

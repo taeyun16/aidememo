@@ -98,6 +98,7 @@ fn main() {
         cmd::Command::McpInstall(sub) => cmd::mcp_install::run_mcp_install(sub, json),
         cmd::Command::Completions(sub) => cmd::completions::run_completions(sub),
         cmd::Command::Pending(sub) => cmd::pending::run_pending_review(sub),
+        cmd::Command::VectorRebuild(sub) => handle_vector_rebuild(&store_path, config, sub),
     };
 
     match result {
@@ -780,6 +781,40 @@ fn handle_stats(
     with_wiki(path, config, |wiki| {
         let stats = wiki.stats()?;
         output::format_stats(&stats, fmt(json))
+    })
+}
+
+fn handle_vector_rebuild(
+    path: &Path,
+    config: Config,
+    sub: cmd::VectorRebuildSub,
+) -> Result<String, WgError> {
+    with_wiki(path, config, |wiki| {
+        let started = std::time::Instant::now();
+        let count = wiki.vector_index_rebuild()?;
+        let elapsed_ms = started.elapsed().as_millis();
+
+        if sub.json {
+            let payload = serde_json::json!({
+                "facts_indexed": count,
+                "elapsed_ms": elapsed_ms,
+            });
+            return serde_json::to_string_pretty(&payload).map_err(|e| WgError::Serialize {
+                context: "vector-rebuild".to_string(),
+                source: e,
+            });
+        }
+        if count == 0 {
+            Ok(format!(
+                "No facts to index — sidecar removed (took {} ms).",
+                elapsed_ms
+            ))
+        } else {
+            Ok(format!(
+                "Rebuilt HNSW index over {} facts in {} ms.",
+                count, elapsed_ms
+            ))
+        }
     })
 }
 

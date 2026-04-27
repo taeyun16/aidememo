@@ -66,6 +66,7 @@ wg bench <golden.jsonl> [--k 5] [--limit N]
 wg skill check <path> [--json]            validate SKILL.md files
 wg ingest <root> [-i]                     ingest markdown
 wg watch <root> [--search Q]              live re-ingest + optional live search
+wg vector-rebuild [--json]                 rebuild HNSW from scratch (after model swap)
 wg export [--scope all|...] / wg import
 wg config get/set/list
 ```

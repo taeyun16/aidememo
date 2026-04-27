@@ -81,6 +81,7 @@ pub enum Command {
     McpInstall(McpInstallSub),
     Completions(CompletionsSub),
     Pending(PendingSub),
+    VectorRebuild(VectorRebuildSub),
 }
 
 #[derive(Debug, Clone)]
@@ -224,6 +225,11 @@ pub struct ImportSub {
 pub struct StatsSub;
 
 #[derive(Debug, Clone)]
+pub struct VectorRebuildSub {
+    pub json: bool,
+}
+
+#[derive(Debug, Clone)]
 pub struct IngestSub {
     pub incremental: bool,
     pub wiki_root: PathBuf,
@@ -308,6 +314,7 @@ pub fn build_cli() -> OptionParser<Args> {
         mcp_install_cmd,
         completions_cmd,
         pending_cmd,
+        vector_rebuild_command(),
     ]);
 
     construct!(Args {
@@ -770,6 +777,23 @@ fn stats_command() -> impl Parser<Command> {
         .to_options()
         .command("stats")
         .help("Show store statistics")
+}
+
+fn vector_rebuild_command() -> impl Parser<Command> {
+    let json = long("json")
+        .help("Emit JSON instead of human-readable output")
+        .switch();
+
+    construct!(VectorRebuildSub { json })
+        .map(Command::VectorRebuild)
+        .to_options()
+        .command("vector-rebuild")
+        .help(
+            "Rebuild the HNSW vector index from scratch. \
+             Use after switching embedding models or recovering \
+             from a corrupted sidecar; otherwise the index is \
+             refreshed lazily on ingest.",
+        )
 }
 
 fn ingest_command() -> impl Parser<Command> {
