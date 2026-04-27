@@ -727,22 +727,37 @@ impl Store {
                     source: Box::new(e),
                 })?;
 
-        let prefix = format!("{}\0", entity_id);
+        // Range scan via the `{entity_id}\0` prefix → `{entity_id}\x01`
+        // upper bound (one byte past the separator). Sub-linear in the
+        // total fact count: redb only walks the entries actually owned
+        // by this entity. Earlier code did a full `iter()` + prefix
+        // filter, which was O(total facts).
+        let lower = format!("{}\0", entity_id);
+        let upper = format!("{}\u{1}", entity_id);
         let count = fact_by_entity
-            .iter()
+            .range::<&str>(lower.as_str()..upper.as_str())
             .map_err(|e| WgError::StoreRead {
                 table: "fact_by_entity",
-                key: "<iter>".to_string(),
+                key: "<range>".to_string(),
                 source: Box::new(e),
             })?
             .filter_map(|entry| entry.ok())
-            .filter(|(k, _)| {
-                let key_str = k.value();
-                key_str.starts_with(&prefix)
-            })
             .count() as u32;
 
         Ok(count)
+    }
+
+    /// Count facts attached to an entity using the `fact_by_entity`
+    /// secondary index. Public so graph traversal and other read paths
+    /// can avoid scanning the full facts table just to get a count.
+    pub fn count_entity_facts(&self, entity_id: &EntityId) -> Result<u32> {
+        let read_txn = self
+            .db
+            .begin_read()
+            .map_err(|e| WgError::TransactionBegin {
+                source: Box::new(e),
+            })?;
+        self.count_entity_facts_internal(&read_txn, entity_id)
     }
 
     /// Delete an entity.
@@ -1610,6 +1625,15 @@ impl Store {
 
         let mut results = Vec::new();
 
+        // Range bounds for `{entity_id}\0...` prefix scan. Encode the
+        // upper bound as `{entity_id}\x01` — one byte past the `\0`
+        // separator, which is greater than every key starting with
+        // `{entity_id}\0` regardless of suffix. Doing this with redb's
+        // `range()` keeps the scan sub-linear; the previous `iter()` +
+        // prefix-filter was O(total relations).
+        let lower = format!("{}\0", entity_id).into_bytes();
+        let upper = format!("{}\u{1}", entity_id).into_bytes();
+
         match direction {
             TraverseDirection::Forward | TraverseDirection::Both => {
                 let relations =
@@ -1621,28 +1645,28 @@ impl Store {
                             source: Box::new(e),
                         })?;
 
-                let prefix = format!("{}\0", entity_id);
-
-                for entry in relations.iter().map_err(|e| WgError::StoreRead {
-                    table: "relations",
-                    key: "<iter>".to_string(),
-                    source: Box::new(e),
-                })? {
-                    let (key, value) = entry.map_err(|e| WgError::StoreRead {
+                for entry in relations
+                    .range::<&[u8]>(lower.as_slice()..upper.as_slice())
+                    .map_err(|e| WgError::StoreRead {
+                        table: "relations",
+                        key: "<range>".to_string(),
+                        source: Box::new(e),
+                    })?
+                {
+                    let (_key, value) = entry.map_err(|e| WgError::StoreRead {
                         table: "relations",
                         key: "<entry>".to_string(),
                         source: Box::new(e),
                     })?;
 
-                    let key_str = String::from_utf8_lossy(key.value());
-                    if key_str.starts_with(&prefix) {
-                        let record: RelationRecord = serde_json::from_slice(value.value())
-                            .map_err(|e| WgError::Deserialize {
+                    let record: RelationRecord =
+                        serde_json::from_slice(value.value()).map_err(|e| {
+                            WgError::Deserialize {
                                 context: "relation get".to_string(),
                                 source: e,
-                            })?;
-                        results.push(record);
-                    }
+                            }
+                        })?;
+                    results.push(record);
                 }
             }
             TraverseDirection::Reverse => {
@@ -1655,28 +1679,28 @@ impl Store {
                             source: Box::new(e),
                         })?;
 
-                let prefix = format!("{}\0", entity_id);
-
-                for entry in relations_rev.iter().map_err(|e| WgError::StoreRead {
-                    table: "relations_rev",
-                    key: "<iter>".to_string(),
-                    source: Box::new(e),
-                })? {
-                    let (key, value) = entry.map_err(|e| WgError::StoreRead {
+                for entry in relations_rev
+                    .range::<&[u8]>(lower.as_slice()..upper.as_slice())
+                    .map_err(|e| WgError::StoreRead {
+                        table: "relations_rev",
+                        key: "<range>".to_string(),
+                        source: Box::new(e),
+                    })?
+                {
+                    let (_key, value) = entry.map_err(|e| WgError::StoreRead {
                         table: "relations_rev",
                         key: "<entry>".to_string(),
                         source: Box::new(e),
                     })?;
 
-                    let key_str = String::from_utf8_lossy(key.value());
-                    if key_str.starts_with(&prefix) {
-                        let record: RelationRecord = serde_json::from_slice(value.value())
-                            .map_err(|e| WgError::Deserialize {
+                    let record: RelationRecord =
+                        serde_json::from_slice(value.value()).map_err(|e| {
+                            WgError::Deserialize {
                                 context: "relation get rev".to_string(),
                                 source: e,
-                            })?;
-                        results.push(record);
-                    }
+                            }
+                        })?;
+                    results.push(record);
                 }
             }
         }

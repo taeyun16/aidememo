@@ -258,12 +258,13 @@ impl<'a> Graph<'a> {
     }
 
     /// Count facts for an entity.
+    ///
+    /// Uses the `fact_by_entity` secondary index (range scan) instead
+    /// of a full `fact_list` deserialize — important for traversal,
+    /// where this is called once per visited entity. The previous
+    /// implementation made traverse_d3 cost O(visited × total facts).
     fn count_entity_facts(&self, entity_id: &EntityId) -> Result<u32> {
-        let facts = self.store.fact_list(FactListOpts {
-            entity_id: Some(*entity_id),
-            ..Default::default()
-        })?;
-        Ok(facts.len() as u32)
+        self.store.count_entity_facts(entity_id)
     }
 }
 
