@@ -25,10 +25,22 @@ from .decisions import DetectedFact
 
 
 def pending_log_path() -> Path:
-    """Honors ``HERMES_STATE_DIR``; falls back to ``~/.hermes/state``."""
-    env = os.environ.get("HERMES_STATE_DIR")
-    base = Path(env) if env else Path.home() / ".hermes" / "state"
-    return base / "wg-pending.jsonl"
+    """Resolve the pending log path. Precedence:
+
+    1. ``HERMES_STATE_DIR`` — explicit override, most specific.
+    2. ``HERMES_HOME/state`` — follow Hermes's own state-dir
+       convention so our log lives next to the rest of the agent's
+       state and isolated test profiles never bleed into the
+       operator's real ``~/.hermes/state``.
+    3. ``~/.hermes/state`` — last-resort default for a stock setup.
+    """
+    env_state = os.environ.get("HERMES_STATE_DIR")
+    if env_state:
+        return Path(env_state) / "wg-pending.jsonl"
+    env_home = os.environ.get("HERMES_HOME")
+    if env_home:
+        return Path(env_home) / "state" / "wg-pending.jsonl"
+    return Path.home() / ".hermes" / "state" / "wg-pending.jsonl"
 
 
 @dataclass(frozen=True)

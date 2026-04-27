@@ -163,8 +163,12 @@ class WgClient:
         args = ["fact", "add", content, "--type", fact_type]
         if entities:
             args += ["--entities", ",".join(entities)]
-        for tag in tags or []:
-            args += ["--tag", tag]
+        if tags:
+            # `wg fact add` takes a single `--tags A,B,C` flag, not
+            # repeated `--tag` entries — the latter raises
+            # `Error: no such flag: --tag`. Comma-join the list to
+            # match the CLI's actual surface.
+            args += ["--tags", ",".join(tags)]
         # Prefer the structured `--json` output (`{"id": "<ULID>",
         # "auto_created_entities": [...]}`) over scraping the human
         # message; falls back to ULID-grep on older wg binaries that

@@ -36,13 +36,24 @@ log = logging.getLogger("hermes_wg")
 
 def _load_config(ctx: Any) -> dict:
     """Pull the plugin config from Hermes if exposed; fall back to a
-    direct read of ``~/.hermes/config.yaml`` otherwise."""
+    direct read of ``$HERMES_HOME/config.yaml`` (honoring isolated
+    test profiles) and finally ``~/.hermes/config.yaml`` for stock
+    setups."""
     cfg_attr = getattr(ctx, "config", None)
     if isinstance(cfg_attr, dict):
         return cfg_attr.get("plugins", {}).get("wg", {}) or {}
 
-    home = Path(os.environ.get("HOME") or os.path.expanduser("~"))
-    path = home / ".hermes" / "config.yaml"
+    # `HERMES_HOME` is the canonical Hermes state-dir env var; it
+    # points at /tmp/wg-hermes-test in our isolated profile and at
+    # ~/.hermes in a stock setup. Read it before falling back to the
+    # default location so dry_run / auto_record / pending_log keys
+    # written into a test profile actually take effect.
+    home_env = os.environ.get("HERMES_HOME")
+    if home_env:
+        path = Path(home_env) / "config.yaml"
+    else:
+        home = Path(os.environ.get("HOME") or os.path.expanduser("~"))
+        path = home / ".hermes" / "config.yaml"
     if not path.exists():
         return {}
     try:
