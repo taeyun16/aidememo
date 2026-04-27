@@ -26,3 +26,11 @@ simsimd = "6"
 [[bin]]
 name = "hnsw_miracl"
 path = "src/bin/hnsw_miracl.rs"
+
+[[bin]]
+name = "hnsw_timing"
+path = "src/bin/hnsw_timing.rs"
+
+[[bin]]
+name = "hnsw_rebuild_cache"
+path = "src/bin/hnsw_rebuild_cache.rs"

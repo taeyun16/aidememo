@@ -78,6 +78,28 @@ inference: ~1 ms per fact for `model2vec`, ~100 ms per fact for
 HTTP-backed providers like Ollama. For 5 503 facts on the
 multilingual model: 5–6 seconds end to end.
 
+### Incremental embedding cache (Tier 8 follow-up)
+
+`vector_index_rebuild` reuses cached vectors from the existing
+sidecar (or in-memory index) when the model + dimension still
+match. Embedding inference is the long pole — skipping it on
+unchanged facts collapses a no-op rebuild from 3.7s to ~2.2s on
+the 5503-fact MIRACL/ko corpus.
+
+Measured by `cargo run --release --bin hnsw_rebuild_cache`:
+
+```
+  cold (no cache):        3.65s  n=5503
+  warm (in-mem cache):    1.75s  n=5503   -52%
+  warm (disk cache):      2.20s  n=5503   -40%
+```
+
+In-memory cache hits avoid the bincode deserialize, so they're
+the fastest path. Disk-cache hits still pay the deserialize cost
+but skip the embed_batch — the dominant win. For HTTP providers
+(Ollama, OpenAI), the speedup multiplier is much larger because
+the embed step there is 50–100× more expensive than model2vec.
+
 There's still no `wg vector-rebuild` standalone command — for
 now operators trigger a rebuild by re-running `wg ingest`. That's
 the next obvious follow-up.

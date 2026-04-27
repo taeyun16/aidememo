@@ -167,7 +167,14 @@ fn default_graph_fact_cap() -> usize {
 }
 
 fn default_semantic_index() -> String {
-    "bm25".to_string()
+    // HNSW gives the bigger recall on multilingual / paraphrase
+    // workloads (+12% R@10 on Korean MIRACL) and ties on English
+    // synthetic data. The build cost at ingest time is sub-4s
+    // even at 5500 facts (see .notes/bench-hnsw-integrated.md and
+    // the hnsw_timing benchmark). Operators on tiny wikis or
+    // latency-bound English-only deployments can flip back to
+    // "bm25" with `wg config set search.semantic_index bm25`.
+    "hnsw".to_string()
 }
 
 impl Default for SearchConfig {

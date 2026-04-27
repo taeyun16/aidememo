@@ -182,6 +182,21 @@ impl HnswIndex {
     pub fn matches_provider(&self, model: &str, dim: usize) -> bool {
         self.model == model && self.dim == dim
     }
+
+    /// Materialize the `(FactId → Vec<f32>)` mapping from the index.
+    /// Used by `vector_index_rebuild` to skip re-embedding facts
+    /// whose content didn't change. The vectors come back already
+    /// L2-normalized — same shape we'd hand back to the next
+    /// `Builder::build` call.
+    pub fn extract_vectors(&self) -> std::collections::HashMap<FactId, Vec<f32>> {
+        self.map
+            .iter()
+            .map(|(pid, point)| {
+                let id = self.map.values[pid.into_inner() as usize];
+                (id, point.vec.clone())
+            })
+            .collect()
+    }
 }
 
 /// L2-normalize a vector in place. Matches the prototype + the
