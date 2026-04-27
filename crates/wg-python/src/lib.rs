@@ -84,23 +84,108 @@ fn to_py<T: serde::Serialize>(py: Python<'_>, value: &T) -> PyResult<PyObject> {
         .map_err(|e| err(e.to_string()))
 }
 
+/// Pull an optional value out of a dict. `None` (Python) and a missing
+/// key both collapse to `Ok(None)` so callers can write a single
+/// match arm. Returns `Err` on extraction failure (wrong type).
+fn dict_opt<'py, T>(item: &Bound<'py, PyDict>, key: &str) -> PyResult<Option<T>>
+where
+    T: pyo3::FromPyObject<'py>,
+{
+    match item.get_item(key)? {
+        Some(v) if !v.is_none() => Ok(Some(v.extract::<T>()?)),
+        _ => Ok(None),
+    }
+}
+
+/// Build a `FactInput` from a Python dict. Shared between
+/// `fact_add_many` (and any future caller that takes per-fact dicts).
+/// `content` is required; everything else collapses Python `None` and
+/// missing keys to `None`. The `entity_ids` field is normalized from
+/// ULID strings to `EntityId`.
+fn fact_input_from_dict(item: &Bound<'_, PyDict>) -> PyResult<FactInput> {
+    let content: String = item
+        .get_item("content")?
+        .ok_or_else(|| err("each item needs a 'content' field"))?
+        .extract()?;
+
+    let entity_ids = match dict_opt::<Vec<String>>(item, "entity_ids")? {
+        Some(names) => Some(
+            names
+                .iter()
+                .map(|s| parse_entity_id(s))
+                .collect::<PyResult<Vec<_>>>()?,
+        ),
+        None => None,
+    };
+
+    let fact_type = dict_opt::<String>(item, "fact_type")?
+        .as_deref()
+        .and_then(parse_fact_type);
+
+    Ok(FactInput {
+        content,
+        fact_type,
+        entity_ids,
+        tags: dict_opt::<Vec<String>>(item, "tags")?,
+        source: dict_opt::<String>(item, "source")?,
+        source_confidence: dict_opt::<f32>(item, "confidence")?,
+        observed_at: None,
+    })
+}
+
 // ---------------------------------------------------------------------------
 // PyWikiGraph
 // ---------------------------------------------------------------------------
 
 /// Local knowledge-graph wiki backed by redb.
 ///
-/// Construct with a path to the store file (`.redb`). Methods are thread-safe
-/// (the underlying graph uses an `RwLock` internally) so a single instance
-/// can be shared across threads.
+/// Construct with a path to the store file (`.redb`). Optional keyword
+/// arguments override the corresponding `Config` fields *before* the
+/// store is opened — useful for selecting a different embedding model,
+/// flipping HNSW vs BM25, or relaxing durability for high-frequency
+/// write workloads. Methods are thread-safe (the underlying graph
+/// uses an `RwLock` internally) so a single instance can be shared
+/// across threads.
+///
+/// ```python
+/// import wg_python as wg
+/// g = wg.WikiGraph(
+///     "./_meta/wiki.redb",
+///     model="minishlab/potion-base-8M",
+///     semantic_index="hnsw",
+///     durability="eventual",
+/// )
+/// ```
 #[pyclass(name = "WikiGraph")]
 pub struct PyWikiGraph(pub Arc<WikiGraph>);
 
 #[pymethods]
 impl PyWikiGraph {
     #[new]
-    fn new(store_path: String) -> PyResult<Self> {
-        let wiki = WikiGraph::open(Path::new(&store_path), Config::default()).map_err(map_err)?;
+    #[pyo3(signature = (
+        store_path,
+        *,
+        model = None,
+        semantic_index = None,
+        durability = None,
+    ))]
+    fn new(
+        store_path: String,
+        model: Option<String>,
+        semantic_index: Option<String>,
+        durability: Option<String>,
+    ) -> PyResult<Self> {
+        let mut config = Config::default();
+        if let Some(model) = model {
+            config.set("model.name", &model).map_err(map_err)?;
+        }
+        if let Some(idx) = semantic_index {
+            config.set("search.semantic_index", &idx).map_err(map_err)?;
+        }
+        if let Some(dur) = durability {
+            config.set("store.durability", &dur).map_err(map_err)?;
+        }
+        let wiki = WikiGraph::open(Path::new(&store_path), config).map_err(map_err)?;
         Ok(Self(Arc::new(wiki)))
     }
 
@@ -289,54 +374,10 @@ impl PyWikiGraph {
     /// order. All-or-nothing — if one item fails to validate, no
     /// facts land.
     fn fact_add_many<'py>(&self, items: Vec<Bound<'py, PyDict>>) -> PyResult<Vec<String>> {
-        let mut inputs = Vec::with_capacity(items.len());
-        for item in items {
-            let content: String = match item.get_item("content")? {
-                Some(v) => v.extract()?,
-                None => return Err(err("each item needs a 'content' field")),
-            };
-            let entity_ids = match item.get_item("entity_ids")? {
-                Some(v) if !v.is_none() => {
-                    let names: Vec<String> = v.extract()?;
-                    Some(
-                        names
-                            .iter()
-                            .map(|s| parse_entity_id(s))
-                            .collect::<PyResult<Vec<_>>>()?,
-                    )
-                }
-                _ => None,
-            };
-            let fact_type = match item.get_item("fact_type")? {
-                Some(v) if !v.is_none() => {
-                    let s: String = v.extract()?;
-                    parse_fact_type(&s)
-                }
-                _ => None,
-            };
-            let tags = match item.get_item("tags")? {
-                Some(v) if !v.is_none() => Some(v.extract::<Vec<String>>()?),
-                _ => None,
-            };
-            let source = match item.get_item("source")? {
-                Some(v) if !v.is_none() => Some(v.extract::<String>()?),
-                _ => None,
-            };
-            let confidence = match item.get_item("confidence")? {
-                Some(v) if !v.is_none() => Some(v.extract::<f32>()?),
-                _ => None,
-            };
-
-            inputs.push(FactInput {
-                content,
-                fact_type,
-                entity_ids,
-                tags,
-                source,
-                source_confidence: confidence,
-                observed_at: None,
-            });
-        }
+        let inputs: Vec<FactInput> = items
+            .iter()
+            .map(fact_input_from_dict)
+            .collect::<PyResult<_>>()?;
         let ids = self.0.fact_add_many(inputs).map_err(map_err)?;
         Ok(ids.iter().map(|id| id.to_string()).collect())
     }
