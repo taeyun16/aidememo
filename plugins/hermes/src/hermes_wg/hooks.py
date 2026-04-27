@@ -181,6 +181,12 @@ def make_post_llm_call(
                     entities=default_entities,
                     fact_type=d.fact_type,
                     tags=["auto-recorded", "hermes-session"],
+                    # Forward the detector's per-pattern weight so the
+                    # wiki sees the same confidence the auto-recorder
+                    # used to gate the entry. Otherwise wg defaults to
+                    # 0.5 and a 0.95-marker decision lands at 0.5 in
+                    # search ranking — bug masquerading as feature.
+                    confidence=d.confidence,
                 )
             except CLIENT_ERRORS as exc:
                 log.warning("wg fact_add (auto-record) failed: %s", exc)

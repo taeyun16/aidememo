@@ -153,6 +153,7 @@ def commit_one(client: WgClient, idx: int, path: Path | None = None) -> PendingE
         entities=None,
         fact_type=entry.fact_type,
         tags=["auto-recorded", "hermes-session"],
+        confidence=entry.confidence,
     )
     remaining = [e for i, e in enumerate(entries) if i != target_idx]
     write(_renumber(remaining), path)
@@ -173,6 +174,7 @@ def commit_all(client: WgClient, path: Path | None = None) -> tuple[int, list[Pe
                 entities=None,
                 fact_type=entry.fact_type,
                 tags=["auto-recorded", "hermes-session"],
+                confidence=entry.confidence,
             )
             committed.append(entry)
         except CLIENT_ERRORS:

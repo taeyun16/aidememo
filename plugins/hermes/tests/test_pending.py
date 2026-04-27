@@ -89,7 +89,7 @@ def test_commit_one_writes_to_wg_and_drops_entry(tmp_path: Path, monkeypatch: py
 
     captured: list[tuple] = []
 
-    def stub_fact_add(self, content, entities=None, fact_type="note", tags=None):
+    def stub_fact_add(self, content, entities=None, fact_type="note", tags=None, **_kw):
         captured.append((content, fact_type, tuple(tags or [])))
         return "STUB-ID"
 
@@ -110,7 +110,7 @@ def test_commit_all_keeps_failed_entries(tmp_path: Path, monkeypatch: pytest.Mon
     log = tmp_path / "wg-pending.jsonl"
     pending.write([_entry(1, "ok"), _entry(2, "boom"), _entry(3, "fine")], log)
 
-    def stub_fact_add(self, content, entities=None, fact_type="note", tags=None):
+    def stub_fact_add(self, content, entities=None, fact_type="note", tags=None, **_kw):
         if content == "boom":
             raise WgUnavailable("simulated failure")
         return "STUB"

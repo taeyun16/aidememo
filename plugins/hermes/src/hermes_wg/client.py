@@ -151,15 +151,18 @@ class WgClient:
         entities: list[str] | None = None,
         fact_type: str = "note",
         tags: list[str] | None = None,
+        confidence: float | None = None,
     ) -> str:
         if self._py is not None:
             entity_ids = [self._py.resolve_entity(e) for e in (entities or [])]
-            return self._py.fact_add(
-                content,
-                entity_ids=entity_ids,
-                fact_type=fact_type,
-                tags=tags or [],
-            )
+            kwargs: dict = {
+                "entity_ids": entity_ids,
+                "fact_type": fact_type,
+                "tags": tags or [],
+            }
+            if confidence is not None:
+                kwargs["confidence"] = confidence
+            return self._py.fact_add(content, **kwargs)
         args = ["fact", "add", content, "--type", fact_type]
         if entities:
             args += ["--entities", ",".join(entities)]
@@ -169,6 +172,8 @@ class WgClient:
             # `Error: no such flag: --tag`. Comma-join the list to
             # match the CLI's actual surface.
             args += ["--tags", ",".join(tags)]
+        if confidence is not None:
+            args += ["--confidence", f"{confidence:.3f}"]
         # Prefer the structured `--json` output (`{"id": "<ULID>",
         # "auto_created_entities": [...]}`) over scraping the human
         # message; falls back to ULID-grep on older wg binaries that

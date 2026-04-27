@@ -372,7 +372,7 @@ def test_slash_wg_pending_commit_all(monkeypatch: pytest.MonkeyPatch, tmp_path) 
     monkeypatch.setattr(
         WgClient,
         "fact_add",
-        lambda self, content, entities=None, fact_type="note", tags=None: (
+        lambda self, content, entities=None, fact_type="note", tags=None, **_kw: (
             captured.append(content) or "STUB"
         ),
     )
@@ -402,7 +402,7 @@ def test_slash_wg_pending_commit_one(monkeypatch: pytest.MonkeyPatch, tmp_path) 
     monkeypatch.setattr(
         WgClient,
         "fact_add",
-        lambda self, content, entities=None, fact_type="note", tags=None: "STUB",
+        lambda self, content, entities=None, fact_type="note", tags=None, **_kw: "STUB",
     )
     monkeypatch.setattr("hermes_wg.client.WgClient._has_cli", staticmethod(lambda: True))
 
