@@ -1,0 +1,21 @@
+name: wg
+version: "1.0.0"
+description: |
+  Wiki-Graph integration for Hermes Agent. Wraps the local wg knowledge
+  graph as native tools, slash commands, and lifecycle hooks: every new
+  session is auto-pre-loaded with recent facts, and decisions detected
+  during the session can be auto-recorded back to wg on close.
+author: Taeyun Jang <taeyun16@pm.me>
+kind: standalone
+requires_env: []
+provides_tools:
+  - wg_query
+  - wg_search
+  - wg_recent
+  - wg_entity_list
+  - wg_traverse
+  - wg_fact_add
+  - wg_lint
+provides_hooks:
+  - on_session_start
+  - on_session_end

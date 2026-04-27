@@ -35,6 +35,13 @@ crates/wg-python/__pycache__/
 crates/wg-python/*.so
 crates/wg-python/*.egg-info/
 
+# Hermes plugin Python packaging
+plugins/hermes/.venv/
+plugins/hermes/.pytest_cache/
+plugins/hermes/**/__pycache__/
+plugins/hermes/*.egg-info/
+plugins/hermes/src/*.egg-info/
+
 # Elixir NIF bindings — built artifacts
 crates/wg-nif/_build/
 crates/wg-nif/deps/
