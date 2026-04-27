@@ -31,6 +31,7 @@ pub struct McpInstallSub {
     pub force: bool,
     pub print: bool,
     pub list_targets: bool,
+    pub no_verify: bool,
 }
 
 pub fn mcp_install_command() -> impl Parser<Command> {
@@ -47,12 +48,20 @@ pub fn mcp_install_command() -> impl Parser<Command> {
     let list_targets = long("list-targets")
         .help("Print supported agents and the registration mechanism each uses")
         .switch();
+    let no_verify = long("no-verify")
+        .help(
+            "Skip the post-install `<bin> mcp list` check. Useful when an \
+             agent's CLI is slow to refresh, lives in a sandbox we can't \
+             reach, or returns noisy output that breaks the heuristic.",
+        )
+        .switch();
 
     construct!(McpInstallSub {
         target,
         force,
         print,
-        list_targets
+        list_targets,
+        no_verify,
     })
     .map(Command::McpInstall)
     .to_options()
@@ -146,18 +155,21 @@ pub fn run_mcp_install(sub: McpInstallSub, json: bool) -> Result<String, WgError
             &["mcp", "add", "wg", "--", "wg", "mcp"],
             sub.force,
             sub.print,
+            sub.no_verify,
         )?,
         "hermes" => install_via_cli(
             "hermes",
             &["mcp", "add", "wg", "--command", "wg", "--args", "mcp"],
             sub.force,
             sub.print,
+            sub.no_verify,
         )?,
         "openclaw" => install_via_cli(
             "openclaw",
             &["mcp", "set", "wg", r#"{"command":"wg","args":["mcp"]}"#],
             sub.force,
             sub.print,
+            sub.no_verify,
         )?,
         "codex" => install_codex(sub.force, sub.print)?,
         "cursor" => install_cursor(sub.force, sub.print)?,
@@ -212,6 +224,7 @@ fn install_via_cli(
     args: &[&str],
     _force: bool,
     print: bool,
+    no_verify: bool,
 ) -> Result<InstallReport, WgError> {
     let cmdline = format!("{} {}", bin, args.join(" "));
     let target = bin.to_string();
@@ -248,7 +261,14 @@ fn install_via_cli(
     // exist or fails for any reason, we leave `verified = None` —
     // the install already exited 0; it'd be hostile to fail the
     // command on a verification step that's only a defence in depth.
-    let verified = verify_registered(bin, "wg");
+    // `--no-verify` skips this entirely for environments where the
+    // list subcommand is slow, sandboxed, or noisy enough to defeat
+    // the word-boundary heuristic.
+    let verified = if no_verify {
+        None
+    } else {
+        verify_registered(bin, "wg")
+    };
 
     Ok(InstallReport {
         target,
@@ -468,6 +488,7 @@ mod tests {
             &["mcp", "add", "wg", "--", "wg", "mcp"],
             false,
             true,
+            false,
         )
         .unwrap();
         assert_eq!(report.target, "claude");
@@ -482,9 +503,24 @@ mod tests {
             force: false,
             print: true,
             list_targets: false,
+            no_verify: false,
         };
         let err = run_mcp_install(sub, false).unwrap_err();
         assert!(err.to_string().contains("unknown target"));
+    }
+
+    #[test]
+    fn no_verify_skips_post_install_check() {
+        // Use `true` as a stand-in for the agent CLI: it exists on
+        // every Unix, exits 0, and ignores arguments — so the install
+        // step "succeeds" cheaply and we can isolate the verify
+        // branch. With `no_verify=true`, `verified` must be `None`
+        // (we never call `verify_registered`); without it we'd fall
+        // through to `true mcp list` which would also be `None` but
+        // for a different reason. The contract we care about is:
+        // `no_verify=true` short-circuits the call.
+        let report = install_via_cli("true", &[], false, false, true).unwrap();
+        assert_eq!(report.verified, None);
     }
 
     #[test]

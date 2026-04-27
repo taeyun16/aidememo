@@ -500,6 +500,89 @@ fn doctor_detects_skill_installation() {
 }
 
 #[test]
+fn doctor_fix_lists_install_commands_for_gaps() {
+    // Empty home + nuked PATH means: no skills installed anywhere,
+    // shell-out targets unverifiable (mcp_registered = None), and
+    // file-edit targets confirmed missing (Some(false)). Only the
+    // confirmed-missing ones should produce suggestions.
+    let home = tempfile::tempdir().unwrap();
+    let store = home.path().join("wiki.redb");
+
+    let out = Command::new(wg_bin())
+        .env_remove("WG_STORE")
+        .env("HOME", home.path())
+        .env("PATH", "/nonexistent")
+        .args(["--store", store.to_str().unwrap(), "doctor", "--fix"])
+        .output()
+        .expect("doctor --fix");
+    assert!(out.status.success());
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("Suggested fixes"),
+        "missing fixes section: {}",
+        stdout
+    );
+    // Skill fixes are always confirmable (file-existence check).
+    assert!(stdout.contains("wg skill install --target claude"));
+    assert!(stdout.contains("wg skill install --target hermes"));
+    assert!(stdout.contains("wg skill install --target openclaw"));
+    // codex / cursor have no skill format — no suggestion for them.
+    assert!(!stdout.contains("wg skill install --target codex"));
+    assert!(!stdout.contains("wg skill install --target cursor"));
+    // MCP fixes only for confirmed-missing (file-edit), not for
+    // unverifiable shell-out targets.
+    assert!(stdout.contains("wg mcp-install --target codex"));
+    assert!(stdout.contains("wg mcp-install --target cursor"));
+    assert!(!stdout.contains("wg mcp-install --target openclaw"));
+}
+
+#[test]
+fn doctor_without_fix_emits_tip_when_gaps_present() {
+    let home = tempfile::tempdir().unwrap();
+    let store = home.path().join("wiki.redb");
+    let out = Command::new(wg_bin())
+        .env_remove("WG_STORE")
+        .env("HOME", home.path())
+        .env("PATH", "/nonexistent")
+        .args(["--store", store.to_str().unwrap(), "doctor"])
+        .output()
+        .expect("doctor");
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("Run `wg doctor --fix`"),
+        "missing tip: {}",
+        stdout
+    );
+    // ...but no fixes block when --fix isn't requested.
+    assert!(!stdout.contains("Suggested fixes"));
+}
+
+#[test]
+fn doctor_json_includes_fixes_array() {
+    let home = tempfile::tempdir().unwrap();
+    let store = home.path().join("wiki.redb");
+    let payload = doctor_json(home.path(), &store);
+    let fixes = payload["fixes"].as_array().expect("fixes must be an array");
+    let kinds: Vec<&str> = fixes.iter().map(|f| f["kind"].as_str().unwrap()).collect();
+    assert!(
+        kinds.contains(&"skill"),
+        "fixes should include skill suggestions"
+    );
+    assert!(
+        kinds.contains(&"mcp"),
+        "fixes should include mcp suggestions"
+    );
+    let commands: Vec<&str> = fixes
+        .iter()
+        .map(|f| f["command"].as_str().unwrap())
+        .collect();
+    assert!(commands.iter().any(|c| c.contains("wg skill install")));
+    assert!(commands.iter().any(|c| c.contains("wg mcp-install")));
+}
+
+#[test]
 fn doctor_human_output_includes_agent_section() {
     let home = tempfile::tempdir().unwrap();
     let store = home.path().join("wiki.redb");

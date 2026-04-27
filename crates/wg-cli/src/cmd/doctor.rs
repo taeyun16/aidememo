@@ -18,11 +18,19 @@ use crate::cmd::skill::{supported_targets, target_skills_dir};
 #[derive(Debug, Clone)]
 pub struct DoctorSub {
     pub json: bool,
+    pub fix: bool,
 }
 
 pub fn doctor_command() -> impl Parser<Command> {
     let json = long("json").short('j').help("Output as JSON").switch();
-    construct!(DoctorSub { json })
+    let fix = long("fix")
+        .help(
+            "Print the install commands that would close every gap in the \
+             agent integration matrix. Doesn't run anything — copy the \
+             lines you want into your shell.",
+        )
+        .switch();
+    construct!(DoctorSub { json, fix })
         .map(Command::Doctor)
         .to_options()
         .command("doctor")
@@ -39,6 +47,7 @@ pub fn run_doctor(
     let issues = wiki.lint()?;
     let stats = wiki.stats()?;
     let agents = collect_agent_integration();
+    let fixes = collect_fix_suggestions(&agents);
 
     if sub.json || global_json {
         let payload = serde_json::json!({
@@ -48,6 +57,9 @@ pub fn run_doctor(
             "issue_count": issues.len(),
             "issues": issues,
             "agents": agents,
+            // Always emitted in JSON: tooling that consumes this
+            // shouldn't have to re-derive the suggestion list.
+            "fixes": fixes,
         });
         return serde_json::to_string_pretty(&payload).map_err(|e| WgError::Serialize {
             context: "doctor".to_string(),
@@ -63,6 +75,15 @@ pub fn run_doctor(
     ));
 
     out.push_str(&format_agent_integration(&agents));
+
+    if sub.fix {
+        out.push_str(&format_fix_suggestions(&fixes));
+    } else if !fixes.is_empty() {
+        out.push_str(&format!(
+            "Tip: {} agent integration gap(s) detected. Run `wg doctor --fix` for the install commands.\n\n",
+            fixes.len()
+        ));
+    }
 
     if issues.is_empty() {
         out.push_str("✓ Graph is healthy — no issues found.\n");
@@ -194,6 +215,69 @@ fn check_cursor_config() -> Option<bool> {
             .map(|s| s.contains_key("wg"))
             .unwrap_or(false),
     )
+}
+
+/// One actionable fix the user can run to close a gap in the agent
+/// integration matrix. The shell command is a copy-pasteable string —
+/// emitting structured fields too lets `wg doctor --json` callers
+/// drive their own UI without re-deriving the command from the kind.
+#[derive(Debug, serde::Serialize)]
+pub(crate) struct FixSuggestion {
+    target: &'static str,
+    /// `"skill"` or `"mcp"` — narrows what the user is being asked
+    /// to install.
+    kind: &'static str,
+    command: String,
+    /// One-line rationale. Stays in JSON so consumers can show it
+    /// next to the command without re-deriving from `kind`.
+    reason: String,
+}
+
+fn collect_fix_suggestions(agents: &[AgentStatus]) -> Vec<FixSuggestion> {
+    let mut out = Vec::new();
+    for a in agents {
+        // Skill gap: target supports skills (skill_path is Some) but
+        // SKILL.md isn't there yet.
+        if matches!(a.skill_installed, Some(false)) {
+            out.push(FixSuggestion {
+                target: a.target,
+                kind: "skill",
+                command: format!("wg skill install --target {}", a.target),
+                reason: format!(
+                    "no SKILL.md at {}",
+                    a.skill_path.as_deref().unwrap_or("<unknown>")
+                ),
+            });
+        }
+        // MCP gap: registration confirmed missing. We *don't* suggest
+        // a fix when the check returned None — that usually means the
+        // agent's CLI isn't installed, in which case `wg mcp-install`
+        // would just fail. Surfacing that as a fix would be misleading.
+        if matches!(a.mcp_registered, Some(false)) {
+            out.push(FixSuggestion {
+                target: a.target,
+                kind: "mcp",
+                command: format!("wg mcp-install --target {}", a.target),
+                reason: format!("wg not registered ({})", a.mcp_detail),
+            });
+        }
+    }
+    out
+}
+
+fn format_fix_suggestions(fixes: &[FixSuggestion]) -> String {
+    if fixes.is_empty() {
+        return "✓ No gaps to fix — every reachable agent has wg installed.\n\n".to_string();
+    }
+    let mut out = format!("Suggested fixes ({}):\n", fixes.len());
+    for f in fixes {
+        out.push_str(&format!(
+            "  $ {:<40}  # {}: {}\n",
+            f.command, f.target, f.reason
+        ));
+    }
+    out.push_str("  (none of these run automatically — copy what you want)\n\n");
+    out
 }
 
 fn format_agent_integration(agents: &[AgentStatus]) -> String {
