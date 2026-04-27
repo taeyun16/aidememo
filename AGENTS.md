@@ -69,6 +69,12 @@ wg watch <root> [--search Q]              live re-ingest + optional live search
 wg vector-rebuild [--json]                 rebuild HNSW from scratch (after model swap)
 wg export [--scope all|...] / wg import
 wg config get/set/list
+
+# Speed/safety knob: drop per-commit fsync. Survives process crash
+# (page cache outlives it), but power loss within ~30s of a write
+# can lose recent commits. About 10× faster than the default.
+wg config set store.durability eventual    # opt in
+wg config set store.durability immediate   # default (recommended)
 ```
 
 ### Multi-project

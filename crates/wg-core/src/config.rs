@@ -33,12 +33,36 @@ pub struct ProjectConfig {
 pub struct StoreConfig {
     /// Path to the redb file (relative to wiki root or absolute).
     pub path: String,
+    /// redb commit durability. Two options:
+    ///
+    /// - `"immediate"` (default, recommended) — every commit fsyncs to
+    ///   disk before returning. Survives both process crash and power
+    ///   loss. Floors single-fact `fact_add` at the OS fsync cost
+    ///   (~3-5 ms on macOS APFS, ~0.1-1 ms on Linux ext4).
+    /// - `"eventual"` — commits are queued; the kernel's page cache
+    ///   eventually flushes. Survives process crash (page cache
+    ///   outlives the process), but power loss within ~30s of a write
+    ///   can lose recent commits. About 10× faster than `immediate`.
+    ///   Opt in only when the workload (e.g. high-frequency LLM fact
+    ///   capture where re-running is cheap) tolerates that exposure.
+    ///
+    /// `Durability::None` is intentionally not exposed — redb's docs
+    /// note that exclusive use causes "rapid growth of the database
+    /// file" because pages aren't freed until a higher-durability
+    /// commit, which is too easy to misuse.
+    #[serde(default = "default_durability")]
+    pub durability: String,
+}
+
+fn default_durability() -> String {
+    "immediate".to_string()
 }
 
 impl Default for StoreConfig {
     fn default() -> Self {
         Self {
             path: "./_meta/wiki.redb".to_string(),
+            durability: default_durability(),
         }
     }
 }
@@ -346,6 +370,7 @@ impl StoreConfig {
     fn get(&self, key: &str) -> Option<String> {
         match key {
             "path" => Some(self.path.clone()),
+            "durability" => Some(self.durability.clone()),
             _ => None,
         }
     }
@@ -355,6 +380,19 @@ impl StoreConfig {
             "path" => {
                 self.path = value.to_string();
                 Ok(())
+            }
+            "durability" => {
+                let normalized = value.to_lowercase();
+                match normalized.as_str() {
+                    "immediate" | "eventual" => {
+                        self.durability = normalized;
+                        Ok(())
+                    }
+                    _ => Err(WgError::InvalidInput(format!(
+                        "store.durability must be 'immediate' or 'eventual', got '{}'",
+                        value
+                    ))),
+                }
             }
             _ => Err(WgError::ConfigKeyNotFound(format!("store.{}", key))),
         }
@@ -594,5 +632,37 @@ mod tests {
             config.get("model.name"),
             Some("minishlab/potion-base-8M".to_string())
         );
+    }
+
+    #[test]
+    fn store_durability_default_is_immediate() {
+        let config = Config::default();
+        assert_eq!(config.store.durability, "immediate");
+        assert_eq!(
+            config.get("store.durability"),
+            Some("immediate".to_string())
+        );
+    }
+
+    #[test]
+    fn store_durability_accepts_eventual() {
+        let mut config = Config::default();
+        config.set("store.durability", "Eventual").unwrap();
+        // Normalized to lowercase.
+        assert_eq!(config.store.durability, "eventual");
+    }
+
+    #[test]
+    fn store_durability_rejects_unknown_values() {
+        let mut config = Config::default();
+        let err = config
+            .set("store.durability", "none")
+            .expect_err("none should be rejected");
+        assert!(format!("{err}").contains("immediate"));
+
+        let err = config
+            .set("store.durability", "fast")
+            .expect_err("garbage should be rejected");
+        assert!(format!("{err}").contains("immediate"));
     }
 }

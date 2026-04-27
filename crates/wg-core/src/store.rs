@@ -47,6 +47,27 @@ impl Store {
         &self.config
     }
 
+    /// Open a write transaction with the durability level configured
+    /// in `store.durability`. Defaults to `Immediate` (per-commit
+    /// fsync); `Eventual` is honored when the user has explicitly
+    /// opted in. An unrecognized value falls back to `Immediate` —
+    /// the safe choice — and `set` validation already prevents
+    /// other strings from landing in the config in the first place.
+    fn begin_write(&self) -> Result<redb::WriteTransaction> {
+        let mut txn = self
+            .db
+            .begin_write()
+            .map_err(|e| WgError::TransactionBegin {
+                source: Box::new(e),
+            })?;
+        let durability = match self.config.store.durability.as_str() {
+            "eventual" => redb::Durability::Eventual,
+            _ => redb::Durability::Immediate,
+        };
+        txn.set_durability(durability);
+        Ok(txn)
+    }
+
     /// Open or create a WikiGraph store at the given path.
     pub fn open(path: &Path, config: Config) -> Result<Self> {
         // Ensure parent directory exists
@@ -75,12 +96,7 @@ impl Store {
 
     /// Initialize schema (create tables if they don't exist).
     fn init_schema(&self) -> Result<()> {
-        let write_txn = self
-            .db
-            .begin_write()
-            .map_err(|e| WgError::TransactionBegin {
-                source: Box::new(e),
-            })?;
+        let write_txn = self.begin_write()?;
 
         // Create tables
         write_txn.open_table(META_TABLE).ok();
@@ -258,12 +274,7 @@ impl Store {
 
     /// Update the last_ingest_at timestamp in meta.
     pub fn set_last_ingest_at(&self) -> Result<()> {
-        let write_txn = self
-            .db
-            .begin_write()
-            .map_err(|e| WgError::TransactionBegin {
-                source: Box::new(e),
-            })?;
+        let write_txn = self.begin_write()?;
         let mut meta = write_txn
             .open_table(META_TABLE)
             .map_err(|e| WgError::StoreWrite {
@@ -310,12 +321,7 @@ impl Store {
             record.source_page = Some(source_page);
         }
 
-        let write_txn = self
-            .db
-            .begin_write()
-            .map_err(|e| WgError::TransactionBegin {
-                source: Box::new(e),
-            })?;
+        let write_txn = self.begin_write()?;
 
         // Check if entity with same name exists
         {
@@ -546,12 +552,7 @@ impl Store {
         let mut updated = record.clone();
         updated.update(input);
 
-        let write_txn = self
-            .db
-            .begin_write()
-            .map_err(|e| WgError::TransactionBegin {
-                source: Box::new(e),
-            })?;
+        let write_txn = self.begin_write()?;
 
         // Serialize updated record
         let record_bytes = serde_json::to_vec(&updated).map_err(|e| WgError::Serialize {
@@ -765,12 +766,7 @@ impl Store {
         let record = self.entity_get(name)?;
         let id = record.id;
 
-        let write_txn = self
-            .db
-            .begin_write()
-            .map_err(|e| WgError::TransactionBegin {
-                source: Box::new(e),
-            })?;
+        let write_txn = self.begin_write()?;
 
         // Remove from entities table
         {
@@ -981,12 +977,7 @@ impl Store {
             records.push(record);
         }
 
-        let write_txn = self
-            .db
-            .begin_write()
-            .map_err(|e| WgError::TransactionBegin {
-                source: Box::new(e),
-            })?;
+        let write_txn = self.begin_write()?;
 
         {
             let mut facts = write_txn
@@ -1157,12 +1148,7 @@ impl Store {
 
         record.update(input);
 
-        let write_txn = self
-            .db
-            .begin_write()
-            .map_err(|e| WgError::TransactionBegin {
-                source: Box::new(e),
-            })?;
+        let write_txn = self.begin_write()?;
 
         let record_bytes = serde_json::to_vec(&record).map_err(|e| WgError::Serialize {
             context: format!("fact update {:?}", id),
@@ -1198,12 +1184,7 @@ impl Store {
 
     /// Delete a fact.
     pub fn fact_delete(&mut self, id: &FactId) -> Result<()> {
-        let write_txn = self
-            .db
-            .begin_write()
-            .map_err(|e| WgError::TransactionBegin {
-                source: Box::new(e),
-            })?;
+        let write_txn = self.begin_write()?;
 
         // Get current record to find entity IDs
         let record: FactRecord = {
@@ -1409,12 +1390,7 @@ impl Store {
 
     /// Add a search session record.
     pub fn search_session_add(&mut self, session: &SearchSession) -> Result<()> {
-        let write_txn = self
-            .db
-            .begin_write()
-            .map_err(|e| WgError::TransactionBegin {
-                source: Box::new(e),
-            })?;
+        let write_txn = self.begin_write()?;
 
         let mut table =
             write_txn
@@ -1448,12 +1424,7 @@ impl Store {
 
     /// Add a search feedback record.
     pub fn search_feedback_add(&mut self, feedback: &SearchFeedback) -> Result<()> {
-        let write_txn = self
-            .db
-            .begin_write()
-            .map_err(|e| WgError::TransactionBegin {
-                source: Box::new(e),
-            })?;
+        let write_txn = self.begin_write()?;
 
         let mut table =
             write_txn
@@ -1544,12 +1515,7 @@ impl Store {
                 .as_millis() as u64,
         };
 
-        let write_txn = self
-            .db
-            .begin_write()
-            .map_err(|e| WgError::TransactionBegin {
-                source: Box::new(e),
-            })?;
+        let write_txn = self.begin_write()?;
 
         // Serialize record
         let record_bytes = serde_json::to_vec(&record).map_err(|e| WgError::Serialize {
@@ -1614,12 +1580,7 @@ impl Store {
         let target_id = self.resolve_entity(target)?;
         let rel_type = RelationType::new(rel_type);
 
-        let write_txn = self
-            .db
-            .begin_write()
-            .map_err(|e| WgError::TransactionBegin {
-                source: Box::new(e),
-            })?;
+        let write_txn = self.begin_write()?;
 
         let key = Self::relation_key(&source_id, &rel_type, &target_id);
         let rev_key = Self::relation_key(&target_id, &rel_type, &source_id);
@@ -2086,6 +2047,39 @@ mod tests {
     }
 
     #[test]
+    fn store_eventual_durability_writes_and_reads() {
+        // Confirms the `store.durability = "eventual"` config path
+        // doesn't break basic read-after-write within the same process
+        // (the eventual flush only matters on power loss, which the
+        // test environment can't simulate). Bench data lives in
+        // `benchmarks/src/bin/fsync_probe.rs`.
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = Config::default();
+        config.store.durability = "eventual".into();
+        let mut store = Store::open(&dir.path().join("test.redb"), config).unwrap();
+
+        store
+            .entity_add(EntityInput {
+                name: "Redis".to_string(),
+                entity_type: Some(EntityType::Technology),
+                ..Default::default()
+            })
+            .unwrap();
+        let redis_id = store.resolve_entity("Redis").unwrap();
+
+        let id = store
+            .fact_add(FactInput {
+                content: "test fact".to_string(),
+                fact_type: Some(FactType::Note),
+                entity_ids: Some(vec![redis_id]),
+                ..Default::default()
+            })
+            .unwrap();
+        let record = store.fact_get(&id).unwrap();
+        assert_eq!(record.content, "test fact");
+    }
+
+    #[test]
     fn fact_add_many_empty_input_is_noop() {
         let mut store = create_test_store();
         let ids = store.fact_add_many(vec![]).unwrap();
@@ -2373,12 +2367,7 @@ impl Store {
 
     /// Set a meta value from bytes.
     fn meta_set(&mut self, key: &str, value: &[u8]) -> Result<()> {
-        let write_txn = self
-            .db
-            .begin_write()
-            .map_err(|e| WgError::TransactionBegin {
-                source: Box::new(e),
-            })?;
+        let write_txn = self.begin_write()?;
 
         let mut meta = write_txn
             .open_table(META_TABLE)
