@@ -34,3 +34,7 @@ path = "src/bin/hnsw_timing.rs"
 [[bin]]
 name = "hnsw_rebuild_cache"
 path = "src/bin/hnsw_rebuild_cache.rs"
+
+[[bin]]
+name = "performance"
+path = "src/bin/performance.rs"
