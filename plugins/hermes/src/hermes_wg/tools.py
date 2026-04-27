@@ -38,53 +38,74 @@ def _make_handlers(client: WgClient) -> list[tuple[str, dict, Callable[..., Any]
     response had no fields to bind back to).
     """
 
-    def _query(args: dict, **_: Any) -> Any:
-        return client.query(
-            str(args.get("topic") or ""),
-            limit=int(args.get("limit") or 5),
-            depth=int(args.get("depth") or 2),
-            recent_limit=int(args.get("recent_limit") or 5),
+    def _serialize(value: Any) -> str:
+        # Hermes's `agent.display._detect_tool_failure` slices the
+        # result with `result[:500]` to scan it for error markers.
+        # That blows up with `unhashable type: 'slice'` if a tool
+        # returns a dict or list (slicing dicts hashes the slice
+        # object). Spotify's bundled handlers all return JSON
+        # strings; we follow the same pattern. The model still
+        # gets a structured payload because every wg call shape
+        # is JSON-serialisable.
+        return json.dumps(value, ensure_ascii=False, default=str)
+
+    def _query(args: dict, **_: Any) -> str:
+        return _serialize(
+            client.query(
+                str(args.get("topic") or ""),
+                limit=int(args.get("limit") or 5),
+                depth=int(args.get("depth") or 2),
+                recent_limit=int(args.get("recent_limit") or 5),
+            )
         )
 
-    def _search(args: dict, **_: Any) -> Any:
-        return client.search(
-            str(args.get("query") or ""),
-            limit=int(args.get("limit") or 10),
+    def _search(args: dict, **_: Any) -> str:
+        return _serialize(
+            client.search(
+                str(args.get("query") or ""),
+                limit=int(args.get("limit") or 10),
+            )
         )
 
-    def _recent(args: dict, **_: Any) -> Any:
-        return client.recent(
-            last=str(args.get("last") or "7d"),
-            limit=int(args.get("limit") or 10),
+    def _recent(args: dict, **_: Any) -> str:
+        return _serialize(
+            client.recent(
+                last=str(args.get("last") or "7d"),
+                limit=int(args.get("limit") or 10),
+            )
         )
 
-    def _entity_list(args: dict, **_: Any) -> Any:
-        return client.entity_list(limit=int(args.get("limit") or 50))
+    def _entity_list(args: dict, **_: Any) -> str:
+        return _serialize(client.entity_list(limit=int(args.get("limit") or 50)))
 
-    def _traverse(args: dict, **_: Any) -> Any:
-        return client.traverse(
-            str(args.get("entity") or ""),
-            depth=int(args.get("depth") or 2),
+    def _traverse(args: dict, **_: Any) -> str:
+        return _serialize(
+            client.traverse(
+                str(args.get("entity") or ""),
+                depth=int(args.get("depth") or 2),
+            )
         )
 
-    def _fact_add(args: dict, **_: Any) -> dict:
+    def _fact_add(args: dict, **_: Any) -> str:
         entities = args.get("entities")
         if entities is not None and not isinstance(entities, list):
             entities = [str(entities)]
         tags = args.get("tags")
         if tags is not None and not isinstance(tags, list):
             tags = [str(tags)]
-        return {
-            "id": client.fact_add(
-                str(args.get("content") or ""),
-                entities=entities,
-                fact_type=str(args.get("fact_type") or "note"),
-                tags=tags,
-            )
-        }
+        return _serialize(
+            {
+                "id": client.fact_add(
+                    str(args.get("content") or ""),
+                    entities=entities,
+                    fact_type=str(args.get("fact_type") or "note"),
+                    tags=tags,
+                )
+            }
+        )
 
-    def _lint(args: dict, **_: Any) -> Any:
-        return client.lint()
+    def _lint(args: dict, **_: Any) -> str:
+        return _serialize(client.lint())
 
     def _schema(name: str, description: str, parameters: dict) -> dict:
         return {"name": name, "description": description, "parameters": parameters}
