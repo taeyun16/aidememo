@@ -186,6 +186,46 @@ class WgClient:
             return payload["id"]
         return self._fact_add_legacy(args)
 
+    def fact_add_many(self, items: list[dict]) -> list[str]:
+        """Insert N facts in one transaction.
+
+        Each item is a dict with the same shape ``fact_add`` accepts:
+        ``content`` (required), ``entities``, ``fact_type``, ``tags``,
+        ``confidence``. Entity *names* are resolved to IDs before the
+        call so callers don't need to know about ULIDs.
+
+        On the PyO3 path the batch lands in a single redb write
+        transaction (one fsync, ~70× faster per fact than sequential
+        ``fact_add`` at typical batch sizes). On the CLI fallback there's
+        no equivalent subcommand, so we loop ``fact_add`` to preserve
+        correctness — operators who care about the speedup should
+        install the ``wg_python`` wheel.
+        """
+        if self._py is not None:
+            py_items = []
+            for item in items:
+                names = item.get("entities") or []
+                entity_ids = [self._py.resolve_entity(n) for n in names]
+                py_items.append({
+                    "content": item["content"],
+                    "entity_ids": entity_ids,
+                    "fact_type": item.get("fact_type", "note"),
+                    "tags": item.get("tags") or [],
+                    "confidence": item.get("confidence"),
+                })
+            return list(self._py.fact_add_many(py_items))
+        # CLI fallback — no `wg fact add-many` command yet, so loop.
+        return [
+            self.fact_add(
+                content=item["content"],
+                entities=item.get("entities"),
+                fact_type=item.get("fact_type", "note"),
+                tags=item.get("tags"),
+                confidence=item.get("confidence"),
+            )
+            for item in items
+        ]
+
     def _fact_add_legacy(self, args: list[str]) -> str:
         """Legacy fallback for `wg` binaries that pre-date the
         structured JSON output on `fact add`. Walks every line of

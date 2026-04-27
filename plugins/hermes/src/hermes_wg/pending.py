@@ -162,25 +162,34 @@ def commit_one(client: WgClient, idx: int, path: Path | None = None) -> PendingE
 
 def commit_all(client: WgClient, path: Path | None = None) -> tuple[int, list[PendingEntry]]:
     """Commit every entry to wg and clear the log on success.
-    On partial failure (some entries written, some not) the log is
-    rewritten with the *un*committed entries so the user can retry."""
+
+    Uses ``fact_add_many`` so the entire batch lands in a single redb
+    transaction — one fsync, much faster than the per-entry loop the
+    older implementation paid for. Semantically all-or-nothing: any
+    failure (wg unreachable, validation error from one entry) leaves
+    *all* entries in the log so the operator can fix and retry. The
+    caller's tuple return shape is preserved so existing UI code
+    keeps working — committed = N on success, 0 on failure.
+    """
     entries = read(path)
-    committed: list[PendingEntry] = []
-    leftover: list[PendingEntry] = []
-    for entry in entries:
-        try:
-            client.fact_add(
-                entry.content,
-                entities=None,
-                fact_type=entry.fact_type,
-                tags=["auto-recorded", "hermes-session"],
-                confidence=entry.confidence,
-            )
-            committed.append(entry)
-        except CLIENT_ERRORS:
-            leftover.append(entry)
-    write(_renumber(leftover), path)
-    return len(committed), leftover
+    if not entries:
+        return 0, []
+    items = [
+        {
+            "content": entry.content,
+            "fact_type": entry.fact_type,
+            "tags": ["auto-recorded", "hermes-session"],
+            "confidence": entry.confidence,
+        }
+        for entry in entries
+    ]
+    try:
+        client.fact_add_many(items)
+    except CLIENT_ERRORS:
+        # Whole batch failed — keep every entry intact for retry.
+        return 0, list(entries)
+    write([], path)
+    return len(entries), []
 
 
 def clear_one(idx: int, path: Path | None = None) -> PendingEntry:

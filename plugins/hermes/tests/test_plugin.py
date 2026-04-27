@@ -367,20 +367,19 @@ def test_slash_wg_pending_commit_all(monkeypatch: pytest.MonkeyPatch, tmp_path) 
         log,
     )
     monkeypatch.setenv("HERMES_STATE_DIR", str(tmp_path))
-    captured: list[str] = []
+    captured: list[list[dict]] = []
     monkeypatch.setattr(WgClient, "__init__", lambda self, *_a, **_kw: None)
     monkeypatch.setattr(
         WgClient,
-        "fact_add",
-        lambda self, content, entities=None, fact_type="note", tags=None, **_kw: (
-            captured.append(content) or "STUB"
-        ),
+        "fact_add_many",
+        lambda self, items: (captured.append(items) or [f"STUB-{i}" for i in range(len(items))]),
     )
     monkeypatch.setattr("hermes_wg.client.WgClient._has_cli", staticmethod(lambda: True))
 
     out = _wg_pending_handler(WgClient())("commit all")
     assert "Committed 2" in out
-    assert captured == ["fact one", "fact two"]
+    assert len(captured) == 1, "should call fact_add_many exactly once for the whole batch"
+    assert [item["content"] for item in captured[0]] == ["fact one", "fact two"]
     assert pending_mod.read(log) == []
 
 

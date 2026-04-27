@@ -106,26 +106,51 @@ def test_commit_one_writes_to_wg_and_drops_entry(tmp_path: Path, monkeypatch: py
     assert rest[0].idx == 1
 
 
-def test_commit_all_keeps_failed_entries(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_commit_all_succeeds_and_clears_log(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     log = tmp_path / "wg-pending.jsonl"
-    pending.write([_entry(1, "ok"), _entry(2, "boom"), _entry(3, "fine")], log)
+    pending.write([_entry(1, "ok"), _entry(2, "fine")], log)
 
-    def stub_fact_add(self, content, entities=None, fact_type="note", tags=None, **_kw):
-        if content == "boom":
-            raise WgUnavailable("simulated failure")
-        return "STUB"
+    captured: list[list[dict]] = []
+
+    def stub_fact_add_many(self, items):
+        captured.append(items)
+        return ["STUB-1", "STUB-2"]
 
     monkeypatch.setattr(WgClient, "__init__", lambda self, *_a, **_kw: None)
-    monkeypatch.setattr(WgClient, "fact_add", stub_fact_add)
+    monkeypatch.setattr(WgClient, "fact_add_many", stub_fact_add_many)
     monkeypatch.setattr("hermes_wg.client.WgClient._has_cli", staticmethod(lambda: True))
 
     committed, leftover = pending.commit_all(WgClient(), log)
     assert committed == 2
-    assert [e.content for e in leftover] == ["boom"]
+    assert leftover == []
+    assert pending.read(log) == [], "log should be cleared on success"
+    assert len(captured) == 1
+    assert [item["content"] for item in captured[0]] == ["ok", "fine"]
+    # Tags / fact_type are forwarded.
+    assert all(item["tags"] == ["auto-recorded", "hermes-session"] for item in captured[0])
+
+
+def test_commit_all_failure_keeps_every_entry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """`fact_add_many` is all-or-nothing in redb. If the batch raises
+    (wg unreachable / validation error on any entry), every queued
+    entry stays put so the operator can fix and retry."""
+    log = tmp_path / "wg-pending.jsonl"
+    pending.write([_entry(1, "a"), _entry(2, "b"), _entry(3, "c")], log)
+
+    def stub_fact_add_many(self, items):
+        raise WgUnavailable("simulated failure")
+
+    monkeypatch.setattr(WgClient, "__init__", lambda self, *_a, **_kw: None)
+    monkeypatch.setattr(WgClient, "fact_add_many", stub_fact_add_many)
+    monkeypatch.setattr("hermes_wg.client.WgClient._has_cli", staticmethod(lambda: True))
+
+    committed, leftover = pending.commit_all(WgClient(), log)
+    assert committed == 0
+    assert [e.content for e in leftover] == ["a", "b", "c"]
 
     on_disk = pending.read(log)
-    assert [e.content for e in on_disk] == ["boom"]
-    assert on_disk[0].idx == 1, "leftover should be renumbered"
+    assert [e.content for e in on_disk] == ["a", "b", "c"]
+    assert on_disk[0].idx == 1, "every entry stays at its original index"
 
 
 def test_pending_log_path_honors_state_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
