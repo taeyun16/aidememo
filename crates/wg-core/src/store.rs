@@ -1043,6 +1043,48 @@ impl Store {
     }
 
     /// Get a fact by ID.
+    /// Fetch many facts by id in a single read transaction.
+    ///
+    /// Used by the search path to hydrate a BM25 / HNSW candidate slate
+    /// without opening one redb txn per id (each `begin_read` +
+    /// `open_table` pair is ~20 µs of overhead, so 64 candidates was
+    /// ~2 ms of pure transaction setup). Returned records preserve
+    /// input order; missing ids are silently skipped.
+    pub fn fact_get_many(&self, ids: &[FactId]) -> Result<Vec<FactRecord>> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let read_txn = self
+            .db
+            .begin_read()
+            .map_err(|e| WgError::TransactionBegin {
+                source: Box::new(e),
+            })?;
+        let facts = read_txn
+            .open_table(FACTS_TABLE)
+            .map_err(|e| WgError::StoreRead {
+                table: "facts",
+                key: "<fact_get_many>".to_string(),
+                source: Box::new(e),
+            })?;
+
+        let mut results = Vec::with_capacity(ids.len());
+        for id in ids {
+            let entry = match facts.get(id.as_bytes().as_slice()) {
+                Ok(Some(v)) => v,
+                Ok(None) => continue,
+                Err(_) => continue,
+            };
+            let mut record: FactRecord = match serde_json::from_slice(entry.value()) {
+                Ok(r) => r,
+                Err(_) => continue,
+            };
+            record.record_access();
+            results.push(record);
+        }
+        Ok(results)
+    }
+
     pub fn fact_get(&self, id: &FactId) -> Result<FactRecord> {
         let read_txn = self
             .db
@@ -1998,6 +2040,49 @@ mod tests {
         // so count_entity_facts must return 10.
         let count = store.count_entity_facts(&redis_id).unwrap();
         assert_eq!(count, 10);
+    }
+
+    #[test]
+    fn fact_get_many_returns_records_in_input_order_skipping_missing() {
+        let mut store = create_test_store();
+        store
+            .entity_add(EntityInput {
+                name: "Redis".to_string(),
+                entity_type: Some(EntityType::Technology),
+                ..Default::default()
+            })
+            .unwrap();
+        let redis_id = store.resolve_entity("Redis").unwrap();
+
+        let inputs: Vec<FactInput> = (0..3)
+            .map(|i| FactInput {
+                content: format!("fact {i}"),
+                fact_type: Some(FactType::Note),
+                entity_ids: Some(vec![redis_id]),
+                ..Default::default()
+            })
+            .collect();
+        let ids = store.fact_add_many(inputs).unwrap();
+        assert_eq!(ids.len(), 3);
+
+        // Empty input → empty output, no txn opened.
+        assert!(store.fact_get_many(&[]).unwrap().is_empty());
+
+        // Order preserved.
+        let reversed: Vec<FactId> = ids.iter().rev().cloned().collect();
+        let records = store.fact_get_many(&reversed).unwrap();
+        assert_eq!(records.len(), 3);
+        assert_eq!(records[0].id, ids[2]);
+        assert_eq!(records[1].id, ids[1]);
+        assert_eq!(records[2].id, ids[0]);
+
+        // Missing ids are silently skipped, real ids still come through.
+        let missing = FactId::new();
+        let mixed = vec![ids[0], missing, ids[1]];
+        let records = store.fact_get_many(&mixed).unwrap();
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].id, ids[0]);
+        assert_eq!(records[1].id, ids[1]);
     }
 
     #[test]

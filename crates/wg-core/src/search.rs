@@ -526,11 +526,12 @@ mod semantic {
         // candidate slate, hydrate just those FactRecords. Otherwise
         // fall back to scanning every fact (maintains old behavior
         // when prefilter=0 or when no candidates are available).
+        // `fact_get_many` opens a single redb read txn for the whole
+        // slate — a per-call `fact_get` loop paid ~20 µs of txn
+        // overhead per candidate (~2 ms total at typical 64-fact
+        // prefilter sizes).
         let mut facts: Vec<FactRecord> = match candidates {
-            Some(ids) if !ids.is_empty() => ids
-                .iter()
-                .filter_map(|id| store.fact_get(id).ok())
-                .collect(),
+            Some(ids) if !ids.is_empty() => store.fact_get_many(ids)?,
             _ => store.fact_list(FactListOpts {
                 limit: None,
                 offset: 0,
@@ -705,13 +706,14 @@ mod semantic {
 
         let already: HashSet<FactId> = existing.iter().copied().collect();
 
-        // 1. Pull the seed entity set from BM25 hits.
+        // 1. Pull the seed entity set from BM25 hits — single batched
+        //    fact_get for the whole slate.
+        let seed_ids: Vec<FactId> = bm25_results.iter().map(|r| r.fact_id).collect();
+        let seed_facts = store.fact_get_many(&seed_ids)?;
         let mut seed_entities: HashSet<EntityId> = HashSet::new();
-        for r in bm25_results {
-            if let Ok(fact) = store.fact_get(&r.fact_id) {
-                for eid in fact.entity_ids {
-                    seed_entities.insert(eid);
-                }
+        for fact in seed_facts {
+            for eid in fact.entity_ids {
+                seed_entities.insert(eid);
             }
         }
         if seed_entities.is_empty() {
