@@ -39,3 +39,7 @@ path = "src/bin/hnsw_rebuild_cache.rs"
 [[bin]]
 name = "performance"
 path = "src/bin/performance.rs"
+
+[[bin]]
+name = "lint_profile"
+path = "src/bin/lint_profile.rs"

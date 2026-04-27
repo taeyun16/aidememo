@@ -23,26 +23,58 @@ impl<'a> LintEngine<'a> {
 
     /// Run all lint checks.
     pub fn lint(&self) -> Result<LintReport> {
+        let profile = std::env::var("WG_LINT_PROFILE").is_ok();
+        let phase = |label: &str, t0: std::time::Instant| {
+            if profile {
+                eprintln!(
+                    "[lint] {label}: {:.2}ms",
+                    t0.elapsed().as_secs_f64() * 1000.0
+                );
+            }
+        };
+        let t0 = std::time::Instant::now();
+
         // Get stats for report
         let stats = self.store.stats()?;
+        phase("stats", t0);
 
         // Single load: entities, all facts, all relations. Each
         // check then walks these slices in memory.
+        let t = std::time::Instant::now();
         let entities = self.store.entity_list(ListOpts {
             limit: Some(10_000),
             ..Default::default()
         })?;
+        phase("entity_list", t);
+
+        let t = std::time::Instant::now();
         let facts = self.store.fact_list(FactListOpts {
             limit: Some(usize::MAX),
             ..Default::default()
         })?;
+        phase("fact_list", t);
+
+        let t = std::time::Instant::now();
         let relations = self.store.relations_list_all()?;
+        phase("relations_list_all", t);
 
         let mut issues = Vec::new();
+
+        let t = std::time::Instant::now();
         issues.extend(check_orphans(&entities, &relations));
+        phase("check_orphans", t);
+
+        let t = std::time::Instant::now();
         issues.extend(check_duplicates(&entities));
+        phase("check_duplicates", t);
+
+        let t = std::time::Instant::now();
         issues.extend(self.check_stale(&entities)?);
+        phase("check_stale", t);
+
+        let t = std::time::Instant::now();
         issues.extend(check_conflicts(&entities, &facts));
+        phase("check_conflicts", t);
 
         Ok(LintReport {
             issues,
@@ -162,6 +194,16 @@ fn check_duplicates(entities: &[EntitySummary]) -> Vec<LintIssue> {
             postings.entry(*t).or_default().push(i);
         }
     }
+
+    // Drop trigrams that aren't discriminative — anything appearing
+    // in more than `common_cutoff` names. These match every pair they
+    // touch and inflate candidate sets without buying recall: two
+    // names that overlap only on common trigrams (e.g. "the lion" and
+    // "the tiger" share " th"/"the"/"he " but nothing else) can't
+    // reach the 0.9 similarity bar anyway. The ~50× speedup on
+    // shared-prefix synthetic corpora comes from this step.
+    let common_cutoff = (entities.len() / 4).max(20);
+    postings.retain(|_, idxs| idxs.len() <= common_cutoff);
 
     // For each entity i, count trigram overlap with later entities j.
     // Avoids the (j > i) duplicate-pair problem and lets us use a
