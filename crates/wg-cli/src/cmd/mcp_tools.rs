@@ -277,6 +277,7 @@ fn tool_recent(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String>
         since,
         until: None,
         current_only: false,
+        as_of: None,
     };
     let facts = wiki.fact_list(opts).map_err(|e| e.to_string())?;
     let text = serde_json::to_string_pretty(&facts).map_err(|e| e.to_string())?;

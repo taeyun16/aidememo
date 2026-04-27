@@ -1278,6 +1278,19 @@ impl Store {
                 continue;
             }
 
+            // As-of filter: include this fact only if it (a) existed
+            // at the as_of time and (b) wasn't superseded yet then.
+            if let Some(as_of) = opts.as_of {
+                if record.created_at > as_of {
+                    continue;
+                }
+                if let Some(superseded_at) = record.superseded_at
+                    && superseded_at <= as_of
+                {
+                    continue;
+                }
+            }
+
             results.push(record);
         }
 
@@ -1928,6 +1941,71 @@ mod tests {
             })
             .unwrap();
         assert_eq!(r.len(), 2);
+    }
+
+    #[test]
+    fn fact_list_as_of_hides_facts_superseded_before_the_cutoff() {
+        let mut store = create_test_store();
+        store
+            .entity_add(EntityInput {
+                name: "Redis".to_string(),
+                entity_type: Some(EntityType::Technology),
+                ..Default::default()
+            })
+            .unwrap();
+        let redis_id = store.resolve_entity("Redis").unwrap();
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        let one_day = 24 * 60 * 60 * 1000;
+        let yesterday = now.saturating_sub(one_day);
+        let tomorrow = now + one_day;
+
+        let a = store
+            .fact_add(FactInput {
+                content: "use Redis 6".to_string(),
+                fact_type: Some(FactType::Decision),
+                entity_ids: Some(vec![redis_id]),
+                source_confidence: Some(0.9),
+                ..Default::default()
+            })
+            .unwrap();
+        let b = store
+            .fact_add(FactInput {
+                content: "use Redis 7".to_string(),
+                fact_type: Some(FactType::Decision),
+                entity_ids: Some(vec![redis_id]),
+                source_confidence: Some(0.9),
+                ..Default::default()
+            })
+            .unwrap();
+
+        // Mark A superseded yesterday (in the past relative to the as_of cutoff).
+        store
+            .fact_update(
+                &a,
+                FactUpdate {
+                    superseded_at: Some(yesterday),
+                    superseded_by: Some(b),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+
+        // as_of in the future: A is already invalidated, only B remains.
+        let r = store
+            .fact_list(FactListOpts {
+                entity_id: Some(redis_id),
+                as_of: Some(tomorrow),
+                limit: Some(100),
+                ..Default::default()
+            })
+            .unwrap();
+        let contents: Vec<_> = r.iter().map(|f| f.content.as_str()).collect();
+        assert!(contents.contains(&"use Redis 7"));
+        assert!(!contents.contains(&"use Redis 6"));
     }
 }
 

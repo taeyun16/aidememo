@@ -325,6 +325,7 @@ impl PyWikiGraph {
             since: since_epoch_ms,
             until: until_epoch_ms,
             current_only,
+            as_of: None,
         };
         let facts = self.0.fact_list(opts).map_err(map_err)?;
         to_py(py, &facts)

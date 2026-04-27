@@ -65,6 +65,10 @@ impl<'a> SearchEngine<'a> {
                     continue;
                 }
 
+                if !matches_as_of(&fact, opts.as_of) {
+                    continue;
+                }
+
                 if opts.current_only && fact.superseded_at.is_some() {
                     continue;
                 }
@@ -145,6 +149,22 @@ fn matches_time_window(fact: &FactRecord, since: Option<u64>, until: Option<u64>
         if ts > u {
             return false;
         }
+    }
+    true
+}
+
+/// "As of" check — fact must have existed and still been current at
+/// `as_of`. Used by `--as-of` queries to walk back the timeline
+/// without manually following supersede chains.
+fn matches_as_of(fact: &FactRecord, as_of: Option<u64>) -> bool {
+    let Some(as_of) = as_of else { return true };
+    if fact.created_at > as_of {
+        return false;
+    }
+    if let Some(superseded_at) = fact.superseded_at
+        && superseded_at <= as_of
+    {
+        return false;
     }
     true
 }
@@ -481,6 +501,7 @@ mod semantic {
                 since: opts.since,
                 until: opts.until,
                 current_only: opts.current_only,
+                as_of: opts.as_of,
                 ..Default::default()
             })?,
         };
@@ -492,6 +513,7 @@ mod semantic {
                 && matches_entity_filter(fact, opts.entity_filter.as_ref())
                 && (opts.since.is_none() && opts.until.is_none()
                     || matches_time_window(fact, opts.since, opts.until))
+                && matches_as_of(fact, opts.as_of)
                 && (!opts.current_only || fact.superseded_at.is_none())
         });
 
@@ -741,7 +763,8 @@ mod semantic {
         #[derive(Clone)]
         struct FusedEntry {
             result: SearchResult,
-            score: f32,
+            base_score: f32,
+            weighted_score: f32,
         }
 
         let mut scores: HashMap<FactId, FusedEntry> = HashMap::new();
@@ -750,10 +773,11 @@ mod semantic {
             let fused_score = bm25_weight / (RRF_K + result.rank as f32);
             scores
                 .entry(result.fact_id)
-                .and_modify(|entry| entry.score += fused_score)
+                .and_modify(|entry| entry.base_score += fused_score)
                 .or_insert_with(|| FusedEntry {
                     result: result.clone(),
-                    score: fused_score,
+                    base_score: fused_score,
+                    weighted_score: 0.0,
                 });
         }
 
@@ -762,18 +786,65 @@ mod semantic {
                 let fused_score = semantic_weight / (RRF_K + result.rank as f32);
                 scores
                     .entry(result.fact_id)
-                    .and_modify(|entry| entry.score += fused_score)
+                    .and_modify(|entry| entry.base_score += fused_score)
                     .or_insert_with(|| FusedEntry {
                         result: result.clone(),
-                        score: fused_score,
+                        base_score: fused_score,
+                        weighted_score: 0.0,
                     });
             }
         }
 
-        let mut entries: Vec<FusedEntry> = scores.into_values().collect();
+        // Apply per-fact multiplicative weights (confidence × age decay)
+        // BEFORE the take(limit) cut. We have to pull every candidate
+        // anyway to populate `content` / `entity_names`, so amortising
+        // the lookup here costs the same as the old single-pass fetch.
+        let now_ms = current_epoch_ms();
+        let cfg = store.config();
+        let weight_by_confidence = cfg.search.weight_by_confidence;
+        let tau_ms = cfg.search.time_decay_tau_ms;
+
+        let mut entries: Vec<FusedEntry> = scores
+            .into_values()
+            .map(|mut entry| {
+                let mut weight = 1.0_f32;
+                if let Ok(fact) = store.fact_get(&entry.result.fact_id) {
+                    if weight_by_confidence {
+                        // Floor relevance at 0.1 so a hard "unhelpful"
+                        // signal hurts ranking but doesn't bury a fact
+                        // entirely (still discoverable when no other
+                        // candidate exists).
+                        weight *= fact.source_confidence.clamp(0.0, 1.0);
+                        weight *= fact.relevance_score.clamp(0.1, 1.0);
+                    }
+                    if tau_ms > 0 {
+                        let ts = fact.observed_at.unwrap_or(fact.created_at);
+                        let age_ms = now_ms.saturating_sub(ts);
+                        let decay = (-(age_ms as f64) / tau_ms as f64).exp() as f32;
+                        weight *= decay;
+                    }
+                    // Hydrate display fields while we have the fact in
+                    // hand — saves a second `fact_get` later.
+                    entry.result.content = fact.content;
+                    entry.result.fact_type = fact.fact_type;
+                    entry.result.entity_names = fact
+                        .entity_ids
+                        .iter()
+                        .filter_map(|eid| store.entity_get_by_id(*eid).ok())
+                        .map(|entity| entity.name)
+                        .collect();
+                    entry.result.source = fact.source;
+                    entry.result.created_at = fact.created_at;
+                    entry.result.observed_at = fact.observed_at;
+                }
+                entry.weighted_score = entry.base_score * weight;
+                entry
+            })
+            .collect();
+
         entries.sort_by(|a, b| {
-            b.score
-                .partial_cmp(&a.score)
+            b.weighted_score
+                .partial_cmp(&a.weighted_score)
                 .unwrap_or(Ordering::Equal)
                 .then_with(|| a.result.rank.cmp(&b.result.rank))
         });
@@ -781,26 +852,21 @@ mod semantic {
         let mut results = Vec::new();
         for (rank, entry) in entries.into_iter().take(limit).enumerate() {
             let mut result = entry.result;
-            if let Ok(fact) = store.fact_get(&result.fact_id) {
-                result.content = fact.content;
-                result.fact_type = fact.fact_type;
-                result.entity_names = fact
-                    .entity_ids
-                    .iter()
-                    .filter_map(|eid| store.entity_get_by_id(*eid).ok())
-                    .map(|entity| entity.name)
-                    .collect();
-                result.source = fact.source;
-                result.created_at = fact.created_at;
-                result.observed_at = fact.observed_at;
-            }
-            result.score = entry.score;
+            result.score = entry.weighted_score;
             result.rank = rank + 1;
             results.push(result);
         }
 
         results
     }
+}
+
+#[cfg(feature = "semantic")]
+fn current_epoch_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 // `embed_text` was an explicit fn re-export; embedding is now done
@@ -875,5 +941,196 @@ mod tests {
             .search("nonexistent query xyz", SearchOpts::default())
             .unwrap();
         assert!(results.len() <= config.search.default_limit);
+    }
+
+    #[cfg(feature = "semantic")]
+    #[test]
+    fn hybrid_search_weights_higher_confidence_higher() {
+        // Two facts mention the same query terms; the high-confidence
+        // one should rank above the low-confidence one. Without
+        // weight_by_confidence the BM25 rank alone would tie or
+        // invert (insertion-order tiebreak).
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.redb");
+        let mut config = Config::default();
+        // Disable time decay so the only differentiator is confidence.
+        config.search.time_decay_tau_ms = 0;
+        config.search.weight_by_confidence = true;
+        config.search.semantic_index = "bm25".to_string();
+        let mut store = Store::open(&path, config.clone()).unwrap();
+
+        store
+            .entity_add(EntityInput {
+                name: "Redis".to_string(),
+                entity_type: Some(EntityType::Technology),
+                ..Default::default()
+            })
+            .unwrap();
+        let redis = store.resolve_entity("Redis").unwrap();
+
+        let low = store
+            .fact_add(FactInput {
+                content: "low-confidence claim about redis cluster".to_string(),
+                fact_type: Some(FactType::Claim),
+                entity_ids: Some(vec![redis]),
+                source_confidence: Some(0.2),
+                ..Default::default()
+            })
+            .unwrap();
+        let high = store
+            .fact_add(FactInput {
+                content: "high-confidence decision about redis cluster".to_string(),
+                fact_type: Some(FactType::Decision),
+                entity_ids: Some(vec![redis]),
+                source_confidence: Some(0.95),
+                ..Default::default()
+            })
+            .unwrap();
+
+        let results = semantic::hybrid_search(
+            &store,
+            "redis cluster",
+            SearchOpts {
+                limit: Some(5),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let ids: Vec<_> = results.iter().map(|r| r.fact_id).collect();
+        let pos_high = ids.iter().position(|i| *i == high).expect("high present");
+        let pos_low = ids.iter().position(|i| *i == low).expect("low present");
+        assert!(
+            pos_high < pos_low,
+            "high-confidence fact should rank ahead of low-confidence (high={pos_high} low={pos_low})",
+        );
+    }
+
+    #[cfg(feature = "semantic")]
+    #[test]
+    fn hybrid_search_time_decay_demotes_old_facts() {
+        // Two equally-confident facts, one fresh and one a year old
+        // (via observed_at). With time_decay_tau_ms set to 30 days,
+        // the older fact's weight is e^(-12) ≈ 0 — it must rank
+        // behind the fresh one even when BM25 would tie.
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.redb");
+        let mut config = Config::default();
+        config.search.time_decay_tau_ms = 30 * 24 * 60 * 60 * 1000; // 30 days
+        config.search.weight_by_confidence = false; // isolate decay
+        config.search.semantic_index = "bm25".to_string();
+        let mut store = Store::open(&path, config.clone()).unwrap();
+
+        store
+            .entity_add(EntityInput {
+                name: "Postgres".to_string(),
+                entity_type: Some(EntityType::Technology),
+                ..Default::default()
+            })
+            .unwrap();
+        let pg = store.resolve_entity("Postgres").unwrap();
+
+        let now_ms = current_epoch_ms();
+        let one_year_ago = now_ms - 365 * 24 * 60 * 60 * 1000;
+
+        let stale = store
+            .fact_add(FactInput {
+                content: "postgres logical replication is unstable".to_string(),
+                fact_type: Some(FactType::Claim),
+                entity_ids: Some(vec![pg]),
+                source_confidence: Some(0.9),
+                observed_at: Some(one_year_ago),
+                ..Default::default()
+            })
+            .unwrap();
+        let fresh = store
+            .fact_add(FactInput {
+                content: "postgres logical replication shipped to prod".to_string(),
+                fact_type: Some(FactType::Decision),
+                entity_ids: Some(vec![pg]),
+                source_confidence: Some(0.9),
+                observed_at: Some(now_ms),
+                ..Default::default()
+            })
+            .unwrap();
+
+        let results = semantic::hybrid_search(
+            &store,
+            "postgres logical replication",
+            SearchOpts {
+                limit: Some(5),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let ids: Vec<_> = results.iter().map(|r| r.fact_id).collect();
+        let pos_fresh = ids.iter().position(|i| *i == fresh).expect("fresh present");
+        let pos_stale = ids.iter().position(|i| *i == stale).expect("stale present");
+        assert!(
+            pos_fresh < pos_stale,
+            "fresh fact should rank ahead of year-old fact under 30d τ (fresh={pos_fresh} stale={pos_stale})",
+        );
+    }
+
+    #[cfg(feature = "semantic")]
+    #[test]
+    fn hybrid_search_decay_disabled_when_tau_is_zero() {
+        // With time_decay_tau_ms=0, age must not affect ranking —
+        // operators on an archival wiki want every fact treated
+        // equally regardless of when it was observed.
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.redb");
+        let mut config = Config::default();
+        config.search.time_decay_tau_ms = 0;
+        config.search.weight_by_confidence = false;
+        config.search.semantic_index = "bm25".to_string();
+        let mut store = Store::open(&path, config.clone()).unwrap();
+
+        store
+            .entity_add(EntityInput {
+                name: "X".to_string(),
+                entity_type: Some(EntityType::Technology),
+                ..Default::default()
+            })
+            .unwrap();
+        let x = store.resolve_entity("X").unwrap();
+
+        // Two facts, ancient and modern, identical content modulo a
+        // disambiguator — without decay they should tie on BM25 score.
+        let now_ms = current_epoch_ms();
+        store
+            .fact_add(FactInput {
+                content: "needle alpha".to_string(),
+                entity_ids: Some(vec![x]),
+                observed_at: Some(now_ms - 10 * 365 * 24 * 60 * 60 * 1000),
+                source_confidence: Some(0.5),
+                ..Default::default()
+            })
+            .unwrap();
+        store
+            .fact_add(FactInput {
+                content: "needle beta".to_string(),
+                entity_ids: Some(vec![x]),
+                observed_at: Some(now_ms),
+                source_confidence: Some(0.5),
+                ..Default::default()
+            })
+            .unwrap();
+
+        let results = semantic::hybrid_search(
+            &store,
+            "needle",
+            SearchOpts {
+                limit: Some(5),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        // Both candidates returned; with τ=0 their weighted_score
+        // equals their base RRF score (no exp() multiplier).
+        assert!(results.len() >= 2, "both facts should be returned");
+        let scores: Vec<_> = results.iter().map(|r| r.score).collect();
+        // Equal base RRF scores remain equal-weighted; we only assert
+        // the score is non-zero (decay didn't squash anything).
+        assert!(scores.iter().all(|s| *s > 0.0));
     }
 }

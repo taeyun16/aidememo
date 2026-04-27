@@ -151,6 +151,7 @@ pub enum FactSub {
         since: Option<String>,
         until: Option<String>,
         last: Option<String>,
+        as_of: Option<String>,
         limit: Option<usize>,
     },
     Delete {
@@ -188,6 +189,7 @@ pub struct SearchSub {
     pub since: Option<String>,
     pub until: Option<String>,
     pub last: Option<String>,
+    pub as_of: Option<String>,
     pub limit: Option<usize>,
     pub query: String,
 }
@@ -533,6 +535,17 @@ fn fact_command() -> impl Parser<Command> {
         .help("Relative window from now: e.g. 30d, 12h, 4w")
         .argument::<String>("DURATION")
         .optional();
+    let as_of = long("as-of")
+        .help(
+            "Show only facts that were *current* at this point in time \
+             (YYYY-MM-DD or RFC3339). A fact qualifies if it existed by \
+             then (created_at ≤ as-of) and wasn't superseded yet \
+             (superseded_at > as-of or absent). Lets the caller answer \
+             'what did we believe was true on that date?' without \
+             walking the supersede chain.",
+        )
+        .argument::<String>("DATE")
+        .optional();
     let limit = long("limit")
         .short('l')
         .help("Maximum number of results")
@@ -545,6 +558,7 @@ fn fact_command() -> impl Parser<Command> {
         since,
         until,
         last,
+        as_of,
         limit,
     })
     .to_options()
@@ -634,6 +648,13 @@ fn search_command() -> impl Parser<Command> {
         .help("Relative window from now: e.g. 30d, 12h, 4w")
         .argument::<String>("DURATION")
         .optional();
+    let as_of = long("as-of")
+        .help(
+            "Restrict results to facts current at this date (YYYY-MM-DD \
+             or RFC3339). See `wg fact list --as-of` for details.",
+        )
+        .argument::<String>("DATE")
+        .optional();
     let limit = long("limit")
         .short('l')
         .help("Maximum number of results")
@@ -653,6 +674,7 @@ fn search_command() -> impl Parser<Command> {
         since,
         until,
         last,
+        as_of,
         limit,
         query,
     })

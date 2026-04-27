@@ -349,7 +349,7 @@ pub struct RelationInput {
 }
 
 /// Fact type classification.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 #[derive(Default)]
 pub enum FactType {
@@ -489,7 +489,7 @@ impl FactRecord {
 }
 
 /// Input for creating a fact.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct FactInput {
     pub content: String,
     #[serde(default)]
@@ -621,6 +621,13 @@ pub struct SearchOpts {
     pub session_id: Option<String>,
     /// If `true`, exclude superseded facts.
     pub current_only: bool,
+    /// "As of" timestamp (epoch ms). When set, the fact is included
+    /// only if it (a) existed at that point — `created_at <= as_of` —
+    /// and (b) was *still current* then — `superseded_at` is `None`
+    /// or `> as_of`. Lets the caller ask "what did we believe was
+    /// true on YYYY-MM-DD?" without manually walking the supersede
+    /// chain.
+    pub as_of: Option<u64>,
 }
 
 /// Options for listing facts.
@@ -638,6 +645,8 @@ pub struct FactListOpts {
     pub until: Option<u64>,
     /// If `true`, exclude superseded facts (those with `superseded_at` set).
     pub current_only: bool,
+    /// "As of" timestamp — see `SearchOpts::as_of`.
+    pub as_of: Option<u64>,
 }
 
 /// Retrieval strategy for `WikiGraph::query`. Inspired by LightRAG.

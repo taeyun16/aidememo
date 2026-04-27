@@ -359,6 +359,7 @@ fn fact_list(
         since: None,
         until: None,
         current_only,
+        as_of: None,
     };
     let facts = handle
         .wiki

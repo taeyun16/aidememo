@@ -336,6 +336,7 @@ impl WgStore {
             since: None,
             until: None,
             current_only: args.current_only.unwrap_or(false),
+            as_of: None,
         };
         let facts = self.wiki.fact_list(opts).map_err(err)?;
         to_json(&facts)

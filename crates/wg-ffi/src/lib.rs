@@ -530,6 +530,7 @@ pub extern "C" fn wg_fact_list(
             since: None,
             until: None,
             current_only,
+            as_of: None,
         };
         let facts = s.wiki.fact_list(opts).map_err(|e| e.to_string())?;
         json_serialize(&facts)

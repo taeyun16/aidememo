@@ -148,6 +148,23 @@ pub struct SearchConfig {
     ///                 the sidecar's model name no longer matches.
     #[serde(default = "default_semantic_index")]
     pub semantic_index: String,
+    /// Multiplicative weighting of `source_confidence` and
+    /// `relevance_score` into the final hybrid-search ranking. When
+    /// `true` (default), a fact's RRF-fused score is multiplied by
+    /// `source_confidence × max(relevance_score, 0.1)` so a low-trust
+    /// fact ranks below an equally-relevant high-trust one. Setting
+    /// `false` reverts to the binary `min_trust` filter only — useful
+    /// for debugging or when every fact in the wiki is hand-curated.
+    #[serde(default = "default_true")]
+    pub weight_by_confidence: bool,
+    /// Time-decay constant in milliseconds. A fact's score is
+    /// multiplied by `exp(-age_ms / time_decay_tau_ms)` where
+    /// `age_ms = now - (observed_at OR created_at)`. The default is
+    /// 90 days — a fact stays at >50% weight for ~62 days, drops to
+    /// ~37% at 90 days, and ~5% by 9 months. Set to `0` to disable
+    /// (every fact gets weight 1.0 regardless of age).
+    #[serde(default = "default_time_decay_tau")]
+    pub time_decay_tau_ms: u64,
 }
 
 fn default_semantic_prefilter() -> usize {
@@ -164,6 +181,15 @@ fn default_graph_depth() -> u32 {
 
 fn default_graph_fact_cap() -> usize {
     50
+}
+
+fn default_time_decay_tau() -> u64 {
+    // 90 days in milliseconds. Picked so a 60-day-old decision still
+    // ranks at >50% weight (e^(-2/3) ≈ 0.51) and a fact older than a
+    // year drops below 5% — enough to push stale claims behind fresh
+    // ones without erasing them outright. Operators can dial this up
+    // for archival wikis or down for fast-moving project notes.
+    90 * 24 * 60 * 60 * 1000
 }
 
 fn default_semantic_index() -> String {
@@ -189,6 +215,8 @@ impl Default for SearchConfig {
             graph_depth: default_graph_depth(),
             graph_fact_cap: default_graph_fact_cap(),
             semantic_index: default_semantic_index(),
+            weight_by_confidence: default_true(),
+            time_decay_tau_ms: default_time_decay_tau(),
         }
     }
 }

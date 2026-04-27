@@ -350,10 +350,15 @@ fn handle_fact(
             since,
             until,
             last,
+            as_of,
             limit,
         } => {
             let since_ms = resolve_since(since.as_deref(), last.as_deref())?;
             let until_ms = resolve_until(until.as_deref())?;
+            let as_of_ms = match as_of.as_deref() {
+                Some(d) => Some(parse_iso_to_epoch_ms(d)?),
+                None => None,
+            };
             with_wiki(path, config, |wiki| {
                 let entity_id = entity.and_then(|n| wiki.resolve_entity(&n).ok());
                 let facts = wiki.fact_list(FactListOpts {
@@ -365,6 +370,7 @@ fn handle_fact(
                     since: since_ms,
                     until: until_ms,
                     current_only: false,
+                    as_of: as_of_ms,
                 })?;
                 output::format_fact_list(&facts, &wiki, fmt(json))
             })
@@ -482,6 +488,10 @@ fn handle_search(
     let semantic_weight = config.search.semantic_weight;
     let since_ms = resolve_since(sub.since.as_deref(), sub.last.as_deref())?;
     let until_ms = resolve_until(sub.until.as_deref())?;
+    let as_of_ms = match sub.as_of.as_deref() {
+        Some(d) => Some(parse_iso_to_epoch_ms(d)?),
+        None => None,
+    };
 
     if sub.all_projects {
         return run_search_all_projects(
@@ -508,6 +518,7 @@ fn handle_search(
             until: until_ms,
             session_id: Some(session_id.clone()),
             current_only: false,
+            as_of: as_of_ms,
         };
 
         let results = if let Some(ref start) = sub.traverse_from {
@@ -555,6 +566,10 @@ fn run_search_all_projects(
             "no projects registered — `wg project create` first".into(),
         ));
     }
+    let as_of_ms = match sub.as_of.as_deref() {
+        Some(d) => Some(parse_iso_to_epoch_ms(d)?),
+        None => None,
+    };
     let limit = sub.limit.or(Some(default_limit));
     let mut all: Vec<(String, wg_core::SearchResult)> = Vec::new();
 
@@ -585,6 +600,7 @@ fn run_search_all_projects(
             until: until_ms,
             session_id: None,
             current_only: false,
+            as_of: as_of_ms,
         };
         match wiki.hybrid_search(&sub.query, opts) {
             Ok(hits) => {
