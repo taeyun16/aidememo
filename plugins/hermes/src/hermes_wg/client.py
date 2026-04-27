@@ -15,8 +15,10 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
+import time
 from pathlib import Path
 from typing import Any
 
@@ -82,10 +84,13 @@ class WgClient:
         return self._cli_json(["search", query, "--limit", str(limit)])
 
     def recent(self, last: str = "7d", limit: int = 10) -> list[dict]:
-        # CLI: `wg recent --last 7d --limit N`. wg-python doesn't expose
-        # `recent` directly — fall back to fact_list filtered by epoch.
+        # CLI: `wg recent --last 7d --limit N`. The PyO3 binding takes
+        # an explicit `since_epoch_ms`, which we derive from the same
+        # ``Nd / Nh / Nw / Ny`` mini-grammar wg's CLI uses so the two
+        # paths agree to the second.
         if self._py is not None:
-            return self._py.fact_list(limit=limit)  # filter not exposed; CLI is more accurate
+            since_ms = _now_ms() - parse_window_ms(last)
+            return self._py.fact_list(limit=limit, since_epoch_ms=since_ms)
         return self._cli_json(["recent", "--last", last, "-n", str(limit)])
 
     def entity_list(self, limit: int = 50) -> list[dict]:
@@ -132,17 +137,28 @@ class WgClient:
             args += ["--entities", ",".join(entities)]
         for tag in tags or []:
             args += ["--tag", tag]
+        # Prefer the structured `--json` output (`{"id": "<ULID>",
+        # "auto_created_entities": [...]}`) over scraping the human
+        # message; falls back to ULID-grep on older wg binaries that
+        # haven't shipped the JSON path yet.
+        try:
+            payload = self._cli_json(args)
+        except WgUnavailable:
+            return self._fact_add_legacy(args)
+        if isinstance(payload, dict) and isinstance(payload.get("id"), str):
+            return payload["id"]
+        return self._fact_add_legacy(args)
+
+    def _fact_add_legacy(self, args: list[str]) -> str:
+        """Legacy fallback for `wg` binaries that pre-date the
+        structured JSON output on `fact add`. Walks every line of
+        the human message looking for a 26-char ULID."""
         out = self._cli(args)
-        # `wg fact add` prints "Added fact with ID <ULID>" on the first
-        # line and may follow with secondary notices like
-        # "auto-created entities: foo, bar". Walk every line to find
-        # the ULID rather than guessing position.
         for line in out.splitlines():
             for token in line.split():
                 token = token.strip(".,:;")
-                if len(token) == 26 and token.isalnum() and token.isupper():
+                if _ULID_RE.match(token):
                     return token
-        # Fallback: return whatever we got — at least the caller can log it.
         return out.strip()
 
     # ------------------------------------------------------------------
@@ -178,3 +194,41 @@ class WgClient:
 def default_skills_path() -> Path:
     """Where the bundled SKILL.md lives inside the installed wheel."""
     return Path(__file__).parent / "skills" / "wg"
+
+
+# Crockford's ULID alphabet: 26 chars, [0-9A-HJKMNP-TV-Z] (no I, L, O,
+# U). We don't enforce the full alphabet — `[0-9A-Z]{26}` is a tighter
+# match than the previous "isalnum + isupper" walk and good enough to
+# tell ULIDs apart from ordinary words in `wg fact add` prose output.
+_ULID_RE = re.compile(r"^[0-9A-Z]{26}$")
+
+
+# Window grammar (`30d`, `12h`, `4w`, `1y`, `90m`, `60s`). Mirrors
+# `wg_core::time::parse_duration_to_ms` so the PyO3 backend agrees
+# with what `wg recent --last <window>` would compute.
+_WINDOW_RE = re.compile(r"^\s*(\d+)\s*([smhdwy])\s*$", re.IGNORECASE)
+_WINDOW_UNITS = {
+    "s": 1_000,
+    "m": 60 * 1_000,
+    "h": 60 * 60 * 1_000,
+    "d": 24 * 60 * 60 * 1_000,
+    "w": 7 * 24 * 60 * 60 * 1_000,
+    "y": 365 * 24 * 60 * 60 * 1_000,
+}
+
+
+def parse_window_ms(window: str) -> int:
+    """Convert a window string like ``"7d"`` or ``"12h"`` to
+    milliseconds. Raises :class:`ValueError` on unparseable input
+    so callers can decide whether to surface or default."""
+    m = _WINDOW_RE.match(window or "")
+    if not m:
+        raise ValueError(
+            f"unparseable window {window!r}; expected forms like 30d, 12h, 4w, 1y, 90m, 60s"
+        )
+    qty, unit = int(m.group(1)), m.group(2).lower()
+    return qty * _WINDOW_UNITS[unit]
+
+
+def _now_ms() -> int:
+    return int(time.time() * 1000)

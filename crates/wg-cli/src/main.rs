@@ -301,6 +301,22 @@ fn handle_fact(
                     source_confidence: confidence,
                     observed_at: observed_at_ms,
                 })?;
+                if json {
+                    // Stable shape for programmatic callers (the
+                    // hermes-wg plugin and any other client that
+                    // would otherwise have to grep for a ULID in
+                    // free-form prose).
+                    let payload = serde_json::json!({
+                        "id": id.to_string(),
+                        "auto_created_entities": auto_created,
+                    });
+                    return serde_json::to_string_pretty(&payload).map_err(|e| {
+                        WgError::Serialize {
+                            context: "fact add (json)".to_string(),
+                            source: e,
+                        }
+                    });
+                }
                 let mut msg = format!("Added fact with ID {}", id);
                 if !auto_created.is_empty() {
                     let label = if auto_created.len() == 1 {

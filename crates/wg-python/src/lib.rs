@@ -289,8 +289,18 @@ impl PyWikiGraph {
     }
 
     /// List facts. Filters: entity (name), fact_type, min_confidence, limit,
-    /// current_only (exclude superseded).
-    #[pyo3(signature = (entity=None, fact_type=None, min_confidence=None, limit=None, current_only=false))]
+    /// current_only (exclude superseded), since_epoch_ms / until_epoch_ms
+    /// (validity-window bounds; pass `None` for either side to leave it open).
+    #[pyo3(signature = (
+        entity=None,
+        fact_type=None,
+        min_confidence=None,
+        limit=None,
+        current_only=false,
+        since_epoch_ms=None,
+        until_epoch_ms=None,
+    ))]
+    #[allow(clippy::too_many_arguments)]
     fn fact_list(
         &self,
         py: Python<'_>,
@@ -299,6 +309,8 @@ impl PyWikiGraph {
         min_confidence: Option<f32>,
         limit: Option<usize>,
         current_only: bool,
+        since_epoch_ms: Option<u64>,
+        until_epoch_ms: Option<u64>,
     ) -> PyResult<PyObject> {
         let entity_id = match entity {
             Some(name) => Some(self.0.resolve_entity(&name).map_err(map_err)?),
@@ -310,8 +322,8 @@ impl PyWikiGraph {
             min_confidence,
             limit,
             offset: 0,
-            since: None,
-            until: None,
+            since: since_epoch_ms,
+            until: until_epoch_ms,
             current_only,
         };
         let facts = self.0.fact_list(opts).map_err(map_err)?;
