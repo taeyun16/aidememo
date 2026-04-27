@@ -70,6 +70,16 @@ struct InstallReport {
     method: String,
     detail: String,
     overwrote: bool,
+    /// Result of the post-install best-effort check that the agent
+    /// actually picked up the new server. `None` when verification
+    /// wasn't attempted (file-edit targets, `--print` mode, missing
+    /// `<bin> mcp list` subcommand). `Some(true)` when `wg` appeared
+    /// in the agent's MCP list, `Some(false)` when the install
+    /// command exited 0 but the entry didn't show up — that's the
+    /// shape we want to surface, since it usually means the agent's
+    /// CLI silently rejected the entry (parser quirk, bad path, etc).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    verified: Option<bool>,
 }
 
 #[derive(serde::Serialize)]
@@ -178,10 +188,19 @@ pub fn run_mcp_install(sub: McpInstallSub, json: bool) -> Result<String, WgError
     } else {
         "Registered"
     };
-    Ok(format!(
+    let mut out = format!(
         "{verb} wg MCP server for {} ({})\n  {}\n",
         report.target, report.method, report.detail
-    ))
+    );
+    match report.verified {
+        Some(true) => out.push_str("  verified: wg appears in the agent's MCP list ✓\n"),
+        Some(false) => out.push_str(
+            "  verified: ⚠ install command exited 0 but `wg` did not show up — \
+             check the agent's config manually\n",
+        ),
+        None => {}
+    }
+    Ok(out)
 }
 
 // ---------------------------------------------------------------------------
@@ -203,6 +222,7 @@ fn install_via_cli(
             method: "shell-out".to_string(),
             detail: cmdline,
             overwrote: false,
+            verified: None,
         });
     }
 
@@ -223,11 +243,45 @@ fn install_via_cli(
         )));
     }
 
+    // Best-effort: ask the agent to list its MCP servers and check
+    // that `wg` actually shows up. If the list subcommand doesn't
+    // exist or fails for any reason, we leave `verified = None` —
+    // the install already exited 0; it'd be hostile to fail the
+    // command on a verification step that's only a defence in depth.
+    let verified = verify_registered(bin, "wg");
+
     Ok(InstallReport {
         target,
         method: "shell-out".to_string(),
         detail: cmdline,
         overwrote: false,
+        verified,
+    })
+}
+
+/// Run `<bin> mcp list` (text output) and check whether `token`
+/// appears as an entry. Returns `None` if the command can't run or
+/// exits non-zero — those signal "list subcommand not available",
+/// not "install failed".
+fn verify_registered(bin: &str, token: &str) -> Option<bool> {
+    let out = ProcessCommand::new(bin)
+        .args(["mcp", "list"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    Some(stdout_contains_token(&stdout, token))
+}
+
+/// Word-boundary aware match — `stdout_contains_token("uvx-wg-x", "wg")`
+/// is `false`, but `stdout_contains_token("wg: stdio …", "wg")` is
+/// `true`. Pure / synchronous so it's the easy bit to unit test.
+fn stdout_contains_token(stdout: &str, token: &str) -> bool {
+    stdout.lines().any(|line| {
+        line.split(|c: char| !c.is_alphanumeric() && c != '-' && c != '_')
+            .any(|word| word == token)
     })
 }
 
@@ -254,6 +308,7 @@ fn install_codex(force: bool, print: bool) -> Result<InstallReport, WgError> {
             method: "file-edit".to_string(),
             detail,
             overwrote: false,
+            verified: None,
         });
     }
 
@@ -301,11 +356,15 @@ fn install_codex(force: bool, print: bool) -> Result<InstallReport, WgError> {
         .map_err(|e| WgError::Internal(format!("serialize codex config: {e}")))?;
     write_atomically(&path, &serialized)?;
 
+    // File-edit is its own verification: we just parsed the file we
+    // wrote, so we know the entry is there. Mark verified true so
+    // operators get the same confidence signal as the shell-out path.
     Ok(InstallReport {
         target: "codex".to_string(),
         method: "file-edit".to_string(),
         detail,
         overwrote: already,
+        verified: Some(true),
     })
 }
 
@@ -329,6 +388,7 @@ fn install_cursor(force: bool, print: bool) -> Result<InstallReport, WgError> {
             method: "file-edit".to_string(),
             detail,
             overwrote: false,
+            verified: None,
         });
     }
 
@@ -376,6 +436,7 @@ fn install_cursor(force: bool, print: bool) -> Result<InstallReport, WgError> {
         method: "file-edit".to_string(),
         detail,
         overwrote: already,
+        verified: Some(true),
     })
 }
 
@@ -452,6 +513,36 @@ mod tests {
         std::fs::write(&path, &s).unwrap();
         let parsed: toml::Value = std::fs::read_to_string(&path).unwrap().parse().unwrap();
         assert_eq!(parsed["mcp_servers"]["wg"]["command"].as_str(), Some("wg"));
+    }
+
+    #[test]
+    fn stdout_contains_token_matches_word_boundary() {
+        // Whole-line entry — the common claude/openclaw `mcp list` form.
+        assert!(stdout_contains_token(
+            "wg: stdio command=wg args=[mcp]\n",
+            "wg"
+        ));
+        // Two-column form — `name<space><type>` (some hermes versions).
+        assert!(stdout_contains_token(
+            "wg            stdio\nctx7  http\n",
+            "wg"
+        ));
+        // Token nestled in punctuation: `[wg]` should match.
+        assert!(stdout_contains_token(
+            "servers: [context7, wg, docs]\n",
+            "wg"
+        ));
+    }
+
+    #[test]
+    fn stdout_contains_token_rejects_substring() {
+        // `uvx-wg` shares the substring but is not a separate entry.
+        assert!(!stdout_contains_token("uvx-wg-bridge: stdio\n", "wg"));
+        // Empty stdout never matches.
+        assert!(!stdout_contains_token("", "wg"));
+        // Token with hyphens — exact match only.
+        assert!(stdout_contains_token("hermes-wg: stdio\n", "hermes-wg"));
+        assert!(!stdout_contains_token("hermes-wg-x: stdio\n", "hermes-wg"));
     }
 
     #[test]
