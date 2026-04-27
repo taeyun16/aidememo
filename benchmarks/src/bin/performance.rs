@@ -188,17 +188,50 @@ fn run_scale(scale: usize, rows: &mut Vec<Row>) {
     });
     eprintln!("{:.2}s", op_t0.elapsed().as_secs_f64());
 
-    eprint!("  search_bm25... ");
-    let op_t0 = Instant::now();
-    // search_bm25 (warm) — BM25-only by zeroing semantic weight.
     let queries = [
         "cache replication",
         "failover latency",
         "sharding indexing",
         "consistency throughput",
     ];
+
+    eprint!("  search_bm25... ");
+    let op_t0 = Instant::now();
+    // search_bm25 (warm) — pure BM25 via WikiGraph::search. No
+    // embedding work, so this is the apples-to-apples view of the
+    // BM25 inverted-index lookup against PLAN.md's target table.
     let mut idx = 0usize;
-    let search_times = time_n(200, || {
+    let search_bm25_times = time_n(200, || {
+        let q = queries[idx % queries.len()];
+        idx = idx.wrapping_add(1);
+        let _ = wiki
+            .search(
+                q,
+                SearchOpts {
+                    limit: Some(10),
+                    ..Default::default()
+                },
+            )
+            .expect("search_bm25");
+    });
+    rows.push(Row {
+        scale,
+        op: "search_bm25",
+        stats: stats(&search_bm25_times),
+    });
+    eprintln!("{:.2}s", op_t0.elapsed().as_secs_f64());
+
+    eprint!("  search_hybrid... ");
+    let op_t0 = Instant::now();
+    // search_hybrid (warm) — production hybrid path. Includes BM25
+    // inverted-index lookup, query embedding, semantic re-rank over
+    // the prefilter slate, and RRF fusion. We're still in the
+    // `semantic_index = "naive"` config so HNSW is skipped, which
+    // matches the BM25-prefilter fallback most non-HNSW deployments
+    // see. The Tier-3/4 (HNSW + model-warm) path will need its own
+    // bench because of the 1–2 s model-load amortization.
+    let mut idx = 0usize;
+    let search_hybrid_times = time_n(100, || {
         let q = queries[idx % queries.len()];
         idx = idx.wrapping_add(1);
         let _ = wiki
@@ -207,16 +240,16 @@ fn run_scale(scale: usize, rows: &mut Vec<Row>) {
                 SearchOpts {
                     limit: Some(10),
                     bm25_weight: 1.0,
-                    semantic_weight: 0.0,
+                    semantic_weight: 1.0,
                     ..Default::default()
                 },
             )
-            .expect("search");
+            .expect("search_hybrid");
     });
     rows.push(Row {
         scale,
-        op: "search_bm25",
-        stats: stats(&search_times),
+        op: "search_hybrid",
+        stats: stats(&search_hybrid_times),
     });
     eprintln!("{:.2}s", op_t0.elapsed().as_secs_f64());
 
@@ -296,6 +329,60 @@ fn run_scale(scale: usize, rows: &mut Vec<Row>) {
         stats: stats(&startup_times),
     });
     eprintln!("{:.2}s", op_t0.elapsed().as_secs_f64());
+
+    // === HNSW phase: reopen with default config, build sidecar,
+    //     measure the HNSW-backed hybrid path. ===
+    eprint!("  hnsw_build... ");
+    let op_t0 = Instant::now();
+    let mut hnsw_cfg = Config::default(); // semantic_index = "hnsw" by default
+    hnsw_cfg.store.path = store_path.to_string_lossy().into_owned();
+    let hnsw_wiki = WikiGraph::open(&store_path, hnsw_cfg).expect("reopen hnsw");
+    let hnsw_build_ms = {
+        let t0 = Instant::now();
+        let _ = hnsw_wiki.vector_index_rebuild().expect("hnsw build");
+        t0.elapsed().as_secs_f64() * 1000.0
+    };
+    rows.push(Row {
+        scale,
+        op: "hnsw_build",
+        stats: stats(&[hnsw_build_ms]),
+    });
+    eprintln!("{:.2}s", op_t0.elapsed().as_secs_f64());
+
+    eprint!("  search_hybrid_hnsw... ");
+    let op_t0 = Instant::now();
+    let mut idx = 0usize;
+    // Warm: first call primes query embedding cache + load model.
+    let _ = hnsw_wiki
+        .hybrid_search(
+            queries[0],
+            SearchOpts {
+                limit: Some(10),
+                ..Default::default()
+            },
+        )
+        .expect("hnsw warmup");
+    let hnsw_search_times = time_n(100, || {
+        let q = queries[idx % queries.len()];
+        idx = idx.wrapping_add(1);
+        let _ = hnsw_wiki
+            .hybrid_search(
+                q,
+                SearchOpts {
+                    limit: Some(10),
+                    bm25_weight: 1.0,
+                    semantic_weight: 1.0,
+                    ..Default::default()
+                },
+            )
+            .expect("search_hybrid_hnsw");
+    });
+    rows.push(Row {
+        scale,
+        op: "search_hybrid_hnsw",
+        stats: stats(&hnsw_search_times),
+    });
+    eprintln!("{:.2}s", op_t0.elapsed().as_secs_f64());
 }
 
 fn print_table(rows: &[Row]) {
@@ -334,6 +421,7 @@ fn target_p95(op: &str, scale: usize) -> Option<f64> {
         ("startup", [5.0, 10.0, 30.0, 100.0, 200.0]),
         ("traverse_d3", [0.2, 0.5, 1.0, 3.0, 5.0]),
         ("search_bm25", [0.5, 1.0, 3.0, 10.0, 15.0]),
+        ("search_hybrid", [1.0, 2.0, 5.0, 15.0, 20.0]),
         ("fact_add", [0.5, 0.5, 1.0, 1.0, 1.0]),
         ("lint", [5.0, 10.0, 50.0, 200.0, 500.0]),
     ];

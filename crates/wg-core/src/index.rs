@@ -4,23 +4,39 @@ use crate::store::Store;
 use crate::types::{FactId, FactListOpts};
 
 /// In-memory BM25 index state.
-pub(crate) struct Bm25IndexState {
+///
+/// Public so that callers (notably `WikiGraph`, but also bindings
+/// and benchmarks) can own one and pass `&RwLock<Bm25IndexState>`
+/// into `SearchEngine::new`. Internals stay private — this is just
+/// a handle to a cached inverted index keyed by `FactId`.
+pub struct Bm25IndexState {
     /// BM25 search engine instance keyed by FactId.
     pub(crate) engine: bm25::SearchEngine<FactId>,
     /// Whether the index needs rebuilding.
-    pub(crate) dirty: bool,
+    pub dirty: bool,
     /// Rebuild generation counter.
     pub(crate) generation: u64,
 }
 
 impl Bm25IndexState {
     /// Create an empty BM25 index state.
-    pub(crate) fn new() -> Self {
+    ///
+    /// Starts marked `dirty: true` so the first search via
+    /// `SearchEngine::ensure_index` triggers a full rebuild.
+    /// `build_bm25_index` flips `dirty` back to `false` once the
+    /// engine is populated.
+    pub fn new() -> Self {
         Self {
             engine: bm25::SearchEngineBuilder::<FactId>::with_avgdl(256.0).build(),
-            dirty: false,
+            dirty: true,
             generation: 0,
         }
+    }
+}
+
+impl Default for Bm25IndexState {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

@@ -11,20 +11,25 @@ use crate::types::*;
 use parking_lot::RwLock;
 
 /// Search engine for WikiGraph.
+///
+/// Borrows its BM25 state from the caller (typically `WikiGraph`),
+/// so multiple `SearchEngine` instances created during a single
+/// `WikiGraph`'s lifetime share the same cached inverted index.
+/// `ensure_index` rebuilds only when the cache is marked dirty by a
+/// preceding mutation.
 pub struct SearchEngine<'a> {
     store: &'a Store,
     config: &'a Config,
-    index: RwLock<Bm25IndexState>,
+    index: &'a RwLock<Bm25IndexState>,
 }
 
 impl<'a> SearchEngine<'a> {
-    /// Create a new search engine.
-    pub fn new(store: &'a Store, config: &'a Config) -> Self {
-        let index = build_bm25_index(store);
+    /// Create a new search engine bound to a caller-owned BM25 cache.
+    pub fn new(store: &'a Store, config: &'a Config, index: &'a RwLock<Bm25IndexState>) -> Self {
         Self {
             store,
             config,
-            index: RwLock::new(index),
+            index,
         }
     }
 
@@ -302,7 +307,16 @@ mod semantic {
             std::num::NonZeroUsize::new(8).expect("non-zero"),
         ));
         let fact_cache = RwLock::new(HashMap::new());
-        hybrid_search_with_ctx(store, query, opts, &*provider, &cache, &fact_cache)
+        let bm25_index = RwLock::new(Bm25IndexState::new());
+        hybrid_search_with_ctx(
+            store,
+            query,
+            opts,
+            &*provider,
+            &cache,
+            &fact_cache,
+            &bm25_index,
+        )
     }
 
     /// Hybrid search with a caller-owned provider + query-embedding cache.
@@ -315,9 +329,10 @@ mod semantic {
         provider: &dyn EmbeddingProvider,
         query_cache: &Mutex<LruCache<String, Vec<f32>>>,
         fact_cache: &RwLock<HashMap<FactId, QuantizedEmbedding>>,
+        bm25_index: &RwLock<Bm25IndexState>,
     ) -> Result<Vec<SearchResult>> {
         let config = store.config();
-        let engine = SearchEngine::new(store, config);
+        let engine = SearchEngine::new(store, config, bm25_index);
 
         // Tier 7-B: pull a wider BM25 candidate slate than the final
         // limit. The semantic re-ranker scores only these candidates,
@@ -397,9 +412,10 @@ mod semantic {
         provider: &dyn EmbeddingProvider,
         query_cache: &Mutex<LruCache<String, Vec<f32>>>,
         index: &crate::vector_index::HnswIndex,
+        bm25_index: &RwLock<Bm25IndexState>,
     ) -> Result<Vec<SearchResult>> {
         let config = store.config();
-        let engine = SearchEngine::new(store, config);
+        let engine = SearchEngine::new(store, config, bm25_index);
 
         let limit = opts.limit.unwrap_or(config.search.default_limit);
         // We still run BM25 — its scores feed into RRF fusion alongside
@@ -930,7 +946,8 @@ mod tests {
             .unwrap();
 
         let config = Config::default();
-        let engine = SearchEngine::new(&store, &config);
+        let bm25_state = RwLock::new(Bm25IndexState::new());
+        let engine = SearchEngine::new(&store, &config, &bm25_state);
 
         let results = engine
             .search("high availability", SearchOpts::default())

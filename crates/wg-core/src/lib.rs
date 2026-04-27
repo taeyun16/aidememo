@@ -80,6 +80,15 @@ pub struct WikiGraph {
     /// BM25-prefilter path so the system still works.
     #[cfg(feature = "semantic")]
     vector_index: Arc<parking_lot::RwLock<Option<vector_index::HnswIndex>>>,
+    /// Cached BM25 inverted index, shared across every search on
+    /// this `WikiGraph`. Without this each `hybrid_search` call
+    /// constructed a fresh `SearchEngine` and rebuilt the index
+    /// from scratch — at 10K facts that was ~800 ms per query.
+    /// Mutations (`add_fact`, `fact_update`, `fact_delete`,
+    /// `entity_add`, `entity_rename`, `entity_delete`, `ingest`)
+    /// flip `dirty = true`; `SearchEngine::ensure_index` rebuilds
+    /// on the next search and clears the flag.
+    bm25_index: Arc<parking_lot::RwLock<index::Bm25IndexState>>,
 }
 
 impl WikiGraph {
@@ -109,7 +118,15 @@ impl WikiGraph {
             fact_embed_cache: Arc::new(parking_lot::RwLock::new(std::collections::HashMap::new())),
             #[cfg(feature = "semantic")]
             vector_index: Arc::new(parking_lot::RwLock::new(None)),
+            bm25_index: Arc::new(parking_lot::RwLock::new(index::Bm25IndexState::new())),
         })
+    }
+
+    /// Mark the cached BM25 inverted index as stale. Call from any
+    /// op that changes a fact's BM25 doc text — content + entity
+    /// names + tags — so the next search rebuilds before scoring.
+    fn bm25_mark_dirty(&self) {
+        self.bm25_index.write().dirty = true;
     }
 
     /// Lazy-load (or return) the embedding provider. Cached for the
@@ -250,7 +267,9 @@ impl WikiGraph {
 
     /// Add a new entity.
     pub fn entity_add(&self, input: EntityInput) -> Result<EntityId> {
-        self.store.write().entity_add(input)
+        let id = self.store.write().entity_add(input)?;
+        self.bm25_mark_dirty();
+        Ok(id)
     }
 
     /// Get an entity by name.
@@ -265,7 +284,11 @@ impl WikiGraph {
 
     /// Update an entity.
     pub fn entity_update(&self, name: &str, input: EntityUpdate) -> Result<()> {
-        self.store.write().entity_update(name, input)
+        self.store.write().entity_update(name, input)?;
+        // Conservative: any field could be `name`, which is in the
+        // BM25 doc text for every fact that references this entity.
+        self.bm25_mark_dirty();
+        Ok(())
     }
 
     /// List entities with options.
@@ -275,7 +298,9 @@ impl WikiGraph {
 
     /// Delete an entity.
     pub fn entity_delete(&self, name: &str) -> Result<()> {
-        self.store.write().entity_delete(name)
+        self.store.write().entity_delete(name)?;
+        self.bm25_mark_dirty();
+        Ok(())
     }
 
     /// Rename an entity (alias for entity_update with name change).
@@ -286,7 +311,9 @@ impl WikiGraph {
                 name: Some(new_name.to_string()),
                 ..Default::default()
             },
-        )
+        )?;
+        self.bm25_mark_dirty();
+        Ok(())
     }
 
     /// Set the "compiled truth" summary prose for an entity.
@@ -339,6 +366,7 @@ impl WikiGraph {
         // index will need rebuilding too. The fact_embed_cache only
         // holds inferred-once vectors keyed by FactId; new IDs simply
         // get computed lazily on first search.
+        self.bm25_mark_dirty();
         Ok(id)
     }
 
@@ -361,6 +389,7 @@ impl WikiGraph {
         {
             self.fact_embed_cache.write().remove(id);
         }
+        self.bm25_mark_dirty();
         Ok(())
     }
 
@@ -371,6 +400,7 @@ impl WikiGraph {
         {
             self.fact_embed_cache.write().remove(id);
         }
+        self.bm25_mark_dirty();
         Ok(())
     }
 
@@ -472,6 +502,7 @@ impl WikiGraph {
             let mut store = self.store.write();
             ingest::ingest_wiki(wiki_root, &mut store, incremental)?
         };
+        self.bm25_mark_dirty();
         // Auto-rebuild the HNSW index if the user opted into the
         // "hnsw" semantic path. Failure is non-fatal — the BM25
         // fallback in hybrid_search will still serve results, and
@@ -493,7 +524,7 @@ impl WikiGraph {
     pub fn search(&self, query: &str, opts: SearchOpts) -> Result<Vec<SearchResult>> {
         use search::SearchEngine;
         let store = self.store.read();
-        let engine = SearchEngine::new(&store, &self.config);
+        let engine = SearchEngine::new(&store, &self.config, &self.bm25_index);
         engine.search(query, opts)
     }
 
@@ -519,6 +550,7 @@ impl WikiGraph {
                     provider.as_ref(),
                     &self.query_embed_cache,
                     idx,
+                    &self.bm25_index,
                 );
             }
             // Index unavailable — log via stderr and fall through.
@@ -539,6 +571,7 @@ impl WikiGraph {
             provider.as_ref(),
             &self.query_embed_cache,
             &self.fact_embed_cache,
+            &self.bm25_index,
         )
     }
 
@@ -553,7 +586,7 @@ impl WikiGraph {
     ) -> Result<Vec<SearchResult>> {
         use search::SearchEngine;
         let store = self.store.read();
-        let engine = SearchEngine::new(&store, &self.config);
+        let engine = SearchEngine::new(&store, &self.config, &self.bm25_index);
         engine.search_with_traverse(query, start, depth, opts)
     }
 

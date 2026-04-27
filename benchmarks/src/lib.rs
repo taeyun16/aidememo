@@ -1,8 +1,10 @@
 use criterion::{BatchSize, Criterion};
+use parking_lot::RwLock;
 use std::fs;
 use std::hint::black_box;
 use std::path::Path;
 use tempfile::TempDir;
+use wg_core::index::Bm25IndexState;
 use wg_core::search::SearchEngine;
 use wg_core::store::Store;
 use wg_core::{Config, EntityInput, EntityType, FactInput, FactType, SearchOpts, WikiGraph};
@@ -139,7 +141,8 @@ Caching reduces latency for repeated reads.
 
 pub fn bm25_search(c: &mut Criterion) {
     let (_dir, store, config) = create_seeded_store();
-    let engine = SearchEngine::new(&store, &config);
+    let bm25_state = RwLock::new(Bm25IndexState::new());
+    let engine = SearchEngine::new(&store, &config, &bm25_state);
     let query = black_box("high availability");
 
     c.bench_function("bm25_search", |b| {

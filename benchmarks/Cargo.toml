@@ -11,6 +11,7 @@ publish = false
 
 [dependencies]
 criterion = "0.5"
+parking_lot = "0.12"
 tempfile = "3.10"
 wg-core = { path = "../crates/wg-core", features = ["semantic"] }
 
