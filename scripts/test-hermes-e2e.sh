@@ -153,13 +153,85 @@ PY
 ok "register(ctx) ran cleanly — 7 tools / 2 hooks / 4 commands"
 
 # ----------------------------------------------------------------------
+# 4. End-to-end through the TUI slash worker — proves slash commands
+#    actually pump through Hermes's plugin host and our handlers fire.
+#
+#    The TUI ships a long-running `tui_gateway.slash_worker` process
+#    that reads JSON-RPC lines from stdin and dispatches each "/wg…"
+#    command through HermesCLI.process_command — which calls into
+#    our register_command handlers. Driving that worker directly
+#    sidesteps the LLM entirely (no provider auth, no API call) and
+#    gives us a deterministic check that every slash surface works.
+# ----------------------------------------------------------------------
+
+if [[ ! -d "$HERMES_AGENT_ROOT/tui_gateway" ]]; then
+    log "tui_gateway module missing — skipping TUI slash worker phase"
+else
+    log "driving tui_gateway.slash_worker for /wg-pending /wg-recent /wg-add"
+    # Pre-seed two facts so /wg-recent has something to show.
+    "$WG_BIN" --store "$WG_STORE" fact add "HNSW is the default semantic index" \
+        --entities wg,hnsw --type decision > /dev/null
+    "$WG_BIN" --store "$WG_STORE" fact add "Hermes plugin auto-records on session_end" \
+        --entities wg,hermes --type convention > /dev/null
+
+    slash_log="$TEST_HOME/slash_output.jsonl"
+    (
+        cd "$HERMES_AGENT_ROOT"
+        printf '%s\n%s\n%s\n%s\n' \
+            '{"id":1,"command":"/wg-pending"}' \
+            '{"id":2,"command":"/wg-recent 7d"}' \
+            '{"id":3,"command":"/wg-add \"HNSW ships as default index\" --type decision --entities wg"}' \
+            '{"id":4,"command":"/wg-recent 7d"}' \
+            | timeout 60 "$HERMES_VENV_PY" -m tui_gateway.slash_worker \
+                --session-key wg-e2e-slash 2>/dev/null > "$slash_log"
+    )
+
+    # Each request returns one JSON line. Hand the file to python
+    # rather than embedding the output in a heredoc — the slash
+    # responses contain backslash-escaped quotes that would otherwise
+    # collide with shell or python string literals.
+    SLASH_LOG="$slash_log" "$HERMES_VENV_PY" - <<'PY'
+import json, os, sys
+
+with open(os.environ["SLASH_LOG"], encoding="utf-8") as fh:
+    lines = [l for l in fh.read().splitlines() if l.strip()]
+
+by_id = {json.loads(line)["id"]: json.loads(line) for line in lines}
+
+def must(cond, msg):
+    if not cond:
+        raise SystemExit(f"FAIL: {msg}")
+
+must(set(by_id) == {1, 2, 3, 4}, f"missing slash responses: got ids {sorted(by_id)}")
+must(all(o["ok"] for o in by_id.values()), "at least one slash returned ok=False")
+
+# /wg-pending on a fresh log → no detections message
+must("No pending detections" in by_id[1]["output"], f"/wg-pending unexpected: {by_id[1]['output']!r}")
+
+# /wg-recent before add → 2 facts (the seed pair)
+recent_before = by_id[2]["output"]
+must(recent_before.count("\n  - [") == 2, f"/wg-recent should show 2 seeded facts, got: {recent_before!r}")
+
+# /wg-add returns a 26-char ULID
+add_msg = by_id[3]["output"]
+must("Recorded 0" in add_msg and "type=decision" in add_msg, f"/wg-add unexpected: {add_msg!r}")
+
+# /wg-recent after add → 3 facts (seed + new)
+recent_after = by_id[4]["output"]
+must(recent_after.count("\n  - [") == 3, f"/wg-recent after add should show 3 facts, got: {recent_after!r}")
+must("HNSW ships as default index" in recent_after, "newly added fact missing from /wg-recent")
+PY
+    ok "/wg, /wg-add, /wg-recent, /wg-pending all dispatched through the TUI gateway"
+fi
+
+# ----------------------------------------------------------------------
 # Done
 # ----------------------------------------------------------------------
 
 ok "all checks passed"
 echo
-echo "  Manual follow-ups (need an LLM-configured profile):"
-echo "    /wg redis"
-echo "    /wg-add \"…\" --type decision --entities …"
-echo "    /wg-pending"
-echo "    on_session_start auto-context preamble"
+echo "  LLM-required follow-ups (run with your own provider configured):"
+echo "    Tool invocation by the model:"
+echo "      hermes chat -q 'Use wg_query for HNSW' -Q"
+echo "    Auto-context preamble at session start:"
+echo "      hermes chat --tui   # check the system message before your turn"
