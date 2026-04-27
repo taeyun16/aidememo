@@ -12,4 +12,17 @@ publish = false
 [dependencies]
 criterion = "0.5"
 tempfile = "3.10"
-wg-core = { path = "../crates/wg-core" }
+wg-core = { path = "../crates/wg-core", features = ["semantic"] }
+
+# HNSW ANN prototype — measures recall + latency vs brute force on
+# real Korean Wikipedia retrieval (MIRACL/ko). Lives behind the
+# `--bin hnsw_miracl` target so it doesn't affect the criterion bench
+# suite or the workspace's release build.
+instant-distance = "0.6"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+simsimd = "6"
+
+[[bin]]
+name = "hnsw_miracl"
+path = "src/bin/hnsw_miracl.rs"
