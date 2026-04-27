@@ -63,15 +63,17 @@ wg --project personal stats             # one-off override
 - `wg relation add <source> <target> <rel_type>` / `wg relation remove`
 
 ### Maintenance
-- `wg doctor [--json]` — health check
+- `wg doctor [--json]` — health check (now also reports memory + disk footprint)
 - `wg lint [--json]` — raw lint issues
 - `wg bench <golden.jsonl> [--k 5]` — measure P@K, R@K, p50/p95 latency against a golden set
 - `wg skill check <path>` — validate Claude Code SKILL.md frontmatter + tool refs
 - `wg ingest <wiki_root> [-i]` — ingest markdown
 - `wg watch <wiki_root> [--search QUERY]` — re-ingest on file changes (live search optional)
 - `wg sync <wiki_root>` — alias for incremental ingest
+- `wg vector-rebuild [--json]` — rebuild the HNSW index (after a model swap)
 - `wg export [--scope all|entities|relations|facts]` / `wg import`
 - `wg config get/set/list`
+  - `wg config set store.durability eventual` — drop per-commit fsync (~13× faster writes; survives process crash, not power loss)
 
 ### Multi-project
 - `wg project list/show/create/use/remove`
@@ -84,9 +86,16 @@ wg --project personal stats             # one-off override
 ## Use as an MCP server
 
 Local agents (Claude Code, Codex CLI, …) can spawn `wg` as a stdio MCP
-server. **9 tools** exposed: `wg_query`, `wg_search`, `wg_entity_list`,
-`wg_traverse`, `wg_lint`, `wg_fact_add`, `wg_doctor`, `wg_recent`,
-`wg_backlinks`.
+server. **13 tools** exposed:
+
+| Read | Write |
+|---|---|
+| `wg_query` (one-call context) | `wg_fact_add` |
+| `wg_search` | `wg_fact_add_many` (batched, one fsync) |
+| `wg_recent` | `wg_fact_supersede` |
+| `wg_traverse` / `wg_backlinks` | `wg_fact_edit` |
+| `wg_entity_list` / `wg_entity_describe` | |
+| `wg_doctor` / `wg_lint` | |
 
 ```bash
 # Claude Code
@@ -113,8 +122,12 @@ for full integration details.
 | `wg-nif` | Elixir/Erlang bindings (rustler) |
 | `wg-ffi` | C-ABI bindings (cdylib + staticlib + header) |
 
-All four bindings expose the full API including `current_only` filtering
-and `fact_supersede` for validity-window workflows.
+All four bindings expose the full API: `current_only` filtering,
+`fact_supersede` for validity-window workflows, and `fact_add_many`
+for amortized-fsync bulk inserts. The Python constructor accepts
+config kwargs (`model`, `semantic_index`, `durability`) so callers
+can override any default without round-tripping through a config
+file.
 
 ## Features
 
@@ -132,9 +145,32 @@ and `fact_supersede` for validity-window workflows.
 - **Multi-project** — switch stores via `wg project use` or `--project`
 - **Auto-create entities** — `wg fact add --entities A,B` creates missing entities
 - **Mermaid / DOT graphs** — `wg graph --format mermaid`
-- **MCP server** — stdio (preferred) and HTTP/SSE transports, 9 tools
+- **MCP server** — stdio (preferred) and HTTP/SSE transports, 13 tools
 - **Native bindings** — embed wg directly in Python / Node / Elixir / C
 - **Adaptive ranking** — record search feedback, retrain ranker offline
+
+## Performance
+
+Reference numbers from `benchmarks/src/bin/performance.rs` on a 10 000-fact
+synthetic wiki, p95 latency, default config (HNSW + immediate durability):
+
+| Operation | p95 |
+|---|---|
+| `traverse_d3` | ~0.01 ms |
+| `search_bm25` (pure BM25) | ~0.5 ms |
+| `search_hybrid` (HNSW path) | ~3.4 ms |
+| `lint` (full health check) | ~34 ms |
+| `fact_add_many` (per fact) | ~0.07 ms |
+| `fact_add` (single) | ~5 ms (OS fsync floor; use `fact_add_many` or `store.durability = eventual` to amortize/skip) |
+| `startup` (open + first traverse) | ~12 ms |
+
+Profile yourself:
+
+```bash
+cargo run --release --bin performance      # full matrix → benchmarks/results/performance.json
+WG_LINT_PROFILE=1 wg lint                  # per-phase lint timings
+WG_SEARCH_PROFILE=1 wg search "…"          # per-phase hybrid_search timings
+```
 
 ## License
 
