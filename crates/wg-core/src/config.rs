@@ -294,14 +294,22 @@ pub struct RerankConfig {
     #[serde(default)]
     pub api_key_env: String,
     /// How many of the top RRF candidates to send to the reranker.
-    /// Lower values = faster (cross-encoders cost ~ms per pair); 32
-    /// is the typical sweet spot for "polish the head of the list."
+    /// Cross-encoders cost roughly 10 ms per pair on Metal-accelerated
+    /// TEI, ~50 ms per pair under Docker amd64 emulation, so the
+    /// per-search rerank tax is `top_k × per-pair-cost` — see
+    /// `.notes/bench-tei-overhead.md` for the measured curve.
+    /// Default 8 is a compromise: it adds ~80 ms p50 on a native
+    /// Apple Silicon host while still polishing the head of the
+    /// list. Bump to 16/32 for recall-heavy work where the latency
+    /// budget allows. Note: TEI's `max_client_batch_size = 32` is
+    /// the upstream cap unless the operator redeploys with a higher
+    /// flag.
     #[serde(default = "default_rerank_top_k")]
     pub top_k: usize,
 }
 
 fn default_rerank_top_k() -> usize {
-    32
+    8
 }
 
 impl Default for RerankConfig {
@@ -773,9 +781,12 @@ mod tests {
     fn rerank_default_is_disabled() {
         let cfg = Config::default();
         assert_eq!(cfg.rerank.provider, "");
-        assert_eq!(cfg.rerank.top_k, 32);
+        // Default top_k=8 was picked from the TEI-overhead bench
+        // (.notes/bench-tei-overhead.md) so the rerank tax stays
+        // around 80 ms p50 on native Metal.
+        assert_eq!(cfg.rerank.top_k, 8);
         assert_eq!(cfg.get("rerank.provider"), Some(String::new()));
-        assert_eq!(cfg.get("rerank.top_k"), Some("32".to_string()));
+        assert_eq!(cfg.get("rerank.top_k"), Some("8".to_string()));
     }
 
     #[test]
