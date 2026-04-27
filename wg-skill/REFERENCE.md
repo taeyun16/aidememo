@@ -79,11 +79,18 @@ pub fn suggest_similar_entities(&self, name: &str) -> Result<Vec<String>>
 // Fact CRUD
 pub fn add_fact(&self, input: FactInput) -> Result<FactId>
 pub fn fact_add(&self, input: FactInput) -> Result<FactId> // alias
+pub fn fact_add_many(&self, inputs: Vec<FactInput>) -> Result<Vec<FactId>>
+// One redb write txn for the whole batch — amortizes the per-commit fsync (~3-5 ms on macOS APFS,
+// ~70× faster per fact than sequential fact_add at typical batch sizes). All-or-nothing.
 pub fn fact_get(&self, id: &FactId) -> Result<FactRecord>
 pub fn fact_update(&self, id: &FactId, input: FactUpdate) -> Result<()>
 pub fn fact_delete(&self, id: &FactId) -> Result<()>
 pub fn fact_feedback(&self, id: &FactId, helpful: bool) -> Result<()>
+pub fn fact_supersede(&self, old_id: &FactId, new_id: &FactId) -> Result<()>
+// Validity-window invalidate. Sets old.superseded_at=now / superseded_by=new.
+// `current_only` filters and `--as-of <date>` queries respect this.
 pub fn fact_list(&self, opts: FactListOpts) -> Result<Vec<FactRecord>>
+// FactListOpts now carries `as_of: Option<u64>` (epoch ms) for historical queries.
 
 // Relations / graph
 pub fn relation_add(&self, input: RelationInput) -> Result<()>

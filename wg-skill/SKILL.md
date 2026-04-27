@@ -22,14 +22,28 @@ All operations are offline and private.
 ## Quick reference
 
 ```bash
-wg --json query "<topic>"                     # one-shot context: search + traverse + recent (preferred)
-wg --json search "<query>" --limit 10         # raw ranked facts (BM25 + semantic)
-wg --json entity list --limit 50              # all entities
-wg --json fact list --entity <name> --last 30d
-wg --json traverse <entity> --depth 2         # related entities
+# Read
+wg --json query "<topic>"                       # one-shot context (search + traverse + recent)
+wg --json search "<query>" --limit 10           # ranked facts (BM25 + semantic)
+wg --json search "<query>" --as-of 2026-01-01   # what we knew on a given date
+wg --json entity list --limit 50                # all entities
+wg --json entity show <name>                    # compiled summary + recent facts
+wg --json fact list --entity <name> --last 30d --current
+wg --json traverse <entity> --depth 2           # related entities
+wg --json recent --last 7d                      # what changed recently
+
+# Write
 wg fact add "<content>" --type <type> --entities <a>,<b>
-wg lint --json                                # graph health
-wg stats --json                               # counts + size
+wg fact supersede <OLD_ID> <NEW_ID>             # validity-window: old becomes "no longer current"
+wg edit fact <ID> --append/--prepend/--find+--replace/--content
+wg entity describe <name> "<prose>"             # set / clear compiled-truth summary
+wg relation add <source> <target> <rel_type>
+
+# Maintenance
+wg lint --json                                  # graph health (orphan / duplicate / conflict / stale)
+wg doctor [--json] [--fix]                      # health + memory/disk + agent integration
+wg vector-rebuild                               # rebuild HNSW after a model swap
+wg stats --json
 ```
 
 `wg query <topic>` collapses the "what do we know about X" workflow into one
@@ -39,19 +53,43 @@ resolved entity, top search hits, related entities (graph), and recent facts
 in a single response.
 
 `fact_type`: `decision | pattern | convention | claim | note | question`
+- *Atomic types* (decision / convention / pattern) are mutually exclusive
+  per entity — `wg lint` flags multiple current ones as conflicts. Resolve
+  with `wg fact supersede`.
+- *Non-atomic* (claim / note / question) coexist freely.
+
 `entity_type`: `technology | concept | comparison | query | person | team`
+or any custom string (e.g. `service`, `rfc`, `incident`).
 
 ## When to add facts
 
-Always link facts to existing entities (run `wg entity list` first). Don't
-invent entity names — if no match, ask the user before creating.
+- Always link facts to existing entities (run `wg entity list` first). Don't
+  invent entity names — if no match, ask the user before creating.
+- For decisions / conventions / patterns, use `wg fact supersede` rather
+  than editing in place when the *meaning* changes — the validity window
+  preserves the timeline (`--as-of` queries can replay past state).
+- Use `wg edit fact` only for typo / clarification fixes that don't
+  alter what the fact asserts.
 
 ## MCP — preferred for tool use
 
-If `wg` is registered as an MCP server (it usually is — see `.mcp.json` at the
-repo root, or `claude mcp add wg -- wg mcp`), use the MCP tools `wg_query`
-(unified context), `wg_search`, `wg_entity_list`, `wg_traverse`, `wg_lint`,
-`wg_fact_add` instead of shelling out. They return structured JSON.
+If `wg` is registered as an MCP server (`.mcp.json` at the repo root, or
+`wg mcp-install --target <agent>`), use the MCP tools instead of shelling
+out. They return structured JSON.
+
+| Tool | Use for |
+|---|---|
+| `wg_query` | One-call context fetch (preferred over chaining) |
+| `wg_search` | Pure hybrid search, no graph |
+| `wg_recent` | Last N days of facts |
+| `wg_entity_list` | Browse entities |
+| `wg_traverse` / `wg_backlinks` | Forward / reverse graph walk |
+| `wg_doctor` / `wg_lint` | Health snapshot / raw issues |
+| `wg_entity_describe` | Set or clear an entity's prose summary |
+| `wg_fact_add` | Append a single fact |
+| `wg_fact_add_many` | Batched insert (one fsync) — prefer for ≥3 facts |
+| `wg_fact_supersede` | Mark old fact replaced by a new one |
+| `wg_fact_edit` | Patch a fact's content (append / prepend / find+replace / content) |
 
 ## Install
 
@@ -62,10 +100,13 @@ choice:
 wg skill install --target claude     # → ~/.claude/skills/wg/
 wg skill install --target hermes     # → ~/.hermes/skills/wg/
 wg skill install --target openclaw   # → ~/.openclaw/skills/wg/
+wg skill install --target opencode   # → ~/.config/opencode/AGENTS.md (appended)
+wg skill install --target pi         # → ~/.config/pi/AGENTS.md (pi has no MCP — skill only)
 
 wg mcp-install --target claude       # claude mcp add wg -- wg mcp
 wg mcp-install --target codex        # writes [mcp_servers.wg] in ~/.codex/config.toml
 wg mcp-install --target cursor       # writes mcpServers.wg in ~/.cursor/mcp.json
+wg mcp-install --target opencode     # writes mcp.wg in ~/.config/opencode/opencode.json
 ```
 
 `wg mcp-install --list-targets` and `wg skill install --list-targets` show
