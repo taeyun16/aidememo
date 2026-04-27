@@ -55,6 +55,31 @@ class DetectedFact:
     source_line: str
 
 
+_MARKDOWN_FENCE = re.compile(r"[`*_~]+")
+_WHITESPACE = re.compile(r"\s+")
+
+
+def _dedup_key(payload: str) -> str:
+    """Normalise a payload aggressively for the dedup set so that
+    superficial formatting differences don't slip a duplicate
+    through. Real-world echo case: a user types
+
+        결정: 한국어 패턴도 auto_record off 모드에서 즉시 wg에 기록한다
+
+    and the LLM responds with
+
+        결론: 한국어 패턴도 ``auto_record off`` 모드에서 즉시 wg에 기록한다.
+
+    Both detections collapse to the same key after this pass —
+    backticks stripped, internal whitespace collapsed, trailing
+    punctuation removed, lowercased — so only the first one is
+    recorded.
+    """
+    cleaned = _MARKDOWN_FENCE.sub("", payload)
+    cleaned = _WHITESPACE.sub(" ", cleaned)
+    return cleaned.strip(" .,;:!?\"'").lower()
+
+
 def detect(text: str, *, confidence_floor: float = 0.8) -> list[DetectedFact]:
     """Scan ``text`` (a single message body or a stitched transcript)
     for fact-worthy lines. Returns deduplicated detections at or above
@@ -82,7 +107,7 @@ def detect(text: str, *, confidence_floor: float = 0.8) -> list[DetectedFact]:
                 continue
             if weight < confidence_floor:
                 continue
-            key = payload.lower()
+            key = _dedup_key(payload)
             if key in seen:
                 continue
             seen.add(key)

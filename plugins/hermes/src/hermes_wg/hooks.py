@@ -101,21 +101,48 @@ def make_post_llm_call(
     confidence_floor: float = 0.85,
     default_entities: list[str] | None = None,
     pending_path: Path | None = None,
+    detect_in: str = "both",
 ):
     """Build the ``post_llm_call`` callback.
 
     Runs the decision detector against the just-finished turn's text
-    (``user_message`` + ``assistant_response``). Matches at or above
-    ``confidence_floor`` get either auto-recorded as wg facts (the
-    default) or appended to ``pending_path`` for offline review
-    when ``dry_run`` is on.
+    and either auto-records each match as a wg fact (the default) or
+    appends it to ``pending_path`` for offline review when
+    ``dry_run`` is on.
+
+    ``detect_in`` controls which side of the turn is scanned:
+
+      - ``"both"`` (default) — user_message + assistant_response.
+        Highest recall: catches both user-typed decisions and
+        agent-confirmed ones (e.g. "should we go with X?" → "let's
+        go with X"). Detector dedup collapses superficial echo
+        differences (markdown formatting, trailing punctuation).
+      - ``"user"`` — user_message only. Highest precision: every
+        record is something the user explicitly typed. Skips agent
+        confirmations entirely.
+      - ``"assistant"`` — assistant_response only. Captures decisions
+        the agent commits to but the user merely prompted for.
     """
+
+    valid_modes = {"both", "user", "assistant"}
+    if detect_in not in valid_modes:
+        log.warning(
+            "wg detect_in=%r unknown — falling back to 'both' (valid: %s)",
+            detect_in,
+            sorted(valid_modes),
+        )
+        detect_in = "both"
 
     def post_llm_call(**kwargs: Any) -> None:
         if not enable_auto_record:
             return
         text_chunks: list[str] = []
-        for key in ("user_message", "assistant_response"):
+        wanted_keys = {
+            "both": ("user_message", "assistant_response"),
+            "user": ("user_message",),
+            "assistant": ("assistant_response",),
+        }[detect_in]
+        for key in wanted_keys:
             value = kwargs.get(key)
             if isinstance(value, str) and value.strip():
                 text_chunks.append(value)
@@ -209,6 +236,7 @@ def register_all(ctx: Any, client: WgClient, config: dict | None = None) -> None
     default_entities = cfg.get("default_entities")
     pending_path_cfg = cfg.get("pending_log")
     pending_path = Path(pending_path_cfg) if pending_path_cfg else None
+    detect_in = str(cfg.get("detect_in") or "both")
 
     ctx.register_hook(
         "pre_llm_call",
@@ -223,5 +251,6 @@ def register_all(ctx: Any, client: WgClient, config: dict | None = None) -> None
             confidence_floor=floor,
             default_entities=default_entities,
             pending_path=pending_path,
+            detect_in=detect_in,
         ),
     )

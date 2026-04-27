@@ -69,6 +69,26 @@ def test_dedupe_repeated_decisions():
     assert len(detect(text)) == 1
 
 
+def test_dedupe_collapses_user_assistant_echo_with_formatting():
+    """Real-world case from the e2e run: user types a decision in
+    plain text, the assistant echoes it back with markdown
+    backticks and a trailing period. Only one fact should land."""
+    text = (
+        "결정: 한국어 패턴도 auto_record off 모드에서 즉시 wg에 기록한다\n"
+        "결론: 한국어 패턴도 `auto_record off` 모드에서 즉시 wg에 기록한다."
+    )
+    out = detect(text)
+    assert len(out) == 1, [d.content for d in out]
+
+
+def test_dedupe_handles_collapsed_whitespace_difference():
+    text = (
+        "Decision: ship the rebuild cache as a Tier 8 follow-up\n"
+        "Decision: ship  the   rebuild   cache as a Tier 8 follow-up"
+    )
+    assert len(detect(text)) == 1
+
+
 def test_minimum_length_filter():
     # Even an explicit marker won't fire if the payload is too short.
     text = "Decision: yes"

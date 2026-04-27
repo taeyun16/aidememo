@@ -238,6 +238,73 @@ def test_dry_run_default_is_false(monkeypatch: pytest.MonkeyPatch, tmp_path) -> 
     assert not pending.exists()
 
 
+def test_post_llm_detect_in_user_only_skips_assistant_echo(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """``detect_in='user'`` runs the detector only on user_message,
+    so the precision-focused operator never gets duplicate records
+    from the assistant echoing the user's commitment."""
+    from hermes_wg.client import WgClient
+    from hermes_wg.hooks import make_post_llm_call
+
+    captured: list[str] = []
+
+    def stub_fact_add(self, *args, **kwargs):
+        captured.append(args[0] if args else kwargs.get("content", ""))
+        return "STUB"
+
+    monkeypatch.setattr(WgClient, "__init__", lambda self, *_a, **_kw: None)
+    monkeypatch.setattr(WgClient, "fact_add", stub_fact_add)
+    monkeypatch.setattr("hermes_wg.client.WgClient._has_cli", staticmethod(lambda: True))
+
+    post = make_post_llm_call(
+        WgClient(),
+        enable_auto_record=True,
+        dry_run=False,
+        confidence_floor=0.85,
+        detect_in="user",
+    )
+    post(
+        user_message="결정: 한국어 패턴도 즉시 기록한다 — auto_record on 모드",
+        assistant_response="결론: 한국어 패턴도 즉시 기록한다 — auto_record on 모드.",
+    )
+
+    assert len(captured) == 1, captured
+
+
+def test_post_llm_detect_in_assistant_only_skips_user_message(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    from hermes_wg.client import WgClient
+    from hermes_wg.hooks import make_post_llm_call
+
+    captured: list[str] = []
+
+    def stub_fact_add(self, *args, **kwargs):
+        captured.append(args[0] if args else kwargs.get("content", ""))
+        return "STUB"
+
+    monkeypatch.setattr(WgClient, "__init__", lambda self, *_a, **_kw: None)
+    monkeypatch.setattr(WgClient, "fact_add", stub_fact_add)
+    monkeypatch.setattr("hermes_wg.client.WgClient._has_cli", staticmethod(lambda: True))
+
+    post = make_post_llm_call(
+        WgClient(),
+        enable_auto_record=True,
+        dry_run=False,
+        confidence_floor=0.85,
+        detect_in="assistant",
+    )
+    post(
+        user_message="should we go with HNSW as the default semantic index?",
+        assistant_response="Decision: use HNSW as the default semantic index.",
+    )
+
+    # Assistant phrasing matched, user question did not.
+    assert len(captured) == 1
+    assert "HNSW" in captured[0]
+
+
 def test_dry_run_still_skipped_when_auto_record_off(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
