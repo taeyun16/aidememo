@@ -41,6 +41,7 @@ wg = "hermes_wg.plugin:register"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/hermes_wg"]
-
-[tool.hatch.build.targets.wheel.force-include]
-"plugin.yaml" = "hermes_wg/plugin.yaml"
+# `plugin.yaml` and `skills/` live inside src/hermes_wg/ now (so a
+# filesystem `<HERMES_HOME>/plugins/wg/` symlink to that directory
+# is self-contained), and hatchling picks them up automatically as
+# package data — no force-include block needed.

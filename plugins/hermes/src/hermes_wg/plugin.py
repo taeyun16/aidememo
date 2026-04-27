@@ -23,8 +23,8 @@ import os
 from pathlib import Path
 from typing import Any
 
-from hermes_wg import cli, hooks, slash, tools
-from hermes_wg.client import (
+from . import cli, hooks, slash, tools
+from .client import (
     HERMES_API_ERRORS,
     WgClient,
     WgUnavailable,

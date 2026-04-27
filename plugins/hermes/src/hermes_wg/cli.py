@@ -11,8 +11,8 @@ from __future__ import annotations
 import argparse
 from typing import Any
 
-from hermes_wg.client import CLIENT_ERRORS, WgClient
-from hermes_wg.tools import to_pretty_json
+from .client import CLIENT_ERRORS, WgClient
+from .tools import to_pretty_json
 
 
 def _setup(parser: argparse.ArgumentParser) -> None:

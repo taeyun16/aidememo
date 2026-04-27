@@ -20,8 +20,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
-from hermes_wg.client import CLIENT_ERRORS, WgClient
-from hermes_wg.decisions import DetectedFact
+from .client import CLIENT_ERRORS, WgClient
+from .decisions import DetectedFact
 
 
 def pending_log_path() -> Path:

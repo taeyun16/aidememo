@@ -33,9 +33,9 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from hermes_wg import pending
-from hermes_wg.client import CLIENT_ERRORS, HERMES_API_ERRORS, WgClient
-from hermes_wg.decisions import detect
+from . import pending
+from .client import CLIENT_ERRORS, HERMES_API_ERRORS, WgClient
+from .decisions import detect
 
 log = logging.getLogger("hermes_wg")
 

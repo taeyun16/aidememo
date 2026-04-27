@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 from typing import Any, Callable
 
-from hermes_wg.client import WgClient
+from .client import WgClient
 
 TOOLSET = "wg"
 

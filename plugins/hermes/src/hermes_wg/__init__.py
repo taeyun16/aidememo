@@ -8,8 +8,8 @@ all backed by either the in-process ``wg-python`` binding (when
 installed) or a subprocess to the ``wg`` CLI binary.
 """
 
-from hermes_wg.client import WgClient
-from hermes_wg.plugin import register
+from .client import WgClient
+from .plugin import register
 
 __all__ = ["WgClient", "register"]
 __version__ = "1.0.0"
