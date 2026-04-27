@@ -9,7 +9,7 @@ lifecycle hooks.
 | Surface | What it does |
 |---|---|
 | **7 tools** | `wg_query`, `wg_search`, `wg_recent`, `wg_entity_list`, `wg_traverse`, `wg_fact_add`, `wg_lint` — same surface as the wg MCP server, but called in-process (no JSON-RPC overhead). |
-| **3 slash commands** | `/wg <topic>` (one-shot context), `/wg-add <content>` (record a fact), `/wg-recent` (last 7 days). |
+| **4 slash commands** | `/wg <topic>` (one-shot context), `/wg-add <content>` (record a fact), `/wg-recent` (last 7 days), `/wg-pending` (review/commit dry-run captures). |
 | **`on_session_start` hook** | Auto-injects recent facts into the conversation so the model has wg context before the user types. |
 | **`on_session_end` hook** | Scans the transcript for decision-style phrasings and auto-records them as wg facts. |
 | **`hermes wg ...` CLI** | `hermes wg query` / `search` / `recent` / `add` / `stats` / `lint`. |
@@ -79,9 +79,18 @@ floor, modest 7-day window, auto-record on).
 ### Recommended onboarding flow
 
 For a wiki you care about, switch on `dry_run: true` for the first
-few sessions, inspect `~/.hermes/state/wg-pending.jsonl`, and
-adjust `confidence_floor` until the captures look right. Then flip
-`dry_run` off — your reviewed pattern will keep matching.
+few sessions, then audit and selectively commit captures from chat:
+
+```text
+/wg-pending                     → list every detection (numbered)
+/wg-pending commit 3            → commit only entry #3
+/wg-pending commit all          → commit all and clear the log
+/wg-pending clear all           → discard everything
+```
+
+Failed commits are kept in the pending log so you can retry. Once
+the captures consistently look right, flip `dry_run` off — your
+reviewed pattern will keep matching from then on.
 
 ## Development
 

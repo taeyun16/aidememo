@@ -3,6 +3,7 @@
 ``/wg <topic>`` — one-shot context fetch (search + traverse + recent).
 ``/wg-add <content>`` — append a quick fact (defaults to type=note).
 ``/wg-recent`` — last 7 days of facts.
+``/wg-pending`` — review or commit the dry-run pending log.
 
 Handlers receive the raw argument string (everything after the command
 word) and return a string which Hermes renders as assistant output.
@@ -13,6 +14,7 @@ from __future__ import annotations
 import shlex
 from typing import Any
 
+from hermes_wg import pending
 from hermes_wg.client import CLIENT_ERRORS, WgClient
 from hermes_wg.tools import to_pretty_json
 
@@ -105,6 +107,86 @@ def _parse_add_args(raw: str) -> tuple[str, list[str] | None, str, list[str]]:
     return content, entities, fact_type, tags
 
 
+def _format_pending_list(entries: list[pending.PendingEntry]) -> str:
+    if not entries:
+        return "No pending detections. Run a session with `dry_run: true` to populate this log."
+    lines = [f"{len(entries)} pending detection(s):"]
+    for e in entries:
+        lines.append(f"  #{e.idx}  [{e.fact_type}, {e.confidence:.2f}]  {e.content}")
+    lines.append("")
+    lines.append("Commands: `/wg-pending commit all|<N>` or `/wg-pending clear all|<N>`")
+    return "\n".join(lines)
+
+
+def _wg_pending_handler(client: WgClient):
+    def handle(raw_args: str) -> str:
+        parts = raw_args.strip().split()
+        if not parts:
+            return _format_pending_list(pending.read())
+
+        action = parts[0].lower()
+        target = parts[1].lower() if len(parts) >= 2 else ""
+
+        if action == "commit":
+            return _handle_commit(client, target)
+        if action == "clear":
+            return _handle_clear(target)
+
+        return (
+            "Usage:\n"
+            "  /wg-pending                 — list pending detections\n"
+            "  /wg-pending commit all      — commit every entry to wg\n"
+            "  /wg-pending commit <N>      — commit a single entry by index\n"
+            "  /wg-pending clear all       — discard every entry\n"
+            "  /wg-pending clear <N>       — discard a single entry"
+        )
+
+    return handle
+
+
+def _handle_commit(client: WgClient, target: str) -> str:
+    if not target:
+        return "Usage: /wg-pending commit all|<N>"
+    if target == "all":
+        committed, leftover = pending.commit_all(client)
+        if committed == 0 and not leftover:
+            return "No pending detections to commit."
+        if leftover:
+            return (
+                f"Committed {committed} fact(s) to wg; {len(leftover)} entry(ies) "
+                "failed and remain in the pending log — run `/wg-pending` to review."
+            )
+        return f"Committed {committed} fact(s) to wg; pending log cleared."
+    try:
+        idx = int(target)
+    except ValueError:
+        return f"Invalid index `{target}` — expected `all` or a number."
+    try:
+        entry = pending.commit_one(client, idx)
+    except IndexError as exc:
+        return f"{exc}. Run `/wg-pending` to see valid indices."
+    except CLIENT_ERRORS as exc:
+        return f"wg fact_add failed for #{idx}; entry kept in pending log: {exc}"
+    return f"Committed #{idx} ([{entry.fact_type}]) to wg."
+
+
+def _handle_clear(target: str) -> str:
+    if not target:
+        return "Usage: /wg-pending clear all|<N>"
+    if target == "all":
+        n = pending.clear_all()
+        return f"Discarded {n} pending entry(ies)."
+    try:
+        idx = int(target)
+    except ValueError:
+        return f"Invalid index `{target}` — expected `all` or a number."
+    try:
+        entry = pending.clear_one(idx)
+    except IndexError as exc:
+        return f"{exc}. Run `/wg-pending` to see valid indices."
+    return f"Discarded #{idx} ([{entry.fact_type}]) without writing to wg."
+
+
 def register_all(ctx: Any, client: WgClient) -> None:
     ctx.register_command(
         name="wg",
@@ -123,4 +205,10 @@ def register_all(ctx: Any, client: WgClient) -> None:
         handler=_wg_recent_handler(client),
         description="Show recent wg facts (default last 7 days).",
         args_hint="[7d|24h|30d]",
+    )
+    ctx.register_command(
+        name="wg-pending",
+        handler=_wg_pending_handler(client),
+        description="Review / commit / clear the dry-run pending detections log.",
+        args_hint="[commit all|N] [clear all|N]",
     )

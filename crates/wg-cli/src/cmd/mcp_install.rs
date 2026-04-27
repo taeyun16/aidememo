@@ -263,7 +263,7 @@ fn install_via_cli(
 /// appears as an entry. Returns `None` if the command can't run or
 /// exits non-zero — those signal "list subcommand not available",
 /// not "install failed".
-fn verify_registered(bin: &str, token: &str) -> Option<bool> {
+pub(crate) fn verify_registered(bin: &str, token: &str) -> Option<bool> {
     let out = ProcessCommand::new(bin)
         .args(["mcp", "list"])
         .output()
@@ -289,7 +289,7 @@ fn stdout_contains_token(stdout: &str, token: &str) -> bool {
 // Codex — edit ~/.codex/config.toml
 // ---------------------------------------------------------------------------
 
-fn codex_config_path() -> Result<PathBuf, WgError> {
+pub(crate) fn codex_config_path() -> Result<PathBuf, WgError> {
     let home =
         dirs::home_dir().ok_or_else(|| WgError::Internal("could not resolve $HOME".to_string()))?;
     Ok(home.join(".codex/config.toml"))
@@ -372,7 +372,7 @@ fn install_codex(force: bool, print: bool) -> Result<InstallReport, WgError> {
 // Cursor — edit ~/.cursor/mcp.json
 // ---------------------------------------------------------------------------
 
-fn cursor_config_path() -> Result<PathBuf, WgError> {
+pub(crate) fn cursor_config_path() -> Result<PathBuf, WgError> {
     let home =
         dirs::home_dir().ok_or_else(|| WgError::Internal("could not resolve $HOME".to_string()))?;
     Ok(home.join(".cursor/mcp.json"))

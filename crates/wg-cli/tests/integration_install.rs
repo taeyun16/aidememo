@@ -370,3 +370,160 @@ fn mcp_install_print_mode_does_not_show_verified() {
         stdout
     );
 }
+
+// ---------------------------------------------------------------------------
+// `wg doctor` — agent integration matrix
+// ---------------------------------------------------------------------------
+
+/// Run `wg doctor` against an isolated `$HOME` and `$PATH` so that
+/// shell-out checks (claude / hermes / openclaw) never reach the
+/// developer's real agents — keeps the test deterministic across
+/// environments. Returns the parsed JSON payload.
+fn doctor_json(home: &Path, store_path: &Path) -> serde_json::Value {
+    let out = Command::new(wg_bin())
+        .env_remove("WG_STORE")
+        .env("HOME", home)
+        .env("PATH", "/nonexistent")
+        .args(["--json", "--store", store_path.to_str().unwrap(), "doctor"])
+        .output()
+        .expect("failed to execute wg binary");
+    assert!(
+        out.status.success(),
+        "doctor exited {}: {}",
+        out.status,
+        String::from_utf8_lossy(&out.stderr)
+    );
+    serde_json::from_slice(&out.stdout).expect("doctor --json should emit valid JSON")
+}
+
+#[test]
+fn doctor_reports_agent_matrix_with_no_installs() {
+    let home = tempfile::tempdir().unwrap();
+    let store = home.path().join("wiki.redb");
+    let payload = doctor_json(home.path(), &store);
+
+    let agents = payload["agents"].as_array().unwrap();
+    let names: Vec<&str> = agents
+        .iter()
+        .map(|a| a["target"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        names,
+        vec!["claude", "hermes", "openclaw", "codex", "cursor"]
+    );
+
+    // With $PATH stripped, every shell-out target reports `null`
+    // (couldn't run `<bin> mcp list`).
+    for shell_out in ["claude", "hermes", "openclaw"] {
+        let entry = agents
+            .iter()
+            .find(|a| a["target"] == shell_out)
+            .unwrap_or_else(|| panic!("missing {}", shell_out));
+        assert_eq!(
+            entry["mcp_registered"],
+            serde_json::Value::Null,
+            "{}: expected null mcp_registered when PATH is stripped",
+            shell_out
+        );
+    }
+
+    // File-edit targets without any config should be Some(false).
+    for file_edit in ["codex", "cursor"] {
+        let entry = agents
+            .iter()
+            .find(|a| a["target"] == file_edit)
+            .unwrap_or_else(|| panic!("missing {}", file_edit));
+        assert_eq!(
+            entry["mcp_registered"],
+            serde_json::Value::Bool(false),
+            "{}: expected false mcp_registered with empty home",
+            file_edit
+        );
+    }
+}
+
+#[test]
+fn doctor_detects_codex_and_cursor_after_mcp_install() {
+    let home = tempfile::tempdir().unwrap();
+    let store = home.path().join("wiki.redb");
+
+    // Pre-install both file-edit targets.
+    let codex = run_with_home(home.path(), &["mcp-install", "--target", "codex"]);
+    assert!(codex.status.success());
+    let cursor = run_with_home(home.path(), &["mcp-install", "--target", "cursor"]);
+    assert!(cursor.status.success());
+
+    let payload = doctor_json(home.path(), &store);
+    let agents = payload["agents"].as_array().unwrap();
+    let codex_entry = agents.iter().find(|a| a["target"] == "codex").unwrap();
+    assert_eq!(codex_entry["mcp_registered"], true);
+    let cursor_entry = agents.iter().find(|a| a["target"] == "cursor").unwrap();
+    assert_eq!(cursor_entry["mcp_registered"], true);
+}
+
+#[test]
+fn doctor_detects_skill_installation() {
+    let home = tempfile::tempdir().unwrap();
+    let store = home.path().join("wiki.redb");
+    let dest = home.path().join(".hermes/skills/wg");
+
+    // Use --dest so the test isn't sensitive to where dirs::home_dir
+    // resolves on the CI runner.
+    let installed = Command::new(wg_bin())
+        .env("HOME", home.path())
+        .args([
+            "skill",
+            "install",
+            "--target",
+            "hermes",
+            "--dest",
+            dest.to_str().unwrap(),
+        ])
+        .output()
+        .expect("failed to run wg skill install");
+    assert!(installed.status.success());
+
+    let payload = doctor_json(home.path(), &store);
+    let agents = payload["agents"].as_array().unwrap();
+    let hermes = agents.iter().find(|a| a["target"] == "hermes").unwrap();
+    assert_eq!(
+        hermes["skill_installed"],
+        true,
+        "hermes skill should be reported installed at {}",
+        dest.display()
+    );
+    let claude = agents.iter().find(|a| a["target"] == "claude").unwrap();
+    assert_eq!(
+        claude["skill_installed"], false,
+        "claude should still report skill not installed"
+    );
+}
+
+#[test]
+fn doctor_human_output_includes_agent_section() {
+    let home = tempfile::tempdir().unwrap();
+    let store = home.path().join("wiki.redb");
+    let out = Command::new(wg_bin())
+        .env_remove("WG_STORE")
+        .env("HOME", home.path())
+        .env("PATH", "/nonexistent")
+        .args(["--store", store.to_str().unwrap(), "doctor"])
+        .output()
+        .expect("doctor");
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("Agent integration:"));
+    for target in ["claude", "hermes", "openclaw", "codex", "cursor"] {
+        assert!(
+            stdout.contains(target),
+            "missing {} row in doctor output: {}",
+            target,
+            stdout
+        );
+    }
+    assert!(
+        stdout.contains("legend:"),
+        "missing legend line: {}",
+        stdout
+    );
+}

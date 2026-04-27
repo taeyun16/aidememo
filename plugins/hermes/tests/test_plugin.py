@@ -99,9 +99,9 @@ def test_registers_all_seven_tools(fake_ctx: FakeCtx) -> None:
     }
 
 
-def test_registers_three_slash_commands(fake_ctx: FakeCtx) -> None:
+def test_registers_four_slash_commands(fake_ctx: FakeCtx) -> None:
     names = {c["name"] for c in fake_ctx.commands}
-    assert names == {"wg", "wg-add", "wg-recent"}
+    assert names == {"wg", "wg-add", "wg-recent", "wg-pending"}
 
 
 def test_registers_session_lifecycle_hooks(fake_ctx: FakeCtx) -> None:
@@ -255,3 +255,121 @@ def test_dry_run_still_skipped_when_auto_record_off(
     )
     on_end(transcript="Decision: this should be ignored entirely.")
     assert not pending.exists()
+
+
+def test_slash_wg_pending_lists_entries(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    """Without args, ``/wg-pending`` prints a numbered review of the
+    log so users can pick what to commit / clear."""
+    from hermes_wg import pending as pending_mod
+    from hermes_wg.client import WgClient
+    from hermes_wg.slash import _wg_pending_handler
+
+    log = tmp_path / "wg-pending.jsonl"
+    pending_mod.write(
+        [
+            pending_mod.PendingEntry(1, 1, "Use HNSW", "decision", 0.95, "Decision: use HNSW"),
+            pending_mod.PendingEntry(2, 1, "Always lint", "convention", 0.85, "Always lint"),
+        ],
+        log,
+    )
+    monkeypatch.setenv("HERMES_STATE_DIR", str(tmp_path))
+    monkeypatch.setattr(WgClient, "__init__", lambda self, *_a, **_kw: None)
+    monkeypatch.setattr("hermes_wg.client.WgClient._has_cli", staticmethod(lambda: True))
+
+    out = _wg_pending_handler(WgClient())("")
+    assert "2 pending detection(s)" in out
+    assert "#1" in out and "#2" in out
+    assert "Use HNSW" in out
+    assert "Always lint" in out
+
+
+def test_slash_wg_pending_commit_all(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    from hermes_wg import pending as pending_mod
+    from hermes_wg.client import WgClient
+    from hermes_wg.slash import _wg_pending_handler
+
+    log = tmp_path / "wg-pending.jsonl"
+    pending_mod.write(
+        [
+            pending_mod.PendingEntry(1, 1, "fact one", "decision", 0.95, "x"),
+            pending_mod.PendingEntry(2, 1, "fact two", "decision", 0.95, "y"),
+        ],
+        log,
+    )
+    monkeypatch.setenv("HERMES_STATE_DIR", str(tmp_path))
+    captured: list[str] = []
+    monkeypatch.setattr(WgClient, "__init__", lambda self, *_a, **_kw: None)
+    monkeypatch.setattr(
+        WgClient,
+        "fact_add",
+        lambda self, content, entities=None, fact_type="note", tags=None: (
+            captured.append(content) or "STUB"
+        ),
+    )
+    monkeypatch.setattr("hermes_wg.client.WgClient._has_cli", staticmethod(lambda: True))
+
+    out = _wg_pending_handler(WgClient())("commit all")
+    assert "Committed 2" in out
+    assert captured == ["fact one", "fact two"]
+    assert pending_mod.read(log) == []
+
+
+def test_slash_wg_pending_commit_one(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    from hermes_wg import pending as pending_mod
+    from hermes_wg.client import WgClient
+    from hermes_wg.slash import _wg_pending_handler
+
+    log = tmp_path / "wg-pending.jsonl"
+    pending_mod.write(
+        [
+            pending_mod.PendingEntry(1, 1, "first", "decision", 0.95, "a"),
+            pending_mod.PendingEntry(2, 1, "second", "decision", 0.95, "b"),
+        ],
+        log,
+    )
+    monkeypatch.setenv("HERMES_STATE_DIR", str(tmp_path))
+    monkeypatch.setattr(WgClient, "__init__", lambda self, *_a, **_kw: None)
+    monkeypatch.setattr(
+        WgClient,
+        "fact_add",
+        lambda self, content, entities=None, fact_type="note", tags=None: "STUB",
+    )
+    monkeypatch.setattr("hermes_wg.client.WgClient._has_cli", staticmethod(lambda: True))
+
+    out = _wg_pending_handler(WgClient())("commit 1")
+    assert "Committed #1" in out
+    rest = pending_mod.read(log)
+    assert [e.content for e in rest] == ["second"]
+
+
+def test_slash_wg_pending_clear(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    from hermes_wg import pending as pending_mod
+    from hermes_wg.client import WgClient
+    from hermes_wg.slash import _wg_pending_handler
+
+    log = tmp_path / "wg-pending.jsonl"
+    pending_mod.write(
+        [
+            pending_mod.PendingEntry(1, 1, "a", "decision", 0.95, "a"),
+            pending_mod.PendingEntry(2, 1, "b", "decision", 0.95, "b"),
+        ],
+        log,
+    )
+    monkeypatch.setenv("HERMES_STATE_DIR", str(tmp_path))
+    monkeypatch.setattr(WgClient, "__init__", lambda self, *_a, **_kw: None)
+    monkeypatch.setattr("hermes_wg.client.WgClient._has_cli", staticmethod(lambda: True))
+
+    out = _wg_pending_handler(WgClient())("clear all")
+    assert "Discarded 2" in out
+    assert pending_mod.read(log) == []
+
+
+def test_slash_wg_pending_invalid_subcommand_returns_usage(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    from hermes_wg.client import WgClient
+    from hermes_wg.slash import _wg_pending_handler
+
+    monkeypatch.setenv("HERMES_STATE_DIR", str(tmp_path))
+    monkeypatch.setattr(WgClient, "__init__", lambda self, *_a, **_kw: None)
+    monkeypatch.setattr("hermes_wg.client.WgClient._has_cli", staticmethod(lambda: True))
+    out = _wg_pending_handler(WgClient())("frobnicate 5")
+    assert "Usage:" in out

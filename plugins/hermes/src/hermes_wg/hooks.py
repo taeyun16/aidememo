@@ -29,50 +29,15 @@ plugin should never break the agent.
 
 from __future__ import annotations
 
-import json
 import logging
-import os
-import time
 from pathlib import Path
 from typing import Any
 
+from hermes_wg import pending
 from hermes_wg.client import CLIENT_ERRORS, HERMES_API_ERRORS, WgClient
-from hermes_wg.decisions import DetectedFact, detect
+from hermes_wg.decisions import detect
 
 log = logging.getLogger("hermes_wg")
-
-
-def _pending_log_path() -> Path:
-    """Where dry-run detections accumulate. Honors ``HERMES_STATE_DIR``
-    for users who relocate Hermes state, falling back to
-    ``~/.hermes/state``."""
-    env = os.environ.get("HERMES_STATE_DIR")
-    base = Path(env) if env else Path.home() / ".hermes" / "state"
-    return base / "wg-pending.jsonl"
-
-
-def _append_pending(detections: list[DetectedFact], path: Path | None = None) -> Path:
-    """Write each detection as one JSONL line. Returns the path so
-    callers can include it in user-facing messaging."""
-    target = path or _pending_log_path()
-    target.parent.mkdir(parents=True, exist_ok=True)
-    now_ms = int(time.time() * 1000)
-    with target.open("a", encoding="utf-8") as fh:
-        for d in detections:
-            fh.write(
-                json.dumps(
-                    {
-                        "ts_ms": now_ms,
-                        "content": d.content,
-                        "fact_type": d.fact_type,
-                        "confidence": d.confidence,
-                        "source_line": d.source_line,
-                    },
-                    ensure_ascii=False,
-                )
-                + "\n"
-            )
-    return target
 
 
 def _format_recent_block(facts: list[dict]) -> str | None:
@@ -176,12 +141,12 @@ def make_on_session_end(
 
         if dry_run:
             try:
-                path = _append_pending(detections, pending_path)
+                path = pending.append(detections, pending_path)
             except OSError as exc:
                 log.warning("wg dry-run could not write pending log: %s", exc)
                 return
             log.info(
-                "wg dry-run captured %d detection(s) (logged to %s — review with `wg fact list --tag auto-recorded` after committing)",
+                "wg dry-run captured %d detection(s) (logged to %s — review with `/wg-pending`, then `/wg-pending commit all` or `clear all`)",
                 len(detections),
                 path,
             )

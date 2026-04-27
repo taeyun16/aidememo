@@ -531,7 +531,7 @@ fn collect_files(path: &Path) -> std::io::Result<Vec<PathBuf>> {
 // ---------------------------------------------------------------------------
 
 /// Where each agent picks up SKILL.md files. Stable as of April 2026.
-fn target_skills_dir(target: &str) -> Option<PathBuf> {
+pub(crate) fn target_skills_dir(target: &str) -> Option<PathBuf> {
     let home = dirs::home_dir()?;
     match target {
         // Claude Code reads `~/.claude/skills/<name>/SKILL.md`.
@@ -551,7 +551,7 @@ fn target_skills_dir(target: &str) -> Option<PathBuf> {
     }
 }
 
-fn supported_targets() -> &'static [&'static str] {
+pub(crate) fn supported_targets() -> &'static [&'static str] {
     &["claude", "hermes", "openclaw", "agents"]
 }
 
