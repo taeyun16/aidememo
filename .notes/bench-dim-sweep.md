@@ -38,7 +38,7 @@ same machine in the same session.
    18 ms p50, P=0.196 — beats `multilingual-128M` (315 MB) by
    +216% on accuracy with 16× less RAM.
 
-## B. Korean MIRACL/ko (50 queries, K=5, HNSW)
+## B. Korean MIRACL/ko (50 queries, K=5, HNSW path)
 
 | Model | dim | provider | P@5 | R@5 | p50 |
 |---|---:|---|---:|---:|---:|
@@ -46,6 +46,42 @@ same machine in the same session.
 | **`potion-multilingual-128M`** | 256 | model2vec | **0.206** | 0.758 | 216 ms |
 | `potion-base-32M` (English-only) | 512 | model2vec | 0.164 | 0.608 | 245 ms |
 | **`bge-m3`** | **1024** | Ollama HTTP | **0.228** | **0.871** | **11172 ms** |
+
+## B'. Korean MIRACL/ko (50 queries, K=5, BM25 path) — full dim sweep
+
+Apples-to-apples: same hybrid pipeline, different model behind
+`semantic_search`. Index = BM25 prefilter, no HNSW (so HNSW build
+failures across ollama models don't confound the comparison).
+
+| Model | dim | provider | P@5 | R@5 | p50 |
+|---|---:|---|---:|---:|---:|
+| `potion-base-4M` (English-only) | 128 | model2vec | 0.174 | 0.610 | 207 ms |
+| **`potion-multilingual-128M`** | 256 | model2vec | **0.202** | 0.693 | 235 ms |
+| `granite-embedding:30m` | 384 | Ollama | 0.148 | 0.532 | 624 ms |
+| `paraphrase-multilingual` | 768 | Ollama | 0.188 | 0.623 | 802 ms |
+| **`granite-embedding:278m`** | 768 | Ollama | **0.204** | 0.690 | 914 ms |
+| **`bge-m3`** | 1024 | Ollama | 0.204 | **0.704** | 2292 ms |
+
+### What this exposes
+
+1. **Dim is *not* monotonic with accuracy.** `granite-embedding:30m`
+   (384d) underperforms `potion-multilingual-128M` (256d). Adding
+   capacity doesn't help if the model wasn't trained on enough
+   Korean.
+2. **`potion-multilingual-128M` ties with 768d/1024d transformers
+   on P.** P=0.202 vs 0.204 (granite-278m, bge-m3). The model2vec
+   multilingual lookup table is competitive with full transformers
+   that are 3-4× larger in dimension and 50× slower.
+3. **paraphrase-multilingual (768d) < multilingual-128M (256d)
+   on P**. Same dim ≠ same model — `paraphrase-multilingual` was
+   trained for paraphrase classification, not retrieval. Training
+   objective matters more than dim at the same capacity tier.
+4. **Diminishing return at the top.** 768 → 1024 (granite-278m
+   vs bge-m3) lifts R@5 by 0.014 only. Doubling dim past ~768
+   doesn't pay off in the way 256 → 768 did.
+5. **Latency wall**. model2vec ~210 ms p50; transformer 624–2292
+   ms (3–11×). HTTP roundtrip + local GGUF inference is the
+   floor — even tiny 384d transformers pay the network tax.
 
 For reference, the earlier 213-query run (K=10) gave:
 
