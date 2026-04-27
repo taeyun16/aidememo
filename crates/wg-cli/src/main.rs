@@ -96,6 +96,7 @@ fn main() {
         cmd::Command::McpServe(sub) => cmd::mcp_serve::run_mcp_serve(sub.port, sub.wiki_root),
         cmd::Command::Mcp(sub) => cmd::mcp_stdio::run_mcp(sub.wiki_root),
         cmd::Command::McpInstall(sub) => cmd::mcp_install::run_mcp_install(sub, json),
+        cmd::Command::Completions(sub) => cmd::completions::run_completions(sub),
     };
 
     match result {

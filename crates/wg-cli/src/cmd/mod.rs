@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 pub mod adapt;
 pub mod bench;
+pub mod completions;
 pub mod doctor;
 pub mod edit;
 pub mod feedback;
@@ -23,6 +24,7 @@ pub mod watch;
 
 pub use adapt::AdaptSub;
 pub use bench::BenchSub;
+pub use completions::CompletionsSub;
 pub use doctor::DoctorSub;
 pub use edit::EditSub;
 pub use feedback::FeedbackSub;
@@ -75,6 +77,7 @@ pub enum Command {
     McpServe(McpSub),
     Mcp(McpStdioSub),
     McpInstall(McpInstallSub),
+    Completions(CompletionsSub),
 }
 
 #[derive(Debug, Clone)]
@@ -256,6 +259,7 @@ pub fn build_cli() -> OptionParser<Args> {
     let mcp_serve_cmd = mcp_serve::mcp_serve_command();
     let mcp_cmd = mcp_stdio::mcp_command();
     let mcp_install_cmd = mcp_install::mcp_install_command();
+    let completions_cmd = completions::completions_command();
     let model_cmd = model::model_command();
     let feedback_cmd = feedback::feedback_command();
     let adapt_cmd = adapt::adapt_command();
@@ -296,6 +300,7 @@ pub fn build_cli() -> OptionParser<Args> {
         mcp_serve_cmd,
         mcp_cmd,
         mcp_install_cmd,
+        completions_cmd,
     ]);
 
     construct!(Args {
