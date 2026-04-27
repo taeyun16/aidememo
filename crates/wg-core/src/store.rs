@@ -1683,6 +1683,45 @@ impl Store {
 
         Ok(results)
     }
+
+    /// Return every relation in the store as a single list. Used by
+    /// `LintEngine` to walk the graph once instead of running per-
+    /// entity `relations_get` calls.
+    pub fn relations_list_all(&self) -> Result<Vec<RelationRecord>> {
+        let read_txn = self
+            .db
+            .begin_read()
+            .map_err(|e| WgError::TransactionBegin {
+                source: Box::new(e),
+            })?;
+        let relations = read_txn
+            .open_table(RELATIONS_TABLE)
+            .map_err(|e| WgError::StoreRead {
+                table: "relations",
+                key: "<all>".to_string(),
+                source: Box::new(e),
+            })?;
+
+        let mut results = Vec::new();
+        for entry in relations.iter().map_err(|e| WgError::StoreRead {
+            table: "relations",
+            key: "<iter>".to_string(),
+            source: Box::new(e),
+        })? {
+            let (_key, value) = entry.map_err(|e| WgError::StoreRead {
+                table: "relations",
+                key: "<entry>".to_string(),
+                source: Box::new(e),
+            })?;
+            let record: RelationRecord =
+                serde_json::from_slice(value.value()).map_err(|e| WgError::Deserialize {
+                    context: "relations_list_all".to_string(),
+                    source: e,
+                })?;
+            results.push(record);
+        }
+        Ok(results)
+    }
 }
 
 #[cfg(test)]

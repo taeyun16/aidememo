@@ -1,8 +1,15 @@
 //! Lint engine for graph health checks.
+//!
+//! Performance contract: a single `lint()` call loads every entity,
+//! every current fact, and every relation **once**, then runs each
+//! check against the in-memory copy. Earlier versions did per-entity
+//! `fact_list` and `relations_get` calls — at 10K facts that meant
+//! ~500 full scans of the facts table per lint.
 
 use crate::error::{Result, WgError};
 use crate::store::Store;
 use crate::types::*;
+use std::collections::{HashMap, HashSet};
 
 /// Lint engine for checking graph health.
 pub struct LintEngine<'a> {
@@ -16,26 +23,26 @@ impl<'a> LintEngine<'a> {
 
     /// Run all lint checks.
     pub fn lint(&self) -> Result<LintReport> {
-        let mut issues = Vec::new();
-
         // Get stats for report
         let stats = self.store.stats()?;
 
-        // Check for orphan entities
-        issues.extend(self.check_orphans()?);
+        // Single load: entities, all facts, all relations. Each
+        // check then walks these slices in memory.
+        let entities = self.store.entity_list(ListOpts {
+            limit: Some(10_000),
+            ..Default::default()
+        })?;
+        let facts = self.store.fact_list(FactListOpts {
+            limit: Some(usize::MAX),
+            ..Default::default()
+        })?;
+        let relations = self.store.relations_list_all()?;
 
-        // Check for duplicate entities
-        issues.extend(self.check_duplicates()?);
-
-        // Check for stale entities/facts
-        issues.extend(self.check_stale()?);
-
-        // Check for one-way relations
-        issues.extend(self.check_one_way_relations()?);
-
-        // Check for unresolved conflicts (multiple current decisions
-        // / conventions for the same entity).
-        issues.extend(self.check_conflicts()?);
+        let mut issues = Vec::new();
+        issues.extend(check_orphans(&entities, &relations));
+        issues.extend(check_duplicates(&entities));
+        issues.extend(self.check_stale(&entities)?);
+        issues.extend(check_conflicts(&entities, &facts));
 
         Ok(LintReport {
             issues,
@@ -45,66 +52,7 @@ impl<'a> LintEngine<'a> {
         })
     }
 
-    fn check_orphans(&self) -> Result<Vec<LintIssue>> {
-        let mut issues = Vec::new();
-
-        let entities = self.store.entity_list(ListOpts {
-            limit: Some(10000),
-            ..Default::default()
-        })?;
-
-        for entity in entities {
-            let relations = self
-                .store
-                .relations_get(&entity.name, TraverseDirection::Both)?;
-            if relations.is_empty() {
-                issues.push(LintIssue {
-                    severity: LintSeverity::Warning,
-                    code: "orphan".to_string(),
-                    message: format!("Entity '{}' has no relations", entity.name),
-                    entity_id: Some(entity.id),
-                    fact_id: None,
-                });
-            }
-        }
-
-        Ok(issues)
-    }
-
-    fn check_duplicates(&self) -> Result<Vec<LintIssue>> {
-        let mut issues = Vec::new();
-
-        let entities = self.store.entity_list(ListOpts {
-            limit: Some(10000),
-            ..Default::default()
-        })?;
-
-        // Check for entities with very similar names
-        for i in 0..entities.len() {
-            for j in (i + 1)..entities.len() {
-                let sim = trigram::similarity(
-                    &entities[i].name.to_lowercase(),
-                    &entities[j].name.to_lowercase(),
-                );
-                if sim > 0.9 {
-                    issues.push(LintIssue {
-                        severity: LintSeverity::Warning,
-                        code: "duplicate".to_string(),
-                        message: format!(
-                            "Entities '{}' and '{}' are very similar (similarity: {:.2})",
-                            entities[i].name, entities[j].name, sim
-                        ),
-                        entity_id: Some(entities[i].id),
-                        fact_id: None,
-                    });
-                }
-            }
-        }
-
-        Ok(issues)
-    }
-
-    fn check_stale(&self) -> Result<Vec<LintIssue>> {
+    fn check_stale(&self, entities: &[EntitySummary]) -> Result<Vec<LintIssue>> {
         let mut issues = Vec::new();
 
         let stale_threshold = 90 * 24 * 60 * 60 * 1000; // 90 days in ms
@@ -112,11 +60,6 @@ impl<'a> LintEngine<'a> {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_millis() as u64;
-
-        let entities = self.store.entity_list(ListOpts {
-            limit: Some(10000),
-            ..Default::default()
-        })?;
 
         for entity in entities {
             let record = match self.store.entity_get_by_id(entity.id) {
@@ -156,107 +99,141 @@ impl<'a> LintEngine<'a> {
 
         Ok(issues)
     }
+}
 
-    /// Surface entities that have ≥2 *current* facts of an "atomic"
-    /// type (decision / convention / pattern). The user almost never
-    /// has two simultaneously-true decisions about the same subject;
-    /// either one supersedes the other, or the entity needs to be
-    /// split. We flag the situation and let the user resolve it via
-    /// `wg fact supersede <old> <new>`.
-    ///
-    /// Notes / claims / questions are NOT atomic — many of those can
-    /// legitimately coexist (multiple notes about the same entity
-    /// describe different aspects).
-    fn check_conflicts(&self) -> Result<Vec<LintIssue>> {
-        use std::collections::HashMap;
+/// Flag entities that don't appear as either the source or target of
+/// any relation. One pass over the relations slice builds a "has any
+/// edge" set; the entity loop then just probes it.
+fn check_orphans(entities: &[EntitySummary], relations: &[RelationRecord]) -> Vec<LintIssue> {
+    let mut connected: HashSet<EntityId> = HashSet::with_capacity(relations.len() * 2);
+    for r in relations {
+        connected.insert(r.source_id);
+        connected.insert(r.target_id);
+    }
 
-        let entities = self.store.entity_list(ListOpts {
-            limit: Some(10000),
-            ..Default::default()
-        })?;
+    entities
+        .iter()
+        .filter(|e| !connected.contains(&e.id))
+        .map(|e| LintIssue {
+            severity: LintSeverity::Warning,
+            code: "orphan".to_string(),
+            message: format!("Entity '{}' has no relations", e.name),
+            entity_id: Some(e.id),
+            fact_id: None,
+        })
+        .collect()
+}
 
-        let mut issues = Vec::new();
+/// Flag pairs of entities with very similar names (possible aliases
+/// the user forgot to merge). Cheap length pre-filter prunes pairs
+/// whose lengths can't reach the 0.9 threshold; on real wikis with
+/// diverse names this drops most comparisons. Synthetic stress tests
+/// where every name shares a prefix won't benefit, but the trigram
+/// similarity itself is still O(min(|a|,|b|)) which keeps the inner
+/// cost tight.
+fn check_duplicates(entities: &[EntitySummary]) -> Vec<LintIssue> {
+    let mut issues = Vec::new();
+    let lowered: Vec<String> = entities.iter().map(|e| e.name.to_lowercase()).collect();
+    let lens: Vec<usize> = lowered.iter().map(|s| s.len()).collect();
 
-        for entity in entities {
-            let facts = self.store.fact_list(FactListOpts {
-                entity_id: Some(entity.id),
-                current_only: true,
-                limit: Some(10000),
-                ..Default::default()
-            })?;
-
-            let mut by_type: HashMap<FactType, Vec<&FactRecord>> = HashMap::new();
-            for fact in &facts {
-                let ft = fact.fact_type;
-                if matches!(
-                    ft,
-                    FactType::Decision | FactType::Convention | FactType::Pattern
-                ) {
-                    by_type.entry(ft).or_default().push(fact);
-                }
+    for i in 0..entities.len() {
+        for j in (i + 1)..entities.len() {
+            let len_i = lens[i] as f64;
+            let len_j = lens[j] as f64;
+            let (lo, hi) = if len_i < len_j {
+                (len_i, len_j)
+            } else {
+                (len_j, len_i)
+            };
+            if hi == 0.0 || lo / hi < 0.9 {
+                continue;
             }
-
-            for (ft, group) in by_type {
-                if group.len() < 2 {
-                    continue;
-                }
-                let preview: Vec<String> = group
-                    .iter()
-                    .take(3)
-                    .map(|f| {
-                        let snippet: String = f.content.chars().take(60).collect();
-                        format!("{} (id={})", snippet, f.id)
-                    })
-                    .collect();
-                let extra = if group.len() > 3 {
-                    format!(" (+{} more)", group.len() - 3)
-                } else {
-                    String::new()
-                };
+            let sim = trigram::similarity(&lowered[i], &lowered[j]);
+            if sim > 0.9 {
                 issues.push(LintIssue {
                     severity: LintSeverity::Warning,
-                    code: "conflict".to_string(),
+                    code: "duplicate".to_string(),
                     message: format!(
-                        "Entity '{}' has {} current {:?} facts that may conflict — supersede the stale one with `wg fact supersede <old> <new>`. Examples: {}{}",
-                        entity.name,
-                        group.len(),
-                        ft,
-                        preview.join("; "),
-                        extra,
+                        "Entities '{}' and '{}' are very similar (similarity: {:.2})",
+                        entities[i].name, entities[j].name, sim
                     ),
-                    entity_id: Some(entity.id),
+                    entity_id: Some(entities[i].id),
                     fact_id: None,
                 });
             }
         }
-
-        Ok(issues)
     }
 
-    fn check_one_way_relations(&self) -> Result<Vec<LintIssue>> {
-        let issues = Vec::new();
+    issues
+}
 
-        let entities = self.store.entity_list(ListOpts {
-            limit: Some(10000),
-            ..Default::default()
-        })?;
-
-        for entity in entities {
-            let fwd = self
-                .store
-                .relations_get(&entity.name, TraverseDirection::Forward)?;
-            let rev = self
-                .store
-                .relations_get(&entity.name, TraverseDirection::Reverse)?;
-
-            // If entity has outgoing but no incoming relations, it might be a one-way link
-            if !fwd.is_empty() && rev.is_empty() {
-                // This is informational only - one-way relations are sometimes valid
-            }
+/// Surface entities that have ≥2 *current* facts of an "atomic"
+/// type (decision / convention / pattern). One pass over the facts
+/// slice builds a `(entity_id, fact_type) → count` map; entities with
+/// any group of size ≥2 are reported.
+///
+/// Notes / claims / questions are NOT atomic — many of those can
+/// legitimately coexist describing different aspects of one entity.
+fn check_conflicts(entities: &[EntitySummary], facts: &[FactRecord]) -> Vec<LintIssue> {
+    // Group atomic-type, current facts by (entity_id, fact_type).
+    let mut groups: HashMap<(EntityId, FactType), Vec<&FactRecord>> = HashMap::new();
+    for fact in facts {
+        if fact.superseded_at.is_some() {
+            continue;
         }
-
-        Ok(issues)
+        let ft = fact.fact_type;
+        if !matches!(
+            ft,
+            FactType::Decision | FactType::Convention | FactType::Pattern
+        ) {
+            continue;
+        }
+        for eid in &fact.entity_ids {
+            groups.entry((*eid, ft)).or_default().push(fact);
+        }
     }
+
+    // Index entities by id so messages can name them.
+    let entity_by_id: HashMap<EntityId, &EntitySummary> =
+        entities.iter().map(|e| (e.id, e)).collect();
+
+    let mut issues = Vec::new();
+    for ((eid, ft), group) in groups {
+        if group.len() < 2 {
+            continue;
+        }
+        let Some(entity) = entity_by_id.get(&eid) else {
+            continue;
+        };
+        let preview: Vec<String> = group
+            .iter()
+            .take(3)
+            .map(|f| {
+                let snippet: String = f.content.chars().take(60).collect();
+                format!("{} (id={})", snippet, f.id)
+            })
+            .collect();
+        let extra = if group.len() > 3 {
+            format!(" (+{} more)", group.len() - 3)
+        } else {
+            String::new()
+        };
+        issues.push(LintIssue {
+            severity: LintSeverity::Warning,
+            code: "conflict".to_string(),
+            message: format!(
+                "Entity '{}' has {} current {:?} facts that may conflict — supersede the stale one with `wg fact supersede <old> <new>`. Examples: {}{}",
+                entity.name,
+                group.len(),
+                ft,
+                preview.join("; "),
+                extra,
+            ),
+            entity_id: Some(eid),
+            fact_id: None,
+        });
+    }
+    issues
 }
 
 #[cfg(test)]
