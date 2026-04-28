@@ -284,6 +284,11 @@ mod tei {
         dimension: usize,
         nice_name: String,
         max_input_length: Option<usize>,
+        /// Hard cap on `texts.len()` per HTTP request. TEI rejects
+        /// batches larger than `max_client_batch_size` (default 32)
+        /// with HTTP 413; bigger requests hit the gateway's body
+        /// limit anyway. We chunk transparently in `embed_batch`.
+        max_client_batch_size: usize,
     }
 
     impl TeiProvider {
@@ -318,11 +323,17 @@ mod tei {
             // /info isn't reachable — the operator may know the
             // dimension and want to skip the round-trip on every
             // process start.
-            let (model_id, max_input_length, discovered_dim) = fetch_info(
-                &info_endpoint,
-                api_key.as_deref(),
-            )
-            .unwrap_or((config.model.name.clone(), None, None));
+            let info = fetch_info(&info_endpoint, api_key.as_deref()).ok();
+            let model_id = info
+                .as_ref()
+                .map(|i| i.0.clone())
+                .unwrap_or_else(|| config.model.name.clone());
+            let max_input_length = info.as_ref().and_then(|i| i.1);
+            let discovered_dim = info.as_ref().and_then(|i| i.2);
+            // TEI publishes `max_client_batch_size` in /info (default
+            // 32). We round it to a sane chunk size; 32 is also the
+            // TEI documented hard cap for `/rerank`.
+            let max_client_batch_size = info.as_ref().and_then(|i| i.3).unwrap_or(32).max(1);
 
             let dimension = if let Some(d) = discovered_dim {
                 d
@@ -341,6 +352,7 @@ mod tei {
                 dimension,
                 nice_name,
                 max_input_length,
+                max_client_batch_size,
             })
         }
     }
@@ -356,19 +368,27 @@ mod tei {
         max_input_length: Option<usize>,
         #[serde(default)]
         dimension: Option<usize>,
+        #[serde(default)]
+        max_client_batch_size: Option<usize>,
     }
 
     fn fetch_info(
         url: &str,
         api_key: Option<&str>,
-    ) -> std::result::Result<(String, Option<usize>, Option<usize>), ureq::Error> {
+    ) -> std::result::Result<(String, Option<usize>, Option<usize>, Option<usize>), ureq::Error>
+    {
         let mut req = ureq::get(url);
         if let Some(key) = api_key {
             req = req.set("Authorization", &format!("Bearer {key}"));
         }
         let resp = req.call()?;
         let parsed: InfoResponse = resp.into_json()?;
-        Ok((parsed.model_id, parsed.max_input_length, parsed.dimension))
+        Ok((
+            parsed.model_id,
+            parsed.max_input_length,
+            parsed.dimension,
+            parsed.max_client_batch_size,
+        ))
     }
 
     fn probe_dimension(embed_endpoint: &str, api_key: Option<&str>) -> Result<usize> {
@@ -407,28 +427,41 @@ mod tei {
             if texts.is_empty() {
                 return Ok(Vec::new());
             }
-            // TEI accepts both a string and an array of strings under
-            // `inputs`. We always send the array form so the response
-            // shape is uniform regardless of batch size.
-            let body = if let Some(max_len) = self.max_input_length {
-                serde_json::json!({"inputs": texts, "truncate": true, "truncate_direction": "Right", "max_input_length": max_len})
-            } else {
-                serde_json::json!({"inputs": texts, "truncate": true})
-            };
-            let mut req = ureq::post(&self.embed_endpoint).set("Content-Type", "application/json");
-            if let Some(key) = &self.api_key {
-                req = req.set("Authorization", &format!("Bearer {key}"));
+            // TEI rejects requests with `texts.len() > max_client_batch_size`
+            // (default 32) — anything larger gets HTTP 413. wg's call sites
+            // routinely hand in 5500+ facts at once during HNSW rebuild,
+            // so we transparently chunk into batches of `max_client_batch_size`
+            // and stitch the results back together.
+            let chunk_size = self.max_client_batch_size;
+            let mut out = Vec::with_capacity(texts.len());
+            for chunk in texts.chunks(chunk_size) {
+                let body = if let Some(max_len) = self.max_input_length {
+                    serde_json::json!({
+                        "inputs": chunk,
+                        "truncate": true,
+                        "truncate_direction": "Right",
+                        "max_input_length": max_len
+                    })
+                } else {
+                    serde_json::json!({"inputs": chunk, "truncate": true})
+                };
+                let mut req =
+                    ureq::post(&self.embed_endpoint).set("Content-Type", "application/json");
+                if let Some(key) = &self.api_key {
+                    req = req.set("Authorization", &format!("Bearer {key}"));
+                }
+                let resp = req.send_json(body).map_err(|e| {
+                    WgError::Internal(format!(
+                        "tei embed request to {} failed: {e}",
+                        self.embed_endpoint
+                    ))
+                })?;
+                let mut parsed: Vec<Vec<f32>> = resp
+                    .into_json()
+                    .map_err(|e| WgError::Internal(format!("tei /embed response parse: {e}")))?;
+                out.append(&mut parsed);
             }
-            let resp = req.send_json(body).map_err(|e| {
-                WgError::Internal(format!(
-                    "tei embed request to {} failed: {e}",
-                    self.embed_endpoint
-                ))
-            })?;
-            let parsed: Vec<Vec<f32>> = resp
-                .into_json()
-                .map_err(|e| WgError::Internal(format!("tei /embed response parse: {e}")))?;
-            Ok(parsed)
+            Ok(out)
         }
     }
 }
