@@ -261,12 +261,25 @@ fn tool_doctor(wiki: &WikiGraph) -> Result<ToolCallResult, String> {
 
 fn tool_recent(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String> {
     let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
-    let last_days = args.get("last_days").and_then(|v| v.as_u64()).unwrap_or(7);
+
+    // Two ways to express the lookback window:
+    //   - `last`      — duration DSL string (e.g. "30d", "12h", "4w") —
+    //                   matches the CLI `wg recent --last` surface.
+    //   - `last_days` — integer days, kept for backwards compatibility.
+    // If both are present `last` wins. Defaults to 7 days when neither
+    // is given, matching the tool's documented default.
+    let window_ms = if let Some(s) = args.get("last").and_then(|v| v.as_str()) {
+        crate::parse_duration_to_ms(s).map_err(|e| e.to_string())?
+    } else {
+        let last_days = args.get("last_days").and_then(|v| v.as_u64()).unwrap_or(7);
+        last_days * 24 * 60 * 60 * 1000
+    };
+
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0);
-    let since = Some(now_ms.saturating_sub(last_days * 24 * 60 * 60 * 1000));
+    let since = Some(now_ms.saturating_sub(window_ms));
 
     let opts = wg_core::FactListOpts {
         fact_type: None,
@@ -280,7 +293,10 @@ fn tool_recent(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String>
         as_of: None,
     };
     let facts = wiki.fact_list(opts).map_err(|e| e.to_string())?;
-    let text = serde_json::to_string_pretty(&facts).map_err(|e| e.to_string())?;
+    // Wrap the array in {"facts": [...]} for shape consistency with
+    // the other list-style tools.
+    let payload = json!({ "facts": facts });
+    let text = serde_json::to_string_pretty(&payload).map_err(|e| e.to_string())?;
     Ok(ToolCallResult {
         content: vec![ContentBlock::text(text)],
         is_error: None,
@@ -398,8 +414,10 @@ fn tool_fact_add(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, Strin
 
     let id = wiki.add_fact(input).map_err(|e| e.to_string())?;
 
+    // Return JSON {"id": "<ULID>"} so callers don't have to string-parse.
+    let payload = json!({ "id": id.to_string() });
     Ok(ToolCallResult {
-        content: vec![ContentBlock::text(format!("Fact added: {}", id))],
+        content: vec![ContentBlock::text(payload.to_string())],
         is_error: None,
     })
 }
@@ -626,12 +644,16 @@ pub fn list_tools() -> Vec<Tool> {
         },
         Tool {
             name: "wg_recent".into(),
-            description: "Recently added/updated facts. Defaults to the last 7 days, 20 facts."
+            description: "Recently added/updated facts. Defaults to the last 7 days, 20 facts. Returns {\"facts\": [...]}."
                 .into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "limit": {"type": "number", "default": 20},
+                    "last": {
+                        "type": "string",
+                        "description": "Lookback window, e.g. '30d', '12h', '4w', '1y'. Wins over last_days when both set."
+                    },
                     "last_days": {"type": "number", "default": 7}
                 }
             }),
@@ -680,7 +702,7 @@ pub fn list_tools() -> Vec<Tool> {
         },
         Tool {
             name: "wg_fact_add".into(),
-            description: "Add a new fact to the wiki graph.".into(),
+            description: "Add a new fact to the wiki graph. Returns {\"id\": \"<ULID>\"}.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -1010,5 +1032,73 @@ mod tests {
         let (_dir, wiki) = open_temp_wiki();
         let err = tool_fact_add_many(&json!({"items": [{}]}), &wiki).unwrap_err();
         assert!(err.contains("content is required"));
+    }
+
+    #[test]
+    fn fact_add_returns_json_id() {
+        let (_dir, wiki) = open_temp_wiki();
+        let result = tool_fact_add(
+            &json!({"content": "Redis is a cache", "entities": ["Redis"]}),
+            &wiki,
+        )
+        .unwrap();
+        let text = result
+            .content
+            .first()
+            .and_then(|b| b.text.as_deref())
+            .unwrap_or("");
+        let payload: serde_json::Value = serde_json::from_str(text).expect("response is JSON");
+        let id = payload.get("id").and_then(|v| v.as_str()).unwrap_or("");
+        assert_eq!(id.len(), 26, "expected ULID, got {id:?}");
+    }
+
+    #[test]
+    fn recent_wraps_facts_in_object() {
+        let (_dir, wiki) = open_temp_wiki();
+        add_fact(&wiki, "Redis 7 introduces functions", "Redis");
+
+        let result = tool_recent(&json!({"limit": 10}), &wiki).unwrap();
+        let text = result
+            .content
+            .first()
+            .and_then(|b| b.text.as_deref())
+            .unwrap_or("");
+        let payload: serde_json::Value = serde_json::from_str(text).expect("response is JSON");
+        assert!(payload.get("facts").is_some(), "expected {{\"facts\": ...}}");
+        assert_eq!(payload["facts"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn recent_accepts_last_dsl_string() {
+        let (_dir, wiki) = open_temp_wiki();
+        add_fact(&wiki, "fresh fact", "Redis");
+
+        // `last="1h"` must be honoured (and produce >=1 hit since the
+        // fact was just inserted).
+        let result = tool_recent(&json!({"last": "1h"}), &wiki).unwrap();
+        let text = result
+            .content
+            .first()
+            .and_then(|b| b.text.as_deref())
+            .unwrap_or("");
+        let payload: serde_json::Value = serde_json::from_str(text).unwrap();
+        assert_eq!(payload["facts"].as_array().unwrap().len(), 1);
+
+        // `last="0s"` zero window → zero hits.
+        let result = tool_recent(&json!({"last": "0s"}), &wiki).unwrap();
+        let text = result
+            .content
+            .first()
+            .and_then(|b| b.text.as_deref())
+            .unwrap_or("");
+        let payload: serde_json::Value = serde_json::from_str(text).unwrap();
+        assert_eq!(payload["facts"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn recent_rejects_bad_duration() {
+        let (_dir, wiki) = open_temp_wiki();
+        let err = tool_recent(&json!({"last": "30"}), &wiki).unwrap_err();
+        assert!(err.contains("duration"), "got: {err}");
     }
 }

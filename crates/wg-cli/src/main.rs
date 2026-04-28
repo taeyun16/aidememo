@@ -94,7 +94,12 @@ fn main() {
         cmd::Command::Init(sub) => cmd::init::run_init(sub.wiki_root, sub.no_ingest),
         cmd::Command::Watch(sub) => cmd::watch::run_watch(sub.wiki_root, sub.interval, sub.search),
         cmd::Command::McpServe(sub) => cmd::mcp_serve::run_mcp_serve(sub.port, sub.wiki_root),
-        cmd::Command::Mcp(sub) => cmd::mcp_stdio::run_mcp(sub.wiki_root),
+        cmd::Command::Mcp(sub) => {
+            // Honour the global --store / --project resolution if the
+            // user didn't pass an explicit positional WIKI_ROOT.
+            let path = sub.wiki_root.unwrap_or_else(|| store_path.clone());
+            cmd::mcp_stdio::run_mcp(Some(path))
+        }
         cmd::Command::McpInstall(sub) => cmd::mcp_install::run_mcp_install(sub, json),
         cmd::Command::Completions(sub) => cmd::completions::run_completions(sub),
         cmd::Command::Pending(sub) => cmd::pending::run_pending_review(sub),
