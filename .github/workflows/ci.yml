@@ -49,23 +49,10 @@ jobs:
         with:
           shared-key: ubuntu-wg-v2
       - run: cargo fmt --all -- --check
-      # cargo 1.95 on Ubuntu has been silently dropping sibling
-      # crates' deps from the build graph when invoked as `clippy
-      # --workspace --all-targets` (wg-cli's ratatui/bpaf/crossterm
-      # surfaced as E0432 even on a fresh cache). A workspace-wide
-      # `cargo check` warms every member's dep graph first, then we
-      # lint per-package so each invocation has an unambiguous package
-      # context (no workspace-feature drop-out). `-- -D warnings`
-      # denies only OUR lints, not upstream deps'.
-      - run: cargo check --workspace --all-targets --features wg-core/semantic
-      - run: cargo clippy -p wg-core    --all-targets --features semantic -- -D warnings
-      - run: cargo clippy -p wg-cli     --all-targets -- -D warnings
-      - run: cargo clippy -p wg-napi    --all-targets -- -D warnings
-      - run: cargo clippy -p wg-python  --all-targets -- -D warnings
-      - run: cargo clippy -p wg-ffi     --all-targets -- -D warnings
-      - run: cargo clippy -p wg-nif     --all-targets -- -D warnings
-      - run: cargo clippy -p wg-benchmarks --all-targets -- -D warnings
-      - run: cargo doc --workspace --no-deps --features wg-core/semantic
+      # `-- -D warnings` denies workspace clippy lints only; transitive
+      # deps' new lints don't break us when stable advances.
+      - run: cargo clippy --workspace --all-targets --features semantic -- -D warnings
+      - run: cargo doc --workspace --no-deps --features semantic
 
   test:
     name: test (${{ matrix.os }})

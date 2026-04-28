@@ -32,12 +32,6 @@ peak_alloc = "0.3"
 # allocator (only one #[global_allocator] is allowed at link time).
 dhat = { version = "0.3", optional = true }
 
-# OS-native physical-memory metrics. macOS reports phys_footprint
-# (compressed + swapped, excludes shared mmap pages); Linux exposes
-# RssAnon via /proc/self/status, which excludes mmap'd files.
-[target.'cfg(target_os = "macos")'.dependencies]
-mach2 = "0.4"
-
 bpaf = { version = "0.9", features = ["derive", "autocomplete"] }
 chrono = "0.4"
 serde = { version = "1.0", features = ["derive"] }
@@ -60,6 +54,16 @@ crossterm = "0.29"
 tokio = { version = "1.35", features = ["full"] }
 axum = "0.7"
 tokio-stream = "0.1"
+
+# OS-native physical-memory metrics. macOS reports phys_footprint
+# (compressed + swapped, excludes shared mmap pages); Linux exposes
+# RssAnon via /proc/self/status, which excludes mmap'd files.
+# Keep this target-specific block at the END of the manifest — TOML
+# section headers consume all keys until the next header, so any
+# regular dependency placed below it would be silently scoped to
+# macOS only and vanish on every other target.
+[target.'cfg(target_os = "macos")'.dependencies]
+mach2 = "0.4"
 
 [features]
 default = []
