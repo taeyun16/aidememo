@@ -12,8 +12,8 @@ use std::time::Instant;
 use serde::Deserialize;
 use wg_core::{Config, FactInput, FactType, WikiGraph};
 
-const STORE: &str = "/tmp/wg-bench-miracl/_meta/wiki.redb";
-const INPUT: &str = "/tmp/wg-tei-bench/miracl_ko_facts.jsonl";
+const DEFAULT_STORE: &str = "/tmp/wg-bench-miracl/_meta/wiki.redb";
+const DEFAULT_INPUT: &str = "/tmp/wg-tei-bench/miracl_ko_facts.jsonl";
 const BATCH: usize = 500;
 
 #[derive(Deserialize)]
@@ -28,7 +28,9 @@ struct Row {
 }
 
 fn main() {
-    let store_path = Path::new(STORE);
+    let store = std::env::var("WG_BENCH_STORE").unwrap_or_else(|_| DEFAULT_STORE.to_string());
+    let input = std::env::var("WG_BENCH_INPUT").unwrap_or_else(|_| DEFAULT_INPUT.to_string());
+    let store_path = Path::new(&store);
     if let Some(parent) = store_path.parent() {
         std::fs::create_dir_all(parent).expect("mkdir store dir");
     }
@@ -40,8 +42,8 @@ fn main() {
     config.search.semantic_index = "naive".into();
     let wiki = WikiGraph::open(store_path, config).expect("open wg store");
 
-    eprintln!("=== MIRACL/ko ingest into {STORE} ===");
-    let body = std::fs::read_to_string(INPUT).expect("read facts file");
+    eprintln!("=== MIRACL/ko ingest into {store} ===");
+    let body = std::fs::read_to_string(&input).expect("read facts file");
     let lines: Vec<&str> = body.lines().collect();
     eprintln!("input: {} rows", lines.len());
 

@@ -60,3 +60,7 @@ path = "src/bin/miracl_ingest.rs"
 [[bin]]
 name = "miracl_rerank_bench"
 path = "src/bin/miracl_rerank_bench.rs"
+
+[[bin]]
+name = "miracl_model_sweep"
+path = "src/bin/miracl_model_sweep.rs"
