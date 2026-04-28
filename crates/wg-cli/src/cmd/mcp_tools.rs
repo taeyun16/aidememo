@@ -1064,7 +1064,10 @@ mod tests {
             .and_then(|b| b.text.as_deref())
             .unwrap_or("");
         let payload: serde_json::Value = serde_json::from_str(text).expect("response is JSON");
-        assert!(payload.get("facts").is_some(), "expected {{\"facts\": ...}}");
+        assert!(
+            payload.get("facts").is_some(),
+            "expected {{\"facts\": ...}}"
+        );
         assert_eq!(payload["facts"].as_array().unwrap().len(), 1);
     }
 
