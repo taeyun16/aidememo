@@ -27,6 +27,10 @@ cargo build -p wg-cli                   # debug binary at target/debug/wg
 cargo build -p wg-cli --release         # release binary
 cargo test -p wg-core --features semantic   # 35 tests
 cargo test -p wg-cli --bin wg              # 7 tests
+# Tests that download a HuggingFace embedding model are #[ignore]'d
+# (CI skips them — first run hits HF lock races). Run locally for the
+# full surface once the model is cached:
+cargo test -p wg-core --features semantic -- --ignored
 cargo build 2>&1 | grep '^error'        # only errors
 cargo install --path crates/wg-cli      # one-off install
 ```

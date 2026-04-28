@@ -982,8 +982,13 @@ mod tests {
         assert!(results.len() <= config.search.default_limit);
     }
 
+    // semantic::hybrid_search initialises the embedding provider
+    // even when semantic_index = "bm25", so it triggers a HuggingFace
+    // model fetch. Skipped in CI; run locally with
+    // `cargo test -p wg-core --features semantic -- --ignored`.
     #[cfg(feature = "semantic")]
     #[test]
+    #[ignore = "downloads HF model — local only"]
     fn hybrid_search_weights_higher_confidence_higher() {
         // Two facts mention the same query terms; the high-confidence
         // one should rank above the low-confidence one. Without
@@ -1046,6 +1051,7 @@ mod tests {
 
     #[cfg(feature = "semantic")]
     #[test]
+    #[ignore = "downloads HF model — local only"]
     fn hybrid_search_time_decay_demotes_old_facts() {
         // Two equally-confident facts, one fresh and one a year old
         // (via observed_at). With time_decay_tau_ms set to 30 days,
@@ -1112,6 +1118,7 @@ mod tests {
 
     #[cfg(feature = "semantic")]
     #[test]
+    #[ignore = "downloads HF model — local only"]
     fn hybrid_search_decay_disabled_when_tau_is_zero() {
         // With time_decay_tau_ms=0, age must not affect ranking —
         // operators on an archival wiki want every fact treated

@@ -845,7 +845,11 @@ mod query_tests {
         (wiki, dir)
     }
 
+    // Loads the configured embedding model from HuggingFace on first
+    // run. Skipped in CI to avoid network + concurrent-blob-lock
+    // races; run locally with `cargo test -- --ignored`.
     #[test]
+    #[ignore = "downloads HF model — local only"]
     fn query_resolves_entity_and_returns_search_traverse_recent() {
         let (wiki, _dir) = fresh_wiki();
 
@@ -881,6 +885,7 @@ mod query_tests {
     }
 
     #[test]
+    #[ignore = "downloads HF model — local only"]
     fn query_unknown_topic_returns_search_only() {
         let (wiki, _dir) = fresh_wiki();
         let result = wiki
