@@ -1,11 +1,13 @@
 //! `wg project` — manage named multi-store projects.
 //!
+//! ```text
 //!   wg project list                — show registered projects + the default
 //!   wg project show [<name>]       — details (defaults to the default project)
 //!   wg project create <name> --path <PATH>
 //!                                  — register a new project
 //!   wg project use <name>          — set the default project
 //!   wg project remove <name>       — unregister (does NOT delete files)
+//! ```
 //!
 //! Projects live in `~/.wg/config.toml` under `[projects.<name>]`.
 

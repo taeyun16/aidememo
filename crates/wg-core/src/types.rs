@@ -834,10 +834,10 @@ mod semantic_types {
     /// Vector record format for semantic search.
     ///
     /// Binary format:
-    /// - bytes[0]: version (u8, current: 1)
-    /// - bytes[1..3]: dimensions (u16 LE, current: 256)
-    /// - bytes[3]: dtype (u8, 0=f32, 1=f16, 2=i8)
-    /// - bytes[4..]: little-endian vector data
+    /// - `bytes[0]`: version (u8, current: 1)
+    /// - `bytes[1..3]`: dimensions (u16 LE, current: 256)
+    /// - `bytes[3]`: dtype (u8, 0=f32, 1=f16, 2=i8)
+    /// - `bytes[4..]`: little-endian vector data
     #[derive(Debug, Clone)]
     pub struct VectorRecord {
         pub version: u8,

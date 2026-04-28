@@ -165,15 +165,15 @@ pub struct SearchConfig {
     pub graph_fact_cap: usize,
     /// Tier 8: which semantic candidate path to use.
     ///   - `"bm25"`  (default) — top-`semantic_prefilter` BM25 hits
-    ///                 + graph expansion → semantic re-rank.
-    ///                 Cheap; ties on accuracy when fact text shares
-    ///                 keywords with the query.
+    ///     plus graph expansion, then semantic re-rank.
+    ///     Cheap; ties on accuracy when fact text shares
+    ///     keywords with the query.
     ///   - `"hnsw"` — HNSW ANN over fact embeddings.
-    ///                 Closes the recall gap on languages where BM25
-    ///                 tokenization is weak (Korean, Japanese, etc.).
-    ///                 Requires `wg vector-rebuild` once after the
-    ///                 store is populated; rebuild is automatic if
-    ///                 the sidecar's model name no longer matches.
+    ///     Closes the recall gap on languages where BM25
+    ///     tokenization is weak (Korean, Japanese, etc.).
+    ///     Requires `wg vector-rebuild` once after the
+    ///     store is populated; rebuild is automatic if
+    ///     the sidecar's model name no longer matches.
     #[serde(default = "default_semantic_index")]
     pub semantic_index: String,
     /// Multiplicative weighting of `source_confidence` and

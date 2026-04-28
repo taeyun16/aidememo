@@ -17,7 +17,9 @@ Thumbs.db
 *.redb
 _meta/
 .wg/
-models/
+# Top-level model cache only — anchored so it doesn't shadow
+# vendor/tokenizers/src/models/ etc.
+/models/
 
 # Temp files
 *.bak

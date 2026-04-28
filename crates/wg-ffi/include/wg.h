@@ -79,6 +79,11 @@ char* wg_fact_add(const wg_store_t* store,
                   const char* tags_json,        /* may be NULL */
                   const char* source,           /* may be NULL */
                   float       confidence);      /* 0.0 = unset */
+/* Insert many facts in one redb write transaction. items_json is a
+ * JSON array of objects matching wg_fact_add's args:
+ *   content (required), entity_ids, fact_type, tags, source, confidence
+ * Returns {"ids":[...]} on success. */
+char* wg_fact_add_many(const wg_store_t* store, const char* items_json);
 char* wg_fact_get(const wg_store_t* store, const char* fact_id);
 char* wg_fact_list(const wg_store_t* store,
                    const char* entity,         /* may be NULL */

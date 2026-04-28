@@ -216,6 +216,7 @@ impl PyWikiGraph {
     /// Returns one dict with keys: topic, entity, search, related, recent_facts.
     /// `mode`: "naive" | "local" | "hybrid" (default) | "global".
     #[pyo3(signature = (topic, limit=10, depth=2, recent_limit=10, current_only=false, mode=None))]
+    #[allow(clippy::too_many_arguments)]
     fn query(
         &self,
         py: Python<'_>,

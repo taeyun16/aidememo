@@ -3,7 +3,7 @@
 //! Ingest pipeline:
 //! 1. Walk wiki root directory for `.md` files
 //! 2. Parse frontmatter (type, tags, aliases)
-//! 3. Extract [[wikilink]] references → relations
+//! 3. Extract `[[wikilink]]` references → relations
 //! 4. Extract heading-based facts (## Decision:, ## Convention:, etc.)
 //! 5. Write to store
 
@@ -206,7 +206,7 @@ pub fn ingest_wiki(
                     let source = Some(format!("{}#{}", parsed.rel_path, section.anchor));
                     let fact_input = FactInput {
                         content: section.content.clone(),
-                        fact_type: Some(section.fact_type.clone()),
+                        fact_type: Some(section.fact_type),
                         entity_ids: Some(vec![entity_id]),
                         tags: None,
                         source,
@@ -541,7 +541,7 @@ fn extract_sections(body: &str) -> Vec<Section> {
                     heading: current_heading.clone(),
                     anchor: current_anchor.clone(),
                     content: current_content.trim().to_string(),
-                    fact_type: current_fact_type.clone(),
+                    fact_type: current_fact_type,
                     line: current_line,
                 });
             }

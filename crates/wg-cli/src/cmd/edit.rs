@@ -1,10 +1,12 @@
 //! `wg edit fact <ID>` — incremental fact content edits.
 //!
+//! ```text
 //! Operations:
 //!   --append <text>             append `\n<text>` to fact.content
 //!   --prepend <text>            prepend `<text>\n`
 //!   --find <s> --replace <s>    in-place find/replace (errors if not found)
 //!   --content <s>               full replace
+//! ```
 //!
 //! Exactly one operation must be selected.
 

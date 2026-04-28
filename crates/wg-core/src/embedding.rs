@@ -326,14 +326,18 @@ mod tei {
             let info = fetch_info(&info_endpoint, api_key.as_deref()).ok();
             let model_id = info
                 .as_ref()
-                .map(|i| i.0.clone())
+                .map(|i| i.model_id.clone())
                 .unwrap_or_else(|| config.model.name.clone());
-            let max_input_length = info.as_ref().and_then(|i| i.1);
-            let discovered_dim = info.as_ref().and_then(|i| i.2);
+            let max_input_length = info.as_ref().and_then(|i| i.max_input_length);
+            let discovered_dim = info.as_ref().and_then(|i| i.dimension);
             // TEI publishes `max_client_batch_size` in /info (default
             // 32). We round it to a sane chunk size; 32 is also the
             // TEI documented hard cap for `/rerank`.
-            let max_client_batch_size = info.as_ref().and_then(|i| i.3).unwrap_or(32).max(1);
+            let max_client_batch_size = info
+                .as_ref()
+                .and_then(|i| i.max_client_batch_size)
+                .unwrap_or(32)
+                .max(1);
 
             let dimension = if let Some(d) = discovered_dim {
                 d
@@ -372,23 +376,16 @@ mod tei {
         max_client_batch_size: Option<usize>,
     }
 
-    fn fetch_info(
-        url: &str,
-        api_key: Option<&str>,
-    ) -> std::result::Result<(String, Option<usize>, Option<usize>, Option<usize>), ureq::Error>
-    {
+    fn fetch_info(url: &str, api_key: Option<&str>) -> Result<InfoResponse> {
         let mut req = ureq::get(url);
         if let Some(key) = api_key {
             req = req.set("Authorization", &format!("Bearer {key}"));
         }
-        let resp = req.call()?;
-        let parsed: InfoResponse = resp.into_json()?;
-        Ok((
-            parsed.model_id,
-            parsed.max_input_length,
-            parsed.dimension,
-            parsed.max_client_batch_size,
-        ))
+        let resp = req
+            .call()
+            .map_err(|e| WgError::Internal(format!("tei /info request failed at {url}: {e}")))?;
+        resp.into_json()
+            .map_err(|e| WgError::Internal(format!("tei /info parse failed: {e}")))
     }
 
     fn probe_dimension(embed_endpoint: &str, api_key: Option<&str>) -> Result<usize> {

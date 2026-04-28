@@ -359,7 +359,7 @@ mod tests {
             .unwrap();
 
         assert!(result.entities.len() >= 2);
-        assert!(result.relations.len() >= 1);
+        assert!(!result.relations.is_empty());
     }
 
     #[test]

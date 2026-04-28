@@ -552,6 +552,7 @@ fn handle_search(
 /// Run a hybrid search across every registered project, tag each hit with
 /// its project name, merge by score, and render. Used by `wg search
 /// --all-projects` (Tier 5-A.3 — Basic Memory issue #123).
+#[allow(clippy::too_many_arguments)]
 fn run_search_all_projects(
     config: Config,
     sub: cmd::SearchSub,
