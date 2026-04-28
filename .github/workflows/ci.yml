@@ -19,7 +19,13 @@ env:
   # Faster git deps (model2vec-native is fetched as a git source).
   CARGO_NET_GIT_FETCH_WITH_CLI: true
   RUSTUP_MAX_RETRIES: 10
-  RUSTFLAGS: -D warnings
+  # NB: do NOT set `RUSTFLAGS: -D warnings` here. RUSTFLAGS is applied
+  # to *every* crate including transitive deps, so a single new lint
+  # warning in any upstream crate (common after a stable bump) becomes
+  # a fatal error and that crate's .rmeta is never produced — every
+  # downstream workspace crate then fails with E0432 unresolved
+  # imports. Pass -D warnings only to the workspace via clippy/rustdoc
+  # invocations below.
 
 permissions:
   contents: read
@@ -30,6 +36,8 @@ jobs:
   lint:
     name: fmt + clippy + doc
     runs-on: ubuntu-latest
+    # rustdoc with `--no-deps` only runs over workspace crates, so
+    # `-D warnings` here only affects our docs.
     env:
       RUSTDOCFLAGS: -D warnings
     steps:
@@ -47,7 +55,11 @@ jobs:
       # dependencies (bpaf, ratatui, crossterm in wg-cli surface as
       # E0432). The bare form lets cargo apply the feature to whichever
       # workspace member has it.
-      - run: cargo clippy --workspace --all-targets --features semantic
+      #
+      # `-- -D warnings` (after the `--`) deny-fails only the workspace
+      # crates' clippy lints, not deps — preventing transient upstream
+      # lint regressions from breaking us.
+      - run: cargo clippy --workspace --all-targets --features semantic -- -D warnings
       - run: cargo doc --workspace --no-deps --features semantic
 
   test:
