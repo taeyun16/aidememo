@@ -704,7 +704,7 @@ impl Store {
                     .and_then(|r| r.updated_at.checked_sub(r.created_at))
                     .cmp(&a_rec.and_then(|r| r.updated_at.checked_sub(r.created_at)))
             }),
-            EntitySort::FactCount => results.sort_by(|a, b| b.fact_count.cmp(&a.fact_count)),
+            EntitySort::FactCount => results.sort_by_key(|e| std::cmp::Reverse(e.fact_count)),
         }
 
         // Apply pagination
