@@ -32,10 +32,12 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-STORE = "/Users/mixlink/.wg-e2e/wiki.redb-concurrent"
-WG = "/Users/mixlink/.local/bin/wg"
-M_PROCESSES = 4   # parallel writers
-N_PER_PROC = 25   # facts per writer  → 100 facts total per mode
+STORE = os.environ.get(
+    "WG_E2E_STORE", "/Users/mixlink/.wg-e2e/wiki.redb-concurrent"
+)
+WG = os.environ.get("WG_BIN", "/Users/mixlink/.local/bin/wg")
+M_PROCESSES = int(os.environ.get("WG_E2E_PROCESSES", "4"))
+N_PER_PROC = int(os.environ.get("WG_E2E_N_PER_PROC", "25"))
 
 
 def reset_store() -> None:

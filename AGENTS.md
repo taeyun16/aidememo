@@ -208,6 +208,33 @@ command = "wg"
 args = ["mcp"]
 ```
 
+### Multi-agent shared store
+
+`wg` uses redb, which holds an **exclusive file lock per process**.
+Two agents that each spawn their own `wg mcp` against the same store
+will fight over the lock — one wins, the other gets `Database
+already open. Cannot acquire lock.` Two ways to handle this:
+
+1. **Single shared `wg mcp-serve` instance** (recommended for shared
+   writes). Run one HTTP/SSE server, point every agent at the same
+   URL. Each agent's MCP client sees the same tools, the same store,
+   no lock contention.
+   ```bash
+   wg mcp-serve --port 3000 --store ~/.wg/team.redb &
+   # In each agent's MCP config: type=http, url=http://localhost:3000/mcp
+   ```
+2. **Brief opportunistic contention** is fine: set
+   `store.lock_retry_ms` so transient locks (one agent's `wg mcp`
+   briefly holds while you run a one-off `wg fact add`) auto-resolve.
+   ```bash
+   wg config set store.lock_retry_ms 5000   # 5s budget, polls every 100ms
+   ```
+   `lock_retry_ms = 0` (default) preserves the old fail-fast behaviour.
+
+Don't try to give multiple agents their own stdio `wg mcp` against
+the same redb path — it will work for whichever started first, then
+silently lose writes from the others.
+
 ## Bindings (all four full coverage)
 
 Each binding exposes ~22 methods including `current_only` filtering and

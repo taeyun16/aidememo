@@ -32,6 +32,15 @@ args = ["mcp"]
 
 도구 5종이 Codex 세션에 자동으로 노출됩니다.
 
+> ⚠️ **`codex exec` non-interactive 사용 시 주의**: Codex의 default 및
+> `--full-auto` sandbox/approval 정책은 MCP tool 호출을 자동 cancel하고
+> 로컬 CLI fallback으로 빠집니다 (잘못된 store를 보게 될 수 있음).
+> 자동화 스크립트나 CI에서는 `codex exec
+> --dangerously-bypass-approvals-and-sandbox …`로 호출하거나
+> `~/.codex/config.toml`에 `approval_policy = "never"` +
+> `sandbox_mode = "danger-full-access"`를 명시해야 합니다. 인터랙티브
+> 사용에서는 영향 없습니다.
+
 ## 3. AGENTS.md 작성 (프로젝트별 지침)
 
 Codex는 프로젝트 루트의 `AGENTS.md`를 자동으로 읽습니다. wg 사용 패턴을

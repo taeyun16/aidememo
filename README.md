@@ -74,6 +74,7 @@ wg --project personal stats             # one-off override
 - `wg export [--scope all|entities|relations|facts]` / `wg import`
 - `wg config get/set/list`
   - `wg config set store.durability eventual` — drop per-commit fsync (~13× faster writes; survives process crash, not power loss)
+  - `wg config set store.lock_retry_ms 5000` — auto-retry briefly when another `wg` process is holding the redb lock (multi-agent setups). Default `0` keeps the fast-fail behaviour.
 
 ### Multi-project
 - `wg project list/show/create/use/remove`

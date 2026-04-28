@@ -94,6 +94,35 @@ jobs:
       # `cargo test -p wg-core --features semantic` already exercises
       # it end-to-end here.
 
+  # Multi-process write contention regression. Verifies the documented
+  # redb single-process lock contract — fail-fast, no data loss, no
+  # deadlock, no ID collisions. Catches regressions to Store::open's
+  # retry behaviour and to the lock-error detection.
+  scenario-d:
+    name: scenario D — concurrent writers
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ubuntu-wg-v2
+          save-if: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: cargo build -p wg-cli --release
+      - name: scenario D
+        env:
+          WG_BIN: ${{ github.workspace }}/target/release/wg
+          WG_E2E_STORE: /tmp/wg-e2e/wiki.redb-concurrent
+          # Trim the workload a bit for CI runners — still enough to
+          # exercise lock contention without burning minutes.
+          WG_E2E_PROCESSES: "3"
+          WG_E2E_N_PER_PROC: "10"
+        run: python3 bench/multi-agent/scenario_d_concurrent_writers.py
+
   # release-debug profile + dhat-heap feature are how `wg bench` reports
   # allocation backtraces. Compile-only check to make sure that path
   # doesn't bitrot — no need to run a benchmark in CI.

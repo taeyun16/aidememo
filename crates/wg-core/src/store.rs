@@ -78,10 +78,7 @@ impl Store {
             })?;
         }
 
-        let db = Database::create(path).map_err(|e| WgError::StoreOpen {
-            path: path.to_path_buf(),
-            source: Box::new(e),
-        })?;
+        let db = Self::open_with_retry(path, config.store.lock_retry_ms)?;
 
         let store = Self {
             db: Arc::new(db),
@@ -92,6 +89,37 @@ impl Store {
         store.init_schema()?;
 
         Ok(store)
+    }
+
+    /// Open the redb file, retrying on lock contention when configured.
+    /// Polls every 100 ms up to `retry_ms`. retry_ms=0 → original
+    /// fail-fast behaviour.
+    fn open_with_retry(path: &Path, retry_ms: u64) -> Result<Database> {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(retry_ms);
+        loop {
+            match Database::create(path) {
+                Ok(db) => return Ok(db),
+                Err(e) if Self::is_lock_error(&e) && std::time::Instant::now() < deadline => {
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+                Err(e) => {
+                    return Err(WgError::StoreOpen {
+                        path: path.to_path_buf(),
+                        source: Box::new(e),
+                    });
+                }
+            }
+        }
+    }
+
+    /// Best-effort detection of redb's "another process holds the lock"
+    /// error. redb 2.x reports it as `DatabaseError::DatabaseAlreadyOpen`,
+    /// but variant names have shifted across releases — match the stable
+    /// substring of the rendered message instead so we keep working
+    /// across minor bumps.
+    fn is_lock_error(err: &redb::DatabaseError) -> bool {
+        let msg = err.to_string();
+        msg.contains("Database already open") || msg.contains("Cannot acquire lock")
     }
 
     /// Initialize schema (create tables if they don't exist).
@@ -1783,6 +1811,59 @@ mod tests {
         let path = dir.path().join("test.redb");
         let config = Config::default();
         Store::open(&path, config).unwrap()
+    }
+
+    #[test]
+    fn open_with_retry_zero_fails_fast_when_locked() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("locked.redb");
+        // Hold an exclusive open. Default config has lock_retry_ms=0
+        // so the second open should fail fast (well under 1s).
+        let _holder = Store::open(&path, Config::default()).unwrap();
+        let start = std::time::Instant::now();
+        let err = match Store::open(&path, Config::default()) {
+            Ok(_) => panic!("second open should have hit the lock"),
+            Err(e) => e,
+        };
+        let elapsed_ms = start.elapsed().as_millis();
+        assert!(
+            elapsed_ms < 200,
+            "fail-fast should be < 200ms, took {elapsed_ms}ms"
+        );
+        assert!(matches!(err, WgError::StoreOpen { .. }));
+    }
+
+    #[test]
+    fn open_with_retry_succeeds_when_holder_drops() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("retried.redb");
+        let path_clone = path.clone();
+
+        // Hold the lock, then release after 200 ms in a thread.
+        let holder = Store::open(&path, Config::default()).unwrap();
+        let releaser = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            drop(holder);
+        });
+
+        // Try to open with 2-second retry budget — should succeed
+        // once the holder drops.
+        let mut config = Config::default();
+        config.store.lock_retry_ms = 2000;
+        let start = std::time::Instant::now();
+        let store = match Store::open(&path_clone, config) {
+            Ok(s) => s,
+            Err(e) => panic!("retry should succeed, got {e:?}"),
+        };
+        let elapsed_ms = start.elapsed().as_millis();
+        // Took at least one retry-poll (100 ms) but well under the
+        // 2-second budget.
+        assert!(
+            (100..1500).contains(&(elapsed_ms as u64)),
+            "expected ~200-1000ms wait, got {elapsed_ms}ms"
+        );
+        drop(store);
+        releaser.join().unwrap();
     }
 
     #[test]

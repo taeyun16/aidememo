@@ -56,6 +56,16 @@ pub struct StoreConfig {
     /// commit, which is too easy to misuse.
     #[serde(default = "default_durability")]
     pub durability: String,
+    /// How long (in milliseconds) to keep retrying when another process
+    /// is holding the redb file lock. redb is single-process by design,
+    /// so two `wg` invocations against the same store fail-fast with
+    /// `Database already open. Cannot acquire lock.` Setting this to a
+    /// non-zero value polls the lock every 100 ms up to the configured
+    /// budget, which smooths over short-lived contention from agent
+    /// orchestrators that briefly spawn `wg` while another long-lived
+    /// `wg mcp` instance holds the lock. Default 0 = current behaviour.
+    #[serde(default)]
+    pub lock_retry_ms: u64,
 }
 
 fn default_durability() -> String {
@@ -67,6 +77,7 @@ impl Default for StoreConfig {
         Self {
             path: "./_meta/wiki.redb".to_string(),
             durability: default_durability(),
+            lock_retry_ms: 0,
         }
     }
 }
@@ -482,6 +493,7 @@ impl StoreConfig {
         match key {
             "path" => Some(self.path.clone()),
             "durability" => Some(self.durability.clone()),
+            "lock_retry_ms" => Some(self.lock_retry_ms.to_string()),
             _ => None,
         }
     }
@@ -504,6 +516,16 @@ impl StoreConfig {
                         value
                     ))),
                 }
+            }
+            "lock_retry_ms" => {
+                let n: u64 = value.parse().map_err(|_| {
+                    WgError::InvalidInput(format!(
+                        "store.lock_retry_ms must be a non-negative integer, got '{}'",
+                        value
+                    ))
+                })?;
+                self.lock_retry_ms = n;
+                Ok(())
             }
             _ => Err(WgError::ConfigKeyNotFound(format!("store.{}", key))),
         }
@@ -761,6 +783,29 @@ mod tests {
         config.set("store.durability", "Eventual").unwrap();
         // Normalized to lowercase.
         assert_eq!(config.store.durability, "eventual");
+    }
+
+    #[test]
+    fn store_lock_retry_default_is_zero() {
+        let config = Config::default();
+        assert_eq!(config.store.lock_retry_ms, 0);
+        assert_eq!(config.get("store.lock_retry_ms"), Some("0".to_string()));
+    }
+
+    #[test]
+    fn store_lock_retry_set_accepts_integer_ms() {
+        let mut config = Config::default();
+        config.set("store.lock_retry_ms", "5000").unwrap();
+        assert_eq!(config.store.lock_retry_ms, 5000);
+    }
+
+    #[test]
+    fn store_lock_retry_set_rejects_non_integer() {
+        let mut config = Config::default();
+        let err = config
+            .set("store.lock_retry_ms", "5s")
+            .expect_err("non-integer should be rejected");
+        assert!(format!("{err}").contains("integer"));
     }
 
     #[test]
