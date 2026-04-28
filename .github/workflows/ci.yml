@@ -81,7 +81,16 @@ jobs:
           # Only the lint job writes the ubuntu cache; readers don't
           # save to avoid concurrent-write conflicts.
           save-if: ${{ matrix.os != 'ubuntu-latest' }}
-      - run: cargo test --workspace --no-default-features
+      # `--workspace --no-default-features` cannot truly disable
+      # wg-core's `semantic` here because wg-cli declares
+      # `wg-core = { features = ["semantic", "semantic-adapt"] }` and
+      # cargo's feature unification makes that the workspace-wide
+      # ground truth. The tests below exercise BM25 paths; the
+      # query_resolves_* test loads a HuggingFace model and is the
+      # only one that needs network. Run it explicitly under the
+      # `wg-core --features semantic` step (cached HF dir) and skip
+      # it from the workspace pass.
+      - run: cargo test --workspace --no-default-features -- --skip query_resolves_entity
       - run: cargo test -p wg-core --features semantic
       - run: cargo test -p wg-cli --bin wg
       # model2vec-native lives in its own repo
