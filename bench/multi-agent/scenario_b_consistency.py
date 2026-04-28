@@ -254,6 +254,7 @@ def main() -> int:
         },
     }
     out_path = Path("bench/multi-agent/results/scenario_b.json")
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(out, indent=2, ensure_ascii=False))
     print(json.dumps(out, indent=2, ensure_ascii=False))
     return 0 if out["summary"]["passed"] == out["summary"]["total"] else 1

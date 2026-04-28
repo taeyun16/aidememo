@@ -189,8 +189,9 @@ def main() -> int:
             "agents_total": len(runs),
         },
     }
-    Path("bench/multi-agent/results/scenario_c.json").write_text(
-        json.dumps(out, indent=2, ensure_ascii=False))
+    out_path = Path("bench/multi-agent/results/scenario_c.json")
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(out, indent=2, ensure_ascii=False))
     print(json.dumps(out, indent=2, ensure_ascii=False))
     return 0
 
