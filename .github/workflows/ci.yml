@@ -62,8 +62,17 @@ jobs:
         os: [ubuntu-latest, macos-latest]
       fail-fast: false
     runs-on: ${{ matrix.os }}
+    # Pin Python to a version PyO3 0.23 supports (max 3.13). The
+    # macos-latest runner ships 3.14 by default, which makes pyo3-ffi's
+    # build script abort with "configured Python interpreter version
+    # is newer than PyO3's maximum supported version".
+    env:
+      PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -109,11 +118,15 @@ jobs:
           shared-key: ubuntu-wg-v2
           save-if: false
       - run: cargo build -p wg-ffi --release
+      # libwg_ffi.a transitively links native_tls/openssl-sys via
+      # wg-core's HTTP deps, so the cc invocation needs -lssl -lcrypto
+      # to satisfy the OpenSSL symbols. Ubuntu runners already ship
+      # libssl-dev, so no apt step needed.
       - run: |
           cc crates/wg-ffi/example/smoke.c \
              -I crates/wg-ffi/include \
              target/release/libwg_ffi.a \
-             -lpthread -ldl -lm \
+             -lpthread -ldl -lm -lssl -lcrypto \
              -o target/wg-ffi-smoke
           target/wg-ffi-smoke
 
