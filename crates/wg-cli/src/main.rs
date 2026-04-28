@@ -93,7 +93,12 @@ fn main() {
         cmd::Command::Adapt(sub) => cmd::adapt::run_adapt(&store_path, config, sub),
         cmd::Command::Init(sub) => cmd::init::run_init(sub.wiki_root, sub.no_ingest),
         cmd::Command::Watch(sub) => cmd::watch::run_watch(sub.wiki_root, sub.interval, sub.search),
-        cmd::Command::McpServe(sub) => cmd::mcp_serve::run_mcp_serve(sub.port, sub.wiki_root),
+        cmd::Command::McpServe(sub) => {
+            // Mirror the Mcp arm — honour --store / --project unless
+            // the user passed a positional WIKI_ROOT.
+            let path = sub.wiki_root.unwrap_or_else(|| store_path.clone());
+            cmd::mcp_serve::run_mcp_serve(sub.port, Some(path))
+        }
         cmd::Command::Mcp(sub) => {
             // Honour the global --store / --project resolution if the
             // user didn't pass an explicit positional WIKI_ROOT.

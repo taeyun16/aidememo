@@ -155,6 +155,43 @@ JSON-RPC envelope 자체에는 영향 없지만 클라이언트가 `data["facts"
 답변에 추측 없이 fact id+content를 verbatim 포함. 즉 **wg는 자연어
 agent의 RAG-style 컨텍스트 소스로 동작 가능**.
 
+## 시나리오 E — mcp-serve HTTP 모드 multi-client write
+
+**목적**: D가 보여준 stdio multi-process write의 lock 충돌을 해소하는
+권장 패턴(`wg mcp-serve` 한 인스턴스 + 다중 HTTP 클라이언트)이 실제로
+무상흠한 multi-agent shared write를 제공하는지 검증.
+
+**셋업**: `wg mcp-serve --port 3939 /tmp/wg-e2e-e/wiki.redb` 백그라운드
+기동, 4 client × 25 inserts (총 100) 동시 HTTP POST.
+
+**결과**: 5/5 invariants 통과. 100/100 fact 모두 저장, ID 중복 0,
+HTTP/lock 에러 0.
+
+| 지표 | 값 |
+|---|---|
+| persisted | 100/100 |
+| unique IDs | 100/100 |
+| p50 latency | 18.6 ms |
+| p95 latency | 24.6 ms |
+| max latency | 27.6 ms |
+| total wall | 545 ms |
+
+**D vs E 한눈에 비교**:
+
+| 모드 | 결과 (M=4, N=25) | wall | 비고 |
+|---|---|---|---|
+| D stdio default (`lock_retry_ms=0`) | CLI 7/100, MCP 25/100 | 423ms / 223ms | 사용자에게 silent loss — 위험 |
+| D stdio retry (`lock_retry_ms=5000`) | CLI 100/100, MCP 100/100 | 5186ms / 868ms | 안전하지만 wait 시간 누적 |
+| **E HTTP shared (`mcp-serve`)** | **100/100** | **545ms** | 가장 빠르고 가장 안전 — 권장 |
+
+E가 D-retry보다 wall이 5배 짧은 이유: HTTP 모드는 모든 인서트가 한
+process의 redb writer에서 in-memory 직렬화 → lock acquisition 라운드
+없음. CLI는 매번 store open/commit/close.
+
+**결론**: AGENTS.md "Multi-agent shared store"가 권하는 mcp-serve 단일
+인스턴스 + 멀티 client 패턴은 **실증적으로 best**. lock_retry는 1회성
+backup, 정기적 multi-agent write에는 mcp-serve가 맞음.
+
 ## 시나리오 D — 동시 라이터 락 동작
 
 **목적**: 4개 프로세스가 같은 store에 N=25개씩 fact를 동시 추가했을 때
