@@ -49,21 +49,23 @@ jobs:
         with:
           shared-key: ubuntu-wg-v2
       - run: cargo fmt --all -- --check
-      # NB: do NOT pass `--features semantic` here. With no
-      # default-members in the workspace, cargo 1.95 + `--workspace
-      # --features X` (where X exists only on a sibling, not on every
-      # member) silently drops some sibling crates from the build
-      # graph — wg-cli's ratatui/bpaf/crossterm vanish and you get
-      # E0432. The semantic code path is still covered: wg-cli depends
-      # on `wg-core = { features = ["semantic", "semantic-adapt"] }`,
-      # so transitive feature unification turns wg-core's semantic
-      # blocks on for the whole workspace check.
-      #
-      # `-- -D warnings` (after the `--`) deny-fails only the workspace
-      # crates' clippy lints, not transitive deps — preventing
-      # upstream lint regressions from breaking us.
-      - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo doc --workspace --no-deps
+      # cargo 1.95 on Ubuntu has been silently dropping sibling
+      # crates' deps from the build graph when invoked as `clippy
+      # --workspace --all-targets` (wg-cli's ratatui/bpaf/crossterm
+      # surfaced as E0432 even on a fresh cache). A workspace-wide
+      # `cargo check` warms every member's dep graph first, then we
+      # lint per-package so each invocation has an unambiguous package
+      # context (no workspace-feature drop-out). `-- -D warnings`
+      # denies only OUR lints, not upstream deps'.
+      - run: cargo check --workspace --all-targets --features wg-core/semantic
+      - run: cargo clippy -p wg-core    --all-targets --features semantic -- -D warnings
+      - run: cargo clippy -p wg-cli     --all-targets -- -D warnings
+      - run: cargo clippy -p wg-napi    --all-targets -- -D warnings
+      - run: cargo clippy -p wg-python  --all-targets -- -D warnings
+      - run: cargo clippy -p wg-ffi     --all-targets -- -D warnings
+      - run: cargo clippy -p wg-nif     --all-targets -- -D warnings
+      - run: cargo clippy -p wg-benchmarks --all-targets -- -D warnings
+      - run: cargo doc --workspace --no-deps --features wg-core/semantic
 
   test:
     name: test (${{ matrix.os }})
