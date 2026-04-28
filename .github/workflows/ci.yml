@@ -19,6 +19,11 @@ env:
   # Faster git deps (model2vec-native is fetched as a git source).
   CARGO_NET_GIT_FETCH_WITH_CLI: true
   RUSTUP_MAX_RETRIES: 10
+  # Opt the JS-based actions onto Node 24 ahead of the 2026-09-16
+  # forced cutover. checkout@v4 / setup-python@v5 still ship as
+  # Node 20 bundles; this env flips them to the runner's Node 24.
+  # Drop once we're on actions/checkout@v5+ everywhere.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
   # NB: do NOT set `RUSTFLAGS: -D warnings` here. RUSTFLAGS is applied
   # to *every* crate including transitive deps, so a single new lint
   # warning in any upstream crate (common after a stable bump) becomes

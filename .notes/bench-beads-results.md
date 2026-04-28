@@ -1,0 +1,88 @@
+# wg vs beads — 1차 실측 결과
+
+> 일시: 2026-04-28
+> 대상: wg @ `3de286f` (release), beads `1.0.3` (Homebrew, Dolt 1.86.6)
+> 머신: macOS arm64 (Apple Silicon)
+> 데이터셋: 1000 records, 64-byte titles, 256-byte descriptions, fixed seed
+> 위치: `bench/beads-vs-wg/`
+
+## 한 줄 결론
+
+**Bulk write에서는 wg가 50× 빠르고 disk가 10× 작다. Single-query
+search에서는 bd가 ~3× 빠르다.** 두 시스템의 backend 선택이 그대로
+trade-off로 드러난다 — wg(redb, lean KV)는 쓰기·디스크에 강하고,
+bd(Dolt, SQL+versioned)는 쿼리 latency가 짧다.
+
+## 시나리오 #1 — Bulk write throughput
+
+같은 1000 records를 양쪽의 first-class bulk-insert 경로로 넣는다.
+
+| 지표 | wg (`wg_fact_add_many` MCP, 1 transaction) | beads (`bd import < jsonl`) | 비율 |
+|---|---|---|---|
+| wall (1000 records) | **108 ms** | 5443 ms | wg **50.2× faster** |
+| throughput | **9 229 records/s** | 184 records/s | wg 50.2× higher |
+| on-disk after insert | 3.7 MB | 39.2 MB | wg **10.6× smaller** |
+
+해석:
+- wg는 redb의 single-transaction append + page write 한 번. fsync 한 번 (immediate durability).
+- bd는 Dolt의 SQL INSERT + commit (versioned hash chain). commit 한 번 = SHA + index + journal 갱신, 비용이 redb보다 한 자릿수 무거움.
+- disk 차이는 1k records에서 가장 두드러진다. Dolt의 versioning metadata가 작은 데이터셋에선 페이로드 자체보다 큼. 이는 100k+ 스케일에서는 흡수될 가능성.
+
+## 시나리오 #3 — Single-query search latency
+
+같은 store에 100개 mid-frequency query (시드 고정, 모든 query는 hit
+보장). 매 호출은 fresh CLI process spawn — agent 입장의 실제 latency.
+
+| 지표 | wg search | bd search | 비율 |
+|---|---|---|---|
+| p50 | 1111 ms | **387 ms** | bd **2.87× faster** |
+| p95 | 1221 ms | **398 ms** | bd 3.07× faster |
+| max | 1263 ms | 408 ms | — |
+| 평균 응답 길이 | 4683 chars | 622 chars | wg 7.5× richer |
+
+해석:
+- wg는 BM25 + (옵션) semantic 모델 로드 시도. 매 fresh spawn마다 tokenizer 초기화 비용 발생. stderr에 매번 `semantic_index=hnsw configured but no sidecar … falling back to BM25 prefilter. Run wg vector-rebuild.` 경고 — fallback path가 cold-start cost를 키움.
+- bd는 SQL `LIKE` on title — 인덱스 없는 full scan이지만 문자열 매칭 자체가 가벼움. ranking 없음.
+- wg의 응답이 7.5× 더 풍부 (entity context, source citation, relevance score). 단순 latency만 보면 손해지만 답변 품질 측면 정보량은 큼.
+- HNSW sidecar를 미리 빌드하면 (`wg vector-rebuild`) wg search가 어떻게 변하는지는 후속 실측 필요.
+
+## 발견 / 후속 작업
+
+1. **wg search의 cold-start tax**: 매 fresh CLI 호출마다 모델 로드를
+   시도하면서 semantic 미설정 경고를 내보내는 것은 사용자 인지 latency
+   를 키운다. 두 가지 개선 후보:
+   - sidecar 미존재 시 경고는 한 번만 (또는 `--quiet`로 silence)
+   - 또는 default config가 HNSW를 요구하지 않게 (bm25 모드 기본)
+2. **장기 사용 시 disk 비교 재측정 필요**: 1k records는 작아서
+   metadata가 페이로드보다 커진 케이스. 10k / 100k에서 wg 우위가
+   유지되는지 확인.
+3. **wg의 entity 자동 생성 미지원**: `wg_fact_add_many`에서 `entities`
+   인자에 미존재 entity 이름을 넘기면 silent drop (entity_count=0
+   결과). 자동 생성 옵션이 있으면 ingest 패턴이 더 직관적.
+4. **시나리오 #2 (graph traversal)와 시나리오 #4 (cold-start)**는
+   설계만 한 상태. wg와 bd의 그래프 모델이 의미적으로 다르고 (entity-
+   relation vs issue-dependency) traversal 의미도 달라서, 측정 fair
+   하게 만들려면 별도 정의 필요.
+
+## 데이터/스크립트
+
+- `bench/beads-vs-wg/gen.py` — 데이터셋 generator
+- `bench/beads-vs-wg/scenario_1_bulk_write.py`
+- `bench/beads-vs-wg/scenario_3_search_latency.py`
+- `bench/beads-vs-wg/data/` — generator 출력 (gitignore)
+- `bench/beads-vs-wg/results/` — 측정 결과 raw JSON (gitignore)
+
+재현:
+
+```bash
+# 1) 데이터셋 생성
+python3 bench/beads-vs-wg/gen.py --n 1000 --seed 42
+
+# 2) bulk write
+python3 bench/beads-vs-wg/scenario_1_bulk_write.py
+
+# 3) search latency
+python3 bench/beads-vs-wg/scenario_3_search_latency.py
+```
+
+환경변수: `WG_BIN`, `BD_BIN`, `BENCH_DATA`, `BENCH_RESULTS`로 override.
