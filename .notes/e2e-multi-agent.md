@@ -1,15 +1,21 @@
 # wg multi-agent 통합 e2e 결과
 
 > 일시: 2026-04-28
-> 대상: wg @ `22fb34a`, claude code, codex (gpt-5.4), hermes (헤르메스 에이전트 + hermes-wg plugin)
+> 대상: wg @ `d7aa7c2` (이슈 #1–#4 fix 적용 후), claude code, codex
+> (gpt-5.4), hermes (헤르메스 에이전트 + hermes-wg plugin)
 > 위치: `bench/multi-agent/`
-> 결과 raw: `bench/multi-agent/results/scenario_a.json`, `…/scenario_b.json`
+> 결과 raw: `bench/multi-agent/results/scenario_*.json` (gitignored, 매
+> 실행마다 새로 생성)
 
 ## 한 줄 결론
 
-**A + B 모두 통과 (3/3, 7/7)**. 셋의 통합은 동작한다. 다만 진행 중에 wg
-본체의 작은 버그/UX 이슈 4건이 드러났고, 그중 하나는 사용자가 실제로
-부딪힐 가능성이 높다 (`wg mcp`가 글로벌 `--store`를 무시).
+**A·B·C·D 네 시나리오 모두 통과** (A 3/3, B 7/7, C 3/3, D 7/7). 셋의
+통합은 실 사용 수준에서 동작한다. 진행 중 발견된 wg 본체 4건은 모두
+fix됨 (PR `a47d3d5`). 추가로 두 발견:
+- **codex는 non-interactive mcp 호출에 sandbox/approval 우회 필요**
+  (`--dangerously-bypass-approvals-and-sandbox`).
+- **wg는 multi-process 동시 write 시 redb file lock 충돌로 fail-fast**
+  (의도된 동작, 그러나 graceful retry/backoff는 본체 개선 후보).
 
 ## 환경 셋업
 
@@ -122,6 +128,65 @@ JSON-RPC envelope 자체에는 영향 없지만 클라이언트가 `data["facts"
 **Fix**: `{"facts": [...]}`로 wrap. 단위 테스트 `recent_wraps_facts_in_object`
 추가.
 
+## 시나리오 C — 자연어 prompt e2e
+
+**목적**: 동일한 자연어 prompt를 3개 에이전트의 non-interactive CLI로
+던지고, 각각 wg의 mcp tool을 실제로 호출해 답변을 만드는지 검증.
+
+**셋업**: e2e store에 알려진 fact 5개 적재 (Redis 3, Postgres 2). 각
+에이전트가 답할 수 없는 추측을 하면 즉시 들통남.
+
+**프롬프트** (한 번, 3 에이전트 공통):
+> Use the wg knowledge graph (wg_query / wg_search / wg_recent tools)
+> to fetch every fact about 'Redis' that wg knows, then summarise them
+> as a numbered list. Quote each fact's content verbatim and include
+> its fact id. Do NOT invent or paraphrase — if wg returns nothing,
+> say so explicitly. Keep the answer under 200 words.
+
+**결과**: 3/3 통과 — 모든 에이전트가 Redis fact 3개 모두 정확히 인용.
+
+| 에이전트 | wall | 인용된 fact id | 토큰 사용 (보고된 경우) | 비고 |
+|---|---|---|---|---|
+| `claude --print` | 12.8s | 3/3 | n/a (CLI 출력 없음) | 가장 빠름. Default sandbox에서 그대로 동작. |
+| `codex exec --dangerously-bypass-approvals-and-sandbox` | 23.4s | 3/3 | 30 239 | **bypass 플래그가 없으면 mcp 호출이 cancel됨** (아래 발견 #5 참고). |
+| `hermes chat -Q -q` | 37.6s | 3/3 | n/a | 정상. 가장 느리지만 답변에 entity fact_count까지 포함. |
+
+세 에이전트 모두 wg의 mcp tool을 실제로 호출했고 (stderr/메타에서 확인),
+답변에 추측 없이 fact id+content를 verbatim 포함. 즉 **wg는 자연어
+agent의 RAG-style 컨텍스트 소스로 동작 가능**.
+
+## 시나리오 D — 동시 라이터 락 동작
+
+**목적**: 4개 프로세스가 같은 store에 N=25개씩 fact를 동시 추가했을 때
+데이터 무결성·deadlock·ID 중복 여부 검증.
+
+**결과**: 7/7 invariants 통과 — 단, 100개 중 일부만 저장됨 (CLI 7개,
+MCP 25개). 이는 **redb의 single-process file lock 정책**이 의도대로
+작동한 결과:
+
+| invariant | CLI | MCP |
+|---|---|---|
+| 성공한 fact 간 ID 중복 없음 | ✓ | ✓ |
+| 최소 1개 write 성공 | ✓ (7/100) | ✓ (25/100, 한 process만) |
+| 60초 이내 종료 (deadlock 없음) | ✓ (423ms) | ✓ (223ms) |
+| 모든 실패가 lock 또는 no-content 에러 | ✓ | ✓ |
+
+**핵심 관찰**:
+- MCP 모드: 한 process가 stdio session을 잡으면 그 안 N=25 inserts
+  모두 성공, 다른 3개 process는 startup의 `Database already open`로
+  fail. → **단일 long-lived `wg mcp` 안에서는 직렬화가 정상 동작**.
+- CLI 모드: 매 호출마다 store open/close, 4개 process가 lock을 racing
+  → 7개만 우연히 성공. **실제 사용 시 사용자가 race를 인지 못 할 수
+  있어 위험**.
+
+**시사점**: wg를 여러 에이전트가 공유 write할 거면 셋 중 하나 필요:
+1. `wg mcp-serve --port 3000` HTTP/SSE 모드 (단일 서버, 멀티 클라이언트)
+2. 에이전트마다 별도 store
+3. 외부 락/큐 프로토콜로 직렬화
+
+현재 .mcp.json/codex/hermes 모두 stdio로 wg mcp를 spawn하므로 (1)이
+아니면 cross-agent shared write는 위험.
+
 ## 비교 — Claude Code, Codex, Hermes 의 wg 통합 특성
 
 | 축 | Claude Code | Codex | Hermes |
@@ -134,13 +199,45 @@ JSON-RPC envelope 자체에는 영향 없지만 클라이언트가 `data["facts"
 | 강점 | 프로젝트별 store 분리 자연스러움 | 글로벌 단일 wg 인스턴스, 어느 워킹 디렉토리에서도 동일 store | Python 코드에서 wg를 import해 쓸 수 있음 |
 | 약점 | 프로젝트마다 .mcp.json 필요 | mcp install 시 글로벌 변경 (다른 프로젝트에도 영향) | CLI shell-out 비용, MCP tool 표면을 우회 |
 
+## 추가로 발견된 이슈
+
+### 5. wg의 lock 충돌 시 즉시 fail (multi-agent 사용성)
+
+`wg --store /path fact add ...` (CLI) 또는 `wg mcp /path` (MCP)가 다른
+process에 의해 store가 이미 열려 있으면 `Database already open. Cannot
+acquire lock.`로 즉시 종료. retry/backoff 없음.
+
+**시나리오 D**가 보여주듯, 여러 에이전트가 stdio mcp로 wg를 spawn하면
+한 명만 lock 잡고 나머지는 즉시 fail. claude-code가 `.mcp.json`으로
+wg를 spawn한 상태에서 사용자가 별도 터미널에서 `wg fact add`를 치면
+같은 에러. 사용자 입장에서는 "왜 안 돼?"가 됨.
+
+**Fix 후보 (낮은 위험도)**:
+- `Store::open`에 retry-with-backoff 옵션 추가 (예: 100ms × 5회).
+- `wg --store ... <cmd>`의 글로벌 옵션으로 `--lock-retry <ms>` 노출.
+- 또는 적어도 에러 메시지에 "다른 wg mcp 인스턴스가 열려 있을 수
+  있음 — `wg mcp-serve`로 공유하거나 `--store`로 별도 store를
+  지정하세요" 같은 힌트.
+
+### 6. codex의 default sandbox/approval이 MCP tool을 silent cancel
+
+`codex exec` 또는 `codex exec --full-auto`로 wg mcp tool을 부르면
+codex가 호출을 자동 cancel하고 CLI fallback을 시도. 그 fallback이
+잘못된 store(`./_meta/wiki.redb`)를 보고 빈 결과 반환 → 에이전트가
+"wg에 데이터가 없습니다"라고 거짓 보고.
+
+이건 wg 본체 이슈는 아니고 **codex 측 설정 문제**지만, wg를 codex와
+연결할 때 `--dangerously-bypass-approvals-and-sandbox` 또는 특정
+config(`approval_policy="never"`)이 필요함을 wg-skill의 setup-codex.md에
+명시해야 사용자가 같은 함정에 빠지지 않음.
+
 ## 다음 검토 후보
 
-1. **위 본체 이슈 4건을 정식 PR/이슈로 등록** — 특히 #1은 사용자 발 걸리는 패턴.
-2. **시나리오 C (자연어 prompt 통합)** 진행 여부 — `claude --print`,
-   `codex exec`, hermes non-interactive로 같은 프롬프트를 던지고 wg를
-   실제로 호출해서 답변하는지 + tool-call 횟수 + 답변 일치/품질.
-   모델 비용이 들고 비결정적이라 1회 데모 정도가 적절.
-3. **동시성 시나리오** — 2개 에이전트가 동시에 wg_fact_add → 누가 이기나,
-   redb 라이터 락이 깔끔하게 양보하는지. wg는 single-writer라 직렬화
-   되어야 함.
+1. **본체 이슈 #5 (lock retry)** — 한 PR로 추가 가능, 시나리오 D를
+   회귀 테스트로 활용.
+2. **wg-skill setup-codex.md 업데이트** — codex 측 sandbox/approval 우회
+   필요성 안내 (1줄 추가).
+3. **wg mcp-serve로 단일 인스턴스 공유 패턴 가이드** — `.mcp.json`에서
+   stdio 대신 HTTP/SSE 모드를 써서 multi-agent shared write 가능.
+4. **시나리오 D-2 (single-process 직렬화 회귀 테스트)** — 한 wg mcp에
+   다중 stdio session을 보내면서 데이터 무결성 검증. CI에 넣을 가치.
