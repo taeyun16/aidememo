@@ -28,8 +28,11 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-STORE = "/Users/mixlink/.wg-e2e/wiki.redb"
-WG = "/Users/mixlink/.local/bin/wg"
+STORE = os.environ.get("WG_E2E_STORE", "/Users/mixlink/.wg-e2e/wiki.redb")
+WG = os.environ.get("WG_BIN", "/Users/mixlink/.local/bin/wg")
+CLAUDE_BIN = os.environ.get("CLAUDE_BIN", "/Users/mixlink/.local/bin/claude")
+CODEX_BIN = os.environ.get("CODEX_BIN", "/opt/homebrew/bin/codex")
+HERMES_BIN = os.environ.get("HERMES_BIN", "/Users/mixlink/.local/bin/hermes")
 
 # Seed facts — short and unambiguous so we can tell whether the agent
 # actually used wg vs hallucinated.
@@ -139,7 +142,7 @@ def main() -> int:
         agents = [
             AgentRun(
                 name="claude",
-                cmd=["/Users/mixlink/.local/bin/claude", "--print",
+                cmd=[CLAUDE_BIN, "--print",
                      "--permission-mode", "bypassPermissions"],
                 cwd=str(td_path),
             ),
@@ -151,13 +154,13 @@ def main() -> int:
                 # opens the wrong store. The bypass flag is the only
                 # way to get codex's non-interactive run to actually
                 # call MCP tools.
-                cmd=["/opt/homebrew/bin/codex", "exec",
+                cmd=[CODEX_BIN, "exec",
                      "--skip-git-repo-check",
                      "--dangerously-bypass-approvals-and-sandbox"],
             ),
             AgentRun(
                 name="hermes",
-                cmd=["/Users/mixlink/.local/bin/hermes", "chat", "-Q", "-q"],
+                cmd=[HERMES_BIN, "chat", "-Q", "-q"],
             ),
         ]
 
@@ -169,11 +172,45 @@ def main() -> int:
                   f"stdout_chars={len(r['stdout'])}", file=sys.stderr)
             runs.append(r)
 
-    # Verify: each agent must have referenced at least one of the
-    # seeded fact IDs (otherwise it didn't actually call wg).
+    # Two verification signals:
+    #   - facts_quoted   : agent reproduced the fact's exact content
+    #                      string. Long natural-language strings are
+    #                      LLM-friendly to transcribe verbatim, so this
+    #                      is the primary signal for "did the agent
+    #                      actually call wg and use the data?"
+    #   - ids_mentioned  : agent included the 26-char ULID. Bonus
+    #                      metric — useful but flaky because LLMs
+    #                      occasionally drop a character when they
+    #                      transcribe long opaque strings. We do NOT
+    #                      gate pass/fail on it.
+    redis_seeds = [content for entity, content in SEED if entity == "Redis"]
+    redis_seed_ids = [
+        fid for fid, (entity, _) in zip(seeded, SEED) if entity == "Redis"
+    ]
     for r in runs:
-        r["seed_ids_mentioned"] = [fid for fid in seeded if fid in r["stdout"]]
-        r["mentioned_count"] = len(r["seed_ids_mentioned"])
+        r["facts_quoted"] = [s for s in redis_seeds if s in r["stdout"]]
+        r["facts_quoted_count"] = len(r["facts_quoted"])
+        r["ids_mentioned"] = [fid for fid in redis_seed_ids if fid in r["stdout"]]
+        r["ids_mentioned_count"] = len(r["ids_mentioned"])
+
+    redis_total = sum(1 for entity, _ in SEED if entity == "Redis")
+    invariants = {
+        # Every agent must have actually used wg — i.e. quoted at
+        # least one Redis fact verbatim. (Otherwise it hallucinated
+        # or said "no facts found".)
+        "all_agents_used_wg": all(r["facts_quoted_count"] >= 1 for r in runs),
+        # Every agent must have surfaced ALL Redis facts wg knows.
+        # Content matching tolerates LLM ULID-transcription wobbles.
+        "all_agents_returned_complete_set": all(
+            r["facts_quoted_count"] == redis_total for r in runs
+        ),
+        # No agent invoked the prompt's "say nothing" escape clause.
+        "no_agent_claimed_empty": all(
+            "no facts" not in r["stdout"].lower()
+            and "could not" not in r["stdout"].lower()
+            for r in runs
+        ),
+    }
 
     out = {
         "scenario": "C — natural-language prompt e2e",
@@ -184,8 +221,10 @@ def main() -> int:
             for fid, (entity, content) in zip(seeded, SEED)
         ],
         "agents": runs,
+        "invariants": invariants,
         "summary": {
-            "agents_that_used_wg": sum(1 for r in runs if r["mentioned_count"] > 0),
+            "passed": sum(1 for v in invariants.values() if v),
+            "total": len(invariants),
             "agents_total": len(runs),
         },
     }
@@ -193,7 +232,7 @@ def main() -> int:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(out, indent=2, ensure_ascii=False))
     print(json.dumps(out, indent=2, ensure_ascii=False))
-    return 0
+    return 0 if out["summary"]["passed"] == out["summary"]["total"] else 1
 
 
 if __name__ == "__main__":

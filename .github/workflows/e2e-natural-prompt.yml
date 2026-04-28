@@ -1,0 +1,73 @@
+name: e2e — natural-language prompt (scenario C)
+
+# Triggered manually or by adding the `run-e2e-c` label to a PR.
+# Intentionally NOT triggered on every push: this workflow burns
+# model tokens (claude + codex + hermes, ~50–100k tokens per run)
+# and depends on a self-hosted runner that has those CLIs installed
+# and authenticated.
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+  pull-requests: write   # so we can comment back on the labelled PR
+
+jobs:
+  scenario-c:
+    name: scenario C — claude / codex / hermes
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' &&
+       github.event.label.name == 'run-e2e-c')
+    runs-on: [self-hosted, macos]   # see bench/multi-agent/README.md
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: build wg
+        run: cargo build -p wg-cli --release
+
+      - name: scenario C
+        env:
+          WG_BIN: ${{ github.workspace }}/target/release/wg
+          WG_E2E_STORE: ${{ runner.temp }}/wg-e2e-c/wiki.redb
+          # Override these on the runner if the binaries live elsewhere.
+          CLAUDE_BIN: ${{ env.CLAUDE_BIN || '/Users/mixlink/.local/bin/claude' }}
+          CODEX_BIN: ${{ env.CODEX_BIN || '/opt/homebrew/bin/codex' }}
+          HERMES_BIN: ${{ env.HERMES_BIN || '/Users/mixlink/.local/bin/hermes' }}
+        run: python3 bench/multi-agent/scenario_c_natural_prompt.py
+
+      - name: upload result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scenario-c-results
+          path: bench/multi-agent/results/scenario_c.json
+          retention-days: 30
+
+      - name: comment on PR
+        if: github.event_name == 'pull_request' && always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = 'bench/multi-agent/results/scenario_c.json';
+            if (!fs.existsSync(path)) return;
+            const out = JSON.parse(fs.readFileSync(path, 'utf8'));
+            const ok = out.summary.passed === out.summary.total;
+            const lines = [
+              `### scenario C — ${ok ? '✅' : '❌'} ${out.summary.passed}/${out.summary.total}`,
+              '',
+              '| agent | wall | facts quoted | ids matched |',
+              '|---|---|---|---|',
+              ...out.agents.map(a =>
+                `| ${a.agent} | ${(a.wall_ms/1000).toFixed(1)}s | ${a.facts_quoted_count}/3 | ${a.ids_mentioned_count}/3 |`),
+            ];
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: lines.join('\n'),
+            });
