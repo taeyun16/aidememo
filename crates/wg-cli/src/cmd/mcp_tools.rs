@@ -118,14 +118,6 @@ impl ContentBlock {
 // Tool implementations
 // ---------------------------------------------------------------------------
 
-/// Parse a time-spec MCP argument. Accepts three shapes (in priority):
-///
-/// 1. `null` / missing → `Ok(None)`
-/// 2. number → epoch milliseconds verbatim
-/// 3. string → ISO date (`2026-04-01`, RFC3339), or for `since`/`until` only,
-///    a duration DSL (`30d`, `12h`, `4w`, `1y`) interpreted as
-///    `now - duration`. The `as_of_mode` flag suppresses duration parsing
-///    so `as_of` can't accidentally be a relative window.
 /// Parse a `fact_type` MCP argument against the closed [`FactType`] enum.
 /// Returns `None` for missing/null. Errors with a list of accepted values
 /// when the agent passes a typo (e.g. "decisions", "fact") so the model
@@ -157,6 +149,14 @@ fn parse_fact_type_arg(arg: Option<&Value>) -> Result<Option<wg_core::FactType>,
     Ok(Some(parsed))
 }
 
+/// Parse a time-spec MCP argument. Accepts three shapes (in priority):
+///
+/// 1. `null` / missing → `Ok(None)`
+/// 2. number → epoch milliseconds verbatim
+/// 3. string → ISO date (`2026-04-01`, RFC3339), or for `since`/`until` only,
+///    a duration DSL (`30d`, `12h`, `4w`, `1y`) interpreted as
+///    `now - duration`. The `as_of_mode` flag suppresses duration parsing
+///    so `as_of` can't accidentally be a relative window.
 fn parse_time_arg(arg: Option<&Value>, as_of_mode: bool) -> Result<Option<u64>, String> {
     let Some(v) = arg else { return Ok(None) };
     if v.is_null() {
