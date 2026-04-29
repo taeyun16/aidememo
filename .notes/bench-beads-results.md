@@ -102,14 +102,15 @@ search latency 우위가 단번에 무너짐.
 - 즉 연구 노트의 별도 작업 #2(HNSW 모델 amortization)는 #1 daemon
   으로 자연스럽게 해결 — 별도 mmap/static-link 작업 가치 없음.
 
-**권장 사용 패턴 정리**:
+**권장 사용 패턴 정리** (CLI default가 BM25로 변경된 후):
 
 | 시나리오 | 명령 |
 |---|---|
-| Agent 빈번한 hot path (latency 최우선) | `wg search --via http://localhost:3000 --bm25` |
-| Agent recall 중요 (한국어/일본어 등 BM25 약함) | `wg search --via http://localhost:3000` (HNSW) |
-| 임시 manual CLI, daemon 없을 때 | `wg search --bm25` |
-| 풀 의미 정확도, 1회성 | `wg search` (HNSW + 매 spawn 모델 로드) |
+| 사용자 manual CLI (default) | `wg search redis` — BM25, 70-300 ms |
+| 사용자 recall 중요 (한국어 등) | `wg search redis --hybrid` — HNSW + 모델 |
+| Agent 빈번한 hot path | `wg search redis --via http://localhost:3000` — 5 ms |
+| Agent recall 중요 + 빈번 | `wg search redis --via http://localhost:3000 --hybrid` — 43 ms |
+| Agent MCP 도구 호출 | `wg_search` (default hybrid 유지 — agent는 daemon 안에서 warm) |
 
 여러 에이전트가 같은 store를 공유한다면 한 번 `wg mcp-serve --port
 3000 /path/to/store &` 띄우고 모두 `--via`로 붙는 것이 best — 시나리오

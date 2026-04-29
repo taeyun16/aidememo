@@ -184,7 +184,13 @@ pub struct PathSub {
 pub struct SearchSub {
     pub json: bool,
     pub all_projects: bool,
-    pub bm25_only: bool,
+    /// Opt into hybrid BM25 + semantic ranking (loads the embedding
+    /// model — adds ~700-900 ms cold-start). Default is BM25-only:
+    /// the CLI is the latency-sensitive path, semantic recall is for
+    /// agents that explicitly need it (or via `wg config set
+    /// search.semantic_weight …` for users on languages with weak
+    /// BM25 tokenisation, e.g. Korean).
+    pub hybrid: bool,
     /// Optional `wg mcp-serve` endpoint (e.g. `http://localhost:3000`).
     /// When set, dispatch the search via `wg_search` JSON-RPC against
     /// that daemon instead of opening the redb store in-process.
@@ -679,11 +685,16 @@ fn search_command() -> impl Parser<Command> {
     let all_projects = long("all-projects")
         .help("Search across every registered project (`wg project list`); merges + re-ranks")
         .switch();
-    let bm25_only = long("bm25")
+    // The CLI defaults to BM25 (the latency-sensitive path). `--hybrid`
+    // opts into the semantic-ranking path that loads the embedding
+    // model (~700-900ms cold start on a fresh CLI; near-zero in
+    // `--via` daemon mode). Agents reach hybrid by default through
+    // the MCP tool surface, where the cost is amortised by the
+    // long-lived `wg mcp-serve` process.
+    let hybrid = long("hybrid")
         .help(
-            "Skip the embedding model entirely — pure BM25. Cuts cold-start \
-             latency from ~1s to ~150ms when you don't need semantic ranking. \
-             Implied by `search.semantic_weight = 0.0` in config.",
+            "Hybrid BM25 + semantic search (loads the embedding model). \
+             Pair with --via for warm daemon mode.",
         )
         .switch();
     let via = long("via")
@@ -699,7 +710,7 @@ fn search_command() -> impl Parser<Command> {
     construct!(SearchSub {
         json,
         all_projects,
-        bm25_only,
+        hybrid,
         via,
         traverse_from,
         traverse_depth,

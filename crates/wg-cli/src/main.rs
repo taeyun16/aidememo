@@ -523,10 +523,10 @@ fn handle_search(
 
     with_wiki_mut(path, config, |wiki| {
         let session_id = wg_core::ulid::Ulid::new().to_string();
-        // `bm25_only` flows through SearchOpts so EVERY caller of
-        // hybrid_search (CLI, MCP tools, Python/Node/Elixir/C
-        // bindings) shares the same lazy-fast-path behaviour.
-        // `--bm25` flag and `semantic_weight=0` both trigger it.
+        // CLI default = BM25 (fast). `--hybrid` opts into the
+        // semantic path; `semantic_weight = 0` in config also forces
+        // BM25 even with the flag (caller-on-caller override).
+        let bm25_only = !sub.hybrid || semantic_weight == 0.0;
         let opts = SearchOpts {
             limit: sub.limit.or(Some(default_limit)),
             min_confidence: sub.min_confidence,
@@ -538,7 +538,7 @@ fn handle_search(
             session_id: Some(session_id.clone()),
             current_only: false,
             as_of: as_of_ms,
-            bm25_only: sub.bm25_only || semantic_weight == 0.0,
+            bm25_only,
         };
 
         let results = if let Some(ref start) = sub.traverse_from {
@@ -595,7 +595,9 @@ fn run_search_via_daemon(
             "arguments": {
                 "query": sub.query,
                 "limit": limit,
-                "bm25_only": sub.bm25_only,
+                // CLI default = BM25; --hybrid flips it on. Daemon
+                // honours the same opt-in semantics.
+                "bm25_only": !sub.hybrid,
             }
         }
     });
@@ -669,7 +671,7 @@ fn run_search_all_projects(
             session_id: None,
             current_only: false,
             as_of: as_of_ms,
-            bm25_only: sub.bm25_only || semantic_weight == 0.0,
+            bm25_only: !sub.hybrid || semantic_weight == 0.0,
         };
         match wiki.hybrid_search(&sub.query, opts) {
             Ok(hits) => {

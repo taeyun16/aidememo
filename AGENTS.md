@@ -39,9 +39,10 @@ cargo install --path crates/wg-cli      # one-off install
 
 ### Read / search
 ```
-wg search <query> [-l N] [--current] [--bm25] [--via URL]
-                                                   hybrid BM25+semantic; --bm25 = lazy fast path
-                                                   (no model load); --via = dispatch via running
+wg search <query> [-l N] [--current] [--hybrid] [--via URL]
+                                                   BM25 by default (no model load — fast path).
+                                                   --hybrid = also run semantic re-rank (loads
+                                                   model). --via = dispatch via running
                                                    `wg mcp-serve` daemon (warm model, ~5-50 ms)
 wg query <topic> [-l N] [-d N] [--recent-limit N] [-m naive|local|hybrid|global]
                                                    unified search+traverse+recent
