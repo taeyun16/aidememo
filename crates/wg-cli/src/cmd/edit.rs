@@ -90,6 +90,22 @@ pub fn run_edit(
                     .map_err(|_| WgError::InvalidInput(format!("Invalid fact ID: {id}")))?,
             );
 
+            // Daemon discovery — wg_fact_edit MCP tool takes the same
+            // append/prepend/find+replace/content shape, so the args
+            // forward 1:1.
+            if let Some(via) = crate::cmd::daemon::registered_endpoint(store_path) {
+                tracing::debug!(via = %via, "auto-discovered daemon for fact edit");
+                return run_fact_edit_via_daemon(
+                    &via,
+                    &id,
+                    append.as_deref(),
+                    prepend.as_deref(),
+                    find.as_deref(),
+                    replace.as_deref(),
+                    content.as_deref(),
+                );
+            }
+
             let wiki = WikiGraph::open(store_path, config)?;
             let current = wiki.fact_get(&fact_id)?;
             let original = current.content.clone();
@@ -175,4 +191,44 @@ pub fn run_edit(
             ))
         }
     }
+}
+
+/// `wg fact edit` daemon path. wg_fact_edit MCP tool takes the same
+/// append/prepend/find+replace/content shape and returns a text
+/// summary; we forward verbatim. The tool itself rejects multi-op
+/// combinations and missing-substring find — same validation the
+/// in-process path does.
+#[allow(clippy::too_many_arguments)]
+fn run_fact_edit_via_daemon(
+    base_url: &str,
+    id: &str,
+    append: Option<&str>,
+    prepend: Option<&str>,
+    find: Option<&str>,
+    replace: Option<&str>,
+    content: Option<&str>,
+) -> Result<String, WgError> {
+    let url = format!("{}/mcp", base_url.trim_end_matches('/'));
+    let mut args = serde_json::json!({"id": id});
+    if let Some(s) = append {
+        args["append"] = serde_json::json!(s);
+    }
+    if let Some(s) = prepend {
+        args["prepend"] = serde_json::json!(s);
+    }
+    if let Some(s) = find {
+        args["find"] = serde_json::json!(s);
+    }
+    if let Some(s) = replace {
+        args["replace"] = serde_json::json!(s);
+    }
+    if let Some(s) = content {
+        args["content"] = serde_json::json!(s);
+    }
+    let body = serde_json::json!({
+        "jsonrpc": "2.0", "id": 1,
+        "method": "tools/call",
+        "params": {"name": "wg_fact_edit", "arguments": args}
+    });
+    crate::daemon_tool_call(&url, body, "wg_fact_edit")
 }

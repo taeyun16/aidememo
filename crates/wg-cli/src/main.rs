@@ -484,20 +484,48 @@ fn handle_fact(
                 id
             ))
         }),
-        cmd::FactSub::Supersede { old_id, new_id } => with_wiki_mut(path, config, |wiki| {
-            let parse = |s: &str| {
-                wg_core::FactId(
-                    wg_core::ulid::Ulid::from_string(s)
-                        .map_err(|_| WgError::InvalidInput(format!("Invalid fact ID: {s}")))
-                        .unwrap_or_default(),
-                )
-            };
-            let old = parse(&old_id);
-            let new = parse(&new_id);
-            wiki.fact_supersede(&old, &new)?;
-            Ok(format!("Superseded {old_id} by {new_id}"))
-        }),
+        cmd::FactSub::Supersede { old_id, new_id } => {
+            // Daemon discovery — wg_fact_supersede MCP tool exists.
+            if let Some(via) = cmd::daemon::registered_endpoint(path) {
+                tracing::debug!(via = %via, "auto-discovered daemon for fact supersede");
+                return run_fact_supersede_via_daemon(&via, &old_id, &new_id);
+            }
+            with_wiki_mut(path, config, |wiki| {
+                let parse = |s: &str| {
+                    wg_core::FactId(
+                        wg_core::ulid::Ulid::from_string(s)
+                            .map_err(|_| WgError::InvalidInput(format!("Invalid fact ID: {s}")))
+                            .unwrap_or_default(),
+                    )
+                };
+                let old = parse(&old_id);
+                let new = parse(&new_id);
+                wiki.fact_supersede(&old, &new)?;
+                Ok(format!("Superseded {old_id} by {new_id}"))
+            })
+        }
     }
+}
+
+/// `wg fact supersede` daemon path. wg_fact_supersede tool returns
+/// `{"old_id": "...", "new_id": "..."}` JSON; we re-pack the same
+/// "Superseded X by Y" line the local path emits.
+fn run_fact_supersede_via_daemon(
+    base_url: &str,
+    old_id: &str,
+    new_id: &str,
+) -> Result<String, WgError> {
+    let url = format!("{}/mcp", base_url.trim_end_matches('/'));
+    let body = serde_json::json!({
+        "jsonrpc": "2.0", "id": 1,
+        "method": "tools/call",
+        "params": {
+            "name": "wg_fact_supersede",
+            "arguments": {"old_id": old_id, "new_id": new_id}
+        }
+    });
+    let _ = daemon_tool_call(&url, body, "wg_fact_supersede")?;
+    Ok(format!("Superseded {old_id} by {new_id}"))
 }
 
 fn handle_traverse(

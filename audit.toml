@@ -24,11 +24,6 @@ ignore = [
     "RUSTSEC-2026-0098",
     "RUSTSEC-2026-0099",
 
-    # lru 0.12.x — IterMut Stacked-Borrows soundness. wg-core uses lru
-    # for the BM25 query-embedding cache; we don't call IterMut. 0.13+
-    # ships the fix; bump when we touch the cache module next.
-    "RUSTSEC-2026-0002",
-
     # Unmaintained crates (warnings, not vulnerabilities). Replacing them
     # would mean churning multiple transitive deps' API surface — accept
     # for now, revisit during 0.2.0.
