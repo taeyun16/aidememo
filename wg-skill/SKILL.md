@@ -90,8 +90,10 @@ out. They return structured JSON.
 | `wg_query` | One-call context fetch (preferred over chaining) |
 | `wg_search` | Pure hybrid search, no graph |
 | `wg_recent` | Last N days of facts |
-| `wg_entity_list` | Browse entities |
+| `wg_entity_list` / `wg_entity_get` | Browse entities / fetch one by name or alias |
+| `wg_fact_list` / `wg_fact_get` | List facts (filterable) / fetch one by ULID |
 | `wg_traverse` / `wg_backlinks` | Forward / reverse graph walk |
+| `wg_path` | Shortest path between two entities |
 | `wg_doctor` / `wg_lint` | Health snapshot / raw issues |
 | `wg_entity_describe` | Set or clear an entity's prose summary |
 | `wg_fact_add` | Append a single fact |

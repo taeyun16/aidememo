@@ -87,7 +87,7 @@ wg --project personal stats             # one-off override
 ## Use as an MCP server
 
 Local agents (Claude Code, Codex CLI, …) can spawn `wg` as a stdio MCP
-server. **13 tools** exposed:
+server. **17 tools** exposed:
 
 | Read | Write |
 |---|---|
@@ -95,7 +95,9 @@ server. **13 tools** exposed:
 | `wg_search` | `wg_fact_add_many` (batched, one fsync) |
 | `wg_recent` | `wg_fact_supersede` |
 | `wg_traverse` / `wg_backlinks` | `wg_fact_edit` |
-| `wg_entity_list` / `wg_entity_describe` | |
+| `wg_path` (shortest entity path) | `wg_entity_describe` |
+| `wg_entity_list` / `wg_entity_get` | |
+| `wg_fact_list` / `wg_fact_get` | |
 | `wg_doctor` / `wg_lint` | |
 
 ```bash

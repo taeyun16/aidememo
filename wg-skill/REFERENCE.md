@@ -10,49 +10,62 @@ title: Wiki-Graph 전체 API 참조
 ```
 /Users/mixlink/dev/wg/           ← 프로젝트 루트 (wg workspace)
 ├── Cargo.toml                   ← workspace manifest
-├── Cargo.lock
 ├── PLAN.md                     ← Phase 1-6 구현 계획
+├── AGENTS.md                   ← 에이전트용 가이드 (CLAUDE.md → import)
 ├── README.md
-├── .gitignore
 ├── crates/
 │   ├── wg-core/                ← 핵심 라이브러리 (lib)
-│   │   ├── src/
-│   │   │   ├── lib.rs          ← WikiGraph, re-export
-│   │   │   ├── store.rs        ← redb 기반 저장소
-│   │   │   ├── graph.rs        ← 그래프 순회/경로 탐색
-│   │   │   ├── search.rs       ← BM25 + semantic/hybrid search (feature `semantic`)
-│   │   │   ├── fuzzy.rs        ← 퍼지 매칭 (strsim)
-│   │   │   ├── ingest.rs       ← 마크다운 → entity/fact 추출
-│   │   │   ├── types.rs        ← EntityInput, FactInput, etc.
-│   │   │   ├── config.rs       ← Config 로드/저장
-│   │   │   ├── error.rs        ← WgError enum
-│   │   │   ├── lint.rs         ← 그래프 건전성 검사
-│   │   │   └── migrate.rs      ← 스키마 마이그레이션
-│   │   └── Cargo.toml
-│   └── wg-cli/                 ← CLI 바이너리 (bin "wg")
-│       ├── src/
-│       │   ├── main.rs         ← entry point + command dispatch
-│       │   └── cmd/
-│       │       ├── mod.rs      ← bpaf command definitions
-│       │   ├── init.rs         ← `wg init` subcommand
-│       │   └── watch.rs        ← `wg watch` subcommand
-│       └── Cargo.toml
-├── benchmarks/
-├── models/
-└── tests/
+│   │   └── src/
+│   │       ├── lib.rs          ← WikiGraph public API (re-exports)
+│   │       ├── store.rs        ← redb CRUD + lock_retry + meta KV
+│   │       ├── graph.rs        ← 그래프 순회 / 최단 경로
+│   │       ├── search.rs       ← BM25 + semantic/hybrid + RRF + adapter
+│   │       ├── index.rs        ← BM25 inverted index (lazy-rebuild)
+│   │       ├── vector_index.rs ← HNSW 사이드카 (instant-distance)
+│   │       ├── embedding.rs    ← model2vec / TEI 프로바이더
+│   │       ├── rerank.rs       ← TEI cross-encoder reranker
+│   │       ├── fuzzy.rs        ← 퍼지 매칭 (strsim jaro-winkler)
+│   │       ├── ingest.rs       ← 마크다운 → entity/fact/relation 추출
+│   │       ├── types.rs        ← EntityInput / FactInput / SearchOpts …
+│   │       ├── relations.rs    ← RelationType + RelationRecord
+│   │       ├── config.rs       ← Config 로드/저장 (projects · model · search · lint)
+│   │       ├── error.rs        ← WgError + thiserror
+│   │       ├── lint.rs         ← 그래프 건전성 검사
+│   │       ├── adapt.rs        ← 도메인 어댑터 (피드백 → 랭킹 보정)
+│   │       ├── wal.rs          ← search_sessions / search_feedback WAL
+│   │       ├── s3.rs           ← (feature) S3 매니페스트 + 세그먼트 (현재 local-fs mirror)
+│   │       └── migrate.rs      ← 스키마 마이그레이션
+│   ├── wg-cli/                 ← CLI 바이너리 (bin "wg")
+│   │   └── src/
+│   │       ├── main.rs         ← 명령 디스패치 + tracing 초기화
+│   │       ├── output.rs       ← Format::{Table, Json}
+│   │       └── cmd/            ← init / watch / model / feedback / adapt /
+│   │                             daemon / mcp_tools / mcp_stdio / mcp_serve / …
+│   ├── wg-ffi/                 ← C ABI (cdylib + staticlib)
+│   ├── wg-napi/                ← Node.js (napi-rs)
+│   ├── wg-nif/                 ← Elixir (rustler)
+│   └── wg-python/              ← Python (PyO3)
+├── benchmarks/                 ← wg-benchmarks 크레이트 (golden 평가)
+├── bench/                       ← 시나리오 스크립트 (beads-vs-wg, multi-agent)
+├── wg-skill/                   ← 배포용 SKILL.md + REFERENCE.md (이 파일)
+└── .notes/                     ← 벤치 결과 + 설계 노트
 ```
 
 ## 핵심 기술 스택
 
 | 구성 요소 | 기술 |
 |---------|------|
-| 저장소 | redb 2.x (embedded key-value DB) |
-| 풀텍스트 검색 | bm25 crate |
-| 퍼지 매칭 | strsim crate |
+| 저장소 | redb 2.x (embedded KV, single-writer file lock) |
+| 풀텍스트 검색 | bm25 crate (lazy inverted index) |
+| 시맨틱 검색 | model2vec-native (정적 임베딩) + instant-distance (HNSW) — `feature = "semantic"` |
+| Reranker | TEI cross-encoder (BGE-reranker, etc.) — `rerank.provider = "tei"` |
+| 도메인 어댑터 | tanh-스쿼시 곱셈 보정 — `feature = "semantic-adapt"` |
+| 퍼지 매칭 | strsim (jaro-winkler) |
 | CLI 파서 | bpaf 0.9 |
+| 관측성 | tracing + EnvFilter (stderr) |
 | ID 생성 | ulid |
 | 파일 감시 | notify 6.x |
-| 시맨틱 검색 | (feature flag `semantic` 사용) |
+| MCP 트랜스포트 | stdio (newline JSON-RPC) + HTTP/SSE (axum) |
 
 ## 핵심 API
 
@@ -171,7 +184,19 @@ pub enum EntitySort { Name, UpdatedAt, FactCount }
 pub struct FactListOpts { pub fact_type: Option<FactType>, pub entity_id: Option<EntityId>, pub min_confidence: Option<f32>, pub limit: Option<usize>, pub offset: usize }
 pub struct TraverseOpts { pub depth: u32, pub relation_types: Option<Vec<RelationType>>, pub direction: TraverseDirection }
 pub enum TraverseDirection { Forward, Reverse, Both }
-pub struct SearchOpts { pub limit: Option<usize>, pub min_confidence: Option<f32>, pub entity_filter: Option<Vec<EntityId>>, pub bm25_weight: f32, pub semantic_weight: f32 }
+pub struct SearchOpts {
+    pub limit: Option<usize>,
+    pub min_confidence: Option<f32>,
+    pub entity_filter: Option<Vec<EntityId>>,
+    pub bm25_weight: f32,
+    pub semantic_weight: f32,
+    pub current_only: bool,         // superseded_at != None인 fact 제외
+    pub since: Option<u64>,         // observed_at >= since (epoch ms)
+    pub until: Option<u64>,         // observed_at < until
+    pub as_of: Option<u64>,         // 시점 재현: as_of 시점에 valid한 fact만
+    pub bm25_only: bool,            // hybrid_search → BM25 fast-path
+    pub session_id: Option<String>, // 피드백 트래킹용
+}
 pub struct IngestStats { pub entities_added, pub entities_updated, pub relations_added, pub facts_added, pub files_scanned, pub errors: Vec<String> }
 pub struct StoreStats { pub entity_count, pub fact_count, pub relation_count, pub total_size_bytes, pub last_ingest_at: Option<u64> }
 pub struct LintReport { pub issues, pub entity_count, pub fact_count, pub relation_count }
@@ -180,23 +205,52 @@ pub struct LintIssue { pub severity, pub code, pub message, pub entity_id, pub f
 
 ### Config (config.rs)
 
+전체 필드는 `crates/wg-core/src/config.rs`에서 확인하세요. 자주 조정하는
+키만 발췌:
+
 ```rust
 pub struct Config {
     pub store: StoreConfig,
     pub model: ModelConfig,
     pub search: SearchConfig,
     pub lint: LintConfig,
+    pub rerank: RerankConfig,
+    pub projects: HashMap<String, String>,
+    pub default_project: Option<String>,
 }
-pub struct StoreConfig { pub path: String }
-pub struct ModelConfig { pub name: String, pub download_dir: String, pub cache_dir: String, pub auto_download: bool }
-pub struct SearchConfig { pub default_limit: usize, pub min_trust: f32, pub bm25_weight: f32, pub semantic_weight: f32 }
-pub struct LintConfig { pub orphan_threshold: u32, pub stale_days: u32, pub duplicate_similarity: f32 }
-pub fn Config::load() -> Result<Config>
-pub fn Config::load_from(path: &Path) -> Result<Config>
-pub fn Config::save(&self) -> Result<()>
-pub fn Config::save_to(&self, path: &Path) -> Result<()>
-pub fn Config::get(&self, key: &str) -> Option<String>
-pub fn Config::set(&mut self, key: &str, value: &str) -> Result<()>
+pub struct StoreConfig {
+    pub path: String,
+    pub durability: String,        // "immediate" (default) | "eventual"
+    pub lock_retry_ms: u64,        // multi-agent contention 처리
+}
+pub struct ModelConfig {
+    pub provider: String,          // "model2vec" (default) | "tei"
+    pub name: String,
+    pub endpoint: Option<String>,  // TEI 사용 시
+    pub auto_download: bool,
+    pub dimension: usize,
+    pub quantize: bool,
+}
+pub struct SearchConfig {
+    pub default_limit: usize,
+    pub min_trust: f32,
+    pub bm25_weight: f32,
+    pub semantic_weight: f32,
+    pub semantic_prefilter: usize, // 시맨틱 후보 컷오프
+    pub graph_prefilter: bool,     // BM25 hit → graph N-hop 확장
+    pub graph_depth: u32,
+    pub graph_fact_cap: usize,
+    pub semantic_index: String,    // "bm25" | "hnsw"
+    pub weight_by_confidence: bool,
+    pub time_decay_tau_ms: u64,    // 0 = 비활성
+    pub use_adapter: bool,         // 학습된 어댑터 적용 여부
+}
+
+// Load / save
+pub fn Config::load() -> Result<Config>;
+pub fn Config::save(&self) -> Result<()>;
+pub fn Config::get(&self, key: &str) -> Option<String>;
+pub fn Config::set(&mut self, key: &str, value: &str) -> Result<()>;
 ```
 
 ## 주요 규칙
@@ -233,29 +287,84 @@ cargo check -p wg-core -p wg-cli
 ./target/debug/wg entity list
 ```
 
-## Phase 1 완료 상태
+## Phase 진척도
 
-| 기능 | 상태 |
-|-----|------|
-| store (redb CRUD) | ✅ |
-| entity/fact/relation CRUD | ✅ |
-| graph traverse | ✅ |
-| search (BM25) | ✅ |
-| fuzzy matching | ✅ |
-| config 관리 | ✅ |
-| ingest (markdown → entity/fact) | ✅ |
-| `wg init` | ✅ |
-| `wg watch` | ✅ |
-| `wg --help` 런타임 정상 | ✅ |
+| 영역 | 상태 |
+|---|---|
+| Phase 1 — store / CRUD / ingest / BM25 / config | ✅ |
+| Phase 2 — `wg lint` / 마이그레이션 / `wg import` · `wg export` | ✅ |
+| Phase 3 — 시맨틱 검색 (model2vec) + HNSW + TEI / `wg model` | ✅ |
+| Phase 4 — 피드백 → 어댑터 → 랭커 결합 (`search.use_adapter`) | ✅ |
+| Phase 5 — MCP (stdio + HTTP/SSE, 17 툴) + 4개 언어 바인딩 + 데몬 | ✅ |
+| Phase 6 — S3 매니페스트 / 세그먼트 (현재 local-fs 미러) | ⏳ |
 
-## Phase 2-6 예정
+남은 phase6 정확한 위치는 `grep -rn "TODO(phase" crates/`로 확인.
 
-- `wg import` / `wg export`
-- `wg model` (시맨틱 벡터 자동 다운로드)
-- `wg lint` — 그래프 건전성 검사
-- 스키마 마이그레이션
-- MCP server mode (`wg mcp serve`)
-- NAPI / Python bindings
+## MCP 도구 (총 17개)
+
+| 도구 | 용도 |
+|---|---|
+| `wg_query` | 한 번에 컨텍스트 (search + traverse + recent) — 우선순위 |
+| `wg_search` | 순수 하이브리드 검색 |
+| `wg_recent` | 최근 N일 fact |
+| `wg_entity_list` / `wg_entity_get` | 엔티티 브라우즈 / 단건 조회 |
+| `wg_fact_list` / `wg_fact_get` | fact 필터 목록 / ULID 단건 조회 |
+| `wg_traverse` / `wg_backlinks` | 정방향 / 역방향 그래프 워크 |
+| `wg_path` | 두 엔티티 간 최단 경로 |
+| `wg_doctor` / `wg_lint` | 건전성 스냅샷 / 원시 이슈 |
+| `wg_entity_describe` | 엔티티의 prose 요약 설정 / 삭제 |
+| `wg_fact_add` | 단일 fact 추가 |
+| `wg_fact_add_many` | 배치 (단일 fsync, 3개 이상이면 권장) |
+| `wg_fact_supersede` | 유효 기간 무효화 (`old.superseded_at = now`) |
+| `wg_fact_edit` | append / prepend / find+replace / content |
+
+스키마: `wg-cli/src/cmd/mcp_tools.rs::list_tools()`.
+
+## 데몬 — 백그라운드 mcp-serve + 자동 발견
+
+```bash
+wg daemon start    # mcp-serve를 백그라운드 + ~/.wg/daemon.json 등록
+wg daemon status   # registry + /health 프로브
+wg daemon stop     # SIGTERM
+```
+
+`wg daemon start` 이후 일반 CLI 호출 (`wg search`, `wg query`, `wg fact add` …)
+은 `~/.wg/daemon.json`을 보고 자동으로 데몬으로 디스패치합니다 — 모델 워밍
+없이 ~9 ms (BM25) / ~45 ms (HNSW). `WG_NO_DAEMON=1`로 일회성 우회.
+
+다중 에이전트 공유: redb는 프로세스당 단일 락이라, 여러 에이전트가 같은
+스토어를 쓰려면 **하나의 `wg mcp-serve`**를 띄우고 모두 그 HTTP 엔드포인트를
+가리켜야 합니다. 자세한 패턴은 `AGENTS.md`의 "Multi-agent shared store" 절.
+
+## 언어 바인딩
+
+4개 모두 `current_only` 필터 + `fact_supersede`까지 풀 커버:
+
+```python
+# Python
+import wg_python as wg
+g = wg.WikiGraph("./_meta/wiki.redb")
+ctx = g.query("Redis", current_only=True)
+```
+
+```javascript
+// Node
+const { WgStore } = require('wg-napi');
+const g = new WgStore('./_meta/wiki.redb');
+g.factSupersede(oldId, newId);
+```
+
+```elixir
+# Elixir
+g = WgNif.open!("./_meta/wiki.redb")
+ctx = WgNif.query(g, "Redis", current_only: true)
+```
+
+```c
+/* C */
+char* json = wg_query(g, "Redis", 5, 2, 5, /* current_only */ true);
+wg_free_string(json);
+```
 
 ## 자주 보는 에러
 
