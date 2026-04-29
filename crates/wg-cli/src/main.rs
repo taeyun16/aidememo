@@ -1025,9 +1025,10 @@ fn run_query_via_daemon(base_url: &str, sub: &cmd::QuerySub) -> Result<String, W
 }
 
 /// `wg fact add` daemon path. Calls the wg_fact_add MCP tool which
-/// returns `{"id": "<ULID>"}`. The local CLI surface returns either
-/// JSON or a "Added fact with ID …" line; we normalise here so users
-/// see the same output whether the daemon is on or off.
+/// returns `{id, content, entity_names, created_at, auto_created_entities}`.
+/// The local CLI surface returns either JSON or a "Added fact with ID …"
+/// line; we normalise here so users see the same output whether the
+/// daemon is on or off.
 fn run_fact_add_via_daemon(
     base_url: &str,
     content: &str,
@@ -1072,17 +1073,30 @@ fn run_fact_add_via_daemon(
         .get("id")
         .and_then(|v| v.as_str())
         .ok_or_else(|| WgError::Internal(format!("wg_fact_add response missing id: {raw}")))?;
+    let auto_created: Vec<String> = payload
+        .get("auto_created_entities")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
     if json {
-        // Match the local --json shape (auto_created_entities is daemon-
-        // side info we don't get back from the tool today; emit empty).
-        let empty: Vec<String> = Vec::new();
         return Ok(serde_json::json!({
             "id": id,
-            "auto_created_entities": empty,
+            "auto_created_entities": auto_created,
         })
         .to_string());
     }
-    Ok(format!("Added fact with ID {id}"))
+    let mut msg = format!("Added fact with ID {id}");
+    if !auto_created.is_empty() {
+        msg.push_str(&format!(
+            "\nAuto-created entities: {}",
+            auto_created.join(", ")
+        ));
+    }
+    Ok(msg)
 }
 
 /// Shared helper for `--via` daemon dispatch: POST a JSON-RPC tool

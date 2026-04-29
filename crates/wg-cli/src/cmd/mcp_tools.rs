@@ -459,12 +459,44 @@ fn tool_entity_describe(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult
     })
 }
 
+/// Resolve entity names to IDs, **auto-creating** any name that doesn't
+/// already exist. Mirrors the CLI behavior in `wg fact add` so MCP and
+/// CLI no longer diverge: previously the MCP path silently dropped
+/// unknown names via `filter_map`, leaving the fact attached to fewer
+/// entities than the agent expected. New entities default to
+/// `EntityType::Unknown` and are surfaced in the return tuple so the
+/// caller can confirm the side effect.
+fn resolve_or_create_entities(
+    wiki: &WikiGraph,
+    names: &[String],
+) -> Result<(Vec<wg_core::EntityId>, Vec<String>), String> {
+    let mut ids = Vec::with_capacity(names.len());
+    let mut created = Vec::new();
+    for name in names {
+        match wiki.resolve_entity(name) {
+            Ok(id) => ids.push(id),
+            Err(_) => {
+                let id = wiki
+                    .entity_add(wg_core::EntityInput {
+                        name: name.clone(),
+                        entity_type: Some(wg_core::EntityType::Unknown),
+                        ..Default::default()
+                    })
+                    .map_err(|e| e.to_string())?;
+                ids.push(id);
+                created.push(name.clone());
+            }
+        }
+    }
+    Ok((ids, created))
+}
+
 fn tool_fact_add(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String> {
     let content = args
         .get("content")
         .and_then(|v| v.as_str())
         .ok_or("content required")?;
-    let entities: Vec<String> = args
+    let entity_names: Vec<String> = args
         .get("entities")
         .and_then(|v| v.as_array())
         .map(|arr| {
@@ -483,18 +515,15 @@ fn tool_fact_add(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, Strin
         })
         .unwrap_or_default();
 
+    let (entity_ids, auto_created) = resolve_or_create_entities(wiki, &entity_names)?;
+
     let input = wg_core::types::FactInput {
         content: content.into(),
         fact_type: None,
-        entity_ids: if entities.is_empty() {
+        entity_ids: if entity_ids.is_empty() {
             None
         } else {
-            Some(
-                entities
-                    .into_iter()
-                    .filter_map(|n| wiki.resolve_entity(&n).ok())
-                    .collect(),
-            )
+            Some(entity_ids.clone())
         },
         tags: if tags.is_empty() { None } else { Some(tags) },
         source: None,
@@ -504,8 +533,25 @@ fn tool_fact_add(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, Strin
 
     let id = wiki.add_fact(input).map_err(|e| e.to_string())?;
 
-    // Return JSON {"id": "<ULID>"} so callers don't have to string-parse.
-    let payload = json!({ "id": id.to_string() });
+    // Verify-symmetry: return the persisted record so the agent can
+    // confirm the write landed without a separate `wg_fact_get` round
+    // trip. The `auto_created_entities` field surfaces the side effect
+    // of CLI-parity entity creation — invisible failures (typo →
+    // silent new-entity) become visible.
+    let record = wiki.fact_get(&id).map_err(|e| e.to_string())?;
+    let entity_names_resolved: Vec<String> = record
+        .entity_ids
+        .iter()
+        .filter_map(|eid| wiki.entity_get_by_id(*eid).ok())
+        .map(|e| e.name)
+        .collect();
+    let payload = json!({
+        "id": id.to_string(),
+        "content": record.content,
+        "entity_names": entity_names_resolved,
+        "created_at": record.created_at,
+        "auto_created_entities": auto_created,
+    });
     Ok(ToolCallResult {
         content: vec![ContentBlock::text(payload.to_string())],
         is_error: None,
@@ -530,6 +576,8 @@ fn tool_fact_add_many(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, 
         });
     }
     let mut inputs = Vec::with_capacity(items.len());
+    let mut per_item_entity_names: Vec<Vec<String>> = Vec::with_capacity(items.len());
+    let mut auto_created_total: Vec<String> = Vec::new();
     for (i, item) in items.iter().enumerate() {
         let obj = item
             .as_object()
@@ -539,16 +587,29 @@ fn tool_fact_add_many(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, 
             .and_then(|v| v.as_str())
             .ok_or_else(|| format!("items[{i}].content is required"))?
             .to_string();
-        let entity_ids = obj
+        let names: Vec<String> = obj
             .get("entities")
             .and_then(|v| v.as_array())
             .map(|arr| {
                 arr.iter()
-                    .filter_map(|v| v.as_str())
-                    .filter_map(|n| wiki.resolve_entity(n).ok())
-                    .collect::<Vec<_>>()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
             })
-            .filter(|v| !v.is_empty());
+            .unwrap_or_default();
+        let (entity_ids_vec, mut created) = resolve_or_create_entities(wiki, &names)?;
+        // Dedup auto-created across items in case the same new entity
+        // is referenced by multiple facts in this batch.
+        for name in created.drain(..) {
+            if !auto_created_total.contains(&name) {
+                auto_created_total.push(name);
+            }
+        }
+        per_item_entity_names.push(names);
+        let entity_ids = if entity_ids_vec.is_empty() {
+            None
+        } else {
+            Some(entity_ids_vec)
+        };
         let tags = obj
             .get("tags")
             .and_then(|v| v.as_array())
@@ -568,14 +629,26 @@ fn tool_fact_add_many(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, 
             observed_at: None,
         });
     }
-    let count = inputs.len();
     let ids = wiki.fact_add_many(inputs).map_err(|e| e.to_string())?;
-    let id_strs: Vec<String> = ids.iter().map(|id| id.to_string()).collect();
+    // Build a per-item record array reusing data we already have — no
+    // extra fact_get calls needed in the batch path.
+    let facts_array: Vec<Value> = ids
+        .iter()
+        .zip(per_item_entity_names.iter())
+        .map(|(id, names)| {
+            json!({
+                "id": id.to_string(),
+                "entity_names": names,
+            })
+        })
+        .collect();
+    let payload = json!({
+        "count": ids.len(),
+        "facts": facts_array,
+        "auto_created_entities": auto_created_total,
+    });
     Ok(ToolCallResult {
-        content: vec![ContentBlock::text(format!(
-            "Added {count} facts:\n{}",
-            id_strs.join("\n")
-        ))],
+        content: vec![ContentBlock::text(payload.to_string())],
         is_error: None,
     })
 }
@@ -1166,7 +1239,49 @@ mod tests {
             .first()
             .and_then(|b| b.text.as_deref())
             .unwrap_or("");
-        assert!(text.starts_with("Added 3 facts:"));
+        let payload: Value = serde_json::from_str(text).expect("response is JSON");
+        assert_eq!(payload["count"], 3);
+        let facts = payload["facts"].as_array().expect("facts array");
+        assert_eq!(facts.len(), 3);
+        // "Redis" was pre-created by the test setup, so it must NOT be
+        // reported as auto-created. The third item has no entities at
+        // all, so nothing to create either.
+        assert!(
+            payload["auto_created_entities"]
+                .as_array()
+                .unwrap()
+                .is_empty(),
+            "pre-existing entity must not be reported as auto-created",
+        );
+    }
+
+    #[test]
+    fn fact_add_many_auto_creates_unknown_entities_once() {
+        // Three items, the same novel entity referenced by two of them.
+        // The MCP path must auto-create it (CLI parity) and dedupe so
+        // the agent doesn't see "Postgres" twice in the response.
+        let (_dir, wiki) = open_temp_wiki();
+        let result = tool_fact_add_many(
+            &json!({
+                "items": [
+                    {"content": "Postgres 16 ships", "entities": ["Postgres"]},
+                    {"content": "Postgres has logical replication", "entities": ["Postgres"]},
+                    {"content": "MySQL 8 has window functions", "entities": ["MySQL"]}
+                ]
+            }),
+            &wiki,
+        )
+        .unwrap();
+        let text = result.content[0].text.as_deref().unwrap();
+        let payload: Value = serde_json::from_str(text).unwrap();
+        let mut created: Vec<&str> = payload["auto_created_entities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
+        created.sort();
+        assert_eq!(created, vec!["MySQL", "Postgres"]);
     }
 
     #[test]
@@ -1177,8 +1292,10 @@ mod tests {
     }
 
     #[test]
-    fn fact_add_returns_json_id() {
+    fn fact_add_returns_full_record_with_auto_created() {
         let (_dir, wiki) = open_temp_wiki();
+        // "Redis" doesn't exist yet — MCP path must auto-create it
+        // (matching CLI behavior) instead of dropping it silently.
         let result = tool_fact_add(
             &json!({"content": "Redis is a cache", "entities": ["Redis"]}),
             &wiki,
@@ -1190,8 +1307,49 @@ mod tests {
             .and_then(|b| b.text.as_deref())
             .unwrap_or("");
         let payload: serde_json::Value = serde_json::from_str(text).expect("response is JSON");
-        let id = payload.get("id").and_then(|v| v.as_str()).unwrap_or("");
+        let id = payload["id"].as_str().unwrap_or("");
         assert_eq!(id.len(), 26, "expected ULID, got {id:?}");
+        assert_eq!(payload["content"], "Redis is a cache");
+        let names: Vec<&str> = payload["entity_names"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
+        assert_eq!(names, vec!["Redis"]);
+        let created: Vec<&str> = payload["auto_created_entities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
+        assert_eq!(created, vec!["Redis"]);
+        assert!(payload["created_at"].is_number());
+    }
+
+    #[test]
+    fn fact_add_does_not_double_create_existing_entities() {
+        let (_dir, wiki) = open_temp_wiki();
+        wiki.entity_add(wg_core::EntityInput {
+            name: "Redis".into(),
+            entity_type: Some(wg_core::EntityType::Technology),
+            ..Default::default()
+        })
+        .unwrap();
+        let result = tool_fact_add(
+            &json!({"content": "Redis 7 introduces functions", "entities": ["Redis"]}),
+            &wiki,
+        )
+        .unwrap();
+        let text = result.content[0].text.as_deref().unwrap();
+        let payload: serde_json::Value = serde_json::from_str(text).unwrap();
+        assert!(
+            payload["auto_created_entities"]
+                .as_array()
+                .unwrap()
+                .is_empty(),
+            "existing entity must not be reported as auto-created"
+        );
     }
 
     #[test]
