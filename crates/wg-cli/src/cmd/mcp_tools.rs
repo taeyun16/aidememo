@@ -323,6 +323,7 @@ fn tool_path(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String> {
 
 fn tool_fact_list(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String> {
     let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
+    let offset = args.get("offset").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
     let entity = args.get("entity").and_then(|v| v.as_str());
     let entity_id = match entity {
         Some(name) => Some(wiki.resolve_entity(name).map_err(|e| e.to_string())?),
@@ -333,7 +334,7 @@ fn tool_fact_list(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, Stri
         entity_id,
         min_confidence: None,
         limit: Some(limit),
-        offset: 0,
+        offset,
         since: None,
         until: None,
         current_only: args
@@ -343,7 +344,17 @@ fn tool_fact_list(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, Stri
         as_of: None,
     };
     let facts = wiki.fact_list(opts).map_err(|e| e.to_string())?;
-    let payload = serde_json::json!({"facts": facts});
+    // `next_offset` is None when the page came back short of the
+    // requested limit — that's the agent's signal to stop paging.
+    let next_offset = if facts.len() == limit {
+        Some(offset + facts.len())
+    } else {
+        None
+    };
+    let payload = serde_json::json!({
+        "facts": facts,
+        "next_offset": next_offset,
+    });
     let text = serde_json::to_string_pretty(&payload).map_err(|e| e.to_string())?;
     Ok(ToolCallResult {
         content: vec![ContentBlock::text(text)],
@@ -393,21 +404,35 @@ fn tool_entity_list(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, St
                 _ => wg_core::EntityType::Unknown,
             });
 
+    let offset = args.get("offset").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
     let opts = wg_core::types::ListOpts {
         entity_type,
         min_facts: None,
         limit: Some(limit),
         sort_by: Default::default(),
-        offset: 0,
+        offset,
     };
     let entities = wiki.entity_list(opts).map_err(|e| e.to_string())?;
+    let next_offset = if entities.len() == limit {
+        Some(offset + entities.len())
+    } else {
+        None
+    };
 
-    let text = entities
-        .into_iter()
+    // Build a structured payload with the page + cursor so agents can
+    // enumerate without a hidden truncation. The legacy human-readable
+    // text still ships as the first content line for backwards-compat
+    // with anything that just printed the result.
+    let lines: Vec<String> = entities
+        .iter()
         .map(|e| format!("- {} ({}) [{} facts]", e.name, e.entity_type, e.fact_count))
-        .collect::<Vec<_>>()
-        .join("\n");
-
+        .collect();
+    let payload = json!({
+        "summary": lines.join("\n"),
+        "entities": entities,
+        "next_offset": next_offset,
+    });
+    let text = serde_json::to_string_pretty(&payload).map_err(|e| e.to_string())?;
     Ok(ToolCallResult {
         content: vec![ContentBlock::text(text)],
         is_error: None,
@@ -796,13 +821,30 @@ fn tool_fact_supersede(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult,
         .get("new_id")
         .and_then(|v| v.as_str())
         .ok_or("new_id required")?;
+    let dry_run = args
+        .get("dry_run")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     let old = parse_fact_id(old_id)?;
     let new = parse_fact_id(new_id)?;
-    wiki.fact_supersede(&old, &new).map_err(|e| e.to_string())?;
+    // Resolve both records before any write so the agent sees the
+    // before/after content, the entity links that survive, and the
+    // existence checks both fail-fast on bad ULIDs.
+    let old_record = wiki.fact_get(&old).map_err(|e| e.to_string())?;
+    let new_record = wiki.fact_get(&new).map_err(|e| e.to_string())?;
+    if !dry_run {
+        wiki.fact_supersede(&old, &new).map_err(|e| e.to_string())?;
+    }
+    let payload = json!({
+        "dry_run": dry_run,
+        "old_id": old_id,
+        "new_id": new_id,
+        "old_content": old_record.content,
+        "new_content": new_record.content,
+        "applied": !dry_run,
+    });
     Ok(ToolCallResult {
-        content: vec![ContentBlock::text(format!(
-            "Superseded {old_id} by {new_id}"
-        ))],
+        content: vec![ContentBlock::text(payload.to_string())],
         is_error: None,
     })
 }
@@ -819,6 +861,10 @@ fn tool_fact_edit(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, Stri
     let find = args.get("find").and_then(|v| v.as_str());
     let replace = args.get("replace").and_then(|v| v.as_str());
     let content = args.get("content").and_then(|v| v.as_str());
+    let dry_run = args
+        .get("dry_run")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
 
     let mut ops = 0;
     if append.is_some() {
@@ -867,19 +913,26 @@ fn tool_fact_edit(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, Stri
         new_content = full.to_string();
     }
 
-    wiki.fact_update(
-        &fact_id,
-        wg_core::FactUpdate {
-            content: Some(new_content.clone()),
-            ..Default::default()
-        },
-    )
-    .map_err(|e| e.to_string())?;
+    if !dry_run {
+        wiki.fact_update(
+            &fact_id,
+            wg_core::FactUpdate {
+                content: Some(new_content.clone()),
+                ..Default::default()
+            },
+        )
+        .map_err(|e| e.to_string())?;
+    }
 
+    let payload = json!({
+        "dry_run": dry_run,
+        "id": id,
+        "before": original,
+        "after": new_content,
+        "applied": !dry_run,
+    });
     Ok(ToolCallResult {
-        content: vec![ContentBlock::text(format!(
-            "Updated fact {id}\n  before: {original}\n  after:  {new_content}"
-        ))],
+        content: vec![ContentBlock::text(payload.to_string())],
         is_error: None,
     })
 }
@@ -972,6 +1025,7 @@ pub fn list_tools() -> Vec<Tool> {
                 "properties": {
                     "entity": {"type": "string", "description": "Filter by entity name/alias"},
                     "limit":  {"type": "number", "default": 20},
+                    "offset": {"type": "number", "default": 0, "description": "Skip the first N facts. Combined with `limit`, paginate through the full result. Response includes `next_offset` (null when the page is the last)."},
                     "current_only": {"type": "boolean", "default": true, "description": "Exclude superseded facts. Pass false to include historical timeline."}
                 }
             }),
@@ -1002,6 +1056,7 @@ pub fn list_tools() -> Vec<Tool> {
                 "type": "object",
                 "properties": {
                     "limit": {"type": "number", "default": 20},
+                    "offset": {"type": "number", "default": 0, "description": "Skip the first N entities. Combined with `limit`, paginate through the full set. Response includes `next_offset`."},
                     "type": {
                         "type": "string",
                         "description": "Filter by entity type. Built-in: technology, concept, comparison, query, person, team, unknown. Any other string is a Custom type (e.g. service, rfc, incident)."
@@ -1150,7 +1205,8 @@ pub fn list_tools() -> Vec<Tool> {
                 "type": "object",
                 "properties": {
                     "old_id": {"type": "string", "description": "ULID of the fact being replaced"},
-                    "new_id": {"type": "string", "description": "ULID of the replacement fact (must already exist; create it first via wg_fact_add)"}
+                    "new_id": {"type": "string", "description": "ULID of the replacement fact (must already exist; create it first via wg_fact_add)"},
+                    "dry_run": {"type": "boolean", "default": false, "description": "Validate both ULIDs and return before/after content without writing. Use this to confirm you're about to retire the right fact."}
                 },
                 "required": ["old_id", "new_id"]
             }),
@@ -1169,7 +1225,8 @@ pub fn list_tools() -> Vec<Tool> {
                     "prepend": {"type": "string", "description": "Text to prepend (newline-joined)"},
                     "find":    {"type": "string", "description": "Substring to find (must use with replace)"},
                     "replace": {"type": "string", "description": "Replacement text (must use with find)"},
-                    "content": {"type": "string", "description": "Replace the entire content"}
+                    "content": {"type": "string", "description": "Replace the entire content"},
+                    "dry_run": {"type": "boolean", "default": false, "description": "Compute the new content (and validate the operation) but skip the write. Returns `{before, after}` so the agent can review."}
                 },
                 "required": ["id"]
             }),
@@ -1609,6 +1666,98 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.contains("session_id required"));
+    }
+
+    #[test]
+    fn fact_list_pagination_yields_next_offset() {
+        // Add five facts on the same entity, page 2 at a time. The
+        // first two pages each return next_offset; the last page
+        // (length < limit) returns null so the agent stops paging.
+        let (_dir, wiki) = open_temp_wiki();
+        for i in 0..5 {
+            add_fact(&wiki, &format!("note number {i}"), "Topic");
+        }
+        let page1 = tool_fact_list(&json!({"limit": 2, "offset": 0}), &wiki).unwrap();
+        let p1: Value = serde_json::from_str(page1.content[0].text.as_deref().unwrap()).unwrap();
+        assert_eq!(p1["facts"].as_array().unwrap().len(), 2);
+        assert_eq!(p1["next_offset"], 2);
+
+        let page3 = tool_fact_list(&json!({"limit": 2, "offset": 4}), &wiki).unwrap();
+        let p3: Value = serde_json::from_str(page3.content[0].text.as_deref().unwrap()).unwrap();
+        assert_eq!(p3["facts"].as_array().unwrap().len(), 1);
+        assert!(
+            p3["next_offset"].is_null(),
+            "short page must signal end-of-stream",
+        );
+    }
+
+    #[test]
+    fn fact_supersede_dry_run_does_not_write() {
+        // Build the supersede pair, run dry_run, confirm both facts are
+        // still queryable as 'current' (the old one was NOT marked).
+        // Then run for real and confirm only the new one survives in
+        // current_only views.
+        let (_dir, wiki) = open_temp_wiki();
+        let old = add_fact(&wiki, "use Redis 6 for cache", "Redis");
+        let new = add_fact(&wiki, "use Redis 7 for cache", "Redis");
+
+        let preview = tool_fact_supersede(
+            &json!({
+                "old_id": old.0.to_string(),
+                "new_id": new.0.to_string(),
+                "dry_run": true,
+            }),
+            &wiki,
+        )
+        .unwrap();
+        let payload: Value =
+            serde_json::from_str(preview.content[0].text.as_deref().unwrap()).unwrap();
+        assert_eq!(payload["dry_run"], true);
+        assert_eq!(payload["applied"], false);
+        assert!(payload["old_content"].as_str().unwrap().contains("Redis 6"));
+        let current = wiki.fact_get(&old).unwrap();
+        assert!(
+            current.superseded_at.is_none(),
+            "dry_run must not mutate the store",
+        );
+
+        // For-real run: applied=true and the old fact is now superseded.
+        let applied = tool_fact_supersede(
+            &json!({
+                "old_id": old.0.to_string(),
+                "new_id": new.0.to_string(),
+            }),
+            &wiki,
+        )
+        .unwrap();
+        let payload: Value =
+            serde_json::from_str(applied.content[0].text.as_deref().unwrap()).unwrap();
+        assert_eq!(payload["applied"], true);
+        let after = wiki.fact_get(&old).unwrap();
+        assert!(after.superseded_at.is_some());
+    }
+
+    #[test]
+    fn fact_edit_dry_run_returns_diff_without_writing() {
+        let (_dir, wiki) = open_temp_wiki();
+        let id = add_fact(&wiki, "original content", "Topic");
+        let preview = tool_fact_edit(
+            &json!({
+                "id": id.0.to_string(),
+                "content": "completely rewritten",
+                "dry_run": true,
+            }),
+            &wiki,
+        )
+        .unwrap();
+        let payload: Value =
+            serde_json::from_str(preview.content[0].text.as_deref().unwrap()).unwrap();
+        assert_eq!(payload["dry_run"], true);
+        assert_eq!(payload["before"], "original content");
+        assert_eq!(payload["after"], "completely rewritten");
+        assert_eq!(payload["applied"], false);
+        let still = wiki.fact_get(&id).unwrap();
+        assert_eq!(still.content, "original content");
     }
 
     #[test]
