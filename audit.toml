@@ -1,0 +1,38 @@
+# `cargo-audit` configuration.
+#
+# CI runs `rustsec/audit-check` on every push (see .github/workflows/ci.yml
+# `audit` job). The advisories below are known and tracked but cannot be
+# fixed today without a larger upgrade. Each entry has an owner reason +
+# what unblocks the fix; review during 0.2.0 prep.
+
+[advisories]
+ignore = [
+    # pyo3 0.23.x — buffer-overflow risk in PyString::from_object on huge
+    # inputs. We're on the 0.23 line because pythonize/maturin still pin it;
+    # 0.24 needs a coordinated wg-python rewrite (Bound API changes).
+    # We don't accept >>4 GB Python strings into PyString from untrusted
+    # callers anyway. Remove on pyo3 0.24 bump.
+    "RUSTSEC-2025-0020",
+
+    # rustls-webpki transitive (pulled in by ureq/reqwest's TLS stack).
+    # Both panic and name-constraint advisories are about server-cert
+    # validation paths; wg only uses TLS as a *client* against pinned
+    # huggingface.co / OpenAI endpoints, so the impact is bounded.
+    # Drops out once ureq/reqwest publish releases that pull in newer
+    # rustls-webpki — track in https://github.com/rustls/webpki/releases
+    "RUSTSEC-2026-0104",
+    "RUSTSEC-2026-0098",
+    "RUSTSEC-2026-0099",
+
+    # lru 0.12.x — IterMut Stacked-Borrows soundness. wg-core uses lru
+    # for the BM25 query-embedding cache; we don't call IterMut. 0.13+
+    # ships the fix; bump when we touch the cache module next.
+    "RUSTSEC-2026-0002",
+
+    # Unmaintained crates (warnings, not vulnerabilities). Replacing them
+    # would mean churning multiple transitive deps' API surface — accept
+    # for now, revisit during 0.2.0.
+    "RUSTSEC-2025-0141",  # bincode (replaced by serde-bincode upstream)
+    "RUSTSEC-2025-0057",  # fxhash (rustc-hash is the de-facto successor)
+    "RUSTSEC-2024-0436",  # paste (proc-macro, transitive only)
+]
