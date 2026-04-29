@@ -628,6 +628,13 @@ pub struct SearchOpts {
     /// true on YYYY-MM-DD?" without manually walking the supersede
     /// chain.
     pub as_of: Option<u64>,
+    /// Skip the embedding-model load entirely and run pure BM25.
+    /// `WikiGraph::hybrid_search` honours this flag and short-circuits
+    /// to `WikiGraph::search` before touching `embed_provider`. Cuts
+    /// cold-start latency on a fresh CLI spawn from ~1s to ~70ms at
+    /// the cost of semantic recall (BM25 token matching only).
+    /// `false` (default) preserves the previous hybrid behaviour.
+    pub bm25_only: bool,
 }
 
 /// Options for listing facts.
@@ -721,6 +728,10 @@ pub struct QueryOpts {
     pub current_only: bool,
     /// Retrieval strategy. `Hybrid` by default.
     pub mode: QueryMode,
+    /// Skip the embedding-model load. Same semantics as
+    /// `SearchOpts::bm25_only` — flows down into the hybrid_search
+    /// step. `false` (default) preserves the previous behaviour.
+    pub bm25_only: bool,
 }
 
 impl Default for QueryOpts {
@@ -732,6 +743,7 @@ impl Default for QueryOpts {
             since: None,
             current_only: false,
             mode: QueryMode::default(),
+            bm25_only: false,
         }
     }
 }

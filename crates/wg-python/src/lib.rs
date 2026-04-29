@@ -237,6 +237,7 @@ impl PyWikiGraph {
                 .as_deref()
                 .map(wg_core::QueryMode::parse)
                 .unwrap_or_default(),
+            bm25_only: false,
         };
         let result = self.0.query(&topic, opts).map_err(map_err)?;
         to_py(py, &result)

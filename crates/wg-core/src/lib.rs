@@ -587,6 +587,13 @@ impl WikiGraph {
     /// Search using hybrid BM25 + semantic ranking.
     #[cfg(feature = "semantic")]
     pub fn hybrid_search(&self, query: &str, opts: SearchOpts) -> Result<Vec<SearchResult>> {
+        // Lazy fast path. `bm25_only` (or zero semantic weight in
+        // config) tells us we don't need the embedding model — skip
+        // the provider load and run pure BM25. This saves ~700-900ms
+        // of cold-start tax on a fresh CLI spawn.
+        if opts.bm25_only || self.config.search.semantic_weight == 0.0 {
+            return self.search(query, opts);
+        }
         let provider = self.embed_provider()?;
 
         // Try the HNSW path when configured. If the sidecar is
@@ -694,6 +701,7 @@ impl WikiGraph {
                     limit: Some(opts.search_limit),
                     since: opts.since,
                     current_only: opts.current_only,
+                    bm25_only: opts.bm25_only,
                     ..Default::default()
                 },
             )?

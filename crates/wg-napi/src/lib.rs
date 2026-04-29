@@ -86,6 +86,9 @@ pub struct QueryArgs {
     pub current_only: Option<bool>,
     /// Retrieval strategy: "naive" | "local" | "hybrid" (default) | "global"
     pub mode: Option<String>,
+    /// Skip the embedding-model load — pure BM25. Cuts cold-start
+    /// latency at the cost of semantic recall.
+    pub bm25_only: Option<bool>,
 }
 
 #[napi(object)]
@@ -184,6 +187,7 @@ impl WgStore {
             recent_limit: None,
             current_only: None,
             mode: None,
+            bm25_only: None,
         });
         let opts = QueryOpts {
             search_limit: args.limit.unwrap_or(10) as usize,
@@ -196,6 +200,7 @@ impl WgStore {
                 .as_deref()
                 .map(wg_core::QueryMode::parse)
                 .unwrap_or_default(),
+            bm25_only: args.bm25_only.unwrap_or(false),
         };
         let result = self.wiki.query(&topic, opts).map_err(err)?;
         to_json(&result)

@@ -220,6 +220,7 @@ pub extern "C" fn wg_query(
             since: None,
             current_only,
             mode,
+            bm25_only: false,
         };
         let result = s.wiki.query(topic, opts).map_err(|e| e.to_string())?;
         json_serialize(&result)

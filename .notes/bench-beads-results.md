@@ -80,6 +80,41 @@ search latency 우위가 단번에 무너짐.
   - **CLI 즉답** (agent의 hot path) → `--bm25` default
   - **wiki 검색·요약** (sentinel keyword가 약한 한글/일본어 등) → hybrid + HNSW
 
+## 시나리오 #5 — daemon (mcp-serve) warm path
+
+연구 노트의 권장 #B(daemon thin client)를 `wg search --via URL`로
+구현. 5 회 warmup 후 50 query 측정 (1k store).
+
+| 모드 | p50 | p95 | bd 대비 |
+|---|---|---|---|
+| **`wg --via --bm25` (daemon warm)** | **5.2 ms** | 5.7 ms | **74× 빠름** |
+| **`wg --via` hybrid HNSW (daemon warm)** | **42.7 ms** | 64.0 ms | **9.1× 빠름, 의미 검색 보존** |
+| `wg --bm25` (local fresh CLI) | 70.9 ms | 74.2 ms | 5.4× 빠름 |
+| `bd search` | 383.8 ms | 395.2 ms | baseline |
+| `wg` HNSW hybrid (local fresh) | 850.7 ms | 959.7 ms | 2.2× 느림 |
+
+해석:
+- 모든 wg 모드가 bd보다 빠름. `--via` daemon의 BM25는 사실상 HTTP
+  RTT(~5 ms)만 든다.
+- **HNSW가 daemon에서는 다시 빠름** (43 ms p50). 모델은 daemon이
+  warm 상태로 들고 있고, 첫 호출에서만 ~700 ms 모델 로드 한 번.
+  이후 query 임베딩만 돌리면 됨.
+- 즉 연구 노트의 별도 작업 #2(HNSW 모델 amortization)는 #1 daemon
+  으로 자연스럽게 해결 — 별도 mmap/static-link 작업 가치 없음.
+
+**권장 사용 패턴 정리**:
+
+| 시나리오 | 명령 |
+|---|---|
+| Agent 빈번한 hot path (latency 최우선) | `wg search --via http://localhost:3000 --bm25` |
+| Agent recall 중요 (한국어/일본어 등 BM25 약함) | `wg search --via http://localhost:3000` (HNSW) |
+| 임시 manual CLI, daemon 없을 때 | `wg search --bm25` |
+| 풀 의미 정확도, 1회성 | `wg search` (HNSW + 매 spawn 모델 로드) |
+
+여러 에이전트가 같은 store를 공유한다면 한 번 `wg mcp-serve --port
+3000 /path/to/store &` 띄우고 모두 `--via`로 붙는 것이 best — 시나리오
+E의 lock 정책 검증과 #5의 latency 측정 모두 그 패턴을 가리킴.
+
 ## 발견 / 후속 작업
 
 1. **wg search의 cold-start tax**: 매 fresh CLI 호출마다 모델 로드를

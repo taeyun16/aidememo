@@ -144,6 +144,7 @@ fn query(
         since: None,
         current_only,
         mode: wg_core::QueryMode::parse(&mode),
+        bm25_only: false,
     };
     let result = handle
         .wiki

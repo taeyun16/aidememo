@@ -185,6 +185,13 @@ pub struct SearchSub {
     pub json: bool,
     pub all_projects: bool,
     pub bm25_only: bool,
+    /// Optional `wg mcp-serve` endpoint (e.g. `http://localhost:3000`).
+    /// When set, dispatch the search via `wg_search` JSON-RPC against
+    /// that daemon instead of opening the redb store in-process.
+    /// Trades the ~70 ms `wg --bm25` cold-start for ~10–20 ms warm
+    /// over a single HTTP round-trip — the daemon keeps the model
+    /// loaded.
+    pub via: Option<String>,
     pub traverse_from: Option<String>,
     pub traverse_depth: Option<u32>,
     pub min_confidence: Option<f32>,
@@ -679,11 +686,21 @@ fn search_command() -> impl Parser<Command> {
              Implied by `search.semantic_weight = 0.0` in config.",
         )
         .switch();
+    let via = long("via")
+        .help(
+            "Dispatch via a running `wg mcp-serve` daemon at this URL \
+             (e.g. http://localhost:3000). Skips the local redb open + \
+             model load entirely; the daemon keeps both warm. Use when \
+             multiple agents share a store.",
+        )
+        .argument::<String>("URL")
+        .optional();
 
     construct!(SearchSub {
         json,
         all_projects,
         bm25_only,
+        via,
         traverse_from,
         traverse_depth,
         min_confidence,

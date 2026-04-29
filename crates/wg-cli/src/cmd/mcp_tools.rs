@@ -124,12 +124,19 @@ fn tool_search(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String>
         .and_then(|v| v.as_str())
         .ok_or("query required")?;
     let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(10) as usize;
+    // Opt-in lazy fast path. Caller asks for BM25-only when latency
+    // matters more than semantic recall (agent hot path).
+    let bm25_only = args
+        .get("bm25_only")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
 
     let results = wiki
         .hybrid_search(
             query,
             wg_core::SearchOpts {
                 limit: Some(limit),
+                bm25_only,
                 ..Default::default()
             },
         )
@@ -341,6 +348,10 @@ fn tool_query(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String> 
             .and_then(|v| v.as_bool())
             .unwrap_or(false),
         mode,
+        bm25_only: args
+            .get("bm25_only")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
     };
     let result = wiki.query(topic, opts).map_err(|e| e.to_string())?;
     let text = serde_json::to_string_pretty(&result).map_err(|e| e.to_string())?;
@@ -596,13 +607,18 @@ pub fn list_tools() -> Vec<Tool> {
         Tool {
             name: "wg_search".into(),
             description:
-                "Search facts in the wiki using BM25 + semantic vectors. Returns ranked results."
+                "Search facts in the wiki using BM25 + semantic vectors. Returns ranked results. Pass `bm25_only:true` to skip the embedding model load (cuts cold-start ~700-900ms; loses semantic recall)."
                     .into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "Search query"},
-                    "limit": {"type": "number", "default": 10}
+                    "limit": {"type": "number", "default": 10},
+                    "bm25_only": {
+                        "type": "boolean",
+                        "default": false,
+                        "description": "Skip embedding model — pure BM25. Use when agent hot-path latency matters more than semantic recall."
+                    }
                 },
                 "required": ["query"]
             }),

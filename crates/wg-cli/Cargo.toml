@@ -55,6 +55,10 @@ tokio = { version = "1.35", features = ["full"] }
 axum = "0.7"
 tokio-stream = "0.1"
 
+# HTTP client — only used by `wg search --via` to talk to a running
+# `wg mcp-serve` daemon (single POST per CLI invocation, no async).
+ureq = { version = "2.12", features = ["json"] }
+
 # OS-native physical-memory metrics. macOS reports phys_footprint
 # (compressed + swapped, excludes shared mmap pages); Linux exposes
 # RssAnon via /proc/self/status, which excludes mmap'd files.

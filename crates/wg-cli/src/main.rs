@@ -517,8 +517,16 @@ fn handle_search(
         );
     }
 
+    if let Some(ref via) = sub.via {
+        return run_search_via_daemon(via, &sub, default_limit, json);
+    }
+
     with_wiki_mut(path, config, |wiki| {
         let session_id = wg_core::ulid::Ulid::new().to_string();
+        // `bm25_only` flows through SearchOpts so EVERY caller of
+        // hybrid_search (CLI, MCP tools, Python/Node/Elixir/C
+        // bindings) shares the same lazy-fast-path behaviour.
+        // `--bm25` flag and `semantic_weight=0` both trigger it.
         let opts = SearchOpts {
             limit: sub.limit.or(Some(default_limit)),
             min_confidence: sub.min_confidence,
@@ -530,20 +538,12 @@ fn handle_search(
             session_id: Some(session_id.clone()),
             current_only: false,
             as_of: as_of_ms,
+            bm25_only: sub.bm25_only || semantic_weight == 0.0,
         };
 
-        // BM25-only fast path: skips the embedding model load (~700-900ms
-        // cold-start tax). Triggered by `--bm25` or by setting
-        // `search.semantic_weight = 0.0` in config. The traverse path
-        // still goes through hybrid_search internally — `--bm25` only
-        // applies to plain search, which is what the latency-sensitive
-        // CLI use case actually hits.
-        let bm25_only = sub.bm25_only || semantic_weight == 0.0;
         let results = if let Some(ref start) = sub.traverse_from {
             let depth = sub.traverse_depth.unwrap_or(2);
             wiki.search_with_traverse(&sub.query, start, depth, opts)?
-        } else if bm25_only {
-            wiki.search(&sub.query, opts)?
         } else {
             wiki.hybrid_search(&sub.query, opts)?
         };
@@ -566,6 +566,53 @@ fn handle_search(
         };
         output::format_search_results(&results, wiki, format)
     })
+}
+
+/// `wg search --via http://host:port` — dispatch the search as a
+/// JSON-RPC `wg_search` tool call against a running `wg mcp-serve`
+/// daemon. The daemon keeps the redb store and the embedding model
+/// warm, so the round-trip is dominated by HTTP latency (typically
+/// ~10–20 ms on localhost).
+///
+/// Output is the daemon's `wg_search` content block dumped verbatim —
+/// the daemon's tool already formats hits the way agents consume
+/// them. We don't try to reformat it as the local table view because
+/// the daemon may legitimately have a different store / config than
+/// the calling CLI's project.
+fn run_search_via_daemon(
+    base_url: &str,
+    sub: &cmd::SearchSub,
+    default_limit: usize,
+    _json: bool,
+) -> Result<String, WgError> {
+    let url = format!("{}/mcp", base_url.trim_end_matches('/'));
+    let limit = sub.limit.unwrap_or(default_limit);
+    let body = serde_json::json!({
+        "jsonrpc": "2.0", "id": 1,
+        "method": "tools/call",
+        "params": {
+            "name": "wg_search",
+            "arguments": {
+                "query": sub.query,
+                "limit": limit,
+                "bm25_only": sub.bm25_only,
+            }
+        }
+    });
+    let resp: serde_json::Value = ureq::post(&url)
+        .set("Content-Type", "application/json")
+        .send_json(body)
+        .map_err(|e| WgError::Internal(format!("daemon POST {url} failed: {e}")))?
+        .into_json()
+        .map_err(|e| WgError::Internal(format!("daemon response parse: {e}")))?;
+    if let Some(err) = resp.get("error") {
+        return Err(WgError::Internal(format!("daemon error: {err}")));
+    }
+    let text = resp
+        .pointer("/result/content/0/text")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| WgError::Internal(format!("unexpected daemon response: {resp}")))?;
+    Ok(text.to_string())
 }
 
 /// Run a hybrid search across every registered project, tag each hit with
@@ -622,13 +669,9 @@ fn run_search_all_projects(
             session_id: None,
             current_only: false,
             as_of: as_of_ms,
+            bm25_only: sub.bm25_only || semantic_weight == 0.0,
         };
-        let hits_result = if sub.bm25_only || semantic_weight == 0.0 {
-            wiki.search(&sub.query, opts)
-        } else {
-            wiki.hybrid_search(&sub.query, opts)
-        };
-        match hits_result {
+        match wiki.hybrid_search(&sub.query, opts) {
             Ok(hits) => {
                 for h in hits {
                     all.push((proj_name.clone(), h));
@@ -704,6 +747,7 @@ fn handle_query(
             since: since_ms,
             current_only: false,
             mode,
+            bm25_only: false,
         };
         let result = wiki.query(&sub.topic, opts)?;
         if json {
