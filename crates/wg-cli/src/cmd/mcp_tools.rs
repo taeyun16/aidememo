@@ -485,13 +485,57 @@ fn tool_lint(wiki: &WikiGraph) -> Result<ToolCallResult, String> {
     })
 }
 
+/// Map a lint code to an actionable hint the agent can carry out
+/// without further deliberation. Generic enough to apply to any
+/// instance of that code, specific enough to suggest the right next
+/// tool.
+fn lint_action_hint(code: &str) -> &'static str {
+    match code {
+        "orphan" => {
+            "No relations point to or from this entity. Either link it to a related one (`wg relation add`) or delete it via the CLI if it's irrelevant."
+        }
+        "duplicate" => {
+            "Two facts have near-identical content. Read both via wg_fact_get; if they say the same thing, retire the older one with wg_fact_supersede."
+        }
+        "conflict" => {
+            "Atomic fact types (decision / pattern / convention) are mutually exclusive per entity. Pick the survivor and run wg_fact_supersede on the others — the timeline is preserved."
+        }
+        "stale" => {
+            "Fact hasn't been touched in a while. Verify it's still accurate. If reality changed, run wg_fact_supersede with an updated version."
+        }
+        "malformed_entity" => {
+            "Entity record is incomplete or broken. Read it with wg_entity_get and repair via wg_entity_describe + fact_update."
+        }
+        _ => "See the message field for details.",
+    }
+}
+
 fn tool_doctor(wiki: &WikiGraph) -> Result<ToolCallResult, String> {
     let issues = wiki.lint().map_err(|e| e.to_string())?;
     let stats = wiki.stats().map_err(|e| e.to_string())?;
+    // Group issues by code so an agent can triage "I have 5 conflicts
+    // to fix" without scanning the full issue list. Each group gets
+    // an action hint pointing at the right next tool — gives the agent
+    // a fix recipe instead of just a list of complaints.
+    let mut codes: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+    for issue in &issues {
+        *codes.entry(issue.code.clone()).or_insert(0) += 1;
+    }
+    let by_code: Vec<Value> = codes
+        .into_iter()
+        .map(|(code, count)| {
+            json!({
+                "code": code,
+                "count": count,
+                "action": lint_action_hint(&code),
+            })
+        })
+        .collect();
     let payload = json!({
         "ok": issues.is_empty(),
         "stats": stats,
         "issue_count": issues.len(),
+        "by_code": by_code,
         "issues": issues,
     });
     let text = serde_json::to_string_pretty(&payload).map_err(|e| e.to_string())?;
@@ -674,6 +718,42 @@ fn tool_fact_add(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, Strin
     let (entity_ids, auto_created) = resolve_or_create_entities(wiki, &entity_names)?;
     let fact_type = parse_fact_type_arg(args.get("fact_type"))?;
 
+    // Pre-add similarity check (non-blocking). BM25-only so we don't
+    // pay the embedding-model load on every add — the goal is just to
+    // surface "this looks like an existing fact" so the agent can opt
+    // to wg_fact_supersede instead of stacking duplicates. Set
+    // `dedup_check: false` to skip (e.g. for trusted bulk imports).
+    let dedup_check = args
+        .get("dedup_check")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+    let existing_similar = if dedup_check {
+        wiki.hybrid_search(
+            content,
+            wg_core::SearchOpts {
+                limit: Some(1),
+                bm25_only: true,
+                current_only: true,
+                ..Default::default()
+            },
+        )
+        .ok()
+        .and_then(|results| results.into_iter().next())
+        // BM25 score threshold — empirically anything above ~1.0
+        // represents a meaningful term-overlap match. Below that, the
+        // hint adds noise to every add against a populated wiki.
+        .filter(|hit| hit.score >= 1.0)
+        .map(|hit| {
+            json!({
+                "fact_id": hit.fact_id.to_string(),
+                "content": hit.content,
+                "score": hit.score,
+            })
+        })
+    } else {
+        None
+    };
+
     let input = wg_core::types::FactInput {
         content: content.into(),
         fact_type,
@@ -708,6 +788,7 @@ fn tool_fact_add(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, Strin
         "entity_names": entity_names_resolved,
         "created_at": record.created_at,
         "auto_created_entities": auto_created,
+        "existing_similar": existing_similar,
     });
     Ok(ToolCallResult {
         content: vec![ContentBlock::text(payload.to_string())],
@@ -1148,7 +1229,7 @@ pub fn list_tools() -> Vec<Tool> {
         },
         Tool {
             name: "wg_fact_add".into(),
-            description: "Add a fact to the wiki graph. Before adding, consider running wg_search on the gist of the fact — duplicates are easy to create and have to be cleaned up later via wg_fact_supersede. Missing entities are auto-created (default type Unknown) and reported in `auto_created_entities` so you can confirm the side effect. Returns {id, content, entity_names, created_at, auto_created_entities}."
+            description: "Add a fact to the wiki graph. By default the tool runs a BM25 dedup check on the new content first — if a high-overlap existing fact is found it appears as `existing_similar` in the response (the new fact is still added; the agent decides whether to wg_fact_supersede the older one). Missing entities are auto-created (default type Unknown) and reported in `auto_created_entities` so you can confirm the side effect. Returns {id, content, entity_names, created_at, auto_created_entities, existing_similar}."
                 .into(),
             input_schema: json!({
                 "type": "object",
@@ -1160,6 +1241,11 @@ pub fn list_tools() -> Vec<Tool> {
                         "type": "string",
                         "enum": ["decision", "pattern", "convention", "claim", "note", "question", "unknown"],
                         "description": "Atomic types (decision/pattern/convention) are mutually exclusive per entity — use wg_fact_supersede to retire the old one. Non-atomic (claim/note/question) coexist freely."
+                    },
+                    "dedup_check": {
+                        "type": "boolean",
+                        "default": true,
+                        "description": "Run a BM25 similarity search against the new content before adding. Disable for trusted bulk imports to save the latency."
                     }
                 },
                 "required": ["content"]
@@ -1773,6 +1859,60 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.contains("invalid fact ID"));
+    }
+
+    #[test]
+    fn doctor_groups_by_code_with_action_hints() {
+        // Add an entity without any relations — this triggers the
+        // "orphan" lint code. Confirm doctor's by_code section maps
+        // it to a hint that names the right next tool.
+        let (_dir, wiki) = open_temp_wiki();
+        wiki.entity_add(EntityInput {
+            name: "FloatingEntity".into(),
+            ..Default::default()
+        })
+        .unwrap();
+
+        let result = tool_doctor(&wiki).unwrap();
+        let payload: Value =
+            serde_json::from_str(result.content[0].text.as_deref().unwrap()).unwrap();
+        let by_code = payload["by_code"].as_array().expect("by_code present");
+        let orphan = by_code
+            .iter()
+            .find(|g| g["code"] == "orphan")
+            .expect("orphan group");
+        assert!(orphan["count"].as_u64().unwrap_or(0) >= 1);
+        assert!(
+            orphan["action"]
+                .as_str()
+                .unwrap_or("")
+                .contains("relations"),
+            "action hint should explain how to resolve an orphan",
+        );
+    }
+
+    #[test]
+    fn fact_add_skips_dedup_check_when_disabled() {
+        // When the agent passes dedup_check:false the response must
+        // include `existing_similar: null` even if a near-duplicate
+        // exists. Useful for trusted bulk imports.
+        let (_dir, wiki) = open_temp_wiki();
+        add_fact(&wiki, "Redis is an in-memory cache", "Redis");
+        let result = tool_fact_add(
+            &json!({
+                "content": "Redis is an in-memory cache",
+                "entities": ["Redis"],
+                "dedup_check": false,
+            }),
+            &wiki,
+        )
+        .unwrap();
+        let payload: Value =
+            serde_json::from_str(result.content[0].text.as_deref().unwrap()).unwrap();
+        assert!(
+            payload["existing_similar"].is_null(),
+            "dedup_check=false must suppress the similarity hint",
+        );
     }
 
     #[test]
