@@ -126,6 +126,37 @@ impl ContentBlock {
 ///    a duration DSL (`30d`, `12h`, `4w`, `1y`) interpreted as
 ///    `now - duration`. The `as_of_mode` flag suppresses duration parsing
 ///    so `as_of` can't accidentally be a relative window.
+/// Parse a `fact_type` MCP argument against the closed [`FactType`] enum.
+/// Returns `None` for missing/null. Errors with a list of accepted values
+/// when the agent passes a typo (e.g. "decisions", "fact") so the model
+/// learns the right vocabulary at the next turn instead of getting a
+/// generic deserialize panic.
+fn parse_fact_type_arg(arg: Option<&Value>) -> Result<Option<wg_core::FactType>, String> {
+    let Some(v) = arg else { return Ok(None) };
+    if v.is_null() {
+        return Ok(None);
+    }
+    let s = v
+        .as_str()
+        .ok_or("fact_type must be a string")?
+        .to_lowercase();
+    let parsed = match s.as_str() {
+        "decision" => wg_core::FactType::Decision,
+        "pattern" => wg_core::FactType::Pattern,
+        "convention" => wg_core::FactType::Convention,
+        "claim" => wg_core::FactType::Claim,
+        "note" => wg_core::FactType::Note,
+        "question" => wg_core::FactType::Question,
+        "unknown" => wg_core::FactType::Unknown,
+        other => {
+            return Err(format!(
+                "invalid fact_type {other:?}; accepted: decision, pattern, convention, claim, note, question, unknown"
+            ));
+        }
+    };
+    Ok(Some(parsed))
+}
+
 fn parse_time_arg(arg: Option<&Value>, as_of_mode: bool) -> Result<Option<u64>, String> {
     let Some(v) = arg else { return Ok(None) };
     if v.is_null() {
@@ -575,10 +606,11 @@ fn tool_fact_add(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, Strin
         .unwrap_or_default();
 
     let (entity_ids, auto_created) = resolve_or_create_entities(wiki, &entity_names)?;
+    let fact_type = parse_fact_type_arg(args.get("fact_type"))?;
 
     let input = wg_core::types::FactInput {
         content: content.into(),
-        fact_type: None,
+        fact_type,
         entity_ids: if entity_ids.is_empty() {
             None
         } else {
@@ -678,9 +710,11 @@ fn tool_fact_add_many(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, 
                     .collect::<Vec<_>>()
             })
             .filter(|v| !v.is_empty());
+        let fact_type = parse_fact_type_arg(obj.get("fact_type"))
+            .map_err(|e| format!("items[{i}].fact_type: {e}"))?;
         inputs.push(wg_core::types::FactInput {
             content,
-            fact_type: None,
+            fact_type,
             entity_ids,
             tags,
             source: None,
@@ -861,7 +895,7 @@ pub fn list_tools() -> Vec<Tool> {
         },
         Tool {
             name: "wg_path".into(),
-            description: "Find the shortest path between two entities (BFS over typed relations). Returns {from, to, path: [hops]}.".into(),
+            description: "Find the shortest path between two entities (BFS over typed relations). Returns {from, to, path: [hops]}. For breadth-first exploration of one neighborhood, use wg_traverse instead.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -873,7 +907,7 @@ pub fn list_tools() -> Vec<Tool> {
         },
         Tool {
             name: "wg_fact_list".into(),
-            description: "List facts with optional entity filter. Use wg_recent for time-windowed listing.".into(),
+            description: "List facts with optional entity filter. Defaults to current_only=true. Use wg_recent for time-windowed listing or wg_search when you have a query string.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -885,7 +919,7 @@ pub fn list_tools() -> Vec<Tool> {
         },
         Tool {
             name: "wg_entity_get".into(),
-            description: "Get a single entity by name (or alias). Returns the JSON record."
+            description: "Get a single entity by name (or alias). On miss, returns suggestions in the error so you can correct the name. Returns the JSON record on success."
                 .into(),
             input_schema: json!({
                 "type": "object",
@@ -904,18 +938,21 @@ pub fn list_tools() -> Vec<Tool> {
         },
         Tool {
             name: "wg_entity_list".into(),
-            description: "List entities in the wiki graph with fact counts.".into(),
+            description: "List entities in the wiki graph with fact counts. To fetch one entity's record use wg_entity_get; to find related entities by graph use wg_traverse.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "limit": {"type": "number", "default": 20},
-                    "type": {"type": "string", "description": "Filter by entity type"}
+                    "type": {
+                        "type": "string",
+                        "description": "Filter by entity type. Built-in: technology, concept, comparison, query, person, team, unknown. Any other string is a Custom type (e.g. service, rfc, incident)."
+                    }
                 }
             }),
         },
         Tool {
             name: "wg_traverse".into(),
-            description: "Traverse the entity graph from a starting entity.".into(),
+            description: "Forward graph walk from a starting entity (returns reachable entities up to depth). For 'what depends on X' (reverse direction) use wg_backlinks; for shortest path between two known entities use wg_path.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -927,7 +964,7 @@ pub fn list_tools() -> Vec<Tool> {
         },
         Tool {
             name: "wg_lint".into(),
-            description: "Check the health of the wiki graph (orphans, duplicates, stale facts)."
+            description: "Raw lint issues — orphan entities, duplicate facts, stale facts, broken refs. Returns the array directly. For a friendly health summary that wraps these issues with stats, prefer wg_doctor."
                 .into(),
             input_schema: json!({"type": "object", "properties": {}}),
         },
@@ -939,7 +976,7 @@ pub fn list_tools() -> Vec<Tool> {
         },
         Tool {
             name: "wg_recent".into(),
-            description: "Recently added/updated facts. Defaults to the last 7 days, 20 facts. Returns {\"facts\": [...]}."
+            description: "Recently added/updated facts. Defaults to the last 7 days, 20 facts. Returns {\"facts\": [...]}. For full context on a topic (search + graph + recent in one call) use wg_query."
                 .into(),
             input_schema: json!({
                 "type": "object",
@@ -967,7 +1004,7 @@ pub fn list_tools() -> Vec<Tool> {
         },
         Tool {
             name: "wg_query".into(),
-            description: "Unified context fetch for a topic. One call returns: hybrid search hits, the resolved entity (if any), related entities (graph traversal), and recent facts. Modes: naive (search only), local (entity + neighbors, no global search), hybrid (default), global (broader scan)."
+            description: "Unified context fetch for a topic — preferred entry point when an agent needs context. One call returns: hybrid search hits, the resolved entity (if any), related entities (graph traversal), and recent facts. Defaults to current_only=true. Modes: naive (search only), local (entity + neighbors, no global search), hybrid (default), global (broader scan). For pure search without graph context use wg_search; for last-N-days listing use wg_recent."
                 .into(),
             input_schema: json!({
                 "type": "object",
@@ -997,26 +1034,26 @@ pub fn list_tools() -> Vec<Tool> {
         },
         Tool {
             name: "wg_fact_add".into(),
-            description: "Add a new fact to the wiki graph. Returns {\"id\": \"<ULID>\"}.".into(),
+            description: "Add a fact to the wiki graph. Before adding, consider running wg_search on the gist of the fact — duplicates are easy to create and have to be cleaned up later via wg_fact_supersede. Missing entities are auto-created (default type Unknown) and reported in `auto_created_entities` so you can confirm the side effect. Returns {id, content, entity_names, created_at, auto_created_entities}."
+                .into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "content": {"type": "string"},
-                    "entities": {"type": "array", "items": {"type": "string"}},
-                    "tags": {"type": "array", "items": {"type": "string"}}
+                    "entities": {"type": "array", "items": {"type": "string"}, "description": "Entity names or aliases. Unknown names are auto-created."},
+                    "tags": {"type": "array", "items": {"type": "string"}},
+                    "fact_type": {
+                        "type": "string",
+                        "enum": ["decision", "pattern", "convention", "claim", "note", "question", "unknown"],
+                        "description": "Atomic types (decision/pattern/convention) are mutually exclusive per entity — use wg_fact_supersede to retire the old one. Non-atomic (claim/note/question) coexist freely."
+                    }
                 },
                 "required": ["content"]
             }),
         },
         Tool {
             name: "wg_fact_add_many".into(),
-            description: "Add many facts to the wiki graph in a single \
-                transaction. Use this for bulk imports — a single \
-                `wg_fact_add_many` call is dramatically faster than \
-                many sequential `wg_fact_add` calls because the disk \
-                fsync cost is paid once per batch instead of once per \
-                fact. Each item is an object with the same shape as \
-                wg_fact_add's args."
+            description: "Add many facts in a single transaction. Dramatically faster than many sequential wg_fact_add calls because the disk fsync cost is paid once per batch. Each item has the same shape as wg_fact_add's args. Returns {count, facts:[{id, entity_names}], auto_created_entities} — the dedup'd auto-created list lets you confirm new entities at a glance."
                 .into(),
             input_schema: json!({
                 "type": "object",
@@ -1028,7 +1065,11 @@ pub fn list_tools() -> Vec<Tool> {
                             "properties": {
                                 "content": {"type": "string"},
                                 "entities": {"type": "array", "items": {"type": "string"}},
-                                "tags": {"type": "array", "items": {"type": "string"}}
+                                "tags": {"type": "array", "items": {"type": "string"}},
+                                "fact_type": {
+                                    "type": "string",
+                                    "enum": ["decision", "pattern", "convention", "claim", "note", "question", "unknown"]
+                                }
                             },
                             "required": ["content"]
                         }
@@ -1041,8 +1082,11 @@ pub fn list_tools() -> Vec<Tool> {
             name: "wg_fact_supersede".into(),
             description: "Mark an old fact as superseded by a new one. The old \
                 fact stays in the store but won't appear in current_only \
-                queries — use this when a decision was overturned or a value \
-                changed.".into(),
+                queries (the default for wg_search / wg_query / wg_fact_list). \
+                Use this when a decision was overturned or a value \
+                changed; for typo fixes use wg_fact_edit. The historical \
+                timeline is preserved — wg_search with `as_of:<date>` \
+                replays past state.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -1426,6 +1470,39 @@ mod tests {
         let result =
             tool_search(&json!({"query": "caching", "since": "2020-01-01"}), &wiki).unwrap();
         assert!(result.is_error.is_none());
+    }
+
+    #[test]
+    fn fact_add_accepts_typed_fact() {
+        // Agents should be able to tag a "decision" via MCP — previously
+        // fact_type was hardcoded to None and the schema didn't expose it,
+        // so the tool was less expressive than the CLI.
+        let (_dir, wiki) = open_temp_wiki();
+        let result = tool_fact_add(
+            &json!({
+                "content": "Use Redis for hot path caching",
+                "entities": ["Redis"],
+                "fact_type": "decision"
+            }),
+            &wiki,
+        )
+        .unwrap();
+        let payload: Value =
+            serde_json::from_str(result.content[0].text.as_deref().unwrap()).unwrap();
+        let id = wg_core::ulid::Ulid::from_string(payload["id"].as_str().unwrap()).unwrap();
+        let record = wiki.fact_get(&wg_core::FactId(id)).unwrap();
+        assert_eq!(record.fact_type, wg_core::FactType::Decision);
+    }
+
+    #[test]
+    fn fact_add_rejects_unknown_fact_type_with_helpful_message() {
+        let (_dir, wiki) = open_temp_wiki();
+        let err =
+            tool_fact_add(&json!({"content": "x", "fact_type": "decisions"}), &wiki).unwrap_err();
+        assert!(
+            err.contains("decision") && err.contains("pattern"),
+            "expected accepted-values list in error, got {err}",
+        );
     }
 
     #[test]
