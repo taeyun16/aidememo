@@ -863,6 +863,18 @@ mod semantic {
         let cfg = store.config();
         let weight_by_confidence = cfg.search.weight_by_confidence;
         let tau_ms = cfg.search.time_decay_tau_ms;
+        // Adapter is loaded once per fusion call (cheap — meta_get is a
+        // single redb point lookup) and only consulted when training has
+        // populated biases. Toggling `search.use_adapter` lets operators
+        // run an un-adapted baseline without wiping the persisted state.
+        // Gated behind `semantic-adapt` because `Store::load_adapter` and
+        // `DomainAdapter` only compile under that feature.
+        #[cfg(feature = "semantic-adapt")]
+        let adapter: Option<crate::adapt::DomainAdapter> = if cfg.search.use_adapter {
+            store.load_adapter().ok().filter(|a| !a.is_empty())
+        } else {
+            None
+        };
 
         let mut entries: Vec<FusedEntry> = scores
             .into_values()
@@ -896,6 +908,10 @@ mod semantic {
                     entry.result.source = fact.source;
                     entry.result.created_at = fact.created_at;
                     entry.result.observed_at = fact.observed_at;
+                }
+                #[cfg(feature = "semantic-adapt")]
+                if let Some(ref adapter) = adapter {
+                    weight *= adapter.weight_factor(&entry.result.fact_id.to_string());
                 }
                 entry.weighted_score = entry.base_score * weight;
                 entry
@@ -1200,5 +1216,95 @@ mod tests {
         // Equal base RRF scores remain equal-weighted; we only assert
         // the score is non-zero (decay didn't squash anything).
         assert!(scores.iter().all(|s| *s > 0.0));
+    }
+
+    #[cfg(all(feature = "semantic", feature = "semantic-adapt"))]
+    #[test]
+    #[ignore = "downloads HF model — local only"]
+    fn hybrid_search_adapter_promotes_helpful_facts() {
+        // Twin facts with identical content + confidence; without the
+        // adapter they tie. Recording helpful feedback on one and
+        // training the adapter must push it ahead of its twin.
+        use crate::types::SearchFeedback;
+        use ulid::Ulid;
+
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.redb");
+        let mut config = Config::default();
+        config.search.time_decay_tau_ms = 0;
+        config.search.weight_by_confidence = false;
+        config.search.semantic_index = "bm25".to_string();
+        config.search.use_adapter = true;
+        let mut store = Store::open(&path, config.clone()).unwrap();
+
+        store
+            .entity_add(EntityInput {
+                name: "Topic".to_string(),
+                entity_type: Some(EntityType::Technology),
+                ..Default::default()
+            })
+            .unwrap();
+        let topic = store.resolve_entity("Topic").unwrap();
+
+        let twin_a = store
+            .fact_add(FactInput {
+                content: "alpha note about topic indexing".to_string(),
+                entity_ids: Some(vec![topic]),
+                source_confidence: Some(0.5),
+                ..Default::default()
+            })
+            .unwrap();
+        let twin_b = store
+            .fact_add(FactInput {
+                content: "beta note about topic indexing".to_string(),
+                entity_ids: Some(vec![topic]),
+                source_confidence: Some(0.5),
+                ..Default::default()
+            })
+            .unwrap();
+
+        let session_id = Ulid::new().to_string();
+        for _ in 0..3 {
+            store
+                .search_feedback_add(&SearchFeedback {
+                    session_id: session_id.clone(),
+                    fact_id: twin_a,
+                    helpful: true,
+                    timestamp: 0,
+                })
+                .unwrap();
+        }
+        store.adapt_train().unwrap();
+
+        let results = semantic::hybrid_search(
+            &store,
+            "topic indexing",
+            SearchOpts {
+                limit: Some(5),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let pos_a = results.iter().position(|r| r.fact_id == twin_a);
+        let pos_b = results.iter().position(|r| r.fact_id == twin_b);
+        assert!(
+            matches!((pos_a, pos_b), (Some(a), Some(b)) if a < b),
+            "helpful-feedback fact should rank ahead of its untrained twin (a={pos_a:?} b={pos_b:?})",
+        );
+
+        // Bypass: with use_adapter=false the bias must not influence
+        // ranking, so the original BM25 / RRF tie-break order returns.
+        config.search.use_adapter = false;
+        let store_no_adapter = Store::open(&path, config).unwrap();
+        let untouched = semantic::hybrid_search(
+            &store_no_adapter,
+            "topic indexing",
+            SearchOpts {
+                limit: Some(5),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(untouched.len() >= 2);
     }
 }

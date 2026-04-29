@@ -2406,8 +2406,10 @@ impl Store {
         Ok(adapter.evaluate(&feedback_pairs, 10))
     }
 
-    /// Load the adapter from meta bytes, or return a fresh one.
-    fn load_adapter(&self) -> Result<crate::adapt::DomainAdapter> {
+    /// Load the adapter from meta bytes, or return a fresh one. Public so
+    /// the search engine can pull it on the hot path without a second
+    /// `Store` plumbing.
+    pub fn load_adapter(&self) -> Result<crate::adapt::DomainAdapter> {
         match self.meta_get::<Vec<u8>>("adapter_state")? {
             Some(bytes) => crate::adapt::DomainAdapter::from_bytes(&bytes),
             None => Ok(crate::adapt::DomainAdapter::new()),

@@ -204,6 +204,13 @@ pub struct SearchConfig {
     /// (every fact gets weight 1.0 regardless of age).
     #[serde(default = "default_time_decay_tau")]
     pub time_decay_tau_ms: u64,
+    /// Apply the trained domain adapter (`wg adapt train`) when fusing
+    /// hybrid-search results. With no training data the adapter is empty
+    /// and the toggle is a no-op, so leaving this on costs nothing for
+    /// fresh stores. Set `false` to bypass the adapter — useful for A/B
+    /// comparisons against the un-adapted baseline.
+    #[serde(default = "default_true")]
+    pub use_adapter: bool,
 }
 
 fn default_semantic_prefilter() -> usize {
@@ -256,6 +263,7 @@ impl Default for SearchConfig {
             semantic_index: default_semantic_index(),
             weight_by_confidence: default_true(),
             time_decay_tau_ms: default_time_decay_tau(),
+            use_adapter: default_true(),
         }
     }
 }

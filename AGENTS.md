@@ -371,7 +371,5 @@ surface where the gap actually lives, not just in `PLAN.md`. List them with:
 grep -rn "TODO(phase" crates/
 ```
 
-Currently flagged: phase4 (search adapter not wired into ranker — see
-`wg-core/src/adapt.rs`, `wg-core/src/wal.rs`, `wg-cli/src/cmd/adapt.rs`,
-`wg-cli/src/cmd/feedback.rs`) and phase6 (S3 transport is a local-fs
-mirror — see `wg-core/src/s3.rs`).
+Currently flagged: phase6 (S3 transport is a local-fs mirror — see
+`wg-core/src/s3.rs`).

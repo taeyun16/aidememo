@@ -3,11 +3,10 @@
 //! Learns a simple linear re-ranking model: given feedback signals, adjusts
 //! the relevance score for each fact entity to improve precision over time.
 //!
-//! TODO(phase4): the trained adapter is persisted to `~/.wg/adapter.json` by
-//! `wg adapt train`, but `SearchEngine::search` (search.rs) does not load or
-//! apply it — the bias terms have no effect on live ranking yet. Wiring is:
-//! load adapter on engine init, then add `alpha * b_f` to the hybrid score
-//! before final sort.
+//! Wiring: `wg adapt train` persists adapter state under the redb meta key
+//! `adapter_state`, and `rrf_fusion` (search.rs) loads it via
+//! `Store::load_adapter` to multiply each fused entry's weight by
+//! `weight_factor(fact_id)`. Toggle with `config.search.use_adapter`.
 //!
 //! ## Model
 //!
@@ -57,6 +56,25 @@ impl DomainAdapter {
     pub fn apply(&self, fact_id: &str, base_score: f32) -> f32 {
         let bias = self.fact_biases.get(fact_id).copied().unwrap_or(0.0);
         base_score + self.alpha * bias
+    }
+
+    /// Multiplicative ranking factor for `rrf_fusion`. Bias is squashed
+    /// into `[-1.0, 1.0]` via `tanh` before being scaled by `alpha`, so a
+    /// fact that's been marked helpful many times can't swamp the rest of
+    /// the signal — the worst-case multiplier is `1 ± alpha`. Result is
+    /// clamped to `[0.1, 2.0]` as a final safety rail.
+    pub fn weight_factor(&self, fact_id: &str) -> f32 {
+        let bias = self.fact_biases.get(fact_id).copied().unwrap_or(0.0);
+        // tanh squashes any bias magnitude into (-1, 1) — keeps a runaway
+        // training signal from making the adapter dominate ranking.
+        let squashed = bias.tanh();
+        (1.0 + self.alpha * squashed).clamp(0.1, 2.0)
+    }
+
+    /// True when there are no learned biases yet — callers can skip the
+    /// per-fact adapter lookup entirely on a fresh store.
+    pub fn is_empty(&self) -> bool {
+        self.fact_biases.is_empty()
     }
 
     /// Train the adapter on a batch of feedback.
@@ -223,5 +241,47 @@ mod tests {
         assert!(!status.has_adapter);
         assert_eq!(status.feedback_count, 5);
         assert!(!status.ready);
+    }
+
+    #[test]
+    fn weight_factor_is_neutral_on_empty_adapter() {
+        let adapter = DomainAdapter::new();
+        // Untrained adapter has no biases — every fact is neutral.
+        assert_eq!(adapter.weight_factor("fact-unknown"), 1.0);
+        assert!(adapter.is_empty());
+    }
+
+    #[test]
+    fn weight_factor_boosts_helpful_demotes_unhelpful() {
+        let mut adapter = DomainAdapter::new();
+        adapter.train(&[
+            ("helpful".to_string(), true),
+            ("helpful".to_string(), true),
+            ("unhelpful".to_string(), false),
+            ("unhelpful".to_string(), false),
+        ]);
+
+        assert!(!adapter.is_empty());
+        let helpful = adapter.weight_factor("helpful");
+        let unhelpful = adapter.weight_factor("unhelpful");
+        let neutral = adapter.weight_factor("never-seen");
+
+        assert!(helpful > neutral);
+        assert!(unhelpful < neutral);
+        assert!((neutral - 1.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn weight_factor_is_bounded_under_runaway_training() {
+        // Pile up 200 helpful signals on the same fact. Without the
+        // tanh squash the multiplier would explode (1 + 0.1 * 200 = 21);
+        // squashed it must stay inside [1, 1 + alpha].
+        let mut adapter = DomainAdapter::new();
+        let payload: Vec<(String, bool)> = (0..200).map(|_| ("hot".to_string(), true)).collect();
+        adapter.train(&payload);
+
+        let factor = adapter.weight_factor("hot");
+        assert!(factor > 1.0);
+        assert!(factor <= 1.1 + f32::EPSILON, "factor was {factor}");
     }
 }

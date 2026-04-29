@@ -1,9 +1,4 @@
 //! `wg adapt` — train, inspect, and evaluate the search adapter.
-//!
-//! TODO(phase4): training writes `~/.wg/adapter.json`, but the CLI search
-//! path (`wg search` / `wg query`) does not consult it. End-to-end loop is
-//! incomplete until `wg-core/src/search.rs` loads the adapter and applies
-//! the per-fact bias term during ranking.
 
 use bpaf::*;
 use std::path::Path;
