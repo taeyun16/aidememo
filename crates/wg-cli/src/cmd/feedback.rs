@@ -1,4 +1,9 @@
 //! `wg feedback` — record feedback for a search result.
+//!
+//! TODO(phase4): feedback rows are persisted to the WAL (search_feedback)
+//! but not yet consumed by the live ranker — see `wg-core/src/adapt.rs` and
+//! `wg-cli/src/cmd/adapt.rs`. Feedback is captured today; ranking loop
+//! closes once the adapter is loaded by `SearchEngine`.
 
 use bpaf::*;
 use std::path::Path;

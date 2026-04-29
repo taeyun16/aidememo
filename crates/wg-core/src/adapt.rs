@@ -3,6 +3,12 @@
 //! Learns a simple linear re-ranking model: given feedback signals, adjusts
 //! the relevance score for each fact entity to improve precision over time.
 //!
+//! TODO(phase4): the trained adapter is persisted to `~/.wg/adapter.json` by
+//! `wg adapt train`, but `SearchEngine::search` (search.rs) does not load or
+//! apply it — the bias terms have no effect on live ranking yet. Wiring is:
+//! load adapter on engine init, then add `alpha * b_f` to the hybrid score
+//! before final sort.
+//!
 //! ## Model
 //!
 //! Maintains a per-entity bias term `b_f` for each fact. On training:

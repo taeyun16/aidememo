@@ -3,6 +3,13 @@
 //! The implementation uses a local filesystem bucket mirror so the protocol
 //! is usable in tests and offline environments. The manifest format is JSONL
 //! and segment payloads are compressed as `.jsonl.zst`.
+//!
+//! TODO(phase6): swap the filesystem mirror for a real S3 client (aws-sdk-s3
+//! or rusoto). Current callers only exercise the local path — there is no
+//! retry, signing, or multi-region story yet.
+//! TODO(phase6): manifest compaction in `flush_segments_to_manifest` runs
+//! per-flush only. A scheduled background compactor (daemon side) would
+//! reclaim space without blocking ingest.
 
 use crate::error::{Result, WgError};
 use crate::wal::{WALSegment, wal_compact};

@@ -361,3 +361,17 @@ wg_free_string(json);
 - `wg-skill/SKILL.md` — Claude Code skill format
 - `wg-skill/REFERENCE.md` — full API reference
 - `README.md` — user-facing quick start
+
+### Inline TODO markers
+
+Roadmap gaps that touch live code carry a `TODO(phaseN):` marker so they
+surface where the gap actually lives, not just in `PLAN.md`. List them with:
+
+```bash
+grep -rn "TODO(phase" crates/
+```
+
+Currently flagged: phase4 (search adapter not wired into ranker — see
+`wg-core/src/adapt.rs`, `wg-core/src/wal.rs`, `wg-cli/src/cmd/adapt.rs`,
+`wg-cli/src/cmd/feedback.rs`) and phase6 (S3 transport is a local-fs
+mirror — see `wg-core/src/s3.rs`).

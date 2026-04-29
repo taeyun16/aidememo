@@ -29,6 +29,9 @@ enum WALLine {
 pub struct WALSegment {
     pub segment_id: SegmentId,
     pub search_sessions: Vec<SearchSession>,
+    // TODO(phase4): search_feedback is appended by `wg feedback` but not yet
+    // consumed by the ranker — the trained adapter (`adapt.rs`) lives in
+    // `~/.wg/adapter.json` and is not loaded by `SearchEngine::search`.
     pub search_feedback: Vec<SearchFeedback>,
     pub created_at: u64,
 }
