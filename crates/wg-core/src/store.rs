@@ -69,6 +69,7 @@ impl Store {
     }
 
     /// Open or create a WikiGraph store at the given path.
+    #[tracing::instrument(level = "debug", skip(config), fields(path = %path.display()))]
     pub fn open(path: &Path, config: Config) -> Result<Self> {
         // Ensure parent directory exists
         if let Some(parent) = path.parent() {

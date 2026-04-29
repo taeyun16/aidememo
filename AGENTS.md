@@ -49,6 +49,18 @@ WG_LOG="wg=debug,wg_core=trace" wg query …  # alias if you don't want
 RUST_LOG=error wg mcp-serve                 # silence everything except errors
 ```
 
+Useful debug spans (turn on with `RUST_LOG=wg_core=debug`):
+
+- `hybrid_search` — wraps every `wg search --hybrid` call. Inside it
+  you'll see `embed_provider loaded ms=…` (model load on first call,
+  near-zero after) and per-phase events `bm25` / `query_embed` /
+  `hnsw_lookup`.
+- `Store::open` — directory create + redb open + schema init.
+
+The legacy `WG_SEARCH_PROFILE=1` and `WG_LINT_PROFILE=1` env vars
+still work as a self-contained `eprintln` dump for users who'd
+rather not configure tracing.
+
 ## CLI surface (post-Tier-3)
 
 ### Read / search

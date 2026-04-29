@@ -23,13 +23,15 @@ impl<'a> LintEngine<'a> {
 
     /// Run all lint checks.
     pub fn lint(&self) -> Result<LintReport> {
+        // Same dual-output pattern as search: DEBUG tracing event for
+        // anyone running with `RUST_LOG=wg_core=debug`, plus the
+        // legacy WG_LINT_PROFILE eprintln for self-contained dumps.
         let profile = std::env::var("WG_LINT_PROFILE").is_ok();
         let phase = |label: &str, t0: std::time::Instant| {
+            let ms = t0.elapsed().as_secs_f64() * 1000.0;
+            tracing::debug!(scope = "lint", phase = label, ms, "phase");
             if profile {
-                eprintln!(
-                    "[lint] {label}: {:.2}ms",
-                    t0.elapsed().as_secs_f64() * 1000.0
-                );
+                eprintln!("[lint] {label}: {ms:.2}ms");
             }
         };
         let t0 = std::time::Instant::now();

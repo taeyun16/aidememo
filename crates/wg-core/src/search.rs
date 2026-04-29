@@ -331,13 +331,17 @@ mod semantic {
         fact_cache: &RwLock<HashMap<FactId, QuantizedEmbedding>>,
         bm25_index: &RwLock<Bm25IndexState>,
     ) -> Result<Vec<SearchResult>> {
+        // Phase timings: emitted as DEBUG-level tracing events so they
+        // show up under `RUST_LOG=wg_core=debug wg search …`. The
+        // legacy WG_SEARCH_PROFILE env still works (it eprintln's the
+        // same numbers for users who want a self-contained dump
+        // without configuring a tracing subscriber).
         let profile = std::env::var("WG_SEARCH_PROFILE").is_ok();
         let phase = |label: &str, t0: std::time::Instant| {
+            let ms = t0.elapsed().as_secs_f64() * 1000.0;
+            tracing::debug!(scope = "bm25-prefilter", phase = label, ms, "phase");
             if profile {
-                eprintln!(
-                    "[search/bm25-prefilter] {label}: {:.2}ms",
-                    t0.elapsed().as_secs_f64() * 1000.0
-                );
+                eprintln!("[search/bm25-prefilter] {label}: {ms:.2}ms");
             }
         };
 
@@ -434,6 +438,18 @@ mod semantic {
         index: &crate::vector_index::HnswIndex,
         bm25_index: &RwLock<Bm25IndexState>,
     ) -> Result<Vec<SearchResult>> {
+        // Phase timings — same scope name as hybrid_search_with_ctx
+        // so users grepping `RUST_LOG=wg_core=debug` see one
+        // consistent label for "the BM25/semantic blend ran here."
+        let phase = |label: &str, t0: std::time::Instant| {
+            tracing::debug!(
+                scope = "hnsw-hybrid",
+                phase = label,
+                ms = t0.elapsed().as_secs_f64() * 1000.0,
+                "phase",
+            );
+        };
+
         let config = store.config();
         let engine = SearchEngine::new(store, config, bm25_index);
 
@@ -445,12 +461,15 @@ mod semantic {
             limit: Some(limit),
             ..opts.clone()
         };
+        let t = std::time::Instant::now();
         let bm25_results = engine.search(query, bm25_opts)?;
+        phase("bm25", t);
 
         // Embed the query (cached) and pull top candidates from the
         // index. We over-fetch (cap × 2) to mirror the BM25 path's
         // habit of pulling more than `limit` so the re-rank has
         // headroom.
+        let t = std::time::Instant::now();
         let query_embedding = {
             let mut cache = query_cache.lock();
             if let Some(v) = cache.get(query) {
@@ -461,10 +480,13 @@ mod semantic {
                 v
             }
         };
+        phase("query_embed", t);
         let mut q_norm = query_embedding.clone();
         crate::vector_index::l2_normalize(&mut q_norm);
         let cap = config.search.semantic_prefilter.max(limit) * 2;
+        let t = std::time::Instant::now();
         let hnsw_ids = index.search(&q_norm, cap);
+        phase("hnsw_lookup", t);
 
         // Run the existing semantic_search on this candidate slate.
         // We reuse the same fact_embed_cache (it doubles as a query

@@ -586,15 +586,22 @@ impl WikiGraph {
 
     /// Search using hybrid BM25 + semantic ranking.
     #[cfg(feature = "semantic")]
+    #[tracing::instrument(level = "debug", skip(self, opts), fields(query_len = query.len()))]
     pub fn hybrid_search(&self, query: &str, opts: SearchOpts) -> Result<Vec<SearchResult>> {
         // Lazy fast path. `bm25_only` (or zero semantic weight in
         // config) tells us we don't need the embedding model — skip
         // the provider load and run pure BM25. This saves ~700-900ms
         // of cold-start tax on a fresh CLI spawn.
         if opts.bm25_only || self.config.search.semantic_weight == 0.0 {
+            tracing::debug!(reason = "bm25_only", "lazy fast path");
             return self.search(query, opts);
         }
+        let provider_start = std::time::Instant::now();
         let provider = self.embed_provider()?;
+        tracing::debug!(
+            ms = provider_start.elapsed().as_secs_f64() * 1000.0,
+            "embed_provider loaded"
+        );
 
         // Try the HNSW path when configured. If the sidecar is
         // missing, model-mismatched, or fails to load for any
