@@ -251,16 +251,36 @@ fn handle_entity(
             entity_type,
             min_facts,
             limit,
-        } => with_wiki(path, config, |wiki| {
-            let entities = wiki.entity_list(ListOpts {
-                entity_type: parse_entity_type(entity_type),
-                min_facts,
-                sort_by: parse_entity_sort(sort),
-                limit,
-                offset: 0,
-            })?;
-            output::format_entity_list(&entities, fmt(json))
-        }),
+        } => {
+            if let Some(via) = cmd::daemon::registered_endpoint(path) {
+                tracing::debug!(via = %via, "auto-discovered daemon for entity list");
+                let url = format!("{}/mcp", via.trim_end_matches('/'));
+                let mut args = serde_json::json!({});
+                if let Some(l) = limit {
+                    args["limit"] = serde_json::json!(l);
+                }
+                if let Some(t) = entity_type {
+                    args["type"] = serde_json::json!(t);
+                }
+                let body = serde_json::json!({
+                    "jsonrpc": "2.0", "id": 1,
+                    "method": "tools/call",
+                    "params": {"name": "wg_entity_list", "arguments": args}
+                });
+                return daemon_tool_call(&url, body, "wg_entity_list");
+            }
+            // Local path — uses sort + min_facts the tool doesn't expose.
+            with_wiki(path, config, |wiki| {
+                let entities = wiki.entity_list(ListOpts {
+                    entity_type: parse_entity_type(entity_type),
+                    min_facts,
+                    sort_by: parse_entity_sort(sort),
+                    limit,
+                    offset: 0,
+                })?;
+                output::format_entity_list(&entities, fmt(json))
+            })
+        }
         cmd::EntitySub::Rename { old_name, new_name } => with_wiki_mut(path, config, |wiki| {
             wiki.entity_rename(&old_name, &new_name)?;
             Ok(format!("Renamed '{}' to '{}'", old_name, new_name))
@@ -575,6 +595,19 @@ fn handle_traverse(
     sub: cmd::TraverseSub,
     json: bool,
 ) -> Result<String, WgError> {
+    if let Some(via) = cmd::daemon::registered_endpoint(path) {
+        tracing::debug!(via = %via, "auto-discovered daemon for traverse");
+        let url = format!("{}/mcp", via.trim_end_matches('/'));
+        let body = serde_json::json!({
+            "jsonrpc": "2.0", "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "wg_traverse",
+                "arguments": {"entity": sub.entity, "depth": sub.depth.unwrap_or(2)}
+            }
+        });
+        return daemon_tool_call(&url, body, "wg_traverse");
+    }
     with_wiki(path, config, |wiki| {
         let result = wiki.traverse(
             &sub.entity,
@@ -1042,6 +1075,16 @@ fn handle_lint(
     sub: cmd::LintSub,
     json: bool,
 ) -> Result<String, WgError> {
+    if let Some(via) = cmd::daemon::registered_endpoint(path) {
+        tracing::debug!(via = %via, "auto-discovered daemon for lint");
+        let url = format!("{}/mcp", via.trim_end_matches('/'));
+        let body = serde_json::json!({
+            "jsonrpc": "2.0", "id": 1,
+            "method": "tools/call",
+            "params": {"name": "wg_lint", "arguments": {}}
+        });
+        return daemon_tool_call(&url, body, "wg_lint");
+    }
     with_wiki(path, config, |wiki| {
         let issues = wiki.lint()?;
         let stats = wiki.stats()?;
