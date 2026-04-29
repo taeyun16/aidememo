@@ -100,12 +100,18 @@ out. They return structured JSON.
 | `wg_fact_add_many` | Batched insert (one fsync) — prefer for ≥3 facts |
 | `wg_fact_supersede` | Mark old fact replaced by a new one |
 | `wg_fact_edit` | Patch a fact's content (append / prepend / find+replace / content) |
+| `wg_feedback` | Mark a fact returned by wg_search as helpful / not-helpful (closes the adapter loop) |
 
 `wg_search` / `wg_query` / `wg_fact_list` default `current_only=true` — the
 result set is "what we know now". Pass `current_only:false` for historical
 or timeline queries. `wg_search` also accepts `since` / `until` / `as_of`
 (ISO date or duration like `30d`), `entity` (filter to one entity),
 and `min_confidence`.
+
+`wg_search` returns `{session_id, results: [...]}`. After acting on the
+hits, optionally pass that `session_id` (with the fact_id and a boolean)
+to `wg_feedback` — the adapter retrains on this signal (`wg adapt
+train`) and live ranking nudges toward facts you confirmed were useful.
 
 ## Install
 

@@ -214,6 +214,16 @@ fn tool_search(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String>
         .get("min_confidence")
         .and_then(|v| v.as_f64())
         .map(|x| x as f32);
+    // Caller can pin a session_id (e.g. one session covering several
+    // queries before a single feedback call) — otherwise we mint a
+    // fresh ULID per request. Either way it round-trips so the agent
+    // can later POST feedback via wg_feedback against the exact hits
+    // returned here.
+    let session_id = args
+        .get("session_id")
+        .and_then(|v| v.as_str())
+        .map(String::from)
+        .unwrap_or_else(|| wg_core::ulid::Ulid::new().to_string());
 
     let results = wiki
         .hybrid_search(
@@ -227,33 +237,64 @@ fn tool_search(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String>
                 as_of,
                 entity_filter,
                 min_confidence,
+                session_id: Some(session_id.clone()),
                 ..Default::default()
             },
         )
         .map_err(|e| e.to_string())?;
 
-    // Surface fact.source as a citation alongside content + score so agents
-    // can attribute each hit. Pattern requested by mem0 #467.
-    let text = results
+    let results_json: Vec<Value> = results
         .into_iter()
         .map(|r| {
-            let src = r
-                .source
-                .as_deref()
-                .map(|s| format!("\n  source: {s}"))
-                .unwrap_or_default();
-            format!(
-                "[{}] {}\n  score={:.3}{src}",
-                r.fact_id,
-                r.content.chars().take(120).collect::<String>(),
-                r.score
-            )
+            json!({
+                "fact_id": r.fact_id.to_string(),
+                "content": r.content,
+                "score": r.score,
+                "rank": r.rank,
+                "source": r.source,
+            })
         })
-        .collect::<Vec<_>>()
-        .join("\n\n");
-
+        .collect();
+    let payload = json!({
+        "session_id": session_id,
+        "results": results_json,
+    });
     Ok(ToolCallResult {
-        content: vec![ContentBlock::text(text)],
+        content: vec![ContentBlock::text(payload.to_string())],
+        is_error: None,
+    })
+}
+
+fn tool_feedback(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String> {
+    let session_id = args
+        .get("session_id")
+        .and_then(|v| v.as_str())
+        .ok_or("session_id required (returned by wg_search)")?
+        .to_string();
+    let fact_id_str = args
+        .get("fact_id")
+        .and_then(|v| v.as_str())
+        .ok_or("fact_id required")?;
+    let fact_id = parse_fact_id(fact_id_str)?;
+    let helpful = args
+        .get("helpful")
+        .and_then(|v| v.as_bool())
+        .ok_or("helpful (boolean) required")?;
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    wiki.search_feedback_add(&wg_core::SearchFeedback {
+        session_id,
+        fact_id,
+        helpful,
+        timestamp,
+    })
+    .map_err(|e| e.to_string())?;
+    Ok(ToolCallResult {
+        content: vec![ContentBlock::text(
+            json!({"ok": true, "fact_id": fact_id_str, "helpful": helpful}).to_string(),
+        )],
         is_error: None,
     })
 }
@@ -888,9 +929,27 @@ pub fn list_tools() -> Vec<Tool> {
                     "min_confidence": {
                         "type": "number",
                         "description": "Filter facts with source_confidence below this threshold."
+                    },
+                    "session_id": {
+                        "type": "string",
+                        "description": "Optional. Pin a session_id (e.g. group several queries under one logical session). If omitted, a fresh ULID is minted and returned alongside the results — feed it back into wg_feedback to record helpful/not-helpful signal that trains the ranking adapter."
                     }
                 },
                 "required": ["query"]
+            }),
+        },
+        Tool {
+            name: "wg_feedback".into(),
+            description: "Record helpful / not-helpful feedback on a fact returned by a recent wg_search call. Pass the session_id from that search response. Feedback feeds into the domain adapter (`wg adapt train`) which, when applied (`config.search.use_adapter=true`, default), nudges future ranking toward facts the agent confirmed were useful."
+                .into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "session_id": {"type": "string", "description": "session_id from the wg_search response"},
+                    "fact_id":    {"type": "string", "description": "ULID of the fact in question"},
+                    "helpful":    {"type": "boolean", "description": "true = the fact answered the query; false = it did not"}
+                },
+                "required": ["session_id", "fact_id", "helpful"]
             }),
         },
         Tool {
@@ -1121,6 +1180,7 @@ pub fn list_tools() -> Vec<Tool> {
 fn call_tool(name: &str, args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String> {
     match name {
         "wg_search" => tool_search(args, wiki),
+        "wg_feedback" => tool_feedback(args, wiki),
         "wg_entity_get" => tool_entity_get(args, wiki),
         "wg_entity_list" => tool_entity_list(args, wiki),
         "wg_fact_get" => tool_fact_get(args, wiki),
@@ -1510,6 +1570,60 @@ mod tests {
         let (_dir, wiki) = open_temp_wiki();
         let err = tool_search(&json!({"query": "x", "since": "not-a-date"}), &wiki).unwrap_err();
         assert!(err.contains("unrecognised time argument"));
+    }
+
+    #[test]
+    #[ignore = "downloads HF embedding model — local only"]
+    fn search_returns_session_id_round_trippable_to_feedback() {
+        // Seed a fact so the search returns at least one hit, then feed
+        // the session_id from wg_search into wg_feedback. The latter
+        // must not error and the request must persist.
+        let (_dir, wiki) = open_temp_wiki();
+        let fact_id = add_fact(&wiki, "Redis is an in-memory store", "Redis");
+
+        let response = tool_search(&json!({"query": "redis"}), &wiki).unwrap();
+        let payload: Value =
+            serde_json::from_str(response.content[0].text.as_deref().unwrap()).unwrap();
+        let session_id = payload["session_id"].as_str().expect("session_id present");
+        assert_eq!(session_id.len(), 26, "session_id should be a ULID");
+
+        let feedback = tool_feedback(
+            &json!({
+                "session_id": session_id,
+                "fact_id": fact_id.0.to_string(),
+                "helpful": true,
+            }),
+            &wiki,
+        )
+        .unwrap();
+        let fb: Value = serde_json::from_str(feedback.content[0].text.as_deref().unwrap()).unwrap();
+        assert_eq!(fb["ok"], true);
+    }
+
+    #[test]
+    fn feedback_rejects_missing_session_id() {
+        let (_dir, wiki) = open_temp_wiki();
+        let err = tool_feedback(
+            &json!({"fact_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV", "helpful": true}),
+            &wiki,
+        )
+        .unwrap_err();
+        assert!(err.contains("session_id required"));
+    }
+
+    #[test]
+    fn feedback_rejects_invalid_fact_id() {
+        let (_dir, wiki) = open_temp_wiki();
+        let err = tool_feedback(
+            &json!({
+                "session_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+                "fact_id": "not-a-ulid",
+                "helpful": true,
+            }),
+            &wiki,
+        )
+        .unwrap_err();
+        assert!(err.contains("invalid fact ID"));
     }
 
     #[test]
