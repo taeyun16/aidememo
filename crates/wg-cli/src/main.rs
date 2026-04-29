@@ -486,6 +486,31 @@ fn handle_fact(
                 Some(d) => Some(parse_iso_to_epoch_ms(d)?),
                 None => None,
             };
+            // Daemon dispatch only when the user didn't pass any
+            // filter the wg_fact_list tool doesn't expose. Anything
+            // else falls through to the in-process path so we never
+            // silently drop a filter.
+            let simple = fact_type.is_none()
+                && min_confidence.is_none()
+                && since_ms.is_none()
+                && until_ms.is_none()
+                && as_of_ms.is_none();
+            if simple {
+                if let Some(via) = cmd::daemon::registered_endpoint(path) {
+                    tracing::debug!(via = %via, "auto-discovered daemon for fact list");
+                    let url = format!("{}/mcp", via.trim_end_matches('/'));
+                    let mut args = serde_json::json!({"limit": limit.unwrap_or(20)});
+                    if let Some(e) = entity.as_ref() {
+                        args["entity"] = serde_json::json!(e);
+                    }
+                    let body = serde_json::json!({
+                        "jsonrpc": "2.0", "id": 1,
+                        "method": "tools/call",
+                        "params": {"name": "wg_fact_list", "arguments": args}
+                    });
+                    return daemon_tool_call(&url, body, "wg_fact_list");
+                }
+            }
             with_wiki(path, config, |wiki| {
                 let entity_id = entity.and_then(|n| wiki.resolve_entity(&n).ok());
                 let facts = wiki.fact_list(FactListOpts {
@@ -627,6 +652,19 @@ fn handle_path(
     sub: cmd::PathSub,
     json: bool,
 ) -> Result<String, WgError> {
+    if let Some(via) = cmd::daemon::registered_endpoint(path) {
+        tracing::debug!(via = %via, "auto-discovered daemon for path");
+        let url = format!("{}/mcp", via.trim_end_matches('/'));
+        let body = serde_json::json!({
+            "jsonrpc": "2.0", "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "wg_path",
+                "arguments": {"from": sub.from, "to": sub.to}
+            }
+        });
+        return daemon_tool_call(&url, body, "wg_path");
+    }
     with_wiki(path, config, |wiki| {
         let path_steps = wiki.path_find(&sub.from, &sub.to)?;
         if json {

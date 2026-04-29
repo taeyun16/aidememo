@@ -168,6 +168,58 @@ fn tool_search(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String>
     })
 }
 
+fn tool_path(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String> {
+    let from = args
+        .get("from")
+        .and_then(|v| v.as_str())
+        .ok_or("from required")?;
+    let to = args
+        .get("to")
+        .and_then(|v| v.as_str())
+        .ok_or("to required")?;
+    let result = wiki.path_find(from, to).map_err(|e| e.to_string())?;
+    let payload = serde_json::json!({
+        "from": from,
+        "to": to,
+        "path": result,
+    });
+    let text = serde_json::to_string_pretty(&payload).map_err(|e| e.to_string())?;
+    Ok(ToolCallResult {
+        content: vec![ContentBlock::text(text)],
+        is_error: None,
+    })
+}
+
+fn tool_fact_list(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String> {
+    let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
+    let entity = args.get("entity").and_then(|v| v.as_str());
+    let entity_id = match entity {
+        Some(name) => Some(wiki.resolve_entity(name).map_err(|e| e.to_string())?),
+        None => None,
+    };
+    let opts = wg_core::FactListOpts {
+        fact_type: None,
+        entity_id,
+        min_confidence: None,
+        limit: Some(limit),
+        offset: 0,
+        since: None,
+        until: None,
+        current_only: args
+            .get("current_only")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+        as_of: None,
+    };
+    let facts = wiki.fact_list(opts).map_err(|e| e.to_string())?;
+    let payload = serde_json::json!({"facts": facts});
+    let text = serde_json::to_string_pretty(&payload).map_err(|e| e.to_string())?;
+    Ok(ToolCallResult {
+        content: vec![ContentBlock::text(text)],
+        is_error: None,
+    })
+}
+
 fn tool_entity_get(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String> {
     let name = args
         .get("name")
@@ -651,6 +703,30 @@ pub fn list_tools() -> Vec<Tool> {
             }),
         },
         Tool {
+            name: "wg_path".into(),
+            description: "Find the shortest path between two entities (BFS over typed relations). Returns {from, to, path: [hops]}.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "from": {"type": "string", "description": "Source entity name/alias"},
+                    "to":   {"type": "string", "description": "Target entity name/alias"}
+                },
+                "required": ["from", "to"]
+            }),
+        },
+        Tool {
+            name: "wg_fact_list".into(),
+            description: "List facts with optional entity filter. Use wg_recent for time-windowed listing.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "entity": {"type": "string", "description": "Filter by entity name/alias"},
+                    "limit":  {"type": "number", "default": 20},
+                    "current_only": {"type": "boolean", "default": false, "description": "Exclude superseded facts"}
+                }
+            }),
+        },
+        Tool {
             name: "wg_entity_get".into(),
             description: "Get a single entity by name (or alias). Returns the JSON record."
                 .into(),
@@ -847,6 +923,8 @@ fn call_tool(name: &str, args: &Value, wiki: &WikiGraph) -> Result<ToolCallResul
         "wg_entity_get" => tool_entity_get(args, wiki),
         "wg_entity_list" => tool_entity_list(args, wiki),
         "wg_fact_get" => tool_fact_get(args, wiki),
+        "wg_fact_list" => tool_fact_list(args, wiki),
+        "wg_path" => tool_path(args, wiki),
         "wg_traverse" => tool_traverse(args, wiki),
         "wg_lint" => tool_lint(wiki),
         "wg_doctor" => tool_doctor(wiki),
