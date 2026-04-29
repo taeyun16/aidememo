@@ -532,9 +532,18 @@ fn handle_search(
             as_of: as_of_ms,
         };
 
+        // BM25-only fast path: skips the embedding model load (~700-900ms
+        // cold-start tax). Triggered by `--bm25` or by setting
+        // `search.semantic_weight = 0.0` in config. The traverse path
+        // still goes through hybrid_search internally — `--bm25` only
+        // applies to plain search, which is what the latency-sensitive
+        // CLI use case actually hits.
+        let bm25_only = sub.bm25_only || semantic_weight == 0.0;
         let results = if let Some(ref start) = sub.traverse_from {
             let depth = sub.traverse_depth.unwrap_or(2);
             wiki.search_with_traverse(&sub.query, start, depth, opts)?
+        } else if bm25_only {
+            wiki.search(&sub.query, opts)?
         } else {
             wiki.hybrid_search(&sub.query, opts)?
         };
@@ -614,7 +623,12 @@ fn run_search_all_projects(
             current_only: false,
             as_of: as_of_ms,
         };
-        match wiki.hybrid_search(&sub.query, opts) {
+        let hits_result = if sub.bm25_only || semantic_weight == 0.0 {
+            wiki.search(&sub.query, opts)
+        } else {
+            wiki.hybrid_search(&sub.query, opts)
+        };
+        match hits_result {
             Ok(hits) => {
                 for h in hits {
                     all.push((proj_name.clone(), h));

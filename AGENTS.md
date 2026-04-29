@@ -39,7 +39,7 @@ cargo install --path crates/wg-cli      # one-off install
 
 ### Read / search
 ```
-wg search <query> [-l N] [--current]              hybrid BM25+semantic
+wg search <query> [-l N] [--current] [--bm25]     hybrid BM25+semantic; --bm25 = lazy fast path (no model load)
 wg query <topic> [-l N] [-d N] [--recent-limit N] [-m naive|local|hybrid|global]
                                                    unified search+traverse+recent
 wg recent [-n N] [--type T] [--last 30d]          last 7d facts (default)

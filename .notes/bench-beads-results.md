@@ -46,6 +46,40 @@ bd(Dolt, SQL+versioned)는 쿼리 latency가 짧다.
 - wg의 응답이 7.5× 더 풍부 (entity context, source citation, relevance score). 단순 latency만 보면 손해지만 답변 품질 측면 정보량은 큼.
 - HNSW sidecar를 미리 빌드하면 (`wg vector-rebuild`) wg search가 어떻게 변하는지는 후속 실측 필요.
 
+## 시나리오 #4 — 4-way latency + quality (재측정)
+
+`.notes/research-search-latency.md`에서 권장한 **A: Lazy provider**를
+구현 (`--bm25` 플래그 + `semantic_weight = 0.0`이면 plain BM25 path).
+같은 1k store에서 4 모드를 50 query로 측정:
+
+| 모드 | p50 | p95 | 비고 |
+|---|---|---|---|
+| **wg `--bm25` (신규 lazy fast path)** | **70.9 ms** | 74.2 ms | 모델 로드 0 |
+| bd search | 383.8 ms | 395.2 ms | SQL LIKE on title |
+| wg (HNSW hybrid, sidecar 빌드 후) | 850.7 ms | 959.7 ms | 모델 로드 + HNSW 조회 |
+| wg (BM25-fallback hybrid, sidecar 없음 = 현 default) | 1126.1 ms | 1185.5 ms | 모델 로드 + BM25 fallback |
+
+**`wg --bm25`가 bd 대비 5.4×, wg 현 default 대비 16× 빠름.** beads의
+search latency 우위가 단번에 무너짐.
+
+### 품질 — overlap@5 (BM25-only baseline 대비)
+
+| 모드 | overlap@5 | 해석 |
+|---|---|---|
+| BM25-only (self) | 1.00 | sanity (deterministic) |
+| HNSW hybrid | 0.04 | **거의 안 겹침** — 임베딩이 완전히 다른 hit 반환 |
+| BM25-fallback hybrid | 0.20 | 일부 겹침 |
+
+해석:
+- 합성 corpus(lorem random)라 임베딩이 의미 잡을 게 없어 사실상 random
+  hit를 반환. 실제 wiki에서는 HNSW가 BM25 token 미스를 보완하는 것이
+  `.notes/bench-miracl-ko.md`에서 입증됨 (P@5 +2.5pp).
+- 즉 **품질 vs latency trade-off는 실제**: 정확도가 정말 필요한 query만
+  hybrid/HNSW로, 나머지는 lazy BM25.
+- 사용자 선택 패턴 권고:
+  - **CLI 즉답** (agent의 hot path) → `--bm25` default
+  - **wiki 검색·요약** (sentinel keyword가 약한 한글/일본어 등) → hybrid + HNSW
+
 ## 발견 / 후속 작업
 
 1. **wg search의 cold-start tax**: 매 fresh CLI 호출마다 모델 로드를

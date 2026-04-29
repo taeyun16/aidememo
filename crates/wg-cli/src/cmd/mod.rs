@@ -184,6 +184,7 @@ pub struct PathSub {
 pub struct SearchSub {
     pub json: bool,
     pub all_projects: bool,
+    pub bm25_only: bool,
     pub traverse_from: Option<String>,
     pub traverse_depth: Option<u32>,
     pub min_confidence: Option<f32>,
@@ -671,10 +672,18 @@ fn search_command() -> impl Parser<Command> {
     let all_projects = long("all-projects")
         .help("Search across every registered project (`wg project list`); merges + re-ranks")
         .switch();
+    let bm25_only = long("bm25")
+        .help(
+            "Skip the embedding model entirely — pure BM25. Cuts cold-start \
+             latency from ~1s to ~150ms when you don't need semantic ranking. \
+             Implied by `search.semantic_weight = 0.0` in config.",
+        )
+        .switch();
 
     construct!(SearchSub {
         json,
         all_projects,
+        bm25_only,
         traverse_from,
         traverse_depth,
         min_confidence,
