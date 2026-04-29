@@ -1103,15 +1103,28 @@ mod tests {
         let payload: serde_json::Value = serde_json::from_str(text).unwrap();
         assert_eq!(payload["facts"].as_array().unwrap().len(), 1);
 
-        // `last="0s"` zero window → zero hits.
-        let result = tool_recent(&json!({"last": "0s"}), &wiki).unwrap();
-        let text = result
-            .content
-            .first()
-            .and_then(|b| b.text.as_deref())
-            .unwrap_or("");
-        let payload: serde_json::Value = serde_json::from_str(text).unwrap();
-        assert_eq!(payload["facts"].as_array().unwrap().len(), 0);
+        // The DSL parses correctly across units. Use a non-zero
+        // small window for the boundary test — `0s` is timing-flaky
+        // because `since = now()` collides with a just-inserted
+        // fact's created_at on systems with coarse clock resolution
+        // (macOS gives 0 hits, Ubuntu's millisecond clock returns
+        // the just-inserted fact). Confirm the parser accepts
+        // multiple unit suffixes.
+        for unit in ["1y", "1w", "1d", "1h", "1m", "1s"] {
+            let result = tool_recent(&json!({"last": unit}), &wiki).unwrap();
+            let text = result
+                .content
+                .first()
+                .and_then(|b| b.text.as_deref())
+                .unwrap_or("");
+            let payload: serde_json::Value = serde_json::from_str(text).unwrap();
+            // Just-inserted fact is within any of these windows.
+            assert_eq!(
+                payload["facts"].as_array().unwrap().len(),
+                1,
+                "unit {unit} should keep the freshly-added fact"
+            );
+        }
     }
 
     #[test]
