@@ -115,6 +115,57 @@ search latency 우위가 단번에 무너짐.
 3000 /path/to/store &` 띄우고 모두 `--via`로 붙는 것이 best — 시나리오
 E의 lock 정책 검증과 #5의 latency 측정 모두 그 패턴을 가리킴.
 
+## 10k 재측정 — 스케일링 확인
+
+같은 워크로드를 N=10000으로 다시 돌려 1k 결과의 ROI가 dataset이 커져도
+유지되는지 확인. (gen.py `--n 10000 --seed 42`, 100 queries / 50
+queries.)
+
+### Bulk write — 격차가 더 벌어짐
+
+| 지표 | 1k | 10k | 1k→10k 증감 |
+|---|---|---|---|
+| wg wall | 108 ms | 220 ms | 2.0× |
+| bd wall | 5443 ms | **74 600 ms** | 13.7× |
+| **wg vs bd 속도 차** | **50× faster** | **339× faster** | **격차 6.8× 더 큼** |
+| wg disk | 3.7 MB | 17.4 MB | 4.7× |
+| bd disk | 39.2 MB | **555 MB** | 14.2× |
+| **wg vs bd 디스크 차** | 10.6× smaller | **31.9× smaller** | 격차 3× 더 큼 |
+
+bd의 Dolt journal/version metadata가 record 수에 super-linear로 증가.
+wg의 redb는 page-based로 sublinear에 가깝게 증가.
+
+### Search latency — daemon warm은 거의 무영향
+
+| 모드 | 1k p50 | 10k p50 | 증감 | 비고 |
+|---|---|---|---|---|
+| **`wg --via --bm25` (daemon warm)** | **5.2 ms** | **5.3 ms** | 1.0× | HTTP RTT만 (서버 logic 무관) |
+| **`wg --via` HNSW hybrid (daemon warm)** | **42.7 ms** | **42.8 ms** | 1.0× | HNSW logarithmic, 모델 warm |
+| `wg --bm25` (local cold spawn) | 71 ms | 289 ms | 4.1× | BM25 inverted index 빌드 비용 |
+| `bd search` | 384 ms | **703 ms** | 1.8× | SQL LIKE full-table scan |
+| `wg` HNSW hybrid (local cold) | 851 ms | 1053 ms | 1.2× | 모델 로드 dominant (이미 ceiling) |
+| `wg` fallback hybrid (현 default, local cold) | 1126 ms | 4349 ms | 3.9× | 모델 로드 + BM25 빌드 모두 |
+
+### 10k 권장 패턴 vs bd 격차
+
+| | wg | bd | 비율 |
+|---|---|---|---|
+| Agent hot path (daemon `--bm25`) | **5.3 ms** | 703 ms | **bd보다 132× 빠름** |
+| Recall-critical (daemon HNSW) | **42.8 ms** | 703 ms | bd보다 16.4× 빠름 + recall 보존 |
+| Manual CLI (`--bm25`) | 289 ms | 703 ms | bd보다 2.4× 빠름 |
+
+### 10k 시사점
+
+- **bulk write 격차는 dataset 크기에 따라 더 벌어진다** (1k의 50× → 10k의
+  339×). bd의 Dolt 백엔드가 large dataset에 부적합한 게 분명해짐.
+- **daemon warm 모드는 dataset 크기에 거의 영향 없다**. 1k와 10k에서
+  사실상 같은 latency. agent의 hot path 비용은 dataset 성장과 무관.
+- **HNSW는 모델 로드가 ceiling이라 dataset 영향 크지 않다** — 1k에서
+  851ms나 10k에서 1053ms나 비슷. 데이터 더 커져도 daemon HNSW가 ~43 ms.
+- **fallback hybrid는 가장 나쁜 scaling** — 모델 로드 + inverted
+  index 빌드 둘 다 매번 발생하는 (현재 default 동작) 가장 큰 이슈. 이게
+  `--bm25` lazy fast path의 가치를 강하게 뒷받침.
+
 ## 발견 / 후속 작업
 
 1. **wg search의 cold-start tax**: 매 fresh CLI 호출마다 모델 로드를
