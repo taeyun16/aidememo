@@ -49,10 +49,7 @@ pub fn run_mcp(wiki_root: Option<PathBuf>) -> Result<String, wg_core::WgError> {
         .map_err(|e| wg_core::WgError::Internal(format!("failed to create runtime: {}", e)))?;
 
     runtime.block_on(async move {
-        eprintln!(
-            "wg mcp: stdio transport ready (store={})",
-            store_path.display()
-        );
+        tracing::info!(store = %store_path.display(), "wg mcp: stdio transport ready");
 
         let stdin = tokio::io::stdin();
         let mut reader = BufReader::new(stdin).lines();
@@ -96,7 +93,7 @@ pub fn run_mcp(wiki_root: Option<PathBuf>) -> Result<String, wg_core::WgError> {
             }
         }
 
-        eprintln!("wg mcp: stdin closed, shutting down");
+        tracing::info!("wg mcp: stdin closed, shutting down");
         Ok::<(), wg_core::WgError>(())
     })?;
 

@@ -85,17 +85,18 @@ pub fn apply_rerank(
     let scores = match reranker.rerank(query, &texts) {
         Ok(s) => s,
         Err(e) => {
-            eprintln!(
-                "wg: reranker {} failed — falling back to RRF order ({e})",
-                reranker.name()
+            tracing::warn!(
+                reranker = %reranker.name(),
+                "reranker failed — falling back to RRF order ({e})",
             );
             return;
         }
     };
     if scores.len() != cap {
-        eprintln!(
-            "wg: reranker {} returned {} scores for {} candidates — ignoring",
-            reranker.name(),
+        tracing::warn!(
+            reranker = %reranker.name(),
+            returned = scores.len(),
+            "reranker returned {} scores for {} candidates — ignoring",
             scores.len(),
             cap
         );

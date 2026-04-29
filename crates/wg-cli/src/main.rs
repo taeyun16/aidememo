@@ -33,6 +33,8 @@ fn main() {
     #[cfg(feature = "dhat-heap")]
     let _dhat = dhat::Profiler::new_heap();
 
+    init_tracing();
+
     let app = cmd::build_cli();
 
     let args = app.run();
@@ -120,6 +122,37 @@ fn main() {
             exit(1);
         }
     }
+}
+
+/// Set up the global tracing subscriber.
+///
+/// Filter precedence:
+///   1. `RUST_LOG` if set (standard convention)
+///   2. `WG_LOG` (alias so users don't have to scope `RUST_LOG`)
+///   3. default: `wg=info,wg_core=warn`
+///      - `wg=info` matches the binary's module path (the bin is
+///        named `wg` per Cargo.toml's `[[bin]] name = "wg"`, so the
+///        target is `wg::cmd::*` not `wg_cli::cmd::*`). Surfaces
+///        `wg mcp-serve` startup, `wg watch` file events.
+///      - `wg_core=warn` for degraded-path warnings (missing HNSW
+///        sidecar, reranker disabled) — quiet otherwise.
+///
+/// Output goes to stderr so stdout stays clean for `--json` consumers.
+fn init_tracing() {
+    use tracing_subscriber::{EnvFilter, fmt};
+    let filter = std::env::var("RUST_LOG")
+        .or_else(|_| std::env::var("WG_LOG"))
+        .ok()
+        .and_then(|s| EnvFilter::try_new(s).ok())
+        .unwrap_or_else(|| EnvFilter::new("wg=info,wg_core=warn"));
+    fmt()
+        .with_env_filter(filter)
+        .with_target(false)
+        .with_writer(std::io::stderr)
+        .with_ansi(false) // structured stderr; downstream tools parse it
+        .compact()
+        .try_init()
+        .ok(); // ignore if already installed (tests / repeated init)
 }
 
 fn with_wiki<F>(path: &Path, config: Config, f: F) -> Result<String, WgError>
@@ -651,11 +684,10 @@ fn run_search_all_projects(
         let wiki = match WikiGraph::open(&store_path, config.clone()) {
             Ok(w) => w,
             Err(e) => {
-                eprintln!(
-                    "[wg search] skipping project '{}' ({}): {}",
-                    proj_name,
-                    store_path.display(),
-                    e
+                tracing::warn!(
+                    project = %proj_name,
+                    store = %store_path.display(),
+                    "[wg search] skipping project: {e}",
                 );
                 continue;
             }
@@ -679,7 +711,9 @@ fn run_search_all_projects(
                     all.push((proj_name.clone(), h));
                 }
             }
-            Err(e) => eprintln!("[wg search] project '{}' search failed: {}", proj_name, e),
+            Err(e) => {
+                tracing::warn!(project = %proj_name, "[wg search] project search failed: {e}")
+            }
         }
     }
 

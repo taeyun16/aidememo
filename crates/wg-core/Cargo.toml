@@ -103,6 +103,11 @@ bytes = "1.5"
 tempfile = "3.10"
 walkdir = "2.4"
 
+# Structured logging — facade only; the binary chooses a subscriber.
+# Library code uses tracing::{warn, info, debug} so consumers (wg-cli,
+# bindings, tests) can route events anywhere.
+tracing = "0.1"
+
 [dev-dependencies]
 tempfile = "3.10"
 proptest = "1.4"

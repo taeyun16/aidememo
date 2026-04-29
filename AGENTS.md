@@ -35,6 +35,20 @@ cargo build 2>&1 | grep '^error'        # only errors
 cargo install --path crates/wg-cli      # one-off install
 ```
 
+### Logging
+
+The CLI uses `tracing` (stderr). Default filter is
+`wg=info,wg_core=warn` so `wg mcp-serve` startup, `wg watch` file
+events, and core fallback warnings (HNSW sidecar missing, reranker
+disabled) all appear without setup.
+
+```bash
+RUST_LOG=debug wg search redis              # standard env
+WG_LOG="wg=debug,wg_core=trace" wg query …  # alias if you don't want
+                                             # to scope RUST_LOG globally
+RUST_LOG=error wg mcp-serve                 # silence everything except errors
+```
+
 ## CLI surface (post-Tier-3)
 
 ### Read / search

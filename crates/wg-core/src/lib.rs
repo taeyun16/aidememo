@@ -149,7 +149,7 @@ impl WikiGraph {
             Ok(Some(r)) => Some(Arc::from(r)),
             Ok(None) => None,
             Err(e) => {
-                eprintln!("wg: reranker disabled — failed to construct: {e}");
+                tracing::warn!("reranker disabled — failed to construct: {e}");
                 None
             }
         };
@@ -567,7 +567,7 @@ impl WikiGraph {
         #[cfg(feature = "semantic")]
         if self.config.search.semantic_index == "hnsw" {
             if let Err(e) = self.vector_index_rebuild() {
-                eprintln!("wg: HNSW index rebuild after ingest failed: {e}");
+                tracing::warn!("HNSW index rebuild after ingest failed: {e}");
             }
         }
         Ok(stats)
@@ -619,13 +619,13 @@ impl WikiGraph {
             )?
         } else {
             if self.config.search.semantic_index == "hnsw" {
-                // Index unavailable — log via stderr and fall through.
+                // Index unavailable — log via tracing and fall through.
                 // We don't error out because BM25 prefilter is a valid
                 // fallback that produces useful results.
-                eprintln!(
-                    "wg: semantic_index=hnsw configured but no sidecar at {}; \
+                tracing::warn!(
+                    sidecar = %self.hnsw_sidecar_path().display(),
+                    "semantic_index=hnsw configured but no sidecar; \
                      falling back to BM25 prefilter. Run `wg vector-rebuild`.",
-                    self.hnsw_sidecar_path().display()
                 );
             }
             let store = self.store.read();

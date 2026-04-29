@@ -108,9 +108,7 @@ pub fn run_mcp_serve(
             .with_state(state);
 
         let addr = format!("0.0.0.0:{}", port);
-        eprintln!("MCP server listening on http://{}", addr);
-        eprintln!("MCP endpoint: http://{}/mcp", addr);
-        eprintln!("SSE endpoint: http://{}/sse", addr);
+        tracing::info!(%addr, "wg mcp-serve: listening (POST /mcp, GET /sse, GET /health)");
 
         let listener = tokio::net::TcpListener::bind(&addr)
             .await

@@ -59,6 +59,12 @@ tokio-stream = "0.1"
 # `wg mcp-serve` daemon (single POST per CLI invocation, no async).
 ureq = { version = "2.12", features = ["json"] }
 
+# Logging — wg-core uses the tracing facade; the CLI binary installs a
+# subscriber. EnvFilter reads the standard RUST_LOG (and falls back to
+# the WG_LOG alias for users who'd rather not set RUST_LOG globally).
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
 # OS-native physical-memory metrics. macOS reports phys_footprint
 # (compressed + swapped, excludes shared mmap pages); Linux exposes
 # RssAnon via /proc/self/status, which excludes mmap'd files.
