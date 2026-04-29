@@ -6,6 +6,7 @@ use std::path::PathBuf;
 pub mod adapt;
 pub mod bench;
 pub mod completions;
+pub mod daemon;
 pub mod doctor;
 pub mod edit;
 pub mod feedback;
@@ -82,6 +83,7 @@ pub enum Command {
     Completions(CompletionsSub),
     Pending(PendingSub),
     VectorRebuild(VectorRebuildSub),
+    Daemon(daemon::DaemonSub),
 }
 
 #[derive(Debug, Clone)]
@@ -296,6 +298,7 @@ pub fn build_cli() -> OptionParser<Args> {
     let project_cmd = project::project_command();
     let bench_cmd = bench::bench_command();
     let skill_cmd = skill::skill_command();
+    let daemon_cmd = daemon::daemon_command();
 
     let command = construct!([
         entity_command(),
@@ -329,6 +332,7 @@ pub fn build_cli() -> OptionParser<Args> {
         completions_cmd,
         pending_cmd,
         vector_rebuild_command(),
+        daemon_cmd,
     ]);
 
     construct!(Args {

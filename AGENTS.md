@@ -133,6 +133,35 @@ wg mcp                                    stdio JSON-RPC (preferred)
 wg mcp-serve --port 3000                  HTTP + SSE
 ```
 
+### Daemon (background mcp-serve, opportunistic discovery)
+
+`wg daemon` wraps `wg mcp-serve` so manual CLI calls (`wg search`,
+…) auto-pick up the warm path without `--via`. Pattern follows
+docker / pg_ctl: one shell, one daemon, the rest of the machine
+just uses it.
+
+```
+wg daemon start                          spawn mcp-serve in background;
+                                         ~/.wg/daemon.json holds port/pid
+wg daemon status                         show registry + /health probe
+wg daemon stop                           SIGTERM the recorded pid
+```
+
+After `wg daemon start`, `wg search redis` automatically dispatches
+to the daemon over HTTP (no `--via` needed). Measured warm:
+
+| call | latency |
+|---|---|
+| `wg search redis` (BM25 via daemon)        | ~9 ms |
+| `wg search redis --hybrid` (HNSW via daemon) | ~45 ms |
+| `wg search redis` (no daemon, fresh CLI)   | ~70-300 ms |
+
+Set `WG_NO_DAEMON=1` to bypass discovery for one invocation. Note:
+because redb is single-writer, an in-process `wg` cannot open the
+store while the daemon holds it — the bypass mode is only useful
+when no daemon is running (e.g. running CI scripts on the same
+store path).
+
 ## Code map
 
 ```

@@ -111,6 +111,7 @@ fn main() {
         cmd::Command::Completions(sub) => cmd::completions::run_completions(sub),
         cmd::Command::Pending(sub) => cmd::pending::run_pending_review(sub),
         cmd::Command::VectorRebuild(sub) => handle_vector_rebuild(&store_path, config, sub),
+        cmd::Command::Daemon(sub) => cmd::daemon::run_daemon(sub, store_path.clone()),
     };
 
     match result {
@@ -550,8 +551,16 @@ fn handle_search(
         );
     }
 
+    // Explicit --via wins over discovery.
     if let Some(ref via) = sub.via {
         return run_search_via_daemon(via, &sub, default_limit, json);
+    }
+    // Opportunistic discovery: if a `wg daemon` is running and serving
+    // the same store, dispatch through it so we skip the local redb
+    // open + (for hybrid) model load. Set WG_NO_DAEMON=1 to bypass.
+    if let Some(via) = cmd::daemon::registered_endpoint(path) {
+        tracing::debug!(via = %via, "auto-discovered daemon");
+        return run_search_via_daemon(&via, &sub, default_limit, json);
     }
 
     with_wiki_mut(path, config, |wiki| {

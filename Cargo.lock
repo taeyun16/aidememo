@@ -5833,6 +5833,7 @@ dependencies = [
  "crossterm",
  "dhat",
  "dirs",
+ "libc",
  "mach2",
  "memory-stats",
  "notify",

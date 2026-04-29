@@ -72,6 +72,11 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # section headers consume all keys until the next header, so any
 # regular dependency placed below it would be silently scoped to
 # macOS only and vanish on every other target.
+# Unix-only kill(2) syscall for `wg daemon stop`. Windows daemon stop
+# is unimplemented (returns a clear error) — see cmd/daemon.rs.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [target.'cfg(target_os = "macos")'.dependencies]
 mach2 = "0.4"
 
