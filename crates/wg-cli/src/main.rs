@@ -232,10 +232,20 @@ fn handle_entity(
             })?;
             Ok(format!("Added entity '{}' with ID {}", name, id))
         }),
-        cmd::EntitySub::Get { name } => with_wiki(path, config, |wiki| {
-            let entity = wiki.entity_get(&name)?;
-            output::format_entity(&entity, fmt(json))
-        }),
+        cmd::EntitySub::Get { name } => {
+            // Daemon discovery — wg_entity_get tool returns JSON.
+            // We forward the JSON directly so the user gets a single
+            // self-contained record; the local table view of an entity
+            // doesn't carry meaningfully more than the JSON does.
+            if let Some(via) = cmd::daemon::registered_endpoint(path) {
+                tracing::debug!(via = %via, "auto-discovered daemon for entity get");
+                return run_entity_get_via_daemon(&via, &name);
+            }
+            with_wiki(path, config, |wiki| {
+                let entity = wiki.entity_get(&name)?;
+                output::format_entity(&entity, fmt(json))
+            })
+        }
         cmd::EntitySub::List {
             sort,
             entity_type,
@@ -424,14 +434,22 @@ fn handle_fact(
                 Ok(msg)
             })
         }
-        cmd::FactSub::Get { id } => with_wiki(path, config, |wiki| {
-            let fact_id = wg_core::FactId(
-                wg_core::ulid::Ulid::from_string(&id)
-                    .map_err(|_| WgError::InvalidInput(format!("Invalid fact ID: {}", id)))?,
-            );
-            let fact = wiki.fact_get(&fact_id)?;
-            output::format_fact(&fact, &wiki, fmt(json))
-        }),
+        cmd::FactSub::Get { id } => {
+            // Same daemon-aware fast path as entity get — wg_fact_get
+            // tool returns a JSON Fact record we forward verbatim.
+            if let Some(via) = cmd::daemon::registered_endpoint(path) {
+                tracing::debug!(via = %via, "auto-discovered daemon for fact get");
+                return run_fact_get_via_daemon(&via, &id);
+            }
+            with_wiki(path, config, |wiki| {
+                let fact_id = wg_core::FactId(
+                    wg_core::ulid::Ulid::from_string(&id)
+                        .map_err(|_| WgError::InvalidInput(format!("Invalid fact ID: {}", id)))?,
+                );
+                let fact = wiki.fact_get(&fact_id)?;
+                output::format_fact(&fact, &wiki, fmt(json))
+            })
+        }
         cmd::FactSub::List {
             fact_type,
             entity,
@@ -505,6 +523,29 @@ fn handle_fact(
             })
         }
     }
+}
+
+/// `wg entity get NAME` daemon path. wg_entity_get returns the
+/// entity record as JSON; we forward it verbatim.
+fn run_entity_get_via_daemon(base_url: &str, name: &str) -> Result<String, WgError> {
+    let url = format!("{}/mcp", base_url.trim_end_matches('/'));
+    let body = serde_json::json!({
+        "jsonrpc": "2.0", "id": 1,
+        "method": "tools/call",
+        "params": {"name": "wg_entity_get", "arguments": {"name": name}}
+    });
+    daemon_tool_call(&url, body, "wg_entity_get")
+}
+
+/// `wg fact get ID` daemon path. Symmetric with entity get.
+fn run_fact_get_via_daemon(base_url: &str, id: &str) -> Result<String, WgError> {
+    let url = format!("{}/mcp", base_url.trim_end_matches('/'));
+    let body = serde_json::json!({
+        "jsonrpc": "2.0", "id": 1,
+        "method": "tools/call",
+        "params": {"name": "wg_fact_get", "arguments": {"id": id}}
+    });
+    daemon_tool_call(&url, body, "wg_fact_get")
 }
 
 /// `wg fact supersede` daemon path. wg_fact_supersede tool returns

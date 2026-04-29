@@ -168,6 +168,33 @@ fn tool_search(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String>
     })
 }
 
+fn tool_entity_get(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String> {
+    let name = args
+        .get("name")
+        .and_then(|v| v.as_str())
+        .ok_or("name required")?;
+    let entity = wiki.entity_get(name).map_err(|e| e.to_string())?;
+    let text = serde_json::to_string_pretty(&entity).map_err(|e| e.to_string())?;
+    Ok(ToolCallResult {
+        content: vec![ContentBlock::text(text)],
+        is_error: None,
+    })
+}
+
+fn tool_fact_get(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String> {
+    let id = args
+        .get("id")
+        .and_then(|v| v.as_str())
+        .ok_or("id required")?;
+    let fact_id = parse_fact_id(id)?;
+    let fact = wiki.fact_get(&fact_id).map_err(|e| e.to_string())?;
+    let text = serde_json::to_string_pretty(&fact).map_err(|e| e.to_string())?;
+    Ok(ToolCallResult {
+        content: vec![ContentBlock::text(text)],
+        is_error: None,
+    })
+}
+
 fn tool_entity_list(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String> {
     let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
     let entity_type =
@@ -624,6 +651,25 @@ pub fn list_tools() -> Vec<Tool> {
             }),
         },
         Tool {
+            name: "wg_entity_get".into(),
+            description: "Get a single entity by name (or alias). Returns the JSON record."
+                .into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {"name": {"type": "string"}},
+                "required": ["name"]
+            }),
+        },
+        Tool {
+            name: "wg_fact_get".into(),
+            description: "Get a single fact by ULID. Returns the JSON record.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {"id": {"type": "string", "description": "Fact ULID"}},
+                "required": ["id"]
+            }),
+        },
+        Tool {
             name: "wg_entity_list".into(),
             description: "List entities in the wiki graph with fact counts.".into(),
             input_schema: json!({
@@ -798,7 +844,9 @@ pub fn list_tools() -> Vec<Tool> {
 fn call_tool(name: &str, args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String> {
     match name {
         "wg_search" => tool_search(args, wiki),
+        "wg_entity_get" => tool_entity_get(args, wiki),
         "wg_entity_list" => tool_entity_list(args, wiki),
+        "wg_fact_get" => tool_fact_get(args, wiki),
         "wg_traverse" => tool_traverse(args, wiki),
         "wg_lint" => tool_lint(wiki),
         "wg_doctor" => tool_doctor(wiki),

@@ -233,7 +233,7 @@ crates/wg-cli/src/
 | `wg mcp` | stdio (newline-delimited JSON-RPC) | local agents (Claude Code, Codex CLI) |
 | `wg mcp-serve --port 3000` | HTTP POST `/mcp` + SSE `/sse` | browser/remote clients |
 
-**13 tools** (preferred order in agent prompts):
+**15 tools** (preferred order in agent prompts):
 
 | Tool | When |
 |---|---|
@@ -241,6 +241,8 @@ crates/wg-cli/src/
 | `wg_search` | Pure hybrid search, no graph |
 | `wg_recent` | Last N days of facts |
 | `wg_entity_list` | Browse entities |
+| `wg_entity_get` | Fetch one entity by name/alias |
+| `wg_fact_get` | Fetch one fact by ULID |
 | `wg_traverse` | Forward walk from a known entity |
 | `wg_backlinks` | Reverse walk — "what depends on X?" |
 | `wg_doctor` | Health snapshot |
