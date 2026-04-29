@@ -120,6 +120,35 @@ fn main() {
         }
         Err(e) => {
             eprintln!("Error: {}", e);
+            // Add a daemon hint when the failure is a redb file-lock
+            // collision and the user actually has a daemon registered.
+            // Catches the most common foot-gun: user runs
+            // `wg daemon start` and then their habitual `wg fact add …`
+            // hits the lock because the daemon is holding it.
+            let msg = e.to_string();
+            if msg.contains("Database already open") || msg.contains("Cannot acquire lock") {
+                use cmd::daemon::RegistryState;
+                match cmd::daemon::registry_state(&store_path) {
+                    RegistryState::Healthy(reg) => {
+                        eprintln!(
+                            "Hint: a wg daemon is running on port {} and is holding this \
+                             store's lock. The CLI auto-dispatches read commands + \
+                             fact-add through it; commands not yet daemon-aware will \
+                             collide. Stop the daemon (`wg daemon stop`) if you need \
+                             local access, or use the daemon-aware command.",
+                            reg.port
+                        );
+                    }
+                    RegistryState::StaleRegistry => {
+                        eprintln!(
+                            "Hint: ~/.wg/daemon.json exists but the daemon isn't \
+                             responding. Run `wg daemon status` to inspect, or \
+                             `wg daemon stop` to clear the stale registry."
+                        );
+                    }
+                    RegistryState::None => {}
+                }
+            }
             exit(1);
         }
     }
@@ -305,6 +334,21 @@ fn handle_fact(
                 Some(s) => Some(parse_iso_to_epoch_ms(s)?),
                 None => None,
             };
+            // Daemon discovery — if a `wg daemon` is running on the
+            // same store, dispatch through it. Otherwise we'd hit the
+            // single-writer redb lock on the daemon's open handle.
+            // The daemon has wg_fact_add as a first-class MCP tool so
+            // the path is symmetric with read commands.
+            if let Some(via) = cmd::daemon::registered_endpoint(path) {
+                tracing::debug!(via = %via, "auto-discovered daemon for fact add");
+                return run_fact_add_via_daemon(
+                    &via,
+                    &content,
+                    entities.as_ref(),
+                    tags.as_ref(),
+                    json,
+                );
+            }
             with_wiki_mut(path, config, |wiki| {
                 let mut auto_created: Vec<String> = Vec::new();
                 let entity_ids = match entities {
@@ -838,6 +882,67 @@ fn run_query_via_daemon(base_url: &str, sub: &cmd::QuerySub) -> Result<String, W
         }
     });
     daemon_tool_call(&url, body, "wg_query")
+}
+
+/// `wg fact add` daemon path. Calls the wg_fact_add MCP tool which
+/// returns `{"id": "<ULID>"}`. The local CLI surface returns either
+/// JSON or a "Added fact with ID …" line; we normalise here so users
+/// see the same output whether the daemon is on or off.
+fn run_fact_add_via_daemon(
+    base_url: &str,
+    content: &str,
+    entities: Option<&Vec<String>>,
+    tags: Option<&Vec<String>>,
+    json: bool,
+) -> Result<String, WgError> {
+    let url = format!("{}/mcp", base_url.trim_end_matches('/'));
+    // Mirror the CLI's "comma-separated names in a single flag" shape.
+    let entity_names: Vec<String> = entities
+        .map(|v| {
+            v.iter()
+                .flat_map(|raw| raw.split(',').map(|s| s.trim().to_string()))
+                .filter(|s| !s.is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+    let tag_list: Vec<String> = tags
+        .map(|v| {
+            v.iter()
+                .flat_map(|raw| raw.split(',').map(|s| s.trim().to_string()))
+                .filter(|s| !s.is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut args = serde_json::json!({ "content": content });
+    if !entity_names.is_empty() {
+        args["entities"] = serde_json::json!(entity_names);
+    }
+    if !tag_list.is_empty() {
+        args["tags"] = serde_json::json!(tag_list);
+    }
+    let body = serde_json::json!({
+        "jsonrpc": "2.0", "id": 1,
+        "method": "tools/call",
+        "params": {"name": "wg_fact_add", "arguments": args}
+    });
+    let raw = daemon_tool_call(&url, body, "wg_fact_add")?;
+    let payload: serde_json::Value = serde_json::from_str(&raw)
+        .map_err(|e| WgError::Internal(format!("wg_fact_add response parse: {e}")))?;
+    let id = payload
+        .get("id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| WgError::Internal(format!("wg_fact_add response missing id: {raw}")))?;
+    if json {
+        // Match the local --json shape (auto_created_entities is daemon-
+        // side info we don't get back from the tool today; emit empty).
+        let empty: Vec<String> = Vec::new();
+        return Ok(serde_json::json!({
+            "id": id,
+            "auto_created_entities": empty,
+        })
+        .to_string());
+    }
+    Ok(format!("Added fact with ID {id}"))
 }
 
 /// Shared helper for `--via` daemon dispatch: POST a JSON-RPC tool

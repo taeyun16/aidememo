@@ -143,17 +143,45 @@ pub fn registered_endpoint(want_store: &std::path::Path) -> Option<String> {
     if std::env::var("WG_NO_DAEMON").is_ok() {
         return None;
     }
+    daemon_for_hint(want_store).map(|reg| format!("http://127.0.0.1:{}", reg.port))
+}
+
+/// Discovery info used by error-hint code on the failure path.
+/// Ignores `WG_NO_DAEMON` — when the user opts out of dispatch they
+/// still need the diagnostic ("daemon is the one holding the lock").
+/// Returns the registry only if the recorded store matches AND
+/// /health responds. Use `registry_state` if you also want to
+/// distinguish "no registry" from "stale registry".
+pub fn daemon_for_hint(want_store: &std::path::Path) -> Option<DaemonRegistry> {
     let reg = load_registry()?;
     if reg.store != want_store {
-        // Store mismatch — daemon is serving a different wiki, don't hijack.
         return None;
     }
     if !probe_health(reg.port) {
-        // Stale registry (daemon died). Leave the file for `wg daemon status`
-        // to surface; the next start will overwrite it.
         return None;
     }
-    Some(format!("http://127.0.0.1:{}", reg.port))
+    Some(reg)
+}
+
+/// Three-way classification for error-hint code:
+///   - `Healthy(reg)`  : registry exists, store matches, /health OK
+///   - `StaleRegistry` : registry exists but isn't responding
+///   - `None`          : no registry on disk
+pub enum RegistryState {
+    Healthy(DaemonRegistry),
+    StaleRegistry,
+    None,
+}
+
+pub fn registry_state(want_store: &std::path::Path) -> RegistryState {
+    let Some(reg) = load_registry() else {
+        return RegistryState::None;
+    };
+    if reg.store == want_store && probe_health(reg.port) {
+        RegistryState::Healthy(reg)
+    } else {
+        RegistryState::StaleRegistry
+    }
 }
 
 // === Subcommand handlers ===
