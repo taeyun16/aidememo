@@ -118,6 +118,40 @@ impl ContentBlock {
 // Tool implementations
 // ---------------------------------------------------------------------------
 
+/// Parse a time-spec MCP argument. Accepts three shapes (in priority):
+///
+/// 1. `null` / missing → `Ok(None)`
+/// 2. number → epoch milliseconds verbatim
+/// 3. string → ISO date (`2026-04-01`, RFC3339), or for `since`/`until` only,
+///    a duration DSL (`30d`, `12h`, `4w`, `1y`) interpreted as
+///    `now - duration`. The `as_of_mode` flag suppresses duration parsing
+///    so `as_of` can't accidentally be a relative window.
+fn parse_time_arg(arg: Option<&Value>, as_of_mode: bool) -> Result<Option<u64>, String> {
+    let Some(v) = arg else { return Ok(None) };
+    if v.is_null() {
+        return Ok(None);
+    }
+    if let Some(n) = v.as_u64() {
+        return Ok(Some(n));
+    }
+    let s = v
+        .as_str()
+        .ok_or("time argument must be a number or string")?;
+    if let Ok(ms) = crate::parse_iso_to_epoch_ms(s) {
+        return Ok(Some(ms));
+    }
+    if !as_of_mode {
+        if let Ok(window_ms) = crate::parse_duration_to_ms(s) {
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            return Ok(Some(now_ms.saturating_sub(window_ms)));
+        }
+    }
+    Err(format!("unrecognised time argument: {s:?}"))
+}
+
 fn tool_search(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String> {
     let query = args
         .get("query")
@@ -130,6 +164,25 @@ fn tool_search(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String>
         .get("bm25_only")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
+    // Default `current_only=true` because most agent queries are
+    // "what do we know NOW?" — superseded facts mixed into results was
+    // the biggest correctness footgun. Pass `false` explicitly for
+    // historical or `--as-of` queries.
+    let current_only = args
+        .get("current_only")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+    let since = parse_time_arg(args.get("since"), false)?;
+    let until = parse_time_arg(args.get("until"), false)?;
+    let as_of = parse_time_arg(args.get("as_of"), true)?;
+    let entity_filter = match args.get("entity").and_then(|v| v.as_str()) {
+        Some(name) => Some(vec![wiki.resolve_entity(name).map_err(|e| e.to_string())?]),
+        None => None,
+    };
+    let min_confidence = args
+        .get("min_confidence")
+        .and_then(|v| v.as_f64())
+        .map(|x| x as f32);
 
     let results = wiki
         .hybrid_search(
@@ -137,6 +190,12 @@ fn tool_search(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String>
             wg_core::SearchOpts {
                 limit: Some(limit),
                 bm25_only,
+                current_only,
+                since,
+                until,
+                as_of,
+                entity_filter,
+                min_confidence,
                 ..Default::default()
             },
         )
@@ -208,7 +267,7 @@ fn tool_fact_list(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, Stri
         current_only: args
             .get("current_only")
             .and_then(|v| v.as_bool())
-            .unwrap_or(false),
+            .unwrap_or(true),
         as_of: None,
     };
     let facts = wiki.fact_list(opts).map_err(|e| e.to_string())?;
@@ -425,7 +484,7 @@ fn tool_query(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String> 
         current_only: args
             .get("current_only")
             .and_then(|v| v.as_bool())
-            .unwrap_or(false),
+            .unwrap_or(true),
         mode,
         bm25_only: args
             .get("bm25_only")
@@ -759,7 +818,7 @@ pub fn list_tools() -> Vec<Tool> {
         Tool {
             name: "wg_search".into(),
             description:
-                "Search facts in the wiki using BM25 + semantic vectors. Returns ranked results. Pass `bm25_only:true` to skip the embedding model load (cuts cold-start ~700-900ms; loses semantic recall)."
+                "Search facts in the wiki using BM25 + semantic vectors. Returns ranked results. Defaults to current-only (excludes superseded facts) — pass `current_only:false` for historical/timeline queries. Pass `bm25_only:true` to skip the embedding model load (cuts cold-start ~700-900ms; loses semantic recall). For graph context (related entities + recent facts) prefer `wg_query` instead — it wraps this tool plus traversal in one call."
                     .into(),
             input_schema: json!({
                 "type": "object",
@@ -770,6 +829,31 @@ pub fn list_tools() -> Vec<Tool> {
                         "type": "boolean",
                         "default": false,
                         "description": "Skip embedding model — pure BM25. Use when agent hot-path latency matters more than semantic recall."
+                    },
+                    "current_only": {
+                        "type": "boolean",
+                        "default": true,
+                        "description": "Exclude superseded facts. Pass false to search the historical timeline."
+                    },
+                    "since": {
+                        "type": ["string", "number"],
+                        "description": "Lower bound on observed_at. Accepts ISO date (2026-01-15), RFC3339, epoch ms, or duration DSL (30d / 12h / 4w / 1y, interpreted as now - window)."
+                    },
+                    "until": {
+                        "type": ["string", "number"],
+                        "description": "Upper bound on observed_at. Same parsing as `since`."
+                    },
+                    "as_of": {
+                        "type": ["string", "number"],
+                        "description": "Replay the wiki at a given timestamp — only facts that were valid (not yet superseded) at this point appear. ISO date, RFC3339, or epoch ms (no relative duration)."
+                    },
+                    "entity": {
+                        "type": "string",
+                        "description": "Restrict to facts attached to this entity (name or alias)."
+                    },
+                    "min_confidence": {
+                        "type": "number",
+                        "description": "Filter facts with source_confidence below this threshold."
                     }
                 },
                 "required": ["query"]
@@ -795,7 +879,7 @@ pub fn list_tools() -> Vec<Tool> {
                 "properties": {
                     "entity": {"type": "string", "description": "Filter by entity name/alias"},
                     "limit":  {"type": "number", "default": 20},
-                    "current_only": {"type": "boolean", "default": false, "description": "Exclude superseded facts"}
+                    "current_only": {"type": "boolean", "default": true, "description": "Exclude superseded facts. Pass false to include historical timeline."}
                 }
             }),
         },
@@ -893,7 +977,7 @@ pub fn list_tools() -> Vec<Tool> {
                     "depth": {"type": "number", "default": 2, "description": "Traverse depth if topic is an entity"},
                     "recent_limit": {"type": "number", "default": 10, "description": "Max recent facts"},
                     "mode": {"type": "string", "enum": ["naive", "local", "hybrid", "global"], "default": "hybrid"},
-                    "current_only": {"type": "boolean", "default": false}
+                    "current_only": {"type": "boolean", "default": true, "description": "Exclude superseded facts. Pass false for historical / timeline queries."}
                 },
                 "required": ["topic"]
             }),
@@ -1289,6 +1373,66 @@ mod tests {
         let (_dir, wiki) = open_temp_wiki();
         let err = tool_fact_add_many(&json!({"items": [{}]}), &wiki).unwrap_err();
         assert!(err.contains("content is required"));
+    }
+
+    #[test]
+    fn fact_list_defaults_current_only_true() {
+        // Add two facts about Redis, supersede one. The default-current
+        // contract for agent queries means the superseded fact must be
+        // hidden unless `current_only:false` is passed explicitly.
+        let (_dir, wiki) = open_temp_wiki();
+        let old = add_fact(&wiki, "Redis 6 in production", "Redis");
+        let new = add_fact(&wiki, "Redis 7 in production", "Redis");
+        wiki.fact_supersede(&old, &new).unwrap();
+
+        let default_call = tool_fact_list(&json!({"entity": "Redis"}), &wiki).unwrap();
+        let payload: Value =
+            serde_json::from_str(default_call.content[0].text.as_deref().unwrap()).unwrap();
+        let ids: Vec<&str> = payload["facts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|f| f["id"].as_str())
+            .collect();
+        let new_str = new.0.to_string();
+        let old_str = old.0.to_string();
+        assert!(ids.contains(&new_str.as_str()));
+        assert!(
+            !ids.contains(&old_str.as_str()),
+            "superseded fact must be hidden by default",
+        );
+
+        // Opt-in to historical view.
+        let history =
+            tool_fact_list(&json!({"entity": "Redis", "current_only": false}), &wiki).unwrap();
+        let payload: Value =
+            serde_json::from_str(history.content[0].text.as_deref().unwrap()).unwrap();
+        let ids: Vec<&str> = payload["facts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|f| f["id"].as_str())
+            .collect();
+        assert!(ids.contains(&old_str.as_str()));
+    }
+
+    #[test]
+    fn search_parses_iso_date_for_since() {
+        // Just verify the parser doesn't reject a legitimate ISO date —
+        // we can't easily stage facts at past observed_at without
+        // bypassing the public API, so this is a smoke check.
+        let (_dir, wiki) = open_temp_wiki();
+        add_fact(&wiki, "an old decision about caching", "Redis");
+        let result =
+            tool_search(&json!({"query": "caching", "since": "2020-01-01"}), &wiki).unwrap();
+        assert!(result.is_error.is_none());
+    }
+
+    #[test]
+    fn search_rejects_unparseable_time_argument() {
+        let (_dir, wiki) = open_temp_wiki();
+        let err = tool_search(&json!({"query": "x", "since": "not-a-date"}), &wiki).unwrap_err();
+        assert!(err.contains("unrecognised time argument"));
     }
 
     #[test]

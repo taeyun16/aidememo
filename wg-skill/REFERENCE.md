@@ -320,6 +320,12 @@ cargo check -p wg-core -p wg-cli
 
 스키마: `wg-cli/src/cmd/mcp_tools.rs::list_tools()`.
 
+검색·열람 계열(`wg_search` / `wg_query` / `wg_fact_list`)은 `current_only=true`가
+기본 — superseded fact를 결과에서 제외합니다. 타임라인 / 시점 재현이 필요하면
+명시적으로 `current_only=false`로 호출하거나 `wg_search`의 `as_of` (ISO 날짜)·
+`since`/`until` (ISO 또는 `30d`/`12h` duration), `entity`(이름/alias 1개로 한정),
+`min_confidence` 필터를 사용합니다.
+
 ## 데몬 — 백그라운드 mcp-serve + 자동 발견
 
 ```bash

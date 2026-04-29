@@ -101,6 +101,12 @@ out. They return structured JSON.
 | `wg_fact_supersede` | Mark old fact replaced by a new one |
 | `wg_fact_edit` | Patch a fact's content (append / prepend / find+replace / content) |
 
+`wg_search` / `wg_query` / `wg_fact_list` default `current_only=true` — the
+result set is "what we know now". Pass `current_only:false` for historical
+or timeline queries. `wg_search` also accepts `since` / `until` / `as_of`
+(ISO date or duration like `30d`), `entity` (filter to one entity),
+and `min_confidence`.
+
 ## Install
 
 If `wg` is on your PATH, the binary self-installs into the agent of your
