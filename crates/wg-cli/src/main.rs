@@ -784,6 +784,16 @@ fn handle_query(
         .as_deref()
         .map(wg_core::QueryMode::parse)
         .unwrap_or_default();
+    // Same opportunistic-discovery shortcut as `wg search`. The wg_query
+    // tool returns JSON, so the daemon's text content is already in
+    // the shape `wg query --json` would print; for the table view we
+    // pretty-print whatever the daemon returned (the formatter expects
+    // an in-memory QueryResult, but a JSON dump is the next-best thing
+    // for a one-shot CLI use of `--via`).
+    if let Some(via) = cmd::daemon::registered_endpoint(path) {
+        tracing::debug!(via = %via, "auto-discovered daemon for query");
+        return run_query_via_daemon(&via, &sub);
+    }
     with_wiki(path, config, |wiki| {
         let opts = QueryOpts {
             search_limit: sub.limit.unwrap_or(10),
@@ -803,6 +813,53 @@ fn handle_query(
         }
         output::format_query_result(&result)
     })
+}
+
+/// `wg query` daemon path. Calls the `wg_query` MCP tool and prints
+/// its JSON response verbatim (the tool already JSON-encodes the
+/// QueryResult; reformatting it as a local table would require
+/// deserialising into the wg-core type, which costs more code than
+/// it's worth for the warm-path one-shot.)
+fn run_query_via_daemon(base_url: &str, sub: &cmd::QuerySub) -> Result<String, WgError> {
+    let url = format!("{}/mcp", base_url.trim_end_matches('/'));
+    let mode = sub.mode.clone().unwrap_or_else(|| "hybrid".to_string());
+    let body = serde_json::json!({
+        "jsonrpc": "2.0", "id": 1,
+        "method": "tools/call",
+        "params": {
+            "name": "wg_query",
+            "arguments": {
+                "topic": sub.topic,
+                "limit": sub.limit.unwrap_or(10),
+                "depth": sub.depth.unwrap_or(2),
+                "recent_limit": sub.recent_limit.unwrap_or(10),
+                "mode": mode,
+            }
+        }
+    });
+    daemon_tool_call(&url, body, "wg_query")
+}
+
+/// Shared helper for `--via` daemon dispatch: POST a JSON-RPC tool
+/// call and unwrap the text content. Used by both wg search and
+/// wg query / wg recent. Errors carry the daemon URL so the user
+/// can tell whether the daemon, the network, or the tool itself
+/// failed.
+fn daemon_tool_call(url: &str, body: serde_json::Value, tool: &str) -> Result<String, WgError> {
+    let resp: serde_json::Value = ureq::post(url)
+        .set("Content-Type", "application/json")
+        .send_json(body)
+        .map_err(|e| WgError::Internal(format!("daemon POST {url} failed: {e}")))?
+        .into_json()
+        .map_err(|e| WgError::Internal(format!("daemon response parse: {e}")))?;
+    if let Some(err) = resp.get("error") {
+        return Err(WgError::Internal(format!("daemon {tool} error: {err}")));
+    }
+    let text = resp
+        .pointer("/result/content/0/text")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| WgError::Internal(format!("unexpected daemon {tool} response: {resp}")))?;
+    Ok(text.to_string())
 }
 
 fn handle_lint(
