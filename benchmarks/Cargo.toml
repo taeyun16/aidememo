@@ -14,7 +14,7 @@ criterion = "0.5"
 parking_lot = "0.12"
 redb = "2.6"
 tempfile = "3.10"
-wg-core = { path = "../crates/wg-core", features = ["semantic"] }
+wg-core = { path = "../crates/wg-core", features = ["semantic", "fastembed"] }
 
 # HNSW ANN prototype — measures recall + latency vs brute force on
 # real Korean Wikipedia retrieval (MIRACL/ko). Lives behind the

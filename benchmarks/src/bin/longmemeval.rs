@@ -98,6 +98,12 @@ struct Args {
     /// first call per WikiGraph (~700-900 ms cold) — in this harness
     /// that's once per question.
     hybrid: bool,
+    /// Override the embedding model when --hybrid is on. Accepted:
+    /// `model2vec` (default — multilingual potion-128M, 28 MB) or
+    /// any fastembed model name (e.g. `bge-small-en-v1.5`,
+    /// `multilingual-e5-base`). The fastembed family is English-tuned;
+    /// LongMemEval is English; expect a measurable lift.
+    embed_model: Option<String>,
     /// Time-decay tau in days. When set, the harness stamps
     /// `observed_at` from session dates (like `--temporal`) but does
     /// NOT apply a hard `until` cutoff; instead BM25 scores are
@@ -153,6 +159,7 @@ fn parse_args() -> Args {
     let mut top_k: usize = 10;
     let mut temporal = false;
     let mut hybrid = false;
+    let mut embed_model: Option<String> = None;
     let mut time_decay_days: Option<f64> = None;
     let mut only_type: Option<String> = None;
     let mut emit_retrievals: Option<PathBuf> = None;
@@ -181,6 +188,10 @@ fn parse_args() -> Args {
                 hybrid = true;
                 i += 1;
             }
+            "--embed-model" if i + 1 < argv.len() => {
+                embed_model = Some(argv[i + 1].clone());
+                i += 2;
+            }
             "--time-decay-days" if i + 1 < argv.len() => {
                 time_decay_days = argv[i + 1].parse().ok();
                 i += 2;
@@ -202,6 +213,7 @@ fn parse_args() -> Args {
         top_k,
         temporal,
         hybrid,
+        embed_model,
         time_decay_days,
         only_type,
         emit_retrievals,
@@ -213,6 +225,7 @@ fn build_store_for_question(
     temporal: bool,
     stamp_observed_at: bool,
     hybrid: bool,
+    embed_model: Option<&str>,
 ) -> Result<(tempfile::TempDir, WikiGraph), String> {
     let dir = tempfile::TempDir::new().map_err(|e| e.to_string())?;
     let mut config = Config::default();
@@ -222,6 +235,13 @@ fn build_store_for_question(
     // model load per WikiGraph instance.
     if !hybrid {
         config.search.semantic_index = "bm25".into();
+    } else if let Some(m) = embed_model {
+        // --embed-model overrides the model2vec default with any
+        // fastembed family member (bge-small-en-v1.5 by default for
+        // English benchmarks). The fastembed feature must be on the
+        // wg-core build (it is via benchmarks/Cargo.toml).
+        config.model.provider = "fastembed".into();
+        config.model.name = m.to_string();
     }
     let store_path = PathBuf::from(&config.store.path);
     let wiki = WikiGraph::open(&store_path, config).map_err(|e| e.to_string())?;
@@ -434,6 +454,9 @@ fn run(args: &Args) -> Result<(), String> {
     println!("top_k:    {top_k}");
     println!("temporal: {temporal}");
     println!("hybrid:   {}", args.hybrid);
+    if let Some(m) = &args.embed_model {
+        println!("embed:    {m}");
+    }
     if let Some(t) = args.time_decay_days {
         println!("decay τ:  {t} days");
     }
@@ -459,7 +482,13 @@ fn run(args: &Args) -> Result<(), String> {
     let started = Instant::now();
     for (i, q) in questions.iter().take(n).enumerate() {
         let stamp_obs = temporal || args.time_decay_days.is_some();
-        let (_dir, wiki) = build_store_for_question(q, temporal, stamp_obs, args.hybrid)?;
+        let (_dir, wiki) = build_store_for_question(
+            q,
+            temporal,
+            stamp_obs,
+            args.hybrid,
+            args.embed_model.as_deref(),
+        )?;
         let (rank, retrievals) =
             evaluate(q, &wiki, top_k, temporal, args.hybrid, args.time_decay_days);
         if let Some(r) = rank {

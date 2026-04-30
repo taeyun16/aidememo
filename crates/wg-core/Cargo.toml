@@ -12,6 +12,14 @@ version.workspace = true
 default = []
 semantic = ["model2vec-native", "ureq", "simsimd", "instant-distance", "bincode"]
 semantic-adapt = ["semantic"]
+# `fastembed` opts the user into ONNX-runtime-backed BGE / E5 embedding
+# models via the `fastembed` crate (which uses pykeio/ort under the hood).
+# Enables `model.provider = "fastembed"` and `model.name = "bge-small-en-v1.5"`
+# (etc) in config.toml. Pulls in ~90 MB of model on first use plus the
+# ONNX Runtime native library — keep the default `semantic` feature set
+# offline-pure (model2vec) unless you specifically need a heavier
+# English-tuned model.
+fastembed = ["semantic", "dep:fastembed"]
 parallel = ["rayon"]
 remote = ["oneio"]
 s3 = ["aws-sdk-s3", "aws-credential-types", "tokio/full", "zstd"]
@@ -53,6 +61,11 @@ chrono = "0.4"
 # the heap. Lives in its own repo so it's reusable outside wg.
 # Pinned to a specific rev for reproducibility; bump as needed.
 model2vec-native = { git = "https://github.com/taeyun16/model2vec-native", rev = "254b304", optional = true }
+
+# ONNX-Runtime-backed BGE / E5 embedding models. Opt-in via the
+# `fastembed` cargo feature — the default `semantic` build stays
+# Model2Vec-only (no native ONNX Runtime DLL on disk).
+fastembed = { version = "5", optional = true }
 
 # OpenAI-compatible HTTP embeddings (Ollama / OpenAI / OpenRouter / vLLM / LocalAI).
 # Pulled in alongside the `semantic` feature so users who opt into semantic

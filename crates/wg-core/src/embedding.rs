@@ -45,7 +45,11 @@ pub trait EmbeddingProvider: Send + Sync {
 /// The set of providers wg knows how to construct from `Config`. Useful
 /// for `wg model providers` and for help-text auto-listing.
 pub fn known_providers() -> &'static [&'static str] {
-    &["model2vec", "openai", "tei"]
+    if cfg!(feature = "fastembed") {
+        &["model2vec", "openai", "tei", "fastembed"]
+    } else {
+        &["model2vec", "openai", "tei"]
+    }
 }
 
 /// Build a provider from `config.model`. Errors if the provider name is
@@ -64,6 +68,10 @@ pub fn load_provider(config: &Config) -> Result<Box<dyn EmbeddingProvider>> {
             openai::OpenAICompatibleProvider::from_config(config)?,
         )),
         "tei" | "text-embeddings-inference" => Ok(Box::new(tei::TeiProvider::from_config(config)?)),
+        #[cfg(feature = "fastembed")]
+        "fastembed" | "bge" | "onnx" => Ok(Box::new(
+            fastembed_provider::FastembedProvider::from_config(config)?,
+        )),
         other => Err(WgError::InvalidInput(format!(
             "unknown embedding provider '{other}' — expected one of {:?}",
             known_providers()
@@ -459,6 +467,207 @@ mod tei {
                 out.append(&mut parsed);
             }
             Ok(out)
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// fastembed (ONNX-Runtime-backed BGE / E5 / Nomic models)
+// ---------------------------------------------------------------------------
+
+/// `fastembed` provider — wraps the [`fastembed`] crate, which itself
+/// runs `pykeio/ort` (ONNX Runtime) on CPU. Brings parity with the
+/// embedding choices that English-tuned competitors (OMEGA's
+/// `bge-small-en-v1.5`, Mastra's stack) use, while keeping wg's
+/// default Model2Vec path untouched. Opt in by:
+///
+///   1. building wg with `--features fastembed`
+///   2. setting `model.provider = "fastembed"` in `~/.wg/config.toml`
+///   3. setting `model.name = "bge-small-en-v1.5"` (or any other
+///      [`EmbeddingModel`] enum the fastembed crate ships)
+///
+/// First call downloads the ONNX weights to the user's HF cache
+/// (`~/.cache/huggingface/`). Subsequent calls are local.
+#[cfg(feature = "fastembed")]
+mod fastembed_provider {
+    use super::{Config, EmbeddingProvider, Result, WgError};
+    use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
+    use parking_lot::Mutex;
+
+    pub struct FastembedProvider {
+        // fastembed's TextEmbedding holds the ONNX session, which the
+        // crate marks `&mut self`-required for `embed`. Wrap in a Mutex
+        // so the provider trait can stay `&self`.
+        inner: Mutex<TextEmbedding>,
+        model_name: String,
+        dim: usize,
+    }
+
+    impl FastembedProvider {
+        pub fn from_config(config: &Config) -> Result<Self> {
+            let model_id = if config.model.name.is_empty() {
+                "bge-small-en-v1.5".to_string()
+            } else {
+                config.model.name.clone()
+            };
+            let (model_enum, dim) = parse_model(&model_id)?;
+            let mut opts = InitOptions::new(model_enum);
+            // Honour the user's configured cache_dir — keeps every wg
+            // download under the same root rather than scattering
+            // model weights across HF + Model2Vec caches.
+            if !config.model.cache_dir.is_empty() {
+                let cache = expand_tilde(&config.model.cache_dir);
+                if !cache.as_os_str().is_empty() {
+                    opts = opts.with_cache_dir(cache);
+                }
+            }
+            let inner = TextEmbedding::try_new(opts).map_err(|e| WgError::ModelLoadFailed {
+                path: std::path::PathBuf::from(&model_id),
+                source: Box::new(std::io::Error::other(e.to_string())),
+            })?;
+
+            Ok(Self {
+                inner: Mutex::new(inner),
+                model_name: model_id,
+                dim,
+            })
+        }
+    }
+
+    impl EmbeddingProvider for FastembedProvider {
+        fn name(&self) -> String {
+            format!("fastembed({})", self.model_name)
+        }
+        fn dimension(&self) -> usize {
+            self.dim
+        }
+        fn embed(&self, text: &str) -> Result<Vec<f32>> {
+            let mut guard = self.inner.lock();
+            let mut out = guard
+                .embed(vec![text.to_string()], None)
+                .map_err(|e| WgError::Internal(format!("fastembed embed: {e}")))?;
+            out.pop()
+                .ok_or_else(|| WgError::Internal("fastembed returned empty batch".into()))
+        }
+        fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+            if texts.is_empty() {
+                return Ok(Vec::new());
+            }
+            let mut guard = self.inner.lock();
+            guard
+                .embed(texts, None)
+                .map_err(|e| WgError::Internal(format!("fastembed embed_batch: {e}")))
+        }
+    }
+
+    /// Map a config string to the fastembed `EmbeddingModel` enum
+    /// AND its known output dimension (BGE / E5 / MiniLM models all
+    /// have published dimension counts). Hardcoding the dim avoids a
+    /// runtime probe inference per provider construction.
+    /// Accepts both lowercase / hyphenated forms ("bge-small-en-v1.5")
+    /// and the verbatim PascalCase enum names ("BGESmallENV15") so
+    /// existing config.toml setups don't have to learn the crate's
+    /// naming convention. Unknown names error rather than silently
+    /// falling back — saves a 90 MB download if the user typo'd.
+    fn parse_model(s: &str) -> Result<(EmbeddingModel, usize)> {
+        let canon = s.to_lowercase().replace(['_', ' '], "-");
+        Ok(match canon.as_str() {
+            "bge-small-en-v1.5" | "bgesmallenv15" => (EmbeddingModel::BGESmallENV15, 384),
+            "bge-base-en-v1.5" | "bgebaseenv15" => (EmbeddingModel::BGEBaseENV15, 768),
+            "bge-large-en-v1.5" | "bgelargeenv15" => (EmbeddingModel::BGELargeENV15, 1024),
+            "bge-small-zh-v1.5" | "bgesmallzhv15" => (EmbeddingModel::BGESmallZHV15, 512),
+            "bge-large-zh-v1.5" | "bgelargezhv15" => (EmbeddingModel::BGELargeZHV15, 1024),
+            "bge-m3" | "bgem3" => (EmbeddingModel::BGEM3, 1024),
+            "all-mini-lm-l6-v2" | "all-minilm-l6-v2" | "allminilml6v2" => {
+                (EmbeddingModel::AllMiniLML6V2, 384)
+            }
+            "all-mini-lm-l12-v2" | "all-minilm-l12-v2" | "allminilml12v2" => {
+                (EmbeddingModel::AllMiniLML12V2, 384)
+            }
+            "all-mpnet-base-v2" | "allmpnetbasev2" => (EmbeddingModel::AllMpnetBaseV2, 768),
+            "multilingual-e5-small" | "multilinguale5small" => {
+                (EmbeddingModel::MultilingualE5Small, 384)
+            }
+            "multilingual-e5-base" | "multilinguale5base" => {
+                (EmbeddingModel::MultilingualE5Base, 768)
+            }
+            "multilingual-e5-large" | "multilinguale5large" => {
+                (EmbeddingModel::MultilingualE5Large, 1024)
+            }
+            "nomic-embed-text-v1.5" | "nomicembedtextv15" => {
+                (EmbeddingModel::NomicEmbedTextV15, 768)
+            }
+            "jina-embeddings-v2-base-en" | "jinaembeddingsv2baseen" => {
+                (EmbeddingModel::JinaEmbeddingsV2BaseEN, 768)
+            }
+            other => {
+                return Err(WgError::InvalidInput(format!(
+                    "unknown fastembed model '{other}' — accepted: bge-small-en-v1.5 \
+                     (default), bge-base-en-v1.5, bge-large-en-v1.5, bge-m3, \
+                     all-mini-lm-l6-v2, all-mini-lm-l12-v2, all-mpnet-base-v2, \
+                     multilingual-e5-small/base/large, nomic-embed-text-v1.5, \
+                     jina-embeddings-v2-base-en. See \
+                     https://github.com/Anush008/fastembed-rs#supported-models"
+                )));
+            }
+        })
+    }
+
+    fn expand_tilde(s: &str) -> std::path::PathBuf {
+        if let Some(rest) = s.strip_prefix("~/")
+            && let Some(home) = std::env::var_os("HOME")
+        {
+            return std::path::PathBuf::from(home).join(rest);
+        }
+        std::path::PathBuf::from(s)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use crate::config::Config;
+
+        // The smoke tests download model weights from HuggingFace on
+        // first run (~90 MB for bge-small-en-v1.5). Marked #[ignore]
+        // so CI stays offline.
+        #[test]
+        #[ignore = "downloads ONNX weights from HuggingFace — local only"]
+        fn fastembed_provider_loads_default_bge() {
+            let mut config = Config::default();
+            config.model.provider = "fastembed".into();
+            config.model.name = "bge-small-en-v1.5".into();
+            let p = FastembedProvider::from_config(&config).unwrap();
+            assert_eq!(p.dimension(), 384);
+            let v = p.embed("hello world").unwrap();
+            assert_eq!(v.len(), 384);
+            assert!(
+                v.iter().any(|x| *x != 0.0),
+                "embedding should not be all-zeros"
+            );
+        }
+
+        #[test]
+        fn fastembed_parser_accepts_canonical_names() {
+            let cases: &[(&str, usize)] = &[
+                ("bge-small-en-v1.5", 384),
+                ("BGESmallENV15", 384),
+                ("bge-base-en-v1.5", 768),
+                ("multilingual-e5-large", 1024),
+                ("nomic-embed-text-v1.5", 768),
+            ];
+            for (name, dim) in cases {
+                let (_, d) = parse_model(name).expect(name);
+                assert_eq!(d, *dim, "dim mismatch for {name}");
+            }
+        }
+
+        #[test]
+        fn fastembed_parser_rejects_unknown_with_helpful_message() {
+            let err = parse_model("bge-tiny-en-v1.5").unwrap_err().to_string();
+            assert!(err.contains("unknown fastembed model"));
+            // Must list at least one accepted name so the typo is
+            // recoverable from the error alone.
+            assert!(err.contains("bge-small-en-v1.5"));
         }
     }
 }
