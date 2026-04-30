@@ -110,6 +110,11 @@ struct Args {
     /// Restrict the run to a single question_type bucket. Lets you
     /// re-measure just one slice without re-running all 500.
     only_type: Option<String>,
+    /// If set, append one JSON line per question to this file with
+    /// the top-K retrieval records — feed this into the official
+    /// LongMemEval evaluator (or the internal `e2e` script) to do
+    /// LLM-graded answer correctness.
+    emit_retrievals: Option<PathBuf>,
 }
 
 /// Parse "2023/02/01 (Wed) 10:20" → epoch ms. Returns None on any
@@ -150,6 +155,7 @@ fn parse_args() -> Args {
     let mut hybrid = false;
     let mut time_decay_days: Option<f64> = None;
     let mut only_type: Option<String> = None;
+    let mut emit_retrievals: Option<PathBuf> = None;
 
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
@@ -183,6 +189,10 @@ fn parse_args() -> Args {
                 only_type = Some(argv[i + 1].clone());
                 i += 2;
             }
+            "--emit-retrievals" if i + 1 < argv.len() => {
+                emit_retrievals = Some(PathBuf::from(&argv[i + 1]));
+                i += 2;
+            }
             _ => i += 1,
         }
     }
@@ -194,6 +204,7 @@ fn parse_args() -> Args {
         hybrid,
         time_decay_days,
         only_type,
+        emit_retrievals,
     }
 }
 
@@ -269,6 +280,19 @@ fn build_store_for_question(
     Ok((dir, wiki))
 }
 
+/// One retrieval row, intended for the `--emit-retrievals` JSONL.
+/// Carries enough for a downstream LLM reader (content + which
+/// session it came from) plus the rank/score the harness saw so
+/// E2E judging can sanity-check ordering.
+#[derive(serde::Serialize)]
+struct RetrievalRecord {
+    rank: usize,
+    fact_id: String,
+    content: String,
+    score: f32,
+    session_id: Option<String>,
+}
+
 fn evaluate(
     q: &Question,
     wiki: &WikiGraph,
@@ -276,7 +300,7 @@ fn evaluate(
     temporal: bool,
     hybrid: bool,
     time_decay_days: Option<f64>,
-) -> Option<usize> {
+) -> (Option<usize>, Vec<RetrievalRecord>) {
     // BM25-only baseline. Returns the 1-indexed rank of the first hit
     // whose entity matches one of the answer-session entities, or
     // None if no such hit appears in the top-K.
@@ -307,7 +331,10 @@ fn evaluate(
         until,
         ..Default::default()
     };
-    let mut results = wiki.hybrid_search(&q.question, opts).ok()?;
+    let mut results = match wiki.hybrid_search(&q.question, opts) {
+        Ok(r) => r,
+        Err(_) => return (None, Vec::new()),
+    };
     if let Some(tau_days) = time_decay_days {
         let q_date = q
             .question_date
@@ -343,21 +370,44 @@ fn evaluate(
         .iter()
         .map(|sid| format!("session:{sid}"))
         .collect();
-    for (rank, hit) in results.iter().enumerate() {
-        // Cheap reverse map: fetch the fact and inspect its
-        // session-tagged entity. wg's fact records hold entity_ids;
-        // we resolve to names and check membership.
+    // Single pass: build retrieval records (for emission) AND find
+    // the rank of the first evidence-session hit. Resolve the
+    // session entity per hit so the JSONL row carries it for the
+    // downstream LLM reader.
+    let mut records: Vec<RetrievalRecord> = Vec::with_capacity(results.len().min(top_k));
+    let mut hit_rank: Option<usize> = None;
+    for (idx, hit) in results.iter().enumerate() {
+        if records.len() >= top_k {
+            break;
+        }
+        let rank = idx + 1;
+        let mut session_id: Option<String> = None;
+        let mut is_evidence = false;
         if let Ok(fact) = wiki.fact_get(&hit.fact_id) {
             for eid in &fact.entity_ids {
                 if let Ok(ent) = wiki.entity_get_by_id(*eid)
-                    && answer_entity_names.contains(&ent.name)
+                    && let Some(stripped) = ent.name.strip_prefix("session:")
                 {
-                    return Some(rank + 1);
+                    session_id = Some(stripped.to_string());
+                    if answer_entity_names.contains(&ent.name) {
+                        is_evidence = true;
+                    }
+                    break;
                 }
             }
+            records.push(RetrievalRecord {
+                rank,
+                fact_id: hit.fact_id.to_string(),
+                content: fact.content,
+                score: hit.score,
+                session_id,
+            });
+        }
+        if is_evidence && hit_rank.is_none() {
+            hit_rank = Some(rank);
         }
     }
-    None
+    (hit_rank, records)
 }
 
 fn run(args: &Args) -> Result<(), String> {
@@ -397,11 +447,21 @@ fn run(args: &Args) -> Result<(), String> {
     let mut hit_at_10 = 0usize;
     let mut reciprocal_sum = 0.0_f64;
     let mut by_type: std::collections::BTreeMap<String, (usize, usize)> = Default::default();
+    let mut emit_writer = if let Some(path) = &args.emit_retrievals {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("mkdir {parent:?}: {e}"))?;
+        }
+        let f = std::fs::File::create(path).map_err(|e| format!("open {path:?}: {e}"))?;
+        Some(std::io::BufWriter::new(f))
+    } else {
+        None
+    };
     let started = Instant::now();
     for (i, q) in questions.iter().take(n).enumerate() {
         let stamp_obs = temporal || args.time_decay_days.is_some();
         let (_dir, wiki) = build_store_for_question(q, temporal, stamp_obs, args.hybrid)?;
-        let rank = evaluate(q, &wiki, top_k, temporal, args.hybrid, args.time_decay_days);
+        let (rank, retrievals) =
+            evaluate(q, &wiki, top_k, temporal, args.hybrid, args.time_decay_days);
         if let Some(r) = rank {
             if r <= 1 {
                 hit_at_1 += 1;
@@ -419,9 +479,26 @@ fn run(args: &Args) -> Result<(), String> {
         if rank.is_some() {
             bucket.1 += 1;
         }
+        if let Some(w) = emit_writer.as_mut() {
+            use std::io::Write;
+            let row = serde_json::json!({
+                "question_id": q.question_id,
+                "question_type": q.question_type,
+                "question": q.question,
+                "question_date": q.question_date,
+                "answer_session_ids": q.answer_session_ids,
+                "retrievals": retrievals,
+                "first_evidence_rank": rank,
+            });
+            writeln!(w, "{row}").map_err(|e| format!("write retrievals row: {e}"))?;
+        }
         if (i + 1) % 10 == 0 {
             eprintln!("[{:>4}/{}] processed (last: {})", i + 1, n, q.question_id);
         }
+    }
+    if let Some(mut w) = emit_writer {
+        use std::io::Write;
+        w.flush().map_err(|e| format!("flush retrievals: {e}"))?;
     }
     let wall = started.elapsed();
     let denom = n as f64;
