@@ -172,6 +172,7 @@ pub fn run_edit(
                     observed_at: None,
                     superseded_at: None,
                     superseded_by: None,
+                    pinned: None,
                 },
             )?;
 

@@ -299,6 +299,55 @@ fn tool_feedback(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, Strin
     })
 }
 
+fn tool_pinned_context(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String> {
+    let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
+    let pinned = wiki.pinned_facts(limit).map_err(|e| e.to_string())?;
+    let entries: Vec<Value> = pinned
+        .into_iter()
+        .map(|f| {
+            let entity_names: Vec<String> = f
+                .entity_ids
+                .iter()
+                .filter_map(|eid| wiki.entity_get_by_id(*eid).ok())
+                .map(|e| e.name)
+                .collect();
+            json!({
+                "id": f.id.to_string(),
+                "content": f.content,
+                "fact_type": f.fact_type.to_string(),
+                "entity_names": entity_names,
+                "tags": f.tags,
+                "created_at": f.created_at,
+                "last_accessed_at": f.last_accessed_at,
+            })
+        })
+        .collect();
+    let payload = json!({"count": entries.len(), "facts": entries});
+    Ok(ToolCallResult {
+        content: vec![ContentBlock::text(payload.to_string())],
+        is_error: None,
+    })
+}
+
+fn tool_fact_pin(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String> {
+    let id_str = args
+        .get("id")
+        .and_then(|v| v.as_str())
+        .ok_or("id required")?;
+    let pinned = args
+        .get("pinned")
+        .and_then(|v| v.as_bool())
+        .ok_or("pinned (boolean) required — true to pin, false to unpin")?;
+    let fact_id = parse_fact_id(id_str)?;
+    wiki.fact_pin(&fact_id, pinned).map_err(|e| e.to_string())?;
+    Ok(ToolCallResult {
+        content: vec![ContentBlock::text(
+            json!({"id": id_str, "pinned": pinned}).to_string(),
+        )],
+        is_error: None,
+    })
+}
+
 fn tool_extract(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String> {
     let text = args
         .get("text")
@@ -1249,6 +1298,30 @@ pub fn list_tools() -> Vec<Tool> {
             }),
         },
         Tool {
+            name: "wg_pinned_context".into(),
+            description: "Return the agent's 'always loaded' tier — every fact tagged `pinned=true` (and not superseded), sorted by recent access. Inspired by Letta's core / archival memory split: an agent calls this once at session start to seed working context with the handful of facts it should know without searching. Pin / unpin via wg_fact_pin."
+                .into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "number", "default": 20, "description": "Cap on the returned set so the warmup envelope stays bounded."}
+                }
+            }),
+        },
+        Tool {
+            name: "wg_fact_pin".into(),
+            description: "Pin or unpin a fact in the always-loaded tier (see wg_pinned_context). Pass `pinned: true` to add or `pinned: false` to remove. Use sparingly — pinned facts compete with the agent's working-memory budget; reserve for long-lived rules and headline decisions."
+                .into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "id":     {"type": "string", "description": "Fact ULID"},
+                    "pinned": {"type": "boolean", "description": "true = pin, false = unpin"}
+                },
+                "required": ["id", "pinned"]
+            }),
+        },
+        Tool {
             name: "wg_extract".into(),
             description: "Heuristic conversation → fact extractor. Pass a chat transcript / paragraph as `text`; the tool splits it into sentence-like chunks, scores each one against the existing entity list (substring match) and a fact-type keyword detector (decided / always / pattern / claim / question), and returns ranked candidates above `min_confidence`. By default returns previews so the agent can edit / approve before committing — pass `apply: true` to persist every surviving candidate via `fact_add` (each one runs the dedup-hint and entity-name-alternatives checks). Designed to run fully offline; agents that have a hosted LLM can still extract themselves and call wg_fact_add_many directly.".into(),
             input_schema: json!({
@@ -1501,6 +1574,8 @@ fn call_tool(name: &str, args: &Value, wiki: &WikiGraph) -> Result<ToolCallResul
         "wg_search" => tool_search(args, wiki),
         "wg_feedback" => tool_feedback(args, wiki),
         "wg_extract" => tool_extract(args, wiki),
+        "wg_pinned_context" => tool_pinned_context(args, wiki),
+        "wg_fact_pin" => tool_fact_pin(args, wiki),
         "wg_entity_get" => tool_entity_get(args, wiki),
         "wg_entity_list" => tool_entity_list(args, wiki),
         "wg_fact_get" => tool_fact_get(args, wiki),
@@ -2141,6 +2216,50 @@ mod tests {
         // "short" must be filtered out (below MIN_SENTENCE_CHARS).
         let contents: Vec<&str> = cands.iter().filter_map(|c| c["content"].as_str()).collect();
         assert!(contents.iter().all(|c| !c.eq(&"short")));
+    }
+
+    #[test]
+    fn pinned_context_round_trips_through_pin_and_unpin() {
+        let (_dir, wiki) = open_temp_wiki();
+        let id = add_fact(&wiki, "use Postgres for hot writes", "Postgres");
+
+        // Empty by default — even though we just added a fact.
+        let result = tool_pinned_context(&json!({}), &wiki).unwrap();
+        let payload: Value =
+            serde_json::from_str(result.content[0].text.as_deref().unwrap()).unwrap();
+        assert_eq!(payload["count"], 0);
+
+        // Pin via the dedicated tool, then re-query — should appear.
+        tool_fact_pin(&json!({"id": id.0.to_string(), "pinned": true}), &wiki).unwrap();
+        let result = tool_pinned_context(&json!({}), &wiki).unwrap();
+        let payload: Value =
+            serde_json::from_str(result.content[0].text.as_deref().unwrap()).unwrap();
+        assert_eq!(payload["count"], 1);
+        assert_eq!(payload["facts"][0]["id"], id.0.to_string());
+
+        // Unpin clears it.
+        tool_fact_pin(&json!({"id": id.0.to_string(), "pinned": false}), &wiki).unwrap();
+        let result = tool_pinned_context(&json!({}), &wiki).unwrap();
+        let payload: Value =
+            serde_json::from_str(result.content[0].text.as_deref().unwrap()).unwrap();
+        assert_eq!(payload["count"], 0);
+    }
+
+    #[test]
+    fn pinned_context_excludes_superseded_facts() {
+        let (_dir, wiki) = open_temp_wiki();
+        let old = add_fact(&wiki, "use Redis 6", "Redis");
+        let new = add_fact(&wiki, "use Redis 7", "Redis");
+        // Pin the old fact, then supersede it. The pinned list should
+        // not surface a retired record even if `pinned=true` is still
+        // on it — that's a stale pin the agent can clean up later.
+        tool_fact_pin(&json!({"id": old.0.to_string(), "pinned": true}), &wiki).unwrap();
+        wiki.fact_supersede(&old, &new).unwrap();
+
+        let result = tool_pinned_context(&json!({}), &wiki).unwrap();
+        let payload: Value =
+            serde_json::from_str(result.content[0].text.as_deref().unwrap()).unwrap();
+        assert_eq!(payload["count"], 0);
     }
 
     #[test]

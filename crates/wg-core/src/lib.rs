@@ -405,6 +405,27 @@ impl WikiGraph {
         extract::extract_candidates(text, &self.store.read(), max_candidates)
     }
 
+    /// Top-N currently-pinned (`pinned=true` AND not superseded)
+    /// facts, sorted by `last_accessed_at` descending. The agent's
+    /// "always loaded" tier — Letta-style memory hierarchy without
+    /// the runtime.
+    pub fn pinned_facts(&self, limit: usize) -> Result<Vec<types::FactRecord>> {
+        self.store.read().pinned_facts(limit)
+    }
+
+    /// Toggle the pinned flag on a single fact. Wraps `fact_update`
+    /// with only the `pinned` field set so call sites don't have to
+    /// build a full FactUpdate just to flip one boolean.
+    pub fn fact_pin(&self, id: &FactId, pinned: bool) -> Result<()> {
+        self.store.write().fact_update(
+            id,
+            types::FactUpdate {
+                pinned: Some(pinned),
+                ..Default::default()
+            },
+        )
+    }
+
     pub fn add_fact(&self, input: FactInput) -> Result<FactId> {
         let id = {
             let mut store = self.store.write();
@@ -504,6 +525,7 @@ impl WikiGraph {
                 observed_at: None,
                 superseded_at: Some(now),
                 superseded_by: Some(*new_id),
+                pinned: None,
             },
         )
     }

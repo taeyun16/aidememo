@@ -1292,6 +1292,49 @@ impl Store {
     }
 
     /// List facts with options.
+    /// Return every fact tagged `pinned=true`, sorted by
+    /// `last_accessed_at` descending. Skips superseded facts so a
+    /// pinned-then-retired decision doesn't keep showing up. Bounded
+    /// by `limit` to keep the warmup envelope size predictable.
+    pub fn pinned_facts(&self, limit: usize) -> Result<Vec<FactRecord>> {
+        let read_txn = self
+            .db
+            .begin_read()
+            .map_err(|e| WgError::TransactionBegin {
+                source: Box::new(e),
+            })?;
+        let facts = read_txn
+            .open_table(FACTS_TABLE)
+            .map_err(|e| WgError::StoreRead {
+                table: "facts",
+                key: "<all>".to_string(),
+                source: Box::new(e),
+            })?;
+        let mut out: Vec<FactRecord> = Vec::new();
+        for entry in facts.iter().map_err(|e| WgError::StoreRead {
+            table: "facts",
+            key: "<iter>".to_string(),
+            source: Box::new(e),
+        })? {
+            let (_key, value) = entry.map_err(|e| WgError::StoreRead {
+                table: "facts",
+                key: "<entry>".to_string(),
+                source: Box::new(e),
+            })?;
+            let record: FactRecord =
+                serde_json::from_slice(value.value()).map_err(|e| WgError::Deserialize {
+                    context: "pinned facts".to_string(),
+                    source: e,
+                })?;
+            if record.pinned && record.superseded_at.is_none() {
+                out.push(record);
+            }
+        }
+        out.sort_by(|a, b| b.last_accessed_at.cmp(&a.last_accessed_at));
+        out.truncate(limit);
+        Ok(out)
+    }
+
     pub fn fact_list(&self, opts: FactListOpts) -> Result<Vec<FactRecord>> {
         let read_txn = self
             .db
@@ -1411,6 +1454,7 @@ impl Store {
                 observed_at: None,
                 superseded_at: None,
                 superseded_by: None,
+                pinned: None,
             },
         )?;
 
@@ -1965,6 +2009,7 @@ mod tests {
                     observed_at: None,
                     superseded_at: None,
                     superseded_by: None,
+                    pinned: None,
                 },
             )
             .unwrap();

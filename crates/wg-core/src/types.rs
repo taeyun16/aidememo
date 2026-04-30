@@ -419,6 +419,14 @@ pub struct FactRecord {
     pub access_count: u32,
     /// Last access timestamp (epoch ms).
     pub last_accessed_at: u64,
+    /// Memory-hierarchy flag: when `true`, the fact is part of the
+    /// "always loaded" tier — agents pull these into context at
+    /// session start via `wg_pinned_context` regardless of recency or
+    /// search relevance. Use sparingly: pinned facts compete with the
+    /// agent's working-memory budget. Defaulting to `false` means
+    /// existing wikis behave unchanged after migration.
+    #[serde(default)]
+    pub pinned: bool,
 }
 
 impl FactRecord {
@@ -444,6 +452,7 @@ impl FactRecord {
             superseded_by: None,
             access_count: 0,
             last_accessed_at: now,
+            pinned: false,
         }
     }
 
@@ -473,6 +482,9 @@ impl FactRecord {
         }
         if let Some(by) = input.superseded_by {
             self.superseded_by = Some(by);
+        }
+        if let Some(pinned) = input.pinned {
+            self.pinned = pinned;
         }
         self.updated_at = now;
     }
@@ -523,6 +535,11 @@ pub struct FactUpdate {
     pub superseded_at: Option<u64>,
     #[serde(default)]
     pub superseded_by: Option<FactId>,
+    /// Toggle the pinned-tier flag. `Some(true)` adds the fact to
+    /// `wg_pinned_context`; `Some(false)` removes it. `None` leaves
+    /// the existing value untouched (default for routine edits).
+    #[serde(default)]
+    pub pinned: Option<bool>,
 }
 
 /// Options for listing entities.
