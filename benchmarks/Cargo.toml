@@ -64,3 +64,7 @@ path = "src/bin/miracl_rerank_bench.rs"
 [[bin]]
 name = "miracl_model_sweep"
 path = "src/bin/miracl_model_sweep.rs"
+
+[[bin]]
+name = "longmemeval"
+path = "src/bin/longmemeval.rs"

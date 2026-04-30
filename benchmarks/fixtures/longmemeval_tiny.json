@@ -1,0 +1,57 @@
+[
+  {
+    "question_id": "q1",
+    "question_type": "single-session-user",
+    "question": "What database did we decide to use for hot writes?",
+    "answer": "Postgres",
+    "haystack_session_ids": ["s1", "s2", "s3"],
+    "haystack_sessions": [
+      [
+        {"role": "user", "content": "We have a write throughput problem."},
+        {"role": "assistant", "content": "After review we decided to migrate hot writes to Postgres given its WAL replication."},
+        {"role": "user", "content": "Sounds good, schedule the migration.", "has_answer": true}
+      ],
+      [
+        {"role": "user", "content": "Daily standup notes for Tuesday."},
+        {"role": "assistant", "content": "Discussed CI flakiness and shipping the new dashboard."}
+      ],
+      [
+        {"role": "user", "content": "Reminder about Friday's outage drill."},
+        {"role": "assistant", "content": "Set; runbook lives in the wiki."}
+      ]
+    ],
+    "answer_session_ids": ["s1"]
+  },
+  {
+    "question_id": "q2",
+    "question_type": "single-session-user",
+    "question": "What is the cache eviction policy?",
+    "answer": "LRU with TTL of 24 hours",
+    "haystack_session_ids": ["c1", "c2"],
+    "haystack_sessions": [
+      [
+        {"role": "user", "content": "Setting up Redis for the new feature."},
+        {"role": "assistant", "content": "Use LRU eviction with a TTL of 24 hours; that matches our staleness budget.", "has_answer": true}
+      ],
+      [
+        {"role": "user", "content": "Did the deploy go through?"},
+        {"role": "assistant", "content": "Yes, no incidents."}
+      ]
+    ],
+    "answer_session_ids": ["c1"]
+  },
+  {
+    "question_id": "q3",
+    "question_type": "temporal-reasoning",
+    "question": "Why are migrations always run in a transaction?",
+    "answer": "Convention to roll back on failure.",
+    "haystack_session_ids": ["m1"],
+    "haystack_sessions": [
+      [
+        {"role": "user", "content": "Why are migrations always run in a transaction?"},
+        {"role": "assistant", "content": "Convention: every schema migration runs in a transaction so we can roll back on failure.", "has_answer": true}
+      ]
+    ],
+    "answer_session_ids": ["m1"]
+  }
+]
