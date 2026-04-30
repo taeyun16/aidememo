@@ -267,6 +267,59 @@ top_k에 들어올 수 있게 함.
 soft bias는 score 압축으로 살아남게 한다** — 일반적인 retrieval 설계
 교훈.
 
+## 후속 측정: ONNX-based fastembed providers
+
+### bge-small-en-v1.5 (English-tuned, 384-dim, 90MB)
+
+OMEGA가 95.4%로 1위 찍은 retrieval pipeline의 핵심 임베딩. wg에
+`fastembed` cargo feature + `model.provider = "fastembed"` /
+`model.name = "bge-small-en-v1.5"` 조합으로 통합 (commit e0580f9).
+
+**500 questions, --hybrid + --embed-model bge-small-en-v1.5 + decay τ=90:**
+
+| metric | BM25 baseline | model2vec hybrid + decay | **bge-small-en-v1.5 + decay** | Δ vs baseline |
+|---|---|---|---|---|
+| R@1 | 0.866 | 0.858 | 0.808 | -5.8pt |
+| R@5 | 0.952 | 0.958 | 0.952 | 0 |
+| **R@10** | 0.974 | 0.978 | **0.984** | **+1.0pt ★** |
+| MRR | 0.902 | 0.898 | 0.868 | -3.4pt |
+
+**Per category R@10 (vs BM25 baseline):**
+
+| Category | BM25 | bge+decay | Δ |
+|---|---|---|---|
+| knowledge-update | 1.000 | 1.000 | 0 |
+| single-session-assistant | 1.000 | 1.000 | 0 |
+| **single-session-user** | 0.986 | **1.000** | **+1.4** |
+| multi-session | 0.985 | 0.985 | 0 |
+| **temporal-reasoning** | 0.940 | 0.962 | **+2.2** |
+| **single-session-preference** | 0.933 | **0.967** | **+3.4** |
+
+**해석:**
+- **R@10 = 0.984** — wg 측정 사상 최고. retrieval ceiling 더 끌어올림.
+- 약점 카테고리에서 의미 있는 개선: preference +3.4pt, temporal +2.2pt.
+- 단, R@1 / MRR은 약간 하락 — bge는 top-10 안에 정답을 더 많이
+  넣지만, 그 안의 rank는 약간 분산. LLM reader로 보면 동일 top-10이라
+  수치적 차이는 무시할 수 있을 가능성.
+- 비용: 500q에 wall 1390s (~2.8s/question, 매 question마다 모델 콜드
+  로드 포함). 운영 환경에선 한 번 로드 후 amortize됨.
+
+### 추가 옵션 (config.toml만 수정으로 활성)
+
+```toml
+# 다국어 (한국어 등) — bge 영어보다 한국어 우수
+[model]
+provider = "fastembed"
+name = "multilingual-e5-large"  # 1024-dim
+# 또는 name = "bge-m3"  # 1024-dim, BGE 다국어 SOTA
+
+# Cross-encoder reranker (in-process, no TEI server)
+[rerank]
+provider = "fastembed"
+model = "bge-reranker-v2-m3"  # 다국어
+top_k = 20
+```
+
 ## 후속 측정: hybrid (BM25 + semantic) vs BM25-only
 
 `--hybrid` flag로 in-process model2vec semantic search 활성화
