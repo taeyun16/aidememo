@@ -93,6 +93,11 @@ struct Args {
     /// future-dated noise is filtered. Hard cutoff — see negative
     /// finding in `.notes/bench-longmemeval.md`. Defaults off.
     temporal: bool,
+    /// Use hybrid search (BM25 + semantic via in-process model2vec)
+    /// instead of BM25-only. Adds the embedding-model load on the
+    /// first call per WikiGraph (~700-900 ms cold) — in this harness
+    /// that's once per question.
+    hybrid: bool,
     /// Time-decay tau in days. When set, the harness stamps
     /// `observed_at` from session dates (like `--temporal`) but does
     /// NOT apply a hard `until` cutoff; instead BM25 scores are
@@ -142,6 +147,7 @@ fn parse_args() -> Args {
     let mut limit: Option<usize> = None;
     let mut top_k: usize = 10;
     let mut temporal = false;
+    let mut hybrid = false;
     let mut time_decay_days: Option<f64> = None;
     let mut only_type: Option<String> = None;
 
@@ -165,6 +171,10 @@ fn parse_args() -> Args {
                 temporal = true;
                 i += 1;
             }
+            "--hybrid" => {
+                hybrid = true;
+                i += 1;
+            }
             "--time-decay-days" if i + 1 < argv.len() => {
                 time_decay_days = argv[i + 1].parse().ok();
                 i += 2;
@@ -181,6 +191,7 @@ fn parse_args() -> Args {
         limit,
         top_k,
         temporal,
+        hybrid,
         time_decay_days,
         only_type,
     }
@@ -190,12 +201,17 @@ fn build_store_for_question(
     q: &Question,
     temporal: bool,
     stamp_observed_at: bool,
+    hybrid: bool,
 ) -> Result<(tempfile::TempDir, WikiGraph), String> {
     let dir = tempfile::TempDir::new().map_err(|e| e.to_string())?;
     let mut config = Config::default();
     config.store.path = dir.path().join("store").to_string_lossy().into_owned();
-    // Skip the embedding-model load — BM25-only baseline.
-    config.search.semantic_index = "bm25".into();
+    // BM25-only by default; --hybrid flips to the in-process semantic
+    // path (model2vec embeddings + HNSW) at the cost of a one-time
+    // model load per WikiGraph instance.
+    if !hybrid {
+        config.search.semantic_index = "bm25".into();
+    }
     let store_path = PathBuf::from(&config.store.path);
     let wiki = WikiGraph::open(&store_path, config).map_err(|e| e.to_string())?;
 
@@ -258,6 +274,7 @@ fn evaluate(
     wiki: &WikiGraph,
     top_k: usize,
     temporal: bool,
+    hybrid: bool,
     time_decay_days: Option<f64>,
 ) -> Option<usize> {
     // BM25-only baseline. Returns the 1-indexed rank of the first hit
@@ -285,7 +302,7 @@ fn evaluate(
     };
     let opts = SearchOpts {
         limit: Some(candidate_limit),
-        bm25_only: true,
+        bm25_only: !hybrid,
         current_only: true,
         until,
         ..Default::default()
@@ -366,6 +383,7 @@ fn run(args: &Args) -> Result<(), String> {
     println!("questions: {n} (of {})", questions.len());
     println!("top_k:    {top_k}");
     println!("temporal: {temporal}");
+    println!("hybrid:   {}", args.hybrid);
     if let Some(t) = args.time_decay_days {
         println!("decay τ:  {t} days");
     }
@@ -382,8 +400,8 @@ fn run(args: &Args) -> Result<(), String> {
     let started = Instant::now();
     for (i, q) in questions.iter().take(n).enumerate() {
         let stamp_obs = temporal || args.time_decay_days.is_some();
-        let (_dir, wiki) = build_store_for_question(q, temporal, stamp_obs)?;
-        let rank = evaluate(q, &wiki, top_k, temporal, args.time_decay_days);
+        let (_dir, wiki) = build_store_for_question(q, temporal, stamp_obs, args.hybrid)?;
+        let rank = evaluate(q, &wiki, top_k, temporal, args.hybrid, args.time_decay_days);
         if let Some(r) = rank {
             if r <= 1 {
                 hit_at_1 += 1;

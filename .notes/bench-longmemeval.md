@@ -188,6 +188,39 @@ artifact (질문은 시점 t, evidence는 t 이후 LLM 생성).
 `--temporal` 플래그는 harness에 남겨둔다 (위키 스타일 데이터에 재시험할 때
 유용). LongMemEval-S baseline 보고는 BM25-only 0.974 그대로.
 
+## 후속 측정: 어댑터 학습 효과 (구조적 부적합)
+
+LongMemEval-S에서 어댑터 학습이 R@K에 주는 영향을 측정하려 했으나 데이터셋
+contract와 어댑터 메커니즘이 맞지 않아 의미있는 측정이 불가:
+
+1. 데이터셋 — 각 질문은 자체 haystack을 가지고 다른 질문과 fact를
+   공유하지 않는다. harness는 question별 isolated tempdir wiki를 만든다
+   (`build_store_for_question`).
+2. 어댑터 — fact ID별 bias. store별 meta에 저장되고 다른 store와 공유
+   불가. cross-question learning이 일어날 store-level state가 없다.
+
+**가능한 실험 형태들과 그 한계:**
+
+- **Within-query perfect-feedback (overfitting)**: 같은 질문에서 evidence
+  fact를 helpful로 표시 → 어댑터 학습 → 같은 질문 재검색. 모든 evidence가
+  rank 1에 들어오는 것을 보장하지만 이건 어댑터가 약속한 "boost" 메커니즘
+  자체의 단위 테스트일 뿐 — agent value를 측정하지 않음.
+- **Train/test split (cross-question)**: 250 questions train, 250 test.
+  하지만 train의 어댑터 state가 test wiki에 carry되지 않으므로 무의미.
+- **Repeated-query simulation**: 같은 질문을 여러 차례 묻는다고 가정하고
+  매 회 helpful 피드백 누적. 비현실적인 시나리오 (실제 agent는 같은
+  질문을 거의 반복 안 함).
+
+**결론**: 어댑터의 가치는 LongMemEval처럼 **하나의 질문 = 하나의
+isolated 짤막한 코퍼스** 형태가 아니라, **장기간 누적되는 도그푸드 위키
++ 반복적 사용자 질의** 환경에서 드러남. 우리 자체 wiki에서 6+ 개월간
+`wg feedback` 누적 후 retrieval 정확도 변화를 측정하는 게 맞는 실험.
+
+어댑터 자체가 작동한다는 증거는 wg-core 단위 테스트
+(`adapt::tests::weight_factor_*`)와 통합 테스트
+(`hybrid_search_adapter_promotes_helpful_facts`, #[ignore]에 있음 —
+모델 다운로드 필요)로 이미 확보됨. LongMemEval 측정은 skip.
+
 ## 후속 측정: time_decay soft-bias
 
 `--time-decay-days τ` 옵션 추가 (`benchmarks/src/bin/longmemeval.rs`).
@@ -233,6 +266,71 @@ top_k에 들어올 수 있게 함.
 **dataset에 dating noise가 있을 때 hard filter는 evidence를 잃지만
 soft bias는 score 압축으로 살아남게 한다** — 일반적인 retrieval 설계
 교훈.
+
+## 후속 측정: hybrid (BM25 + semantic) vs BM25-only
+
+`--hybrid` flag로 in-process model2vec semantic search 활성화
+(default `minishlab/potion-multilingual-128M`). 기존 약점인
+`single-session-preference` (BM25-only R@10 0.933) 끌어올리기 시도.
+
+**single-session-preference (30 questions):**
+
+| | R@1 | R@5 | R@10 | MRR | wall |
+|---|---|---|---|---|---|
+| BM25-only | 0.367 | 0.800 | 0.933 | 0.535 | 10s |
+| Hybrid (BM25 + semantic) | **0.433** | 0.800 | 0.933 | **0.596** | 30s |
+| Δ | +6.7pt | — | — | +6.1pt | 3× slower |
+
+**해석:** semantic이 BM25가 이미 찾은 top-10 안에서 정확한 답을 위로
+끌어올림 — R@10 ceiling은 같지만 R@1과 MRR이 의미있게 개선. preference
+("내가 어떤 음식을 좋아하나" 같은 의미 매칭이 중요한 질문)에 적합.
+
+**Full 500 questions, hybrid + decay τ=90:**
+
+| 설정 | R@1 | R@5 | **R@10** | MRR |
+|---|---|---|---|---|
+| baseline (BM25-only) | 0.866 | 0.952 | 0.974 | 0.902 |
+| BM25 + decay-90 | 0.858 | 0.958 | **0.978** | 0.898 |
+| Hybrid + decay-90 | 0.762 | 0.934 | 0.974 | 0.832 |
+
+**해석:** Hybrid은 카테고리별로 영향이 갈린다:
+
+| Category | BM25 base | Hybrid+decay | Δ |
+|---|---|---|---|
+| single-session-user | 0.986 | 1.000 | **+1.4** |
+| temporal-reasoning | 0.940 | 0.962 | **+2.2** |
+| multi-session | 0.985 | 0.985 | 0 |
+| knowledge-update | 1.000 | 0.987 | -1.3 |
+| single-session-assistant | 1.000 | 0.982 | -1.8 |
+| single-session-preference | 0.933 | 0.867 | -6.6 |
+
+multilingual potion-128M이 영어 chat 코퍼스에 완벽 align되지 않아
+preference 같은 정확 매칭 의존 카테고리는 오히려 noise 추가. 전체
+R@1/R@5/MRR 모두 BM25-only baseline보다 낮음.
+
+**카테고리별 권장 config:**
+
+- **temporal-reasoning** → BM25 + decay τ=90 (0.940 → 0.955)
+- **single-session-preference** → hybrid (0.367 → 0.433 R@1)
+- **나머지** → BM25-only이 가장 견고
+
+운영 차원에서: 도메인별 측정 후 config 분기 또는 query classifier로
+설정을 다르게 가는 방향이 정량적으로 정당화됨. 단일 "best config"는
+없다.
+
+## TEI rerank (skipped — 별도 인프라 필요)
+
+`rerank.provider = "tei"` + `rerank.endpoint = http://...` + BGE-reranker
+서버를 띄우면 hybrid 결과의 top-K를 cross-encoder로 재정렬. 본 측정에선
+TEI 인스턴스가 없어 skip. 예상 ROI:
+
+- preference 같은 짧은 사실 매칭에서 +5-15pt R@1 가능 (cross-encoder가
+  강한 영역)
+- 모든 카테고리에서 추가 latency 50-200 ms/query (TEI 호출 + rerank)
+- 운영 권장: query type을 알 수 있을 때만 rerank 활성화 (bool flag로
+  agent가 결정)
+
+수치는 자체 TEI 서버가 있을 때 측정 후 추가 필요.
 
 ## 향후 측정
 
