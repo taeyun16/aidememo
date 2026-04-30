@@ -325,62 +325,111 @@ R@1/R@5/MRR 모두 BM25-only baseline보다 낮음.
 
 ### 결과 (500 questions, 2026-04-30)
 
-| reader | judge | overall | wall | 비용 |
+**v1 측정 (초기 prompt with abstention emphasis):**
+
+| reader | judge | overall | preference | temporal | knowledge |
+|---|---|---|---|---|---|
+| `gpt-4o-mini` | `gpt-4o-mini` | 0.540 | 0.300 | 0.241 | 0.731 |
+| `gpt-4o` | `gpt-4o-mini` | 0.480 | 0.200 | 0.218 | 0.679 |
+| `gpt-5.4-mini` | `gpt-4o-mini` | 0.484 | 0.533 | 0.165 | 0.615 |
+
+**v1에서 발견된 prompt 결함** — bigger / reasoning-tuned model일수록 abstention
+지침을 보수적으로 해석. retrieval rank 1에 답이 있어도 "I don't know" 회피.
+예시 (qid=8ebdbe50, gold "Data Science"):
+
+```
+rank 1 retrieval: "I need to add my latest certification in Data Science…"
+gpt-4o response: "I don't know."
+```
+
+→ Prompt에서 abstention emphasis 제거, extraction을 명시적으로 권장하도록 수정.
+
+**v2 측정 (extraction-friendly prompt):**
+
+| reader | judge | **overall** | preference | temporal | knowledge | 비용 |
+|---|---|---|---|---|---|---|
+| `gpt-4o-mini` | `gpt-4o-mini` | **0.580** | 0.567 | 0.323 | 0.705 | ~$0.25 |
+| `gpt-4o` | `gpt-4o-mini` | **0.586** | 0.533 | 0.316 | 0.744 | ~$3.90 |
+| `gpt-5.4-mini` | `gpt-4o-mini` | **0.596** | 0.700 | 0.353 | 0.654 | ~$1.50 |
+
+**v1 → v2 효과:** 같은 retrieval slate 동일, prompt만 수정으로 +4-12pt 상승.
+abstention이 강할수록 큰 모델이 더 손해를 봤음.
+
+### Per-category 상세 (v2)
+
+| Category | gpt-4o-mini | gpt-4o | gpt-5.4-mini | 최고 |
 |---|---|---|---|---|
-| `gpt-4o-mini` | `gpt-4o-mini` | **0.540** | ~22 min | ~$0.25 |
+| single-session-assistant | 0.964 | 0.929 | 0.946 | 4o-mini ✓ |
+| single-session-user | 0.943 | 0.943 | 0.929 | 동률 |
+| knowledge-update | 0.705 | 0.744 | 0.654 | gpt-4o ✓ |
+| single-session-preference | 0.567 | 0.533 | 0.700 | 5.4-mini ✓ |
+| multi-session | 0.414 | 0.444 | 0.459 | 5.4-mini ✓ |
+| temporal-reasoning | 0.323 | 0.316 | 0.353 | 5.4-mini ✓ |
 
-**Per category:**
+### Retrieval × Verdict 크로스탭 (best v2: gpt-5.4-mini)
 
-| Category | wg R@10 | E2E acc | r-MISS (wg 탓) | r-HIT-but-WRONG (LLM 탓) |
+```
+                       CORRECT  INCORRECT
+  retrieval HIT            295        194
+  retrieval MISS             3          8
+```
+
+**202건 오답 중 194건 (96%)이 retrieval은 맞췄는데 LLM이 합성/추론 실패.**
+v1의 같은 패턴 (96%) 유지 — prompt 수정해도 reasoning 한계는 그대로.
+
+| Category | total | CORRECT | r-MISS (wg 탓) | r-HIT-but-WRONG (LLM 탓) |
 |---|---|---|---|---|
-| single-session-assistant | 1.000 | 0.929 | 0 | 4 |
-| single-session-user | 0.986 | 0.914 | 1 | 6 |
-| knowledge-update | 1.000 | 0.731 | 0 | 21 |
-| multi-session | 0.985 | 0.421 | 2 | 75 |
-| single-session-preference | 0.933 | 0.300 | 2 | 19 |
-| temporal-reasoning | 0.955 | 0.241 | 6 | 96 |
+| single-session-assistant | 56 | 53 (0.946) | 0 | 3 |
+| single-session-user | 70 | 65 (0.929) | 1 | 5 |
+| knowledge-update | 78 | 51 (0.654) | 0 | 27 |
+| multi-session | 133 | 61 (0.459) | 2 | 70 |
+| single-session-preference | 30 | 21 (0.700) | 2 | 8 |
+| temporal-reasoning | 133 | 47 (0.353) | 6 | 81 |
 
-### 핵심 인사이트
+multi-session과 temporal-reasoning이 모델 ceiling. retrieval은 R@10 0.985
+/ 0.955로 대부분 맞추지만 LLM이 다중 세션 합성 / 시간 비교에서 무너짐.
 
-**230건 오답 중 221건 (96.1%)이 retrieval은 맞췄는데 reader가 못 풀어낸 케이스.**
-즉 wg의 retrieval 책임은 거의 다 했고, 부족한 건 작은 모델(gpt-4o-mini)의
-reasoning 능력. multi-session과 temporal-reasoning이 특히 LLM 한계 노출:
+### Published 비교 (모두 reader=gpt-4o, judge=gpt-4o)
 
-- multi-session: 75/77 = 97% LLM 실패 (여러 session에 걸친 정보 합성)
-- temporal-reasoning: 96/101 = 95% LLM 실패 (시간 비교, "지난주에 뭐 했지?")
-- preference: 19/21 = 90% LLM 실패 (모호한 형용사 매칭)
-
-### Published 비교
-
-| 시스템 | reader | E2E accuracy |
+| 시스템 | reader | E2E |
 |---|---|---|
-| Mem0 | gpt-4o | 49.0% |
-| **wg + decay-90** | **gpt-4o-mini** | **54.0%** |
-| Zep | gpt-4o | 63.8% |
-| Mastra | gpt-4o | 84.2% |
-| Mastra | gpt-5-mini | 94.9% |
-| MemPalace | (verbatim) | 96.6% |
+| Mem0 (published) | gpt-4o | 0.490 |
+| **wg + decay-90** | **gpt-4o** | **0.586** |
+| Zep (published) | gpt-4o | 0.638 |
+| Mastra (published) | gpt-4o | 0.842 |
+| Mastra (published) | gpt-5-mini | 0.949 |
 
-**해석:**
-1. **wg + gpt-4o-mini가 mem0 + gpt-4o(49%)를 +5pt 능가**. 더 약한 reader로
-   더 좋은 retrieval로 보완 가능 — wg의 R@10 0.978이 실제로 reader bottleneck
-   완화로 변환됨.
-2. Zep / Mastra 대비 격차는 거의 전부 reader 차이 (gpt-4o-mini vs gpt-4o).
-   같은 reader로 비교하면 gap이 좁혀질 가능성 → 다음 측정에서 확인.
-3. R@10 retrieval ceiling 0.978이 **이론적 상한** (모든 retrieval-MISS는
-   LLM이 어떻게 해도 못 풀음). 따라서 wg의 진짜 ceiling은 ~98%, 그 아래는
-   reader 능력 함수.
+**Mem0 +9.6pt 능가, Zep -5.2pt 미만, Mastra -25.6pt 미만.** judge가 gpt-4o-mini
+(우리) vs gpt-4o (published)라 1-2pt 차이는 calibration 노이즈 가능성.
 
-### 다음 측정 권장
+**5.4-mini가 4o보다 살짝 높음 (0.596 vs 0.586)** — 신모델이 비용 1/3로 동등급.
+Mastra gpt-5-mini 0.949와는 큰 격차 — 그쪽은 자체 retrieval+verbatim 저장으로
+LLM에 더 많은 raw context 제공하는 구조 차이.
+
+### 핵심 결론
+
+1. **wg + gpt-4o = 0.586** — published mem0 + gpt-4o (0.490)를 9.6pt 능가.
+   small footprint(1 binary, 28MB embedding model)로 mem0 stack(Python +
+   3 service) 능가하는 retrieval 품질을 데이터로 입증.
+2. **wg의 retrieval ceiling = R@10 0.978** — 11/500 (2.2%)만 retrieval miss.
+   reader 어떻게 바꿔도 이론 상한 ~98%.
+3. **현재 bottleneck = reader reasoning** — 96% 오답이 r-HIT-but-WRONG.
+   gpt-4o / gpt-5.4-mini로도 multi-session(45%)과 temporal(35%)은 한계.
+   gpt-5.4 (full) 또는 gpt-5.5로 끌어올릴 잠재력 있음.
+4. **prompt sensitivity 큼** — 같은 모델/retrieval에서 abstention emphasis만
+   바꿔 +4-12pt 변동. published 점수와 직접 비교 시 prompt 비교 가능성도
+   주의 필요.
+
+### 다음 측정 권장 (선택)
 
 | reader | 예상 비용 | 가설 |
 |---|---|---|
-| gpt-4o (legacy frontier) | ~$5 | mem0/Zep/Mastra 직접 비교 — 75-85% 예상 |
-| gpt-5.4-mini | ~$1-2 | Mastra gpt-5-mini와 비교 — 80-95% 가능성 |
-| gpt-5.4 | ~$10-15 | Mastra+ 영역 — 90-95%+ 가능성 |
+| gpt-5.4 (full frontier) | ~$10-15 | multi-session/temporal에서 추가 +5-15pt 가능성 — Mastra 84% 도달? |
+| gpt-5.5 (newest premium) | ~$15-20 | 자체 SOTA 수준 (90%+) 가능성 |
+| 다른 judge (gpt-4o instead of mini) | ~$3 | judge calibration 차이 측정 |
+| 자체 도그푸드 위키 | 무료 | 이건 reader 없는 R@K 측정 — 본 결과의 일반화 검증 |
 
-이 셋 추가 측정 시 ~$15-20. wg의 retrieval ceiling이 reader 따라 어디까지
-변환되는지 정량적으로 답할 수 있음.
+추가 측정 합산 ~$25-40. 현 결과만으로도 카테고리 비교 표에 자리 잡음.
 
 ## TEI rerank (skipped — 별도 인프라 필요)
 

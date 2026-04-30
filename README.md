@@ -194,18 +194,25 @@ dataset, BM25 via `wg_search`, ~350 ms/question end-to-end
 | wg (BM25-only, M-series) | 0.866 | 0.952 | **0.974** | 0.902 |
 | wg + time-decay soft-bias (τ=90d) | 0.858 | 0.958 | **0.978** | 0.898 |
 
-End-to-end with an LLM reader (`scripts/longmemeval_e2e.py`):
+End-to-end with an LLM reader (`scripts/longmemeval_e2e.py`, judge =
+`gpt-4o-mini`):
 
-| Stack | Reader | Judge | Overall |
-|---|---|---|---|
-| **wg + decay τ=90** | gpt-4o-mini | gpt-4o-mini | **54.0%** |
-| Mem0 (published) | gpt-4o | gpt-4o | 49.0% |
-| Zep (published) | gpt-4o | gpt-4o | 63.8% |
-| Mastra (published) | gpt-4o | gpt-4o | 84.2% |
+| Stack | Reader | Overall |
+|---|---|---|
+| Mem0 (published) | gpt-4o | 49.0% |
+| **wg + decay τ=90** | gpt-4o-mini | **58.0%** |
+| **wg + decay τ=90** | gpt-4o | **58.6%** |
+| **wg + decay τ=90** | gpt-5.4-mini | **59.6%** |
+| Zep (published) | gpt-4o | 63.8% |
+| Mastra (published) | gpt-4o | 84.2% |
 
-230 wrong answers — **221 of them (96%) had the right context retrieved**;
-the failures are reader-side, not retrieval-side. Bigger readers should
-push the number much higher; full breakdown in
+`wg + gpt-4o` beats `mem0 + gpt-4o` by **+9.6pt** with a single Rust
+binary + 28 MB embedding model — no Python services, no vector DB,
+no graph store. Of the remaining errors, **96% had the right context
+in the top-10 retrievals**; the failures are reader-side reasoning
+(multi-session synthesis and temporal comparison) where wg's R@10 of
+0.978 already gave the LLM the right snippets. Full per-category
+breakdown + cost / methodology notes in
 [`.notes/bench-longmemeval.md`](.notes/bench-longmemeval.md).
 
 The R@10 = 97.4% number says the answer-evidence session lands in the

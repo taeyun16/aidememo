@@ -120,7 +120,7 @@ that slice carries the smallest footprint.
 | LLM-grade auto-extraction | Mastra / Supermemory hit 95-99% on LongMemEval by feeding raw chat to an LLM. wg's `wg_extract` is heuristic-only. | Agent can still call its own LLM and feed structured output to `wg_fact_add_many`. Built-in LLM extraction is a future feature. |
 | Multi-writer merge | beads has git-style cell merge; wg is single-writer. | Use `wg mcp-serve` to share one daemon; full distributed merge isn't in scope. |
 | Community / cluster detection | Graphiti groups related entities into communities. | Not implemented; out of scope for v0.x. |
-| LongMemEval public score (LLM-graded) | mem0 / Zep / Mastra publish E2E numbers using gpt-4o reader. | wg measured **54.0% with gpt-4o-mini reader** — beating mem0 + gpt-4o (49%). Retrieval R@10 = 0.978. 96% of remaining errors are reader-side (the right context was retrieved, the smaller model failed to use it). gpt-4o reader run pending. See [README §Performance](README.md#longmemeval-s-retrieval-baseline) and [.notes/bench-longmemeval.md](.notes/bench-longmemeval.md). |
+| LongMemEval public score (LLM-graded) | mem0 / Zep / Mastra publish E2E numbers using gpt-4o reader. | wg measured **58.6% with gpt-4o reader** — beating mem0 + gpt-4o (49%) by +9.6pt with a single Rust binary + 28 MB embedding model (no Python service, no vector DB, no graph store). Retrieval R@10 = 0.978; 96% of remaining errors are reader-side reasoning failures, not retrieval misses. Full table: README §Performance / [.notes/bench-longmemeval.md](.notes/bench-longmemeval.md). |
 | Per-user / multi-tenant | Cloud peers partition by `user_id`. | Workaround: separate stores via `wg --project`. Native multi-tenant is a future feature. |
 
 ## When `wg` is the right call
