@@ -318,6 +318,70 @@ R@1/R@5/MRR 모두 BM25-only baseline보다 낮음.
 설정을 다르게 가는 방향이 정량적으로 정당화됨. 단일 "best config"는
 없다.
 
+## E2E LLM 측정 (Phase 2: reader + judge)
+
+`scripts/longmemeval_e2e.py`로 wg retrieval JSONL + OpenAI API
+호출. retrieval은 best config (BM25 + decay τ=90, R@10 0.978).
+
+### 결과 (500 questions, 2026-04-30)
+
+| reader | judge | overall | wall | 비용 |
+|---|---|---|---|---|
+| `gpt-4o-mini` | `gpt-4o-mini` | **0.540** | ~22 min | ~$0.25 |
+
+**Per category:**
+
+| Category | wg R@10 | E2E acc | r-MISS (wg 탓) | r-HIT-but-WRONG (LLM 탓) |
+|---|---|---|---|---|
+| single-session-assistant | 1.000 | 0.929 | 0 | 4 |
+| single-session-user | 0.986 | 0.914 | 1 | 6 |
+| knowledge-update | 1.000 | 0.731 | 0 | 21 |
+| multi-session | 0.985 | 0.421 | 2 | 75 |
+| single-session-preference | 0.933 | 0.300 | 2 | 19 |
+| temporal-reasoning | 0.955 | 0.241 | 6 | 96 |
+
+### 핵심 인사이트
+
+**230건 오답 중 221건 (96.1%)이 retrieval은 맞췄는데 reader가 못 풀어낸 케이스.**
+즉 wg의 retrieval 책임은 거의 다 했고, 부족한 건 작은 모델(gpt-4o-mini)의
+reasoning 능력. multi-session과 temporal-reasoning이 특히 LLM 한계 노출:
+
+- multi-session: 75/77 = 97% LLM 실패 (여러 session에 걸친 정보 합성)
+- temporal-reasoning: 96/101 = 95% LLM 실패 (시간 비교, "지난주에 뭐 했지?")
+- preference: 19/21 = 90% LLM 실패 (모호한 형용사 매칭)
+
+### Published 비교
+
+| 시스템 | reader | E2E accuracy |
+|---|---|---|
+| Mem0 | gpt-4o | 49.0% |
+| **wg + decay-90** | **gpt-4o-mini** | **54.0%** |
+| Zep | gpt-4o | 63.8% |
+| Mastra | gpt-4o | 84.2% |
+| Mastra | gpt-5-mini | 94.9% |
+| MemPalace | (verbatim) | 96.6% |
+
+**해석:**
+1. **wg + gpt-4o-mini가 mem0 + gpt-4o(49%)를 +5pt 능가**. 더 약한 reader로
+   더 좋은 retrieval로 보완 가능 — wg의 R@10 0.978이 실제로 reader bottleneck
+   완화로 변환됨.
+2. Zep / Mastra 대비 격차는 거의 전부 reader 차이 (gpt-4o-mini vs gpt-4o).
+   같은 reader로 비교하면 gap이 좁혀질 가능성 → 다음 측정에서 확인.
+3. R@10 retrieval ceiling 0.978이 **이론적 상한** (모든 retrieval-MISS는
+   LLM이 어떻게 해도 못 풀음). 따라서 wg의 진짜 ceiling은 ~98%, 그 아래는
+   reader 능력 함수.
+
+### 다음 측정 권장
+
+| reader | 예상 비용 | 가설 |
+|---|---|---|
+| gpt-4o (legacy frontier) | ~$5 | mem0/Zep/Mastra 직접 비교 — 75-85% 예상 |
+| gpt-5.4-mini | ~$1-2 | Mastra gpt-5-mini와 비교 — 80-95% 가능성 |
+| gpt-5.4 | ~$10-15 | Mastra+ 영역 — 90-95%+ 가능성 |
+
+이 셋 추가 측정 시 ~$15-20. wg의 retrieval ceiling이 reader 따라 어디까지
+변환되는지 정량적으로 답할 수 있음.
+
 ## TEI rerank (skipped — 별도 인프라 필요)
 
 `rerank.provider = "tei"` + `rerank.endpoint = http://...` + BGE-reranker
