@@ -115,6 +115,12 @@ See [`AGENTS.md`](AGENTS.md) and
 [`wg-skill/setup-claude-code.md`](wg-skill/setup-claude-code.md)
 for full integration details.
 
+## How does `wg` compare?
+
+[`COMPARE.md`](COMPARE.md) has the head-to-head against mem0, Letta,
+Graphiti / Zep, and beads — what `wg` wins, where it lags, and when
+to reach for something else.
+
 ## Architecture
 
 | Crate | Purpose |
