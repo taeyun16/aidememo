@@ -84,6 +84,27 @@ pub enum Command {
     Pending(PendingSub),
     VectorRebuild(VectorRebuildSub),
     Daemon(daemon::DaemonSub),
+    Extract(ExtractSub),
+    Session(SessionSub),
+}
+
+#[derive(Debug, Clone)]
+pub struct ExtractSub {
+    pub apply: bool,
+    pub min_confidence: Option<f32>,
+    pub max_candidates: Option<usize>,
+    pub from_stdin: bool,
+    pub text: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub enum SessionSub {
+    Start {
+        pinned_limit: Option<usize>,
+        recent_limit: Option<usize>,
+        recent_days: Option<u64>,
+        top_entities_limit: Option<usize>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -163,6 +184,15 @@ pub enum FactSub {
     Feedback {
         helpful: bool,
         id: String,
+    },
+    Pin {
+        id: String,
+    },
+    Unpin {
+        id: String,
+    },
+    Pinned {
+        limit: Option<usize>,
     },
     Supersede {
         old_id: String,
@@ -333,6 +363,8 @@ pub fn build_cli() -> OptionParser<Args> {
         pending_cmd,
         vector_rebuild_command(),
         daemon_cmd,
+        extract_command(),
+        session_command(),
     ]);
 
     construct!(Args {
@@ -347,6 +379,71 @@ pub fn build_cli() -> OptionParser<Args> {
 
 fn singleton_list(parser: impl Parser<Option<String>>) -> impl Parser<Option<Vec<String>>> {
     parser.map(|value| value.map(|value| vec![value]))
+}
+
+fn extract_command() -> impl Parser<Command> {
+    let apply = long("apply")
+        .help("Persist every surviving candidate via fact_add (otherwise preview only)")
+        .switch();
+    let min_confidence = long("min-confidence")
+        .help("Drop candidates below this score (0.0-1.0, default 0.5)")
+        .argument::<f32>("F")
+        .optional();
+    let max_candidates = long("max-candidates")
+        .help("Cap on candidates returned (default 20)")
+        .argument::<usize>("N")
+        .optional();
+    let from_stdin = long("from-stdin")
+        .help("Read text from stdin instead of the TEXT positional")
+        .switch();
+    let text = positional::<String>("TEXT").optional();
+
+    construct!(ExtractSub {
+        apply,
+        min_confidence,
+        max_candidates,
+        from_stdin,
+        text,
+    })
+    .map(Command::Extract)
+    .to_options()
+    .command("extract")
+    .help("Heuristic conversation/text → candidate facts (preview or --apply)")
+}
+
+fn session_command() -> impl Parser<Command> {
+    let pinned_limit = long("pinned-limit")
+        .help("Max pinned facts to surface (default 20)")
+        .argument::<usize>("N")
+        .optional();
+    let recent_limit = long("recent-limit")
+        .help("Max recent facts to surface (default 10)")
+        .argument::<usize>("N")
+        .optional();
+    let recent_days = long("recent-days")
+        .help("Lookback window for recent facts (default 7)")
+        .argument::<u64>("DAYS")
+        .optional();
+    let top_entities_limit = long("top-entities")
+        .help("Max top-entities to surface (default 10)")
+        .argument::<usize>("N")
+        .optional();
+
+    let start = construct!(SessionSub::Start {
+        pinned_limit,
+        recent_limit,
+        recent_days,
+        top_entities_limit,
+    })
+    .to_options()
+    .command("start")
+    .help("Return one envelope: stats + pinned + recent + top entities + open issues");
+
+    construct!([start])
+        .map(Command::Session)
+        .to_options()
+        .command("session")
+        .help("Agent session helpers (warmup envelope)")
 }
 
 fn entity_command() -> impl Parser<Command> {
@@ -610,12 +707,36 @@ fn fact_command() -> impl Parser<Command> {
         .command("supersede")
         .help("Mark OLD_ID as superseded by NEW_ID (validity window)");
 
-    construct!([add, get, list, delete, feedback, supersede])
-        .map(Command::Fact)
+    let id = positional::<String>("ID");
+    let pin = construct!(FactSub::Pin { id })
         .to_options()
-        .command("fact")
-        .short('f')
-        .help("Fact management commands")
+        .command("pin")
+        .help("Add a fact to the always-loaded tier (wg fact pinned, wg_pinned_context)");
+
+    let id = positional::<String>("ID");
+    let unpin = construct!(FactSub::Unpin { id })
+        .to_options()
+        .command("unpin")
+        .help("Remove a fact from the always-loaded tier");
+
+    let limit = long("limit")
+        .short('l')
+        .help("Cap on facts returned")
+        .argument::<usize>("N")
+        .optional();
+    let pinned = construct!(FactSub::Pinned { limit })
+        .to_options()
+        .command("pinned")
+        .help("List pinned facts (the always-loaded tier), most-recently-accessed first");
+
+    construct!([
+        add, get, list, delete, feedback, supersede, pin, unpin, pinned
+    ])
+    .map(Command::Fact)
+    .to_options()
+    .command("fact")
+    .short('f')
+    .help("Fact management commands")
 }
 
 fn traverse_command() -> impl Parser<Command> {

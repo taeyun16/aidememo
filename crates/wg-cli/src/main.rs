@@ -112,6 +112,8 @@ fn main() {
         cmd::Command::Pending(sub) => cmd::pending::run_pending_review(sub),
         cmd::Command::VectorRebuild(sub) => handle_vector_rebuild(&store_path, config, sub),
         cmd::Command::Daemon(sub) => cmd::daemon::run_daemon(sub, store_path.clone()),
+        cmd::Command::Extract(sub) => handle_extract(&store_path, config, sub, json),
+        cmd::Command::Session(sub) => handle_session(&store_path, config, sub, json),
     };
 
     match result {
@@ -654,6 +656,262 @@ fn handle_fact(
                 Ok(format!("Superseded {old_id} by {new_id}"))
             })
         }
+        cmd::FactSub::Pin { id } => with_wiki(path, config, |wiki| {
+            let fact_id = parse_fact_id_str(&id)?;
+            wiki.fact_pin(&fact_id, true)?;
+            Ok(format!("Pinned fact {id}"))
+        }),
+        cmd::FactSub::Unpin { id } => with_wiki(path, config, |wiki| {
+            let fact_id = parse_fact_id_str(&id)?;
+            wiki.fact_pin(&fact_id, false)?;
+            Ok(format!("Unpinned fact {id}"))
+        }),
+        cmd::FactSub::Pinned { limit } => with_wiki(path, config, |wiki| {
+            let limit = limit.unwrap_or(20);
+            let pinned = wiki.pinned_facts(limit)?;
+            if json {
+                return serde_json::to_string_pretty(&pinned).map_err(|e| WgError::Serialize {
+                    context: "fact pinned (json)".to_string(),
+                    source: e,
+                });
+            }
+            if pinned.is_empty() {
+                return Ok("No pinned facts.".to_string());
+            }
+            let mut out = format!("Pinned facts (top {}):", pinned.len());
+            for f in &pinned {
+                out.push_str(&format!(
+                    "\n  [{}] {} ({})",
+                    f.id,
+                    f.content.chars().take(80).collect::<String>(),
+                    f.fact_type,
+                ));
+            }
+            Ok(out)
+        }),
+    }
+}
+
+fn parse_fact_id_str(s: &str) -> Result<wg_core::FactId, WgError> {
+    wg_core::ulid::Ulid::from_string(s)
+        .map(wg_core::FactId)
+        .map_err(|_| WgError::InvalidInput(format!("Invalid fact ID: {s}")))
+}
+
+fn handle_extract(
+    store_path: &Path,
+    config: Config,
+    sub: cmd::ExtractSub,
+    json: bool,
+) -> Result<String, WgError> {
+    let cmd::ExtractSub {
+        apply,
+        min_confidence,
+        max_candidates,
+        from_stdin,
+        text,
+    } = sub;
+    let raw_text = if from_stdin {
+        use std::io::Read;
+        let mut buf = String::new();
+        std::io::stdin()
+            .read_to_string(&mut buf)
+            .map_err(|e| WgError::InvalidInput(format!("read stdin: {e}")))?;
+        buf
+    } else {
+        text.ok_or_else(|| {
+            WgError::InvalidInput("provide TEXT positional or pass --from-stdin".into())
+        })?
+    };
+    let min_confidence = min_confidence.unwrap_or(0.5);
+    let max_candidates = max_candidates.unwrap_or(20);
+
+    with_wiki_mut(store_path, config, |wiki| {
+        let mut candidates = wiki.extract_candidates(&raw_text, max_candidates)?;
+        candidates.retain(|c| c.confidence >= min_confidence);
+
+        if !apply {
+            if json {
+                return serde_json::to_string_pretty(
+                    &serde_json::json!({"applied": false, "candidates": candidates}),
+                )
+                .map_err(|e| WgError::Serialize {
+                    context: "extract (json)".into(),
+                    source: e,
+                });
+            }
+            if candidates.is_empty() {
+                return Ok("No candidates above threshold.".into());
+            }
+            let mut out = format!("{} candidate fact(s):", candidates.len());
+            for c in &candidates {
+                out.push_str(&format!(
+                    "\n  [{:.2}] {:10} {} {}",
+                    c.confidence,
+                    c.suggested_fact_type,
+                    if c.suggested_entities.is_empty() {
+                        "—"
+                    } else {
+                        "→"
+                    },
+                    if c.suggested_entities.is_empty() {
+                        c.content.clone()
+                    } else {
+                        format!(
+                            "{} (entities: {})",
+                            c.content,
+                            c.suggested_entities.join(", ")
+                        )
+                    },
+                ));
+            }
+            return Ok(out);
+        }
+
+        let mut added: Vec<serde_json::Value> = Vec::new();
+        for cand in &candidates {
+            let mut entity_ids = Vec::with_capacity(cand.suggested_entities.len());
+            for name in &cand.suggested_entities {
+                let id = match wiki.resolve_entity(name) {
+                    Ok(id) => id,
+                    Err(_) => wiki.entity_add(wg_core::EntityInput {
+                        name: name.clone(),
+                        entity_type: Some(wg_core::EntityType::Unknown),
+                        ..Default::default()
+                    })?,
+                };
+                entity_ids.push(id);
+            }
+            let id = wiki.add_fact(wg_core::FactInput {
+                content: cand.content.clone(),
+                fact_type: Some(cand.suggested_fact_type),
+                entity_ids: if entity_ids.is_empty() {
+                    None
+                } else {
+                    Some(entity_ids)
+                },
+                tags: None,
+                source: None,
+                source_confidence: Some(cand.confidence),
+                observed_at: None,
+            })?;
+            added.push(serde_json::json!({
+                "id": id.to_string(),
+                "content": cand.content,
+                "fact_type": cand.suggested_fact_type.to_string(),
+                "entities": cand.suggested_entities,
+                "confidence": cand.confidence,
+            }));
+        }
+        if json {
+            return serde_json::to_string_pretty(
+                &serde_json::json!({"applied": true, "added": added}),
+            )
+            .map_err(|e| WgError::Serialize {
+                context: "extract (json)".into(),
+                source: e,
+            });
+        }
+        Ok(format!("Added {} fact(s) from extraction.", added.len()))
+    })
+}
+
+fn handle_session(
+    store_path: &Path,
+    config: Config,
+    sub: cmd::SessionSub,
+    json: bool,
+) -> Result<String, WgError> {
+    match sub {
+        cmd::SessionSub::Start {
+            pinned_limit,
+            recent_limit,
+            recent_days,
+            top_entities_limit,
+        } => with_wiki(store_path, config, |wiki| {
+            let pinned_limit = pinned_limit.unwrap_or(20);
+            let recent_limit = recent_limit.unwrap_or(10);
+            let recent_days = recent_days.unwrap_or(7);
+            let top_entities_limit = top_entities_limit.unwrap_or(10);
+
+            let pinned = wiki.pinned_facts(pinned_limit)?;
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            let since = Some(now_ms.saturating_sub(recent_days * 24 * 60 * 60 * 1000));
+            let recent = wiki.fact_list(wg_core::FactListOpts {
+                fact_type: None,
+                entity_id: None,
+                min_confidence: None,
+                limit: Some(recent_limit),
+                offset: 0,
+                since,
+                until: None,
+                current_only: true,
+                as_of: None,
+            })?;
+            let top_entities = wiki.entity_list(wg_core::ListOpts {
+                entity_type: None,
+                min_facts: None,
+                sort_by: wg_core::EntitySort::FactCount,
+                limit: Some(top_entities_limit),
+                offset: 0,
+            })?;
+            let issues = wiki.lint()?;
+            let stats = wiki.stats()?;
+
+            if json {
+                return serde_json::to_string_pretty(&serde_json::json!({
+                    "stats": stats,
+                    "pinned": pinned,
+                    "recent": recent,
+                    "top_entities": top_entities,
+                    "open_issues": {
+                        "total": issues.len(),
+                        "issues": issues,
+                    },
+                }))
+                .map_err(|e| WgError::Serialize {
+                    context: "session start (json)".into(),
+                    source: e,
+                });
+            }
+            let mut out = String::new();
+            out.push_str(&format!(
+                "stats: {} entities, {} facts, {} relations",
+                stats.entity_count, stats.fact_count, stats.relation_count
+            ));
+            out.push_str(&format!("\npinned ({}/{}):", pinned.len(), pinned_limit));
+            for f in pinned.iter().take(5) {
+                out.push_str(&format!(
+                    "\n  [{}] {}",
+                    f.id,
+                    f.content.chars().take(80).collect::<String>()
+                ));
+            }
+            out.push_str(&format!(
+                "\nrecent (last {recent_days}d, {}/{}):",
+                recent.len(),
+                recent_limit
+            ));
+            for f in recent.iter().take(5) {
+                out.push_str(&format!(
+                    "\n  [{}] {}",
+                    f.id,
+                    f.content.chars().take(80).collect::<String>()
+                ));
+            }
+            out.push_str(&format!("\ntop entities ({}):", top_entities.len()));
+            for e in &top_entities {
+                out.push_str(&format!(
+                    "\n  - {} ({}) [{} facts]",
+                    e.name, e.entity_type, e.fact_count
+                ));
+            }
+            out.push_str(&format!("\nopen issues: {}", issues.len()));
+            Ok(out)
+        }),
     }
 }
 
