@@ -277,23 +277,23 @@ OMEGA가 95.4%로 1위 찍은 retrieval pipeline의 핵심 임베딩. wg에
 
 **500 questions, --hybrid + --embed-model bge-small-en-v1.5 + decay τ=90:**
 
-| metric | BM25 baseline | model2vec hybrid + decay | bge + decay | **bge alone (no decay)** ★ |
-|---|---|---|---|---|
-| R@1 | 0.866 | 0.858 | 0.808 | **0.914** |
-| R@5 | 0.952 | 0.958 | 0.952 | **0.976** |
-| **R@10** | 0.974 | 0.978 | 0.984 | **0.986** |
-| MRR | 0.902 | 0.898 | 0.868 | **0.941** |
+| metric | BM25 baseline | model2vec + decay | bge + decay | bge alone | **bge + bge-reranker** ★ |
+|---|---|---|---|---|---|
+| R@1 | 0.866 | 0.858 | 0.808 | 0.914 | **0.938** |
+| R@5 | 0.952 | 0.958 | 0.952 | 0.976 | **0.984** |
+| **R@10** | 0.974 | 0.978 | 0.984 | 0.986 | **0.986** |
+| MRR | 0.902 | 0.898 | 0.868 | 0.941 | **0.957** |
 
 **Per-category R@1 (decisive metric for LLM reader):**
 
-| Category | BM25+decay | bge+decay | **bge alone** | best Δ |
+| Category | BM25+decay | bge alone | **bge + reranker** | best Δ vs origin |
 |---|---|---|---|---|
-| single-session-preference | 0.367 | 0.600 | **0.700** | **+33.3** |
-| multi-session | 0.842 | 0.857 | **0.917** | **+7.5** |
-| knowledge-update | 0.949 | 0.692 | **0.987** | +3.8 |
-| single-session-assistant | 0.982 | 0.857 | **1.000** | +1.8 |
-| single-session-user | 0.900 | 0.729 | **0.929** | +2.9 |
-| temporal-reasoning | 0.857 | 0.895 | 0.872 | +1.5 (bge+decay) |
+| single-session-preference | 0.367 | 0.700 | **0.733** | **+36.6** |
+| multi-session | 0.842 | 0.917 | **0.955** | **+11.3** |
+| knowledge-update | 0.949 | 0.987 | **1.000** | +5.1 |
+| single-session-assistant | 0.982 | 1.000 | 0.982 | 0 (saturated) |
+| single-session-user | 0.900 | 0.929 | **0.957** | +5.7 |
+| temporal-reasoning | 0.857 | 0.872 | **0.902** | +4.5 |
 
 bge embedding quality + observed_at가 LongMemEval-S 2023 timestamps라
 "now" 기준 wg-core in-pipeline decay가 모든 fact를 동등하게 crush.
