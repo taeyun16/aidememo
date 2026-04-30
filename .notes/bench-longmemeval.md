@@ -182,11 +182,57 @@ artifact (질문은 시점 t, evidence는 t 이후 LLM 생성).
    이 정확한 마크다운 위키에선 같은 메커니즘이 도움. 우리 자체 도그푸드
    세팅(`wg watch`)에서 후속 측정 가치.
 3. **soft-bias가 더 나을 가능성.** hard-cutoff 대신 `time_decay_tau_ms`
-   로 가중치만 조정하면 evidence가 future-dated여도 살아남을 수 있다.
-   별도 실험.
+   로 가중치만 조정하면 evidence가 future-dated여도 살아남을 수 있다 →
+   다음 실험에서 검증.
 
 `--temporal` 플래그는 harness에 남겨둔다 (위키 스타일 데이터에 재시험할 때
 유용). LongMemEval-S baseline 보고는 BM25-only 0.974 그대로.
+
+## 후속 측정: time_decay soft-bias
+
+`--time-decay-days τ` 옵션 추가 (`benchmarks/src/bin/longmemeval.rs`).
+세션마다 `observed_at = haystack_date` stamp + BM25 검색 후 score를
+`exp(-|question_date - observed_at|_days / τ)` 로 곱셈해 재정렬.
+top_k×5 wider candidate slate를 가져와서 하위 BM25 hit이 추가 boost로
+top_k에 들어올 수 있게 함.
+
+**Tau 스윕 (full 500 questions):**
+
+| τ (days) | R@1 | R@5 | R@10 | MRR | Δ vs baseline |
+|---|---|---|---|---|---|
+| baseline (no decay) | 0.866 | 0.952 | **0.974** | 0.902 | — |
+| τ = 7 | 0.730 | 0.894 | 0.948 | 0.803 | -2.6pt R@10 (over-aggressive) |
+| τ = 14 (temporal-only run) | n/a | n/a | (0.955 on temporal) | n/a | n/a |
+| τ = 30 (temporal-only run) | n/a | n/a | (0.955 on temporal) | n/a | n/a |
+| τ = 90 | 0.858 | 0.958 | **0.978** | 0.898 | **+0.4pt R@10** |
+| τ = 180 | 0.860 | 0.954 | **0.978** | 0.899 | **+0.4pt R@10** |
+
+**Per-category breakdown @ τ=90 (sweet spot, full run):**
+
+| Category | Baseline | τ=7 (aggressive) | τ=90 (gentle) |
+|---|---|---|---|
+| knowledge-update | 1.000 | 0.936 | **1.000** |
+| single-session-assistant | 1.000 | 1.000 | **1.000** |
+| single-session-user | 0.986 | 0.929 | **0.986** |
+| multi-session | 0.985 | 0.970 | **0.985** |
+| **temporal-reasoning** ★ | 0.940 | 0.962 | **0.955** |
+| single-session-preference | 0.933 | 0.767 | **0.933** |
+
+**해석:**
+1. **Aggressive decay (τ=7)는 temporal에서 이기지만 다른 5개를 모두
+   잃는다.** 7일 halflife는 LongMemEval-S 세션 분포 (수개월 ~ 1년 span)
+   대비 너무 짧아 evidence를 깎아냄.
+2. **Gentle decay (τ=90 ~ 180)는 안전한 sweet spot.** temporal-reasoning
+   +1.5pt 개선 + 다른 카테고리 정확히 보존 → 전체 R@10 +0.4pt 순이익.
+3. **다음 단계 권장**: wg 기본값 (`time_decay_tau_ms = 7,776,000,000` =
+   90일)이 우리 실측에서 정당화됨. 도그푸드 위키에서도 이 값으로 시작.
+
+**negative finding의 후속으로서**: hard `until` cutoff (이전 실험의
+-16pt 회귀)와 soft decay (이번 실험의 +0.4pt 개선)는 같은 신호("질문
+시점 부근 fact를 부스트")를 주지만 강도가 완전히 다른 결과로 이어짐.
+**dataset에 dating noise가 있을 때 hard filter는 evidence를 잃지만
+soft bias는 score 압축으로 살아남게 한다** — 일반적인 retrieval 설계
+교훈.
 
 ## 향후 측정
 

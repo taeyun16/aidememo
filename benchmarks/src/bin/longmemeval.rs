@@ -89,10 +89,19 @@ struct Args {
     limit: Option<usize>,
     top_k: usize,
     /// Enable temporal-aware retrieval: stamp each fact with its
-    /// session's `haystack_date` and pass `as_of=question_date` so
-    /// future-dated noise is filtered. Targeted at boosting the
-    /// `temporal-reasoning` category.
+    /// session's `haystack_date` and pass `until=question_date` so
+    /// future-dated noise is filtered. Hard cutoff — see negative
+    /// finding in `.notes/bench-longmemeval.md`. Defaults off.
     temporal: bool,
+    /// Time-decay tau in days. When set, the harness stamps
+    /// `observed_at` from session dates (like `--temporal`) but does
+    /// NOT apply a hard `until` cutoff; instead BM25 scores are
+    /// multiplied post-hoc by `exp(-age_days_from_question / tau)`
+    /// and re-sorted. Soft bias toward sessions near the question
+    /// date — won't drop legitimate evidence that's only slightly
+    /// future-dated (the dataset noise the negative-result analysis
+    /// flagged).
+    time_decay_days: Option<f64>,
     /// Restrict the run to a single question_type bucket. Lets you
     /// re-measure just one slice without re-running all 500.
     only_type: Option<String>,
@@ -133,6 +142,7 @@ fn parse_args() -> Args {
     let mut limit: Option<usize> = None;
     let mut top_k: usize = 10;
     let mut temporal = false;
+    let mut time_decay_days: Option<f64> = None;
     let mut only_type: Option<String> = None;
 
     let argv: Vec<String> = std::env::args().skip(1).collect();
@@ -155,6 +165,10 @@ fn parse_args() -> Args {
                 temporal = true;
                 i += 1;
             }
+            "--time-decay-days" if i + 1 < argv.len() => {
+                time_decay_days = argv[i + 1].parse().ok();
+                i += 2;
+            }
             "--only-type" if i + 1 < argv.len() => {
                 only_type = Some(argv[i + 1].clone());
                 i += 2;
@@ -167,6 +181,7 @@ fn parse_args() -> Args {
         limit,
         top_k,
         temporal,
+        time_decay_days,
         only_type,
     }
 }
@@ -174,6 +189,7 @@ fn parse_args() -> Args {
 fn build_store_for_question(
     q: &Question,
     temporal: bool,
+    stamp_observed_at: bool,
 ) -> Result<(tempfile::TempDir, WikiGraph), String> {
     let dir = tempfile::TempDir::new().map_err(|e| e.to_string())?;
     let mut config = Config::default();
@@ -206,16 +222,16 @@ fn build_store_for_question(
     let mut inputs = Vec::new();
     for (sess_idx, session) in q.haystack_sessions.iter().enumerate() {
         let entity_id = session_eids.get(sess_idx).copied();
-        // With --temporal, each fact in a session inherits its
-        // session's `haystack_dates[sess_idx]` as `observed_at` so the
-        // `as_of` filter at search time can drop future-dated noise.
-        let observed_at = if temporal {
+        // Stamp observed_at when caller asks (--temporal hard cutoff
+        // OR --time-decay soft bias both need session-relative dates).
+        let observed_at = if stamp_observed_at {
             q.haystack_dates
                 .get(sess_idx)
                 .and_then(|d| parse_question_date(d))
         } else {
             None
         };
+        let _ = temporal; // disambiguation only — both paths share this stamp
         for turn in session {
             inputs.push(FactInput {
                 content: format!("{}: {}", turn.role, turn.content),
@@ -237,30 +253,74 @@ fn build_store_for_question(
     Ok((dir, wiki))
 }
 
-fn evaluate(q: &Question, wiki: &WikiGraph, top_k: usize, temporal: bool) -> Option<usize> {
+fn evaluate(
+    q: &Question,
+    wiki: &WikiGraph,
+    top_k: usize,
+    temporal: bool,
+    time_decay_days: Option<f64>,
+) -> Option<usize> {
     // BM25-only baseline. Returns the 1-indexed rank of the first hit
     // whose entity matches one of the answer-session entities, or
-    // None if no such hit appears in the top-K. Under `--temporal`,
-    // the search uses `until=question_date` (observed_at-based window)
-    // so facts observed AFTER the question can't surface — eliminates
-    // future-dated noise that hurts the temporal-reasoning slice.
-    // We use `until` rather than `as_of` because `as_of` filters on
-    // `created_at` (DB insertion time, always "now" in this harness)
-    // whereas `until` checks `observed_at` (the real-world time we
-    // stamped during ingest).
+    // None if no such hit appears in the top-K.
+    //
+    // - `temporal=true`: hard `until=question_date` cutoff.
+    // - `time_decay_days=Some(tau)`: soft bias — request a wider
+    //   candidate slate, multiply each BM25 score by
+    //   `exp(-age_days/tau)` where age = |question_date -
+    //   observed_at| in days, then re-sort and keep top_k. Works
+    //   even when evidence is slightly future-dated (the dataset
+    //   noise the previous experiment surfaced).
     let until = if temporal {
         q.question_date.as_deref().and_then(parse_question_date)
     } else {
         None
     };
+    // Pull a wider slate when applying decay so post-hoc re-rank can
+    // promote a low-BM25-but-recent hit into the top-K.
+    let candidate_limit = if time_decay_days.is_some() {
+        top_k.saturating_mul(5).max(50)
+    } else {
+        top_k
+    };
     let opts = SearchOpts {
-        limit: Some(top_k),
+        limit: Some(candidate_limit),
         bm25_only: true,
         current_only: true,
         until,
         ..Default::default()
     };
-    let results = wiki.hybrid_search(&q.question, opts).ok()?;
+    let mut results = wiki.hybrid_search(&q.question, opts).ok()?;
+    if let Some(tau_days) = time_decay_days {
+        let q_date = q
+            .question_date
+            .as_deref()
+            .and_then(parse_question_date)
+            .unwrap_or(0);
+        // Pre-fetch per-fact observed_at to avoid borrowing wiki twice
+        // inside the sort closure.
+        let observed: Vec<u64> = results
+            .iter()
+            .map(|r| {
+                wiki.fact_get(&r.fact_id)
+                    .ok()
+                    .and_then(|f| f.observed_at)
+                    .unwrap_or(0)
+            })
+            .collect();
+        for (r, obs) in results.iter_mut().zip(observed.iter()) {
+            let age_ms = (q_date as i64 - *obs as i64).unsigned_abs();
+            let age_days = age_ms as f64 / 86_400_000.0;
+            let decay = (-age_days / tau_days).exp() as f32;
+            r.score *= decay;
+        }
+        results.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        results.truncate(top_k);
+    }
     let answer_entity_names: std::collections::HashSet<String> = q
         .answer_session_ids
         .iter()
@@ -306,6 +366,9 @@ fn run(args: &Args) -> Result<(), String> {
     println!("questions: {n} (of {})", questions.len());
     println!("top_k:    {top_k}");
     println!("temporal: {temporal}");
+    if let Some(t) = args.time_decay_days {
+        println!("decay τ:  {t} days");
+    }
     if let Some(only) = &args.only_type {
         println!("only:     {only}");
     }
@@ -318,8 +381,9 @@ fn run(args: &Args) -> Result<(), String> {
     let mut by_type: std::collections::BTreeMap<String, (usize, usize)> = Default::default();
     let started = Instant::now();
     for (i, q) in questions.iter().take(n).enumerate() {
-        let (_dir, wiki) = build_store_for_question(q, temporal)?;
-        let rank = evaluate(q, &wiki, top_k, temporal);
+        let stamp_obs = temporal || args.time_decay_days.is_some();
+        let (_dir, wiki) = build_store_for_question(q, temporal, stamp_obs)?;
+        let rank = evaluate(q, &wiki, top_k, temporal, args.time_decay_days);
         if let Some(r) = rank {
             if r <= 1 {
                 hit_at_1 += 1;
