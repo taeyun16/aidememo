@@ -277,12 +277,29 @@ OMEGA가 95.4%로 1위 찍은 retrieval pipeline의 핵심 임베딩. wg에
 
 **500 questions, --hybrid + --embed-model bge-small-en-v1.5 + decay τ=90:**
 
-| metric | BM25 baseline | model2vec hybrid + decay | **bge-small-en-v1.5 + decay** | Δ vs baseline |
+| metric | BM25 baseline | model2vec hybrid + decay | bge + decay | **bge alone (no decay)** ★ |
 |---|---|---|---|---|
-| R@1 | 0.866 | 0.858 | 0.808 | -5.8pt |
-| R@5 | 0.952 | 0.958 | 0.952 | 0 |
-| **R@10** | 0.974 | 0.978 | **0.984** | **+1.0pt ★** |
-| MRR | 0.902 | 0.898 | 0.868 | -3.4pt |
+| R@1 | 0.866 | 0.858 | 0.808 | **0.914** |
+| R@5 | 0.952 | 0.958 | 0.952 | **0.976** |
+| **R@10** | 0.974 | 0.978 | 0.984 | **0.986** |
+| MRR | 0.902 | 0.898 | 0.868 | **0.941** |
+
+**Per-category R@1 (decisive metric for LLM reader):**
+
+| Category | BM25+decay | bge+decay | **bge alone** | best Δ |
+|---|---|---|---|---|
+| single-session-preference | 0.367 | 0.600 | **0.700** | **+33.3** |
+| multi-session | 0.842 | 0.857 | **0.917** | **+7.5** |
+| knowledge-update | 0.949 | 0.692 | **0.987** | +3.8 |
+| single-session-assistant | 0.982 | 0.857 | **1.000** | +1.8 |
+| single-session-user | 0.900 | 0.729 | **0.929** | +2.9 |
+| temporal-reasoning | 0.857 | 0.895 | 0.872 | +1.5 (bge+decay) |
+
+bge embedding quality + observed_at가 LongMemEval-S 2023 timestamps라
+"now" 기준 wg-core in-pipeline decay가 모든 fact를 동등하게 crush.
+post-hoc decay는 question_date 기준이라 다른 신호. 둘 모두 net 음.
+**bge alone이 5/6 카테고리에서 best, 나머지(temporal)는 0.872 vs 0.895
+1.3-2.3pt 차이로 거의 동등.**
 
 **Per category R@10 (vs BM25 baseline):**
 

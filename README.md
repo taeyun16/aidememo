@@ -193,7 +193,8 @@ dataset, BM25 via `wg_search`, ~350 ms/question end-to-end
 |---|---|---|---|---|
 | wg (BM25-only, M-series) | 0.866 | 0.952 | **0.974** | 0.902 |
 | wg + time-decay soft-bias (τ=90d) | 0.858 | 0.958 | **0.978** | 0.898 |
-| wg + decay + bge-small-en-v1.5 (ONNX) | 0.808 | 0.952 | **0.984** | 0.868 |
+| wg + decay + bge-small-en-v1.5 | 0.808 | 0.952 | 0.984 | 0.868 |
+| **wg + bge-small-en-v1.5 (no decay)** ★ | **0.914** | **0.976** | **0.986** | **0.941** |
 
 End-to-end with an LLM reader (`scripts/longmemeval_e2e.py`, judge =
 `gpt-4o` to match the published-baseline calibration):
