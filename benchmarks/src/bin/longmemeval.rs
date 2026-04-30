@@ -256,17 +256,35 @@ fn parse_args() -> Args {
     }
 }
 
-fn build_store_for_question(
-    q: &Question,
+/// Bundle of retrieval-side knobs the harness flips per measurement.
+/// Keeping them in one struct rather than as a long argument list
+/// makes call sites readable and keeps clippy happy at the
+/// 7-argument bar.
+struct BuildOpts<'a> {
     temporal: bool,
     stamp_observed_at: bool,
     hybrid: bool,
-    embed_model: Option<&str>,
-    reranker: Option<&str>,
+    embed_model: Option<&'a str>,
+    reranker: Option<&'a str>,
     bm25_weight: Option<f32>,
     semantic_weight: Option<f32>,
     decay_days_for_hybrid: Option<f64>,
+}
+
+fn build_store_for_question(
+    q: &Question,
+    opts: BuildOpts<'_>,
 ) -> Result<(tempfile::TempDir, WikiGraph), String> {
+    let BuildOpts {
+        temporal,
+        stamp_observed_at,
+        hybrid,
+        embed_model,
+        reranker,
+        bm25_weight,
+        semantic_weight,
+        decay_days_for_hybrid,
+    } = opts;
     let dir = tempfile::TempDir::new().map_err(|e| e.to_string())?;
     let mut config = Config::default();
     config.store.path = dir.path().join("store").to_string_lossy().into_owned();
@@ -570,20 +588,22 @@ fn run(args: &Args) -> Result<(), String> {
         let stamp_obs = temporal || args.time_decay_days.is_some();
         let (_dir, wiki) = build_store_for_question(
             q,
-            temporal,
-            stamp_obs,
-            args.hybrid,
-            args.embed_model.as_deref(),
-            args.reranker.as_deref(),
-            args.bm25_weight,
-            args.semantic_weight,
-            // Hybrid path: route decay into wg-core's in-pipeline
-            // rrf_fusion (composes with rerank). bm25_only path: keep
-            // the post-hoc multiplier inside `evaluate`.
-            if args.hybrid {
-                args.time_decay_days
-            } else {
-                None
+            BuildOpts {
+                temporal,
+                stamp_observed_at: stamp_obs,
+                hybrid: args.hybrid,
+                embed_model: args.embed_model.as_deref(),
+                reranker: args.reranker.as_deref(),
+                bm25_weight: args.bm25_weight,
+                semantic_weight: args.semantic_weight,
+                // Hybrid path: route decay into wg-core's in-pipeline
+                // rrf_fusion (composes with rerank). bm25_only path:
+                // keep the post-hoc multiplier inside `evaluate`.
+                decay_days_for_hybrid: if args.hybrid {
+                    args.time_decay_days
+                } else {
+                    None
+                },
             },
         )?;
         let (rank, retrievals) =
