@@ -638,6 +638,27 @@ impl WikiGraph {
             "embed_provider loaded"
         );
 
+        // Two-stage retrieval: when a reranker is configured, ask for
+        // a wider candidate pool than the user wants in the final
+        // result. The reranker can then promote correct evidence from
+        // ranks 11..K into the user's top-10. This is the standard
+        // pattern (cf. Pinecone's "rerankers and two-stage retrieval"
+        // and OMEGA's 5-stage pipeline). Without this, even a perfect
+        // reranker can only re-order what RRF already cut to the
+        // user's `limit` — capping the upside.
+        let user_limit = opts.limit.unwrap_or(self.config.search.default_limit);
+        let opts = if self.config.rerank.provider.trim().is_empty() {
+            opts
+        } else {
+            let wider = user_limit
+                .max(self.config.rerank.top_k)
+                .max(20);
+            SearchOpts {
+                limit: Some(wider),
+                ..opts
+            }
+        };
+
         // Try the HNSW path when configured. If the sidecar is
         // missing, model-mismatched, or fails to load for any
         // reason, fall through to the BM25-prefilter path so the
@@ -689,6 +710,11 @@ impl WikiGraph {
         if let Some(reranker) = self.reranker() {
             let top_k = self.config.rerank.top_k;
             rerank::apply_rerank(&mut results, query, reranker.as_ref(), top_k);
+            // Now trim back to the user's original limit. The
+            // reranker may have promoted a previously-rank-11 hit
+            // into the top-10; truncating after the reorder is what
+            // realises that gain.
+            results.truncate(user_limit);
         }
 
         Ok(results)
