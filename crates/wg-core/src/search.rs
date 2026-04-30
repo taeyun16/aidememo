@@ -864,6 +864,7 @@ mod semantic {
         let weight_by_confidence = cfg.search.weight_by_confidence;
         let tau_ms = cfg.search.time_decay_tau_ms;
         let type_weights = &cfg.search.fact_type_weights;
+        let centrality_w = cfg.search.entity_centrality_weight;
         // Adapter is loaded once per fusion call (cheap — meta_get is a
         // single redb point lookup) and only consulted when training has
         // populated biases. Toggling `search.use_adapter` lets operators
@@ -912,6 +913,26 @@ mod semantic {
                     // SearchConfig::default).
                     if let Some(w) = type_weights.get(&type_key) {
                         weight *= *w;
+                    }
+                    // Entity centrality boost: multi-fact "hub"
+                    // entities (Postgres mentioned in 50 facts) carry
+                    // their facts higher than long-tail entities
+                    // (Acme corp mentioned once). Inspired by Zep /
+                    // Graphiti's central-node ranking. Disabled by
+                    // default (entity_centrality_weight = 0.0); turn
+                    // on with `wg config set
+                    // search.entity_centrality_weight 0.2`.
+                    if centrality_w > 0.0 {
+                        let max_fact_count = fact
+                            .entity_ids
+                            .iter()
+                            .filter_map(|eid| store.count_entity_facts(eid).ok())
+                            .max()
+                            .unwrap_or(0);
+                        if max_fact_count > 0 {
+                            let log = (1.0 + max_fact_count as f32).log10();
+                            weight *= 1.0 + centrality_w * log;
+                        }
                     }
                     // Hydrate display fields while we have the fact in
                     // hand — saves a second `fact_get` later.

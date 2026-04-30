@@ -650,9 +650,7 @@ impl WikiGraph {
         let opts = if self.config.rerank.provider.trim().is_empty() {
             opts
         } else {
-            let wider = user_limit
-                .max(self.config.rerank.top_k)
-                .max(20);
+            let wider = user_limit.max(self.config.rerank.top_k).max(20);
             SearchOpts {
                 limit: Some(wider),
                 ..opts

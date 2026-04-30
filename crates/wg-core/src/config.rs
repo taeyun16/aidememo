@@ -229,6 +229,22 @@ pub struct SearchConfig {
     /// pattern to wg's `decision` / `convention` / `pattern`.
     #[serde(default = "default_decay_exempt_types")]
     pub decay_exempt_types: Vec<String>,
+    /// Entity centrality boost coefficient. When `> 0`, facts attached
+    /// to "central" entities (entities with many facts already on
+    /// them) get an extra ranking multiplier of
+    /// `1 + entity_centrality_weight * log10(1 + max_fact_count)`,
+    /// where `max_fact_count` is the maximum across the fact's
+    /// linked entities. Mirrors Zep / Graphiti's "central node"
+    /// concept: when a query is ambiguous, prefer facts on
+    /// well-connected entities (Postgres / our team's hub topics)
+    /// over facts on long-tail single-mention entities. Default
+    /// `0.0` keeps existing scoring unchanged.
+    #[serde(default = "default_entity_centrality_weight")]
+    pub entity_centrality_weight: f32,
+}
+
+fn default_entity_centrality_weight() -> f32 {
+    0.0
 }
 
 fn default_fact_type_weights() -> std::collections::BTreeMap<String, f32> {
@@ -304,6 +320,7 @@ impl Default for SearchConfig {
             use_adapter: default_true(),
             fact_type_weights: default_fact_type_weights(),
             decay_exempt_types: default_decay_exempt_types(),
+            entity_centrality_weight: default_entity_centrality_weight(),
         }
     }
 }
