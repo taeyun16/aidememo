@@ -348,6 +348,126 @@ fn tool_fact_pin(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, Strin
     })
 }
 
+/// One-call session warmup envelope. Bundles the four read calls an
+/// agent makes at the top of a new conversation — pinned tier, recent
+/// activity, top entities, open lint issues — into a single MCP
+/// invocation so the model doesn't have to chain `wg_pinned_context`
+/// + `wg_recent` + `wg_entity_list` + `wg_doctor` (four round trips →
+/// one). Each section honors its own limit so agents can shape the
+/// envelope size to their context budget.
+fn tool_session_start(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String> {
+    let pinned_limit = args
+        .get("pinned_limit")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(20) as usize;
+    let recent_limit = args
+        .get("recent_limit")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(10) as usize;
+    let recent_days = args
+        .get("recent_days")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(7);
+    let top_entities_limit = args
+        .get("top_entities_limit")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(10) as usize;
+
+    let pinned = wiki.pinned_facts(pinned_limit).map_err(|e| e.to_string())?;
+    let pinned_json: Vec<Value> = pinned
+        .iter()
+        .map(|f| {
+            json!({
+                "id": f.id.to_string(),
+                "content": f.content,
+                "fact_type": f.fact_type.to_string(),
+            })
+        })
+        .collect();
+
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    let since = Some(now_ms.saturating_sub(recent_days * 24 * 60 * 60 * 1000));
+    let recent = wiki
+        .fact_list(wg_core::FactListOpts {
+            fact_type: None,
+            entity_id: None,
+            min_confidence: None,
+            limit: Some(recent_limit),
+            offset: 0,
+            since,
+            until: None,
+            current_only: true,
+            as_of: None,
+        })
+        .map_err(|e| e.to_string())?;
+    let recent_json: Vec<Value> = recent
+        .iter()
+        .map(|f| {
+            json!({
+                "id": f.id.to_string(),
+                "content": f.content,
+                "fact_type": f.fact_type.to_string(),
+                "created_at": f.created_at,
+            })
+        })
+        .collect();
+
+    let top_entities = wiki
+        .entity_list(wg_core::ListOpts {
+            entity_type: None,
+            min_facts: None,
+            sort_by: wg_core::EntitySort::FactCount,
+            limit: Some(top_entities_limit),
+            offset: 0,
+        })
+        .map_err(|e| e.to_string())?;
+    let top_entities_json: Vec<Value> = top_entities
+        .iter()
+        .map(|e| {
+            json!({
+                "name": e.name,
+                "type": e.entity_type.to_string(),
+                "fact_count": e.fact_count,
+            })
+        })
+        .collect();
+
+    let issues = wiki.lint().map_err(|e| e.to_string())?;
+    let mut codes: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+    for issue in &issues {
+        *codes.entry(issue.code.clone()).or_insert(0) += 1;
+    }
+    let by_code: Vec<Value> = codes
+        .into_iter()
+        .map(|(code, count)| {
+            json!({
+                "code": code,
+                "count": count,
+                "action": lint_action_hint(&code),
+            })
+        })
+        .collect();
+
+    let stats = wiki.stats().map_err(|e| e.to_string())?;
+    let payload = json!({
+        "stats": stats,
+        "pinned": pinned_json,
+        "recent": recent_json,
+        "top_entities": top_entities_json,
+        "open_issues": {
+            "total": issues.len(),
+            "by_code": by_code,
+        },
+    });
+    Ok(ToolCallResult {
+        content: vec![ContentBlock::text(payload.to_string())],
+        is_error: None,
+    })
+}
+
 fn tool_extract(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String> {
     let text = args
         .get("text")
@@ -1298,6 +1418,20 @@ pub fn list_tools() -> Vec<Tool> {
             }),
         },
         Tool {
+            name: "wg_session_start".into(),
+            description: "One-call session warmup. Returns the four things an agent typically needs at the top of a new conversation — pinned-tier facts, recent activity (last 7d default), top entities by fact_count, and open lint issues with action hints — in one envelope so the agent doesn't chain four reads. Each section has its own limit knob to keep the response bounded."
+                .into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "pinned_limit": {"type": "number", "default": 20},
+                    "recent_limit": {"type": "number", "default": 10},
+                    "recent_days":  {"type": "number", "default": 7, "description": "Lookback window for the 'recent' section."},
+                    "top_entities_limit": {"type": "number", "default": 10}
+                }
+            }),
+        },
+        Tool {
             name: "wg_pinned_context".into(),
             description: "Return the agent's 'always loaded' tier — every fact tagged `pinned=true` (and not superseded), sorted by recent access. Inspired by Letta's core / archival memory split: an agent calls this once at session start to seed working context with the handful of facts it should know without searching. Pin / unpin via wg_fact_pin."
                 .into(),
@@ -1576,6 +1710,7 @@ fn call_tool(name: &str, args: &Value, wiki: &WikiGraph) -> Result<ToolCallResul
         "wg_extract" => tool_extract(args, wiki),
         "wg_pinned_context" => tool_pinned_context(args, wiki),
         "wg_fact_pin" => tool_fact_pin(args, wiki),
+        "wg_session_start" => tool_session_start(args, wiki),
         "wg_entity_get" => tool_entity_get(args, wiki),
         "wg_entity_list" => tool_entity_list(args, wiki),
         "wg_fact_get" => tool_fact_get(args, wiki),
@@ -2243,6 +2378,55 @@ mod tests {
         let payload: Value =
             serde_json::from_str(result.content[0].text.as_deref().unwrap()).unwrap();
         assert_eq!(payload["count"], 0);
+    }
+
+    #[test]
+    fn session_start_returns_all_four_sections() {
+        // Build a tiny representative wiki: a pinned decision, a
+        // recent note, a typed entity (so top_entities is non-empty),
+        // and an orphan to trigger the open_issues path.
+        let (_dir, wiki) = open_temp_wiki();
+        let pinned = add_fact(&wiki, "use Postgres for hot writes", "Postgres");
+        wiki.fact_pin(&pinned, true).unwrap();
+        add_fact(&wiki, "deploy ran fine on staging", "Postgres");
+        wiki.entity_add(EntityInput {
+            name: "Floater".into(),
+            ..Default::default()
+        })
+        .unwrap();
+
+        let result = tool_session_start(&json!({}), &wiki).unwrap();
+        let payload: Value =
+            serde_json::from_str(result.content[0].text.as_deref().unwrap()).unwrap();
+
+        assert!(
+            payload["stats"]["fact_count"].as_u64().unwrap_or(0) >= 2,
+            "stats present",
+        );
+        let pinned_arr = payload["pinned"].as_array().unwrap();
+        assert_eq!(pinned_arr.len(), 1);
+        assert!(
+            payload["recent"].as_array().unwrap().len() >= 2,
+            "recent present"
+        );
+        let top: Vec<&str> = payload["top_entities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|e| e["name"].as_str())
+            .collect();
+        assert!(
+            top.contains(&"Postgres"),
+            "Postgres in top_entities: {top:?}"
+        );
+        // open_issues should call out the orphan.
+        let by_code: Vec<&str> = payload["open_issues"]["by_code"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|e| e["code"].as_str())
+            .collect();
+        assert!(by_code.contains(&"orphan"), "orphan flagged: {by_code:?}");
     }
 
     #[test]

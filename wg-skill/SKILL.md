@@ -102,6 +102,8 @@ out. They return structured JSON.
 | `wg_fact_edit` | Patch a fact's content (append / prepend / find+replace / content) |
 | `wg_feedback` | Mark a fact returned by wg_search as helpful / not-helpful (closes the adapter loop) |
 | `wg_extract` | Heuristic conversation → candidate facts. `apply:true` persists them; otherwise returns previews to edit |
+| `wg_session_start` | One-call warmup: pinned + recent + top entities + open issues |
+| `wg_pinned_context` / `wg_fact_pin` | "Always loaded" memory tier — pin a fact for session start |
 
 `wg_search` / `wg_query` / `wg_fact_list` default `current_only=true` — the
 result set is "what we know now". Pass `current_only:false` for historical

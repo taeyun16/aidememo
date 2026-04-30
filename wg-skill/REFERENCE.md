@@ -300,7 +300,7 @@ cargo check -p wg-core -p wg-cli
 
 남은 phase6 정확한 위치는 `grep -rn "TODO(phase" crates/`로 확인.
 
-## MCP 도구 (총 19개)
+## MCP 도구 (총 22개)
 
 | 도구 | 용도 |
 |---|---|
@@ -319,6 +319,8 @@ cargo check -p wg-core -p wg-cli
 | `wg_fact_edit` | append / prepend / find+replace / content |
 | `wg_feedback` | wg_search 결과에 helpful/not 표기 — 어댑터 학습 시그널 |
 | `wg_extract` | 대화/문단 → 후보 fact 추출 (휴리스틱). `apply:true`로 일괄 추가 |
+| `wg_session_start` | 한 호출 warmup — pinned/recent/top_entities/open_issues 묶음 |
+| `wg_pinned_context` / `wg_fact_pin` | "always loaded" 메모리 계층 (Letta-style) |
 
 스키마: `wg-cli/src/cmd/mcp_tools.rs::list_tools()`.
 
