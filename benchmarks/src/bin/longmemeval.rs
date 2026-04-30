@@ -104,6 +104,24 @@ struct Args {
     /// `multilingual-e5-base`). The fastembed family is English-tuned;
     /// LongMemEval is English; expect a measurable lift.
     embed_model: Option<String>,
+    /// Cross-encoder reranker (fastembed). E.g. `bge-reranker-base`
+    /// (en+zh, default), `bge-reranker-v2-m3` (multilingual),
+    /// `jina-reranker-v2-base-multilingual`. When set, the harness
+    /// turns on `rerank.provider = "fastembed"` and reorders the
+    /// top-K hybrid result via the cross-encoder. Only meaningful
+    /// when `--hybrid` is also on (rerank doesn't apply to BM25-only
+    /// searches today).
+    reranker: Option<String>,
+    /// Override `search.bm25_weight` in RRF fusion. With BM25-strong
+    /// corpora (knowledge-update / single-session-user style exact
+    /// matches), pushing BM25 above semantic preserves R@1 wins that
+    /// pure-semantic embeddings dilute. Defaults to the config value
+    /// (1.0).
+    bm25_weight: Option<f32>,
+    /// Override `search.semantic_weight` in RRF fusion. Lower this
+    /// (e.g. 0.5) to back off semantic when it's pulling the wrong
+    /// candidates into top-K. Defaults to the config value (1.0).
+    semantic_weight: Option<f32>,
     /// Time-decay tau in days. When set, the harness stamps
     /// `observed_at` from session dates (like `--temporal`) but does
     /// NOT apply a hard `until` cutoff; instead BM25 scores are
@@ -160,6 +178,9 @@ fn parse_args() -> Args {
     let mut temporal = false;
     let mut hybrid = false;
     let mut embed_model: Option<String> = None;
+    let mut reranker: Option<String> = None;
+    let mut bm25_weight: Option<f32> = None;
+    let mut semantic_weight: Option<f32> = None;
     let mut time_decay_days: Option<f64> = None;
     let mut only_type: Option<String> = None;
     let mut emit_retrievals: Option<PathBuf> = None;
@@ -192,6 +213,18 @@ fn parse_args() -> Args {
                 embed_model = Some(argv[i + 1].clone());
                 i += 2;
             }
+            "--reranker" if i + 1 < argv.len() => {
+                reranker = Some(argv[i + 1].clone());
+                i += 2;
+            }
+            "--bm25-weight" if i + 1 < argv.len() => {
+                bm25_weight = argv[i + 1].parse().ok();
+                i += 2;
+            }
+            "--semantic-weight" if i + 1 < argv.len() => {
+                semantic_weight = argv[i + 1].parse().ok();
+                i += 2;
+            }
             "--time-decay-days" if i + 1 < argv.len() => {
                 time_decay_days = argv[i + 1].parse().ok();
                 i += 2;
@@ -214,6 +247,9 @@ fn parse_args() -> Args {
         temporal,
         hybrid,
         embed_model,
+        reranker,
+        bm25_weight,
+        semantic_weight,
         time_decay_days,
         only_type,
         emit_retrievals,
@@ -226,6 +262,10 @@ fn build_store_for_question(
     stamp_observed_at: bool,
     hybrid: bool,
     embed_model: Option<&str>,
+    reranker: Option<&str>,
+    bm25_weight: Option<f32>,
+    semantic_weight: Option<f32>,
+    decay_days_for_hybrid: Option<f64>,
 ) -> Result<(tempfile::TempDir, WikiGraph), String> {
     let dir = tempfile::TempDir::new().map_err(|e| e.to_string())?;
     let mut config = Config::default();
@@ -242,6 +282,35 @@ fn build_store_for_question(
         // wg-core build (it is via benchmarks/Cargo.toml).
         config.model.provider = "fastembed".into();
         config.model.name = m.to_string();
+    }
+    if let Some(r) = reranker {
+        // Cross-encoder rerank wired via fastembed (in-process ONNX,
+        // no TEI server). Top-K rerank window matches the harness
+        // top_k so every returned slot is candidate for promotion.
+        config.rerank.provider = "fastembed".into();
+        config.rerank.model = r.to_string();
+        config.rerank.top_k = 20;
+    }
+    if let Some(w) = bm25_weight {
+        config.search.bm25_weight = w;
+    }
+    if let Some(w) = semantic_weight {
+        config.search.semantic_weight = w;
+    }
+    // Decay disabled by default in this harness — wg-core's
+    // SearchConfig::default sets time_decay_tau_ms=90 days, but the
+    // LongMemEval-S dataset has dating noise (74 evidence sessions
+    // future-dated past the question; see .notes/bench-longmemeval.md)
+    // and per-category measurements showed bge embeddings are better
+    // off WITHOUT decay (knowledge-update R@1 0.692 → 0.987 by
+    // turning decay off). The `--time-decay-days` flag opts the user
+    // back in: in hybrid mode it routes through wg-core's
+    // in-pipeline decay (so it composes correctly with the cross-
+    // encoder reranker); in bm25_only mode the harness still applies
+    // a post-hoc multiplier (wg-core's BM25 path doesn't apply decay).
+    config.search.time_decay_tau_ms = 0;
+    if hybrid && let Some(days) = decay_days_for_hybrid {
+        config.search.time_decay_tau_ms = (days * 86_400_000.0) as u64;
     }
     let store_path = PathBuf::from(&config.store.path);
     let wiki = WikiGraph::open(&store_path, config).map_err(|e| e.to_string())?;
@@ -337,9 +406,11 @@ fn evaluate(
     } else {
         None
     };
-    // Pull a wider slate when applying decay so post-hoc re-rank can
-    // promote a low-BM25-but-recent hit into the top-K.
-    let candidate_limit = if time_decay_days.is_some() {
+    // Pull a wider slate when applying post-hoc decay (BM25-only mode)
+    // so the post-multiplier can promote a low-BM25-but-recent hit
+    // into the top-K. Hybrid mode handles this inside wg-core, so
+    // the wider slate is unnecessary there.
+    let candidate_limit = if time_decay_days.is_some() && !hybrid {
         top_k.saturating_mul(5).max(50)
     } else {
         top_k
@@ -355,7 +426,13 @@ fn evaluate(
         Ok(r) => r,
         Err(_) => return (None, Vec::new()),
     };
-    if let Some(tau_days) = time_decay_days {
+    // Post-hoc decay only applies to bm25_only mode — in hybrid mode
+    // wg-core's rrf_fusion already applies the decay in-pipeline (set
+    // by build_store_for_question), so doubling here would corrupt
+    // both ordering and any reranker step that ran after fusion.
+    if let Some(tau_days) = time_decay_days
+        && !hybrid
+    {
         let q_date = q
             .question_date
             .as_deref()
@@ -457,6 +534,15 @@ fn run(args: &Args) -> Result<(), String> {
     if let Some(m) = &args.embed_model {
         println!("embed:    {m}");
     }
+    if let Some(r) = &args.reranker {
+        println!("reranker: {r}");
+    }
+    if let Some(w) = args.bm25_weight {
+        println!("bm25_w:   {w}");
+    }
+    if let Some(w) = args.semantic_weight {
+        println!("sem_w:    {w}");
+    }
     if let Some(t) = args.time_decay_days {
         println!("decay τ:  {t} days");
     }
@@ -488,6 +574,17 @@ fn run(args: &Args) -> Result<(), String> {
             stamp_obs,
             args.hybrid,
             args.embed_model.as_deref(),
+            args.reranker.as_deref(),
+            args.bm25_weight,
+            args.semantic_weight,
+            // Hybrid path: route decay into wg-core's in-pipeline
+            // rrf_fusion (composes with rerank). bm25_only path: keep
+            // the post-hoc multiplier inside `evaluate`.
+            if args.hybrid {
+                args.time_decay_days
+            } else {
+                None
+            },
         )?;
         let (rank, retrievals) =
             evaluate(q, &wiki, top_k, temporal, args.hybrid, args.time_decay_days);
