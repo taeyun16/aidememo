@@ -53,9 +53,20 @@ pub fn load_reranker(config: &Config) -> Result<Option<Box<dyn Reranker>>> {
         "tei" | "text-embeddings-inference" => {
             Ok(Some(Box::new(tei::TeiReranker::from_config(config)?)))
         }
-        other => Err(WgError::InvalidInput(format!(
-            "unknown rerank provider '{other}' — expected one of [\"tei\"]"
+        #[cfg(feature = "fastembed")]
+        "fastembed" | "bge-reranker" | "onnx-reranker" => Ok(Some(Box::new(
+            fastembed_rerank::FastembedReranker::from_config(config)?,
         ))),
+        other => {
+            let accepted = if cfg!(feature = "fastembed") {
+                "[\"tei\", \"fastembed\"]"
+            } else {
+                "[\"tei\"]"
+            };
+            Err(WgError::InvalidInput(format!(
+                "unknown rerank provider '{other}' — expected one of {accepted}"
+            )))
+        }
     }
 }
 
@@ -229,6 +240,178 @@ mod tei {
                 }
             }
             Ok(scores)
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// fastembed reranker (BGE / Jina cross-encoders via ONNX Runtime)
+// ---------------------------------------------------------------------------
+
+/// In-process cross-encoder reranker backed by `fastembed-rs`'s
+/// `TextRerank`. No external service required — the BGE / Jina
+/// reranker ONNX weights run via `ort` on CPU.
+///
+/// Why a second reranker provider on top of the existing TEI one?
+///
+/// - **TEI** wins for production / shared multi-agent setups: one
+///   GPU-backed server, every agent reuses the cached model weights.
+///   Latency stays consistent regardless of agent count.
+/// - **fastembed** wins for local single-user setups: zero infra,
+///   first call downloads ~90-300 MB (depending on model), every
+///   subsequent call is in-process. Same MCP / CLI / binding surface,
+///   no Docker / TEI server.
+///
+/// Requires the `fastembed` cargo feature on `wg-core`. Default
+/// model is `BGERerankerBase` (English+Chinese, ~270 MB). Multilingual
+/// callers should set `rerank.model = "bge-reranker-v2-m3"` (or
+/// `jina-reranker-v2-base-multilingual`) — both supported by the
+/// upstream crate and listed in [`parse_reranker_model`].
+#[cfg(feature = "fastembed")]
+mod fastembed_rerank {
+    use super::{Config, Reranker, Result, WgError};
+    use fastembed::{RerankInitOptions, RerankerModel, TextRerank};
+    use parking_lot::Mutex;
+
+    pub struct FastembedReranker {
+        inner: Mutex<TextRerank>,
+        model_name: String,
+    }
+
+    impl FastembedReranker {
+        pub fn from_config(config: &Config) -> Result<Self> {
+            let model_id = if config.rerank.model.is_empty() {
+                "bge-reranker-base".to_string()
+            } else {
+                config.rerank.model.clone()
+            };
+            let model_enum = parse_reranker_model(&model_id)?;
+            let mut opts = RerankInitOptions::new(model_enum);
+            // Honour the user's wg cache_dir (same convention as
+            // `model.cache_dir` for embeddings) so reranker weights
+            // co-locate with everything else under one root.
+            if !config.model.cache_dir.is_empty() {
+                let cache = expand_tilde(&config.model.cache_dir);
+                if !cache.as_os_str().is_empty() {
+                    opts = opts.with_cache_dir(cache);
+                }
+            }
+            let inner = TextRerank::try_new(opts).map_err(|e| WgError::ModelLoadFailed {
+                path: std::path::PathBuf::from(&model_id),
+                source: Box::new(std::io::Error::other(e.to_string())),
+            })?;
+            Ok(Self {
+                inner: Mutex::new(inner),
+                model_name: model_id,
+            })
+        }
+    }
+
+    impl Reranker for FastembedReranker {
+        fn name(&self) -> String {
+            format!("fastembed({})", self.model_name)
+        }
+        fn rerank(&self, query: &str, texts: &[String]) -> Result<Vec<f32>> {
+            if texts.is_empty() {
+                return Ok(Vec::new());
+            }
+            let mut guard = self.inner.lock();
+            // The fastembed crate's generic constraint requires query
+            // and documents to share `S: AsRef<str>`. Project &[String]
+            // to a Vec<&str> to satisfy it without reallocating the
+            // strings themselves.
+            let docs: Vec<&str> = texts.iter().map(|s| s.as_str()).collect();
+            // `return_documents=false` — we only want scores; the
+            // caller already has the original texts and we look them
+            // up by input position, not by the reranker's echo.
+            let results = guard
+                .rerank(query, docs, false, None)
+                .map_err(|e| WgError::Internal(format!("fastembed rerank: {e}")))?;
+            // `TextRerank::rerank` returns results sorted by score
+            // descending, NOT in input order. wg's Reranker contract
+            // requires same-length, input-order scores. Re-sort by
+            // `index` to recover the original order.
+            let mut scored: Vec<(usize, f32)> =
+                results.into_iter().map(|r| (r.index, r.score)).collect();
+            scored.sort_by_key(|(idx, _)| *idx);
+            Ok(scored.into_iter().map(|(_, s)| s).collect())
+        }
+    }
+
+    /// Map a config string to the `RerankerModel` enum. Accepts
+    /// kebab/lowercase forms ("bge-reranker-base"), HF hub paths
+    /// ("BAAI/bge-reranker-base"), and PascalCase enum names
+    /// ("BGERerankerBase"). Unknown names error rather than picking
+    /// a default, since the wrong model means a 100-300 MB wasted
+    /// download.
+    fn parse_reranker_model(s: &str) -> Result<RerankerModel> {
+        let canon = s
+            .to_lowercase()
+            .replace(['_', ' '], "-")
+            .replace("baai/", "")
+            .replace("rozgo/", "")
+            .replace("jinaai/", "");
+        Ok(match canon.as_str() {
+            "bge-reranker-base" | "bgererankerbase" => RerankerModel::BGERerankerBase,
+            "bge-reranker-v2-m3" | "bgererankerv2m3" => RerankerModel::BGERerankerV2M3,
+            "jina-reranker-v1-turbo-en" | "jinarerankerv1turboen" => {
+                RerankerModel::JINARerankerV1TurboEn
+            }
+            "jina-reranker-v2-base-multilingual"
+            | "jinarerankerv2basemultiligual"
+            | "jinarerankerv2basemultilingual" => RerankerModel::JINARerankerV2BaseMultiligual,
+            other => {
+                return Err(WgError::InvalidInput(format!(
+                    "unknown fastembed reranker '{other}' — accepted: \
+                     bge-reranker-base (default, en+zh), \
+                     bge-reranker-v2-m3 (multilingual), \
+                     jina-reranker-v1-turbo-en, \
+                     jina-reranker-v2-base-multilingual"
+                )));
+            }
+        })
+    }
+
+    fn expand_tilde(s: &str) -> std::path::PathBuf {
+        if let Some(rest) = s.strip_prefix("~/")
+            && let Some(home) = std::env::var_os("HOME")
+        {
+            return std::path::PathBuf::from(home).join(rest);
+        }
+        std::path::PathBuf::from(s)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn parser_canonical_forms() {
+            assert_eq!(
+                parse_reranker_model("bge-reranker-base").unwrap(),
+                RerankerModel::BGERerankerBase
+            );
+            assert_eq!(
+                parse_reranker_model("BGERerankerBase").unwrap(),
+                RerankerModel::BGERerankerBase
+            );
+            assert_eq!(
+                parse_reranker_model("BAAI/bge-reranker-v2-m3").unwrap(),
+                RerankerModel::BGERerankerV2M3
+            );
+            assert_eq!(
+                parse_reranker_model("jina-reranker-v2-base-multilingual").unwrap(),
+                RerankerModel::JINARerankerV2BaseMultiligual
+            );
+        }
+
+        #[test]
+        fn parser_rejects_unknown_with_helpful_message() {
+            let err = parse_reranker_model("bge-reranker-large")
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("unknown fastembed reranker"));
+            assert!(err.contains("bge-reranker-base"));
         }
     }
 }

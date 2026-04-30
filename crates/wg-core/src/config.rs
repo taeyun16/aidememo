@@ -211,6 +211,27 @@ pub struct SearchConfig {
     /// comparisons against the un-adapted baseline.
     #[serde(default = "default_true")]
     pub use_adapter: bool,
+    /// Per-`fact_type` ranking multiplier. Decisions and conventions
+    /// are typically the answers users want first, so they get boosted
+    /// over background notes; questions are open issues so they're
+    /// deprioritized. Inspired by OMEGA's "decisions/lessons get 2×
+    /// weight" approach. Override individual entries via
+    /// `wg config set search.fact_type_weights.decision 3.0`. Missing
+    /// types fall back to 1.0 (neutral).
+    #[serde(default = "default_fact_type_weights")]
+    pub fact_type_weights: std::collections::BTreeMap<String, f32>,
+}
+
+fn default_fact_type_weights() -> std::collections::BTreeMap<String, f32> {
+    let mut m = std::collections::BTreeMap::new();
+    m.insert("decision".to_string(), 2.0);
+    m.insert("convention".to_string(), 2.0);
+    m.insert("pattern".to_string(), 1.5);
+    m.insert("claim".to_string(), 1.0);
+    m.insert("note".to_string(), 1.0);
+    m.insert("question".to_string(), 0.5);
+    m.insert("unknown".to_string(), 1.0);
+    m
 }
 
 fn default_semantic_prefilter() -> usize {
@@ -264,6 +285,7 @@ impl Default for SearchConfig {
             weight_by_confidence: default_true(),
             time_decay_tau_ms: default_time_decay_tau(),
             use_adapter: default_true(),
+            fact_type_weights: default_fact_type_weights(),
         }
     }
 }

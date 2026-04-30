@@ -863,6 +863,7 @@ mod semantic {
         let cfg = store.config();
         let weight_by_confidence = cfg.search.weight_by_confidence;
         let tau_ms = cfg.search.time_decay_tau_ms;
+        let type_weights = &cfg.search.fact_type_weights;
         // Adapter is loaded once per fusion call (cheap — meta_get is a
         // single redb point lookup) and only consulted when training has
         // populated biases. Toggling `search.use_adapter` lets operators
@@ -894,6 +895,16 @@ mod semantic {
                         let age_ms = now_ms.saturating_sub(ts);
                         let decay = (-(age_ms as f64) / tau_ms as f64).exp() as f32;
                         weight *= decay;
+                    }
+                    // Per-fact_type ranking multiplier — decisions /
+                    // conventions get boosted, questions deprioritised.
+                    // Mirrors OMEGA's "decisions / lessons 2× weight"
+                    // approach. `fact.fact_type.to_string()` is the same
+                    // lowercase form used as the BTreeMap key (set in
+                    // SearchConfig::default).
+                    let type_key = fact.fact_type.to_string();
+                    if let Some(w) = type_weights.get(&type_key) {
+                        weight *= *w;
                     }
                     // Hydrate display fields while we have the fact in
                     // hand — saves a second `fact_get` later.
