@@ -183,6 +183,23 @@ WG_LINT_PROFILE=1 wg lint                  # per-phase lint timings
 WG_SEARCH_PROFILE=1 wg search "…"          # per-phase hybrid_search timings
 ```
 
+### LongMemEval-S retrieval baseline
+
+500 questions from the published [LongMemEval-S cleaned](https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned)
+dataset, BM25-only via `wg_search`, ~348 ms/question end-to-end
+(per-question store build + 50-200 turn ingest + one search):
+
+| | R@1 | R@5 | **R@10** | MRR |
+|---|---|---|---|---|
+| wg (BM25-only, M-series) | 0.866 | 0.952 | **0.974** | 0.902 |
+
+The R@10 = 97.4% number says the answer-evidence session lands in the
+top-10 retrieval set 487 / 500 times — i.e., the LLM has the right
+context at hand for nearly every question. End-to-end answer
+correctness is left to the LLM the agent uses; this is the slice wg
+controls. See [`.notes/bench-longmemeval.md`](.notes/bench-longmemeval.md)
+for per-`question_type` breakdown and the reproduction recipe.
+
 ## License
 
 MIT OR Apache-2.0.

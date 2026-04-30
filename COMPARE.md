@@ -120,7 +120,7 @@ that slice carries the smallest footprint.
 | LLM-grade auto-extraction | Mastra / Supermemory hit 95-99% on LongMemEval by feeding raw chat to an LLM. wg's `wg_extract` is heuristic-only. | Agent can still call its own LLM and feed structured output to `wg_fact_add_many`. Built-in LLM extraction is a future feature. |
 | Multi-writer merge | beads has git-style cell merge; wg is single-writer. | Use `wg mcp-serve` to share one daemon; full distributed merge isn't in scope. |
 | Community / cluster detection | Graphiti groups related entities into communities. | Not implemented; out of scope for v0.x. |
-| LongMemEval public score | mem0 / Zep have published numbers. | Harness lives at `benchmarks/src/bin/longmemeval.rs`; [run instructions](.notes/bench-longmemeval.md). Numbers TBD. |
+| LongMemEval public score (LLM-graded) | mem0 / Zep / Mastra have full E2E numbers; wg measures retrieval only since end-to-end needs the agent's LLM. | wg ships **R@10 0.974 (BM25-only)** on the full 500-question LongMemEval-S retrieval slice — see [README §Performance](README.md#longmemeval-s-retrieval-baseline) and [.notes/bench-longmemeval.md](.notes/bench-longmemeval.md). LLM-graded answer correctness is left to the agent's chosen model. |
 | Per-user / multi-tenant | Cloud peers partition by `user_id`. | Workaround: separate stores via `wg --project`. Native multi-tenant is a future feature. |
 
 ## When `wg` is the right call

@@ -91,22 +91,65 @@ wall: 0.22s
 (공시: [Mem0 49% / Zep 63.8% on full LongMemEval at GPT-4o](https://docs.mem0.ai)
  — 단 이건 retrieval+생성 합산이라 직접 비교는 안 됨).
 
-## 실측 결과 (placeholder — 데이터셋 다운로드 후 채울 것)
+## 실측 결과
+
+`xiaowu0162/longmemeval-cleaned/longmemeval_s_cleaned.json` (500 questions),
+M-series Apple Silicon, `wg @ 257cb44`, BM25-only via
+`SearchOpts { bm25_only: true, current_only: true }`.
 
 ```
 LongMemEval-S retrieval baseline — wg BM25-only
-questions: <N>
-R@1:  <TBD>
-R@5:  <TBD>
-R@10: <TBD>
-MRR:  <TBD>
+questions: 500 / 500
+top_k:    10
+
+R@1:  0.866
+R@5:  0.952
+R@10: 0.974
+MRR:  0.902
+wall: 174.13s   (≈ 348 ms/question, includes per-question
+                 store build + 50-200 turn ingest + 1 search)
+
 By question_type:
-  single-session-user      R@10: <TBD>
-  multi-session            R@10: <TBD>
-  temporal-reasoning       R@10: <TBD>
-  knowledge-update         R@10: <TBD>
-  abstention               R@10: <TBD>
+  knowledge-update            R@10: 1.000  (78/78)
+  single-session-assistant    R@10: 1.000  (56/56)
+  single-session-user         R@10: 0.986  (69/70)
+  multi-session               R@10: 0.985  (131/133)
+  temporal-reasoning          R@10: 0.940  (125/133)
+  single-session-preference   R@10: 0.933  (28/30)
 ```
+
+**해석.** 이 수치는 **retrieval-only** — 답을 담은 evidence session이
+top-10 hit에 들어왔는지 측정. 공식 LongMemEval은 LLM이 retrieved context
+로부터 답을 생성한 다음 정답과 비교하는데, 그 단계는 LLM 품질에 좌우되고
+wg가 직접 영향을 주지 않는다. **R@10 0.974**는 LLM이 답을 만들 때 정답에
+필요한 evidence를 97% 이상 컨텍스트에 가지고 들어간다는 의미.
+
+**비교 참조** (직접 비교 X — 다른 metric, 다른 LLM, 다른 stack):
+
+| 시스템 | LongMemEval 점수 | 출처 |
+|---|---|---|
+| MemPalace (verbatim Chroma) | 96.6% (full E2E with LLM) | 자체 공시 |
+| Supermemory | 99%+ 주장 | 자체 공시 |
+| Mastra Observational | 84.2% (gpt-4o) | [Mastra research](https://mastra.ai/research/observational-memory) |
+| Zep / Graphiti | 63.8% (gpt-4o) | [Zep](https://www.getzep.com/) |
+| Mem0 | 49.0% (gpt-4o) | [Mem0 docs](https://docs.mem0.ai) |
+| **wg (retrieval R@10, BM25-only)** | **0.974** | 본 측정 |
+
+wg의 R@10 = 0.974는 retrieval 구간만 — LLM 품질 추가하면 답 정확도는 그
+이하. 그래도 retrieval ceiling이 매우 높다는 뜻이고, 이 단계가 system
+설계의 가장 중요한 책임 영역이다.
+
+## 가장 약한 카테고리 분석
+
+`temporal-reasoning` (94%)와 `single-session-preference` (93%)가 R@10
+하락의 주범:
+
+- **temporal-reasoning** — "지난주에 결정한 게 뭐냐" 같은 시간 한정 질문.
+  현재 BM25는 timestamp를 점수에 반영하지 않음. wg의 `time_decay_tau_ms`
+  + `as_of` 필터가 이 카테고리를 더 끌어올릴 수 있을지 후속 측정 가치.
+- **single-session-preference** — "내가 어떤 종류의 음식을 좋아하나"
+  같은 1인칭 선호. 짧은 fact + 정확한 형용사 매칭이 필요.
+  rerank가 도움될 가능성.
 
 ## 향후 측정
 

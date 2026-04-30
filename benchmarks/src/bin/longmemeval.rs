@@ -53,10 +53,12 @@ struct Question {
     question_type: String,
     question: String,
     // Captured for schema fidelity / future answer-correctness eval —
-    // current harness only measures retrieval.
+    // current harness only measures retrieval. Type is `Value` (not
+    // `String`) because LongMemEval-S contains numeric answers
+    // (e.g. "how many" → 3) alongside string answers.
     #[serde(default)]
     #[allow(dead_code)]
-    answer: String,
+    answer: Value,
     haystack_session_ids: Vec<String>,
     haystack_sessions: Vec<Vec<Turn>>,
     answer_session_ids: Vec<String>,
@@ -118,17 +120,21 @@ fn build_store_for_question(q: &Question) -> Result<(tempfile::TempDir, WikiGrap
     let wiki = WikiGraph::open(&store_path, config).map_err(|e| e.to_string())?;
 
     // Each haystack session becomes an entity so we can tag turns
-    // with it via `entity_ids`. That keeps the session linkage in the
-    // graph rather than relying on tag-substring lookups.
+    // with it via `entity_ids`. That keeps the session linkage in
+    // the graph rather than relying on tag-substring lookups.
+    // Some questions reference the same session_id twice — dedupe by
+    // resolving when entity_add hits "already exists".
     let mut session_eids = Vec::with_capacity(q.haystack_session_ids.len());
     for sid in &q.haystack_session_ids {
-        let id = wiki
-            .entity_add(EntityInput {
-                name: format!("session:{sid}"),
-                entity_type: Some(EntityType::Custom("session".into())),
-                ..Default::default()
-            })
-            .map_err(|e| e.to_string())?;
+        let name = format!("session:{sid}");
+        let id = match wiki.entity_add(EntityInput {
+            name: name.clone(),
+            entity_type: Some(EntityType::Custom("session".into())),
+            ..Default::default()
+        }) {
+            Ok(id) => id,
+            Err(_) => wiki.resolve_entity(&name).map_err(|e| e.to_string())?,
+        };
         session_eids.push(id);
     }
 
