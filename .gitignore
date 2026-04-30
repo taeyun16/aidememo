@@ -52,3 +52,7 @@ crates/wg-nif/mix.lock
 dhat-heap.json
 .env
 .env.local
+
+# Local-only LongMemEval E2E intermediates
+wg_retrievals_*.jsonl
+wg_e2e_*/
