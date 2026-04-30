@@ -220,6 +220,15 @@ pub struct SearchConfig {
     /// types fall back to 1.0 (neutral).
     #[serde(default = "default_fact_type_weights")]
     pub fact_type_weights: std::collections::BTreeMap<String, f32>,
+    /// Fact types exempt from time-decay. Long-lived facts (decisions,
+    /// conventions, persistent preferences) shouldn't lose ranking
+    /// weight just because they're old — once decided, the decision
+    /// stays the answer. Notes / questions / claims still decay so
+    /// stale chatter doesn't outrank fresh insight. OMEGA exempts
+    /// `preference` and `error` from its decay floor; we extend the
+    /// pattern to wg's `decision` / `convention` / `pattern`.
+    #[serde(default = "default_decay_exempt_types")]
+    pub decay_exempt_types: Vec<String>,
 }
 
 fn default_fact_type_weights() -> std::collections::BTreeMap<String, f32> {
@@ -232,6 +241,14 @@ fn default_fact_type_weights() -> std::collections::BTreeMap<String, f32> {
     m.insert("question".to_string(), 0.5);
     m.insert("unknown".to_string(), 1.0);
     m
+}
+
+fn default_decay_exempt_types() -> Vec<String> {
+    vec![
+        "decision".to_string(),
+        "convention".to_string(),
+        "pattern".to_string(),
+    ]
 }
 
 fn default_semantic_prefilter() -> usize {
@@ -286,6 +303,7 @@ impl Default for SearchConfig {
             time_decay_tau_ms: default_time_decay_tau(),
             use_adapter: default_true(),
             fact_type_weights: default_fact_type_weights(),
+            decay_exempt_types: default_decay_exempt_types(),
         }
     }
 }

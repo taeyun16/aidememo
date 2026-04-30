@@ -890,7 +890,15 @@ mod semantic {
                         weight *= fact.source_confidence.clamp(0.0, 1.0);
                         weight *= fact.relevance_score.clamp(0.1, 1.0);
                     }
-                    if tau_ms > 0 {
+                    let type_key = fact.fact_type.to_string();
+                    // Decay-exempt types skip the time multiplier. Long-
+                    // lived facts (decisions / conventions / patterns)
+                    // shouldn't lose rank just for being old — the
+                    // decision is still the decision. Note / question /
+                    // claim continue to decay so stale chatter falls
+                    // off the top.
+                    let exempt = cfg.search.decay_exempt_types.contains(&type_key);
+                    if tau_ms > 0 && !exempt {
                         let ts = fact.observed_at.unwrap_or(fact.created_at);
                         let age_ms = now_ms.saturating_sub(ts);
                         let decay = (-(age_ms as f64) / tau_ms as f64).exp() as f32;
@@ -902,7 +910,6 @@ mod semantic {
                     // approach. `fact.fact_type.to_string()` is the same
                     // lowercase form used as the BTreeMap key (set in
                     // SearchConfig::default).
-                    let type_key = fact.fact_type.to_string();
                     if let Some(w) = type_weights.get(&type_key) {
                         weight *= *w;
                     }
@@ -1317,5 +1324,80 @@ mod tests {
         )
         .unwrap();
         assert!(untouched.len() >= 2);
+    }
+
+    #[cfg(feature = "semantic")]
+    #[test]
+    #[ignore = "downloads HF model — local only"]
+    fn hybrid_search_decay_exempt_types_resist_aging() {
+        // Two facts, both year-old. One typed Decision (default
+        // exempt), one Note (default decays). With τ=30d the Note
+        // should be crushed near zero, the Decision should hold its
+        // weight, so the Decision wins ranking even though both are
+        // equally old.
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.redb");
+        let mut config = Config::default();
+        config.search.time_decay_tau_ms = 30 * 24 * 60 * 60 * 1000; // 30 days
+        config.search.weight_by_confidence = false;
+        config.search.semantic_index = "bm25".to_string();
+        // decay_exempt_types defaults to {decision, convention, pattern} —
+        // verify by relying on the default rather than over-configuring.
+        let mut store = Store::open(&path, config.clone()).unwrap();
+        store
+            .entity_add(EntityInput {
+                name: "Topic".to_string(),
+                entity_type: Some(EntityType::Technology),
+                ..Default::default()
+            })
+            .unwrap();
+        let t = store.resolve_entity("Topic").unwrap();
+
+        let now_ms = current_epoch_ms();
+        let one_year_ago = now_ms - 365 * 24 * 60 * 60 * 1000;
+
+        let old_note = store
+            .fact_add(FactInput {
+                content: "topic foo bar baz".to_string(),
+                fact_type: Some(FactType::Note),
+                entity_ids: Some(vec![t]),
+                observed_at: Some(one_year_ago),
+                source_confidence: Some(0.9),
+                ..Default::default()
+            })
+            .unwrap();
+        let old_decision = store
+            .fact_add(FactInput {
+                content: "topic foo bar quux".to_string(),
+                fact_type: Some(FactType::Decision),
+                entity_ids: Some(vec![t]),
+                observed_at: Some(one_year_ago),
+                source_confidence: Some(0.9),
+                ..Default::default()
+            })
+            .unwrap();
+
+        let results = semantic::hybrid_search(
+            &store,
+            "topic foo bar",
+            SearchOpts {
+                limit: Some(5),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let pos_decision = results
+            .iter()
+            .position(|r| r.fact_id == old_decision)
+            .expect("decision present");
+        let pos_note = results
+            .iter()
+            .position(|r| r.fact_id == old_note)
+            .expect("note present");
+        assert!(
+            pos_decision < pos_note,
+            "decay-exempt Decision should rank ahead of decayed Note despite equal age \
+             (decision={pos_decision} note={pos_note})",
+        );
     }
 }
