@@ -75,7 +75,16 @@ if [[ "${1:-}" == "--ping" ]]; then
   printf '  %-20s  %-6s  %s\n' --------------------- ------ ---------------
   any_ok=0
   for model in "${PING_MODELS[@]}"; do
-    body=$(printf '{"model":"%s","messages":[{"role":"user","content":"Reply with: OK"}],"max_tokens":5}' "$model")
+    # gpt-5.x and o-series rejected `max_tokens` — they want
+    # `max_completion_tokens` (the post-reasoning-models naming).
+    # Older 4o/4.1 still accept `max_tokens`.
+    case "$model" in
+      gpt-5*|o1*|o3*|o4*)
+        token_field='"max_completion_tokens":16' ;;
+      *)
+        token_field='"max_tokens":5' ;;
+    esac
+    body=$(printf '{"model":"%s","messages":[{"role":"user","content":"Reply with: OK"}],%s}' "$model" "$token_field")
     status=$(curl -sS -o /tmp/openai_ping.json -w '%{http_code}' \
         -H "Authorization: Bearer ${OPENAI_API_KEY}" \
         -H "Content-Type: application/json" \
