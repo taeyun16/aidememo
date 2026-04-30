@@ -348,12 +348,43 @@ gpt-4o response: "I don't know."
 
 | reader | judge | **overall** | preference | temporal | knowledge | 비용 |
 |---|---|---|---|---|---|---|
-| `gpt-4o-mini` | `gpt-4o-mini` | **0.580** | 0.567 | 0.323 | 0.705 | ~$0.25 |
-| `gpt-4o` | `gpt-4o-mini` | **0.586** | 0.533 | 0.316 | 0.744 | ~$3.90 |
-| `gpt-5.4-mini` | `gpt-4o-mini` | **0.596** | 0.700 | 0.353 | 0.654 | ~$1.50 |
+| `gpt-4o-mini` | `gpt-4o-mini` | 0.580 | 0.567 | 0.323 | 0.705 | ~$0.25 |
+| `gpt-4o` | `gpt-4o-mini` | 0.586 | 0.533 | 0.316 | 0.744 | ~$3.90 |
+| `gpt-5.4-mini` | `gpt-4o-mini` | 0.596 | 0.700 | 0.353 | 0.654 | ~$1.50 |
 
 **v1 → v2 효과:** 같은 retrieval slate 동일, prompt만 수정으로 +4-12pt 상승.
 abstention이 강할수록 큰 모델이 더 손해를 봤음.
+
+### Judge calibration (gpt-4o-mini vs gpt-4o judge)
+
+published baselines (mem0/Zep/Mastra)이 모두 gpt-4o judge를 쓰므로,
+같은 axis로 비교하기 위해 v2 결과를 gpt-4o judge로 재채점.
+
+| reader | mini judge | **gpt-4o judge** | Δ | agreement |
+|---|---|---|---|---|
+| gpt-4o-mini | 0.580 | **0.600** | +2.0 | 96.4% |
+| gpt-4o | 0.586 | **0.604** | +1.8 | 95.8% |
+| gpt-5.4-mini | 0.596 | **0.626** | +3.0 | 94.6% |
+
+**Agreement 95-96%** — 두 judge가 대부분 동의. 차이는 직선적 — gpt-4o
+judge가 CORRECT 표시를 14-21건 더 많이 줌, 반대 방향(mini correct, 4o
+wrong)은 4-6건 뿐. **mini judge는 verbose answer를 보수적으로 incorrect
+판정하는 경향 — published 비교에는 gpt-4o judge가 fair**.
+
+**Per-category, gpt-5.4-mini reader × gpt-4o judge (best v2):**
+
+| Category | E2E acc |
+|---|---|
+| single-session-user | 0.971 |
+| single-session-assistant | 0.964 |
+| single-session-preference | 0.767 |
+| knowledge-update | 0.705 |
+| multi-session | 0.466 |
+| temporal-reasoning | 0.383 |
+
+multi-session 47% / temporal 38%로 reader 한계 — judge 바뀌어도 bottom
+카테고리 양상 같음. 즉 published 시스템(Mastra 84%, OMEGA 95%) 대비 차이
+의 본질은 **judge calibration이 아니라 retrieval+reader 파이프라인 차이**.
 
 ### Per-category 상세 (v2)
 
@@ -389,36 +420,41 @@ v1의 같은 패턴 (96%) 유지 — prompt 수정해도 reasoning 한계는 그
 multi-session과 temporal-reasoning이 모델 ceiling. retrieval은 R@10 0.985
 / 0.955로 대부분 맞추지만 LLM이 다중 세션 합성 / 시간 비교에서 무너짐.
 
-### Published 비교 (모두 reader=gpt-4o, judge=gpt-4o)
+### Published 비교 (judge=gpt-4o로 통일)
 
 | 시스템 | reader | E2E |
 |---|---|---|
 | Mem0 (published) | gpt-4o | 0.490 |
-| **wg + decay-90** | **gpt-4o** | **0.586** |
-| Zep (published) | gpt-4o | 0.638 |
+| **wg + decay-90** | gpt-4o-mini | **0.600** |
+| **wg + decay-90** | **gpt-4o** | **0.604** |
+| **wg + decay-90** | gpt-5.4-mini | **0.626** |
+| Zep / Graphiti 2026 (published) | gpt-4o | 0.712 |
+| Supermemory (published) | (?) | 0.854 |
+| Emergence AI (published) | (?) | 0.860 |
 | Mastra (published) | gpt-4o | 0.842 |
 | Mastra (published) | gpt-5-mini | 0.949 |
-
-**Mem0 +9.6pt 능가, Zep -5.2pt 미만, Mastra -25.6pt 미만.** judge가 gpt-4o-mini
-(우리) vs gpt-4o (published)라 1-2pt 차이는 calibration 노이즈 가능성.
-
-**5.4-mini가 4o보다 살짝 높음 (0.596 vs 0.586)** — 신모델이 비용 1/3로 동등급.
-Mastra gpt-5-mini 0.949와는 큰 격차 — 그쪽은 자체 retrieval+verbatim 저장으로
-LLM에 더 많은 raw context 제공하는 구조 차이.
+| OMEGA (published, local) | gpt-4.1 | 0.954 |
 
 ### 핵심 결론
 
-1. **wg + gpt-4o = 0.586** — published mem0 + gpt-4o (0.490)를 9.6pt 능가.
-   small footprint(1 binary, 28MB embedding model)로 mem0 stack(Python +
-   3 service) 능가하는 retrieval 품질을 데이터로 입증.
-2. **wg의 retrieval ceiling = R@10 0.978** — 11/500 (2.2%)만 retrieval miss.
-   reader 어떻게 바꿔도 이론 상한 ~98%.
-3. **현재 bottleneck = reader reasoning** — 96% 오답이 r-HIT-but-WRONG.
-   gpt-4o / gpt-5.4-mini로도 multi-session(45%)과 temporal(35%)은 한계.
-   gpt-5.4 (full) 또는 gpt-5.5로 끌어올릴 잠재력 있음.
-4. **prompt sensitivity 큼** — 같은 모델/retrieval에서 abstention emphasis만
-   바꿔 +4-12pt 변동. published 점수와 직접 비교 시 prompt 비교 가능성도
-   주의 필요.
+1. **wg + gpt-4o = 0.604** (gpt-4o judge) — Mem0 + gpt-4o (0.490)를 +11.4pt
+   능가. single binary + 28MB embedding model로 Python+3-service 스택 능가.
+2. **wg + gpt-5.4-mini = 0.626** — 비용 1/3 모델로 best result. 신모델이
+   reasoning에서 4o 능가하기 시작.
+3. **그러나 SOTA(Mastra 84%, Supermemory 85%, OMEGA 95%)와 큰 격차**:
+   - **Mastra**는 LLM Observer + Reflector가 insert-time에 dense observation
+     생성 — wg의 raw turn 저장과 근본 다른 아키텍처
+   - **OMEGA**는 같은 로컬 카테고리에서 cross-encoder rerank + type-weighted
+     scoring + GPT-4.1 reader로 95.4% — wg가 미보유한 기능 다수
+   - **차이의 대부분은 retrieval-after-rank stage** (rerank, type weighting)
+     + insert-time LLM extraction 부재
+4. **wg retrieval ceiling = R@10 0.978**. 이론 상한 ~98%. reader/reranker
+   강화로 60% → 80%+ 영역 진입 가능.
+5. **bottleneck 분포** (현재 v2 numbers):
+   - retrieval-MISS (wg 탓): 2-3%
+   - reader-bottleneck (현재 multi-session/temporal-reasoning): 30-40%
+   - 격차 좁히려면 (a) cross-encoder rerank, (b) type-weighted scoring,
+     (c) LLM-aided wg_extract 가 ROI 순.
 
 ### 다음 측정 권장 (선택)
 

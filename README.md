@@ -195,24 +195,30 @@ dataset, BM25 via `wg_search`, ~350 ms/question end-to-end
 | wg + time-decay soft-bias (τ=90d) | 0.858 | 0.958 | **0.978** | 0.898 |
 
 End-to-end with an LLM reader (`scripts/longmemeval_e2e.py`, judge =
-`gpt-4o-mini`):
+`gpt-4o` to match the published-baseline calibration):
 
 | Stack | Reader | Overall |
 |---|---|---|
 | Mem0 (published) | gpt-4o | 49.0% |
-| **wg + decay τ=90** | gpt-4o-mini | **58.0%** |
-| **wg + decay τ=90** | gpt-4o | **58.6%** |
-| **wg + decay τ=90** | gpt-5.4-mini | **59.6%** |
-| Zep (published) | gpt-4o | 63.8% |
+| **wg + decay τ=90** | gpt-4o-mini | **60.0%** |
+| **wg + decay τ=90** | gpt-4o | **60.4%** |
+| **wg + decay τ=90** | gpt-5.4-mini | **62.6%** |
+| Zep / Graphiti 2026 (published) | gpt-4o | 71.2% |
+| Supermemory (published) | — | 85.4% |
 | Mastra (published) | gpt-4o | 84.2% |
+| Mastra (published) | gpt-5-mini | 94.9% |
+| OMEGA (published, local) | gpt-4.1 | 95.4% |
 
-`wg + gpt-4o` beats `mem0 + gpt-4o` by **+9.6pt** with a single Rust
+`wg + gpt-4o` beats `mem0 + gpt-4o` by **+11.4pt** with a single Rust
 binary + 28 MB embedding model — no Python services, no vector DB,
-no graph store. Of the remaining errors, **96% had the right context
-in the top-10 retrievals**; the failures are reader-side reasoning
-(multi-session synthesis and temporal comparison) where wg's R@10 of
-0.978 already gave the LLM the right snippets. Full per-category
-breakdown + cost / methodology notes in
+no graph store. Below SOTA local systems (OMEGA 95.4% with cross-
+encoder rerank + type-weighted scoring) — see [`COMPARE.md`](COMPARE.md)
+for the architecture-level gap analysis. Of wg's remaining errors,
+**96% had the right context in the top-10 retrievals**; the failures
+are reader-side reasoning (multi-session synthesis, temporal
+comparison) where wg's R@10 of 0.978 already gave the LLM the right
+snippets. Full per-category breakdown + judge-calibration analysis +
+methodology notes in
 [`.notes/bench-longmemeval.md`](.notes/bench-longmemeval.md).
 
 The R@10 = 97.4% number says the answer-evidence session lands in the
