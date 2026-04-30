@@ -52,7 +52,10 @@ struct Question {
     #[serde(default)]
     question_type: String,
     question: String,
+    // Captured for schema fidelity / future answer-correctness eval —
+    // current harness only measures retrieval.
     #[serde(default)]
+    #[allow(dead_code)]
     answer: String,
     haystack_session_ids: Vec<String>,
     haystack_sessions: Vec<Vec<Turn>>,
@@ -63,7 +66,10 @@ struct Question {
 struct Turn {
     role: String,
     content: String,
+    // Per-turn evidence flag is captured but not currently scored —
+    // future per-turn precision pass can use it.
     #[serde(default)]
+    #[allow(dead_code)]
     has_answer: Option<bool>,
 }
 
@@ -228,7 +234,7 @@ fn run(data: &Path, limit: Option<usize>, top_k: usize) -> Result<(), String> {
             bucket.1 += 1;
         }
         if (i + 1) % 10 == 0 {
-            eprintln!("[{:>4}/{}] processed", i + 1, n);
+            eprintln!("[{:>4}/{}] processed (last: {})", i + 1, n, q.question_id);
         }
     }
     let wall = started.elapsed();

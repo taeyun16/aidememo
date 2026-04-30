@@ -118,7 +118,7 @@ impl ContentBlock {
 // Tool implementations
 // ---------------------------------------------------------------------------
 
-/// Parse a `fact_type` MCP argument against the closed [`FactType`] enum.
+/// Parse a `fact_type` MCP argument against the closed `FactType` enum.
 /// Returns `None` for missing/null. Errors with a list of accepted values
 /// when the agent passes a typo (e.g. "decisions", "fact") so the model
 /// learns the right vocabulary at the next turn instead of getting a
@@ -351,10 +351,10 @@ fn tool_fact_pin(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, Strin
 /// One-call session warmup envelope. Bundles the four read calls an
 /// agent makes at the top of a new conversation — pinned tier, recent
 /// activity, top entities, open lint issues — into a single MCP
-/// invocation so the model doesn't have to chain `wg_pinned_context`
-/// + `wg_recent` + `wg_entity_list` + `wg_doctor` (four round trips →
-/// one). Each section honors its own limit so agents can shape the
-/// envelope size to their context budget.
+/// invocation so the model doesn't have to chain four sequential
+/// reads (`wg_pinned_context`, `wg_recent`, `wg_entity_list`,
+/// `wg_doctor`). Each section honors its own limit so agents can
+/// shape the envelope size to their context budget.
 fn tool_session_start(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String> {
     let pinned_limit = args
         .get("pinned_limit")

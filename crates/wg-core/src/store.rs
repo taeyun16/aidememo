@@ -1330,7 +1330,7 @@ impl Store {
                 out.push(record);
             }
         }
-        out.sort_by(|a, b| b.last_accessed_at.cmp(&a.last_accessed_at));
+        out.sort_by_key(|f| std::cmp::Reverse(f.last_accessed_at));
         out.truncate(limit);
         Ok(out)
     }
