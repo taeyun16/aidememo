@@ -145,11 +145,48 @@ wg의 R@10 = 0.974는 retrieval 구간만 — LLM 품질 추가하면 답 정확
 하락의 주범:
 
 - **temporal-reasoning** — "지난주에 결정한 게 뭐냐" 같은 시간 한정 질문.
-  현재 BM25는 timestamp를 점수에 반영하지 않음. wg의 `time_decay_tau_ms`
-  + `as_of` 필터가 이 카테고리를 더 끌어올릴 수 있을지 후속 측정 가치.
 - **single-session-preference** — "내가 어떤 종류의 음식을 좋아하나"
   같은 1인칭 선호. 짧은 fact + 정확한 형용사 매칭이 필요.
   rerank가 도움될 가능성.
+
+## 후속 측정: temporal mode (negative result)
+
+`--temporal` 옵션을 harness에 추가해서 각 fact에 `observed_at =
+haystack_date`를 stamp하고 검색 시 `until = question_date`로 미래
+세션을 필터해 봤다 (`benchmarks/src/bin/longmemeval.rs`):
+
+```
+temporal-reasoning baseline:    R@10 0.940  (125/133)
+temporal-reasoning --temporal:  R@10 0.782  (104/133)  ← 16pt 하락
+```
+
+**이유** — LongMemEval-S 데이터셋 자체에 dating noise가 있다. 133개
+temporal-reasoning 질문의 **answer-evidence sessions 74개가 question_date
+이후로 timestamp 매김**:
+
+```bash
+python3 -c "..." # see commit 메시지
+# temporal-reasoning total: 133
+# total future-dated sessions: 1417
+# future-dated EVIDENCE sessions: 74
+```
+
+즉 evidence 자체가 미래로 잘못 매겨진 케이스가 절반 이상이라 hard-cutoff
+필터가 evidence를 제외한다. 합성 chat-memory 코퍼스를 만들 때 흔히 생기는
+artifact (질문은 시점 t, evidence는 t 이후 LLM 생성).
+
+**시사점:**
+1. **LongMemEval-S에선 temporal filter ROI 없음.** `until=question_date`
+   가정 자체가 데이터 contract와 맞지 않음.
+2. **실제 위키엔 ROI가 다를 가능성.** frontmatter `date:` / `decided_at:`
+   이 정확한 마크다운 위키에선 같은 메커니즘이 도움. 우리 자체 도그푸드
+   세팅(`wg watch`)에서 후속 측정 가치.
+3. **soft-bias가 더 나을 가능성.** hard-cutoff 대신 `time_decay_tau_ms`
+   로 가중치만 조정하면 evidence가 future-dated여도 살아남을 수 있다.
+   별도 실험.
+
+`--temporal` 플래그는 harness에 남겨둔다 (위키 스타일 데이터에 재시험할 때
+유용). LongMemEval-S baseline 보고는 BM25-only 0.974 그대로.
 
 ## 향후 측정
 

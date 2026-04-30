@@ -37,7 +37,7 @@
 //!   cargo run --release -p wg-benchmarks --bin longmemeval -- --limit 50
 //! ```
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Instant;
 
@@ -59,6 +59,15 @@ struct Question {
     #[serde(default)]
     #[allow(dead_code)]
     answer: Value,
+    /// "2023/02/01 (Wed) 10:20" — when the question is asked. With
+    /// `--temporal` we interpret it as the `as_of` boundary; facts
+    /// from later sessions are filtered out.
+    #[serde(default)]
+    question_date: Option<String>,
+    /// Per-session date in the same format. With `--temporal` each
+    /// fact in a session inherits its session's date as `observed_at`.
+    #[serde(default)]
+    haystack_dates: Vec<String>,
     haystack_session_ids: Vec<String>,
     haystack_sessions: Vec<Vec<Turn>>,
     answer_session_ids: Vec<String>,
@@ -79,6 +88,42 @@ struct Args {
     data: PathBuf,
     limit: Option<usize>,
     top_k: usize,
+    /// Enable temporal-aware retrieval: stamp each fact with its
+    /// session's `haystack_date` and pass `as_of=question_date` so
+    /// future-dated noise is filtered. Targeted at boosting the
+    /// `temporal-reasoning` category.
+    temporal: bool,
+    /// Restrict the run to a single question_type bucket. Lets you
+    /// re-measure just one slice without re-running all 500.
+    only_type: Option<String>,
+}
+
+/// Parse "2023/02/01 (Wed) 10:20" → epoch ms. Returns None on any
+/// parse failure (the harness then falls back to "no temporal info").
+fn parse_question_date(raw: &str) -> Option<u64> {
+    // Split off the parenthesised weekday: "2023/02/01 (Wed) 10:20"
+    let mut parts = raw.split_whitespace();
+    let date = parts.next()?; // "2023/02/01"
+    let _weekday = parts.next(); // "(Wed)" — discarded
+    let time = parts.next()?; // "10:20"
+    let mut date_parts = date.split('/');
+    let y: i32 = date_parts.next()?.parse().ok()?;
+    let mo: u32 = date_parts.next()?.parse().ok()?;
+    let d: u32 = date_parts.next()?.parse().ok()?;
+    let mut tparts = time.split(':');
+    let h: u32 = tparts.next()?.parse().ok()?;
+    let m: u32 = tparts.next()?.parse().ok()?;
+    // Days-from-epoch via the civil-from-fields algorithm (Howard Hinnant).
+    let y_adj = if mo <= 2 { y - 1 } else { y };
+    let era = y_adj.div_euclid(400);
+    let yoe = (y_adj - era * 400) as u32;
+    let mp = if mo <= 2 { mo + 9 } else { mo - 3 };
+    let doy = (153 * mp + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146_097 + doe as i32 - 719_468;
+    let seconds_per_day = 86_400_i64;
+    let secs = days as i64 * seconds_per_day + (h as i64) * 3600 + (m as i64) * 60;
+    Some((secs * 1000) as u64)
 }
 
 fn parse_args() -> Args {
@@ -87,6 +132,8 @@ fn parse_args() -> Args {
         .unwrap_or_else(|_| PathBuf::from("benchmarks/fixtures/longmemeval_tiny.json"));
     let mut limit: Option<usize> = None;
     let mut top_k: usize = 10;
+    let mut temporal = false;
+    let mut only_type: Option<String> = None;
 
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
@@ -104,13 +151,30 @@ fn parse_args() -> Args {
                 top_k = argv[i + 1].parse().unwrap_or(10);
                 i += 2;
             }
+            "--temporal" => {
+                temporal = true;
+                i += 1;
+            }
+            "--only-type" if i + 1 < argv.len() => {
+                only_type = Some(argv[i + 1].clone());
+                i += 2;
+            }
             _ => i += 1,
         }
     }
-    Args { data, limit, top_k }
+    Args {
+        data,
+        limit,
+        top_k,
+        temporal,
+        only_type,
+    }
 }
 
-fn build_store_for_question(q: &Question) -> Result<(tempfile::TempDir, WikiGraph), String> {
+fn build_store_for_question(
+    q: &Question,
+    temporal: bool,
+) -> Result<(tempfile::TempDir, WikiGraph), String> {
     let dir = tempfile::TempDir::new().map_err(|e| e.to_string())?;
     let mut config = Config::default();
     config.store.path = dir.path().join("store").to_string_lossy().into_owned();
@@ -142,6 +206,16 @@ fn build_store_for_question(q: &Question) -> Result<(tempfile::TempDir, WikiGrap
     let mut inputs = Vec::new();
     for (sess_idx, session) in q.haystack_sessions.iter().enumerate() {
         let entity_id = session_eids.get(sess_idx).copied();
+        // With --temporal, each fact in a session inherits its
+        // session's `haystack_dates[sess_idx]` as `observed_at` so the
+        // `as_of` filter at search time can drop future-dated noise.
+        let observed_at = if temporal {
+            q.haystack_dates
+                .get(sess_idx)
+                .and_then(|d| parse_question_date(d))
+        } else {
+            None
+        };
         for turn in session {
             inputs.push(FactInput {
                 content: format!("{}: {}", turn.role, turn.content),
@@ -153,7 +227,7 @@ fn build_store_for_question(q: &Question) -> Result<(tempfile::TempDir, WikiGrap
                 )]),
                 source: None,
                 source_confidence: None,
-                observed_at: None,
+                observed_at,
             });
         }
     }
@@ -163,14 +237,27 @@ fn build_store_for_question(q: &Question) -> Result<(tempfile::TempDir, WikiGrap
     Ok((dir, wiki))
 }
 
-fn evaluate(q: &Question, wiki: &WikiGraph, top_k: usize) -> Option<usize> {
+fn evaluate(q: &Question, wiki: &WikiGraph, top_k: usize, temporal: bool) -> Option<usize> {
     // BM25-only baseline. Returns the 1-indexed rank of the first hit
-    // whose entity matches one of the answer-session entities, or None
-    // if no such hit appears in the top-K.
+    // whose entity matches one of the answer-session entities, or
+    // None if no such hit appears in the top-K. Under `--temporal`,
+    // the search uses `until=question_date` (observed_at-based window)
+    // so facts observed AFTER the question can't surface — eliminates
+    // future-dated noise that hurts the temporal-reasoning slice.
+    // We use `until` rather than `as_of` because `as_of` filters on
+    // `created_at` (DB insertion time, always "now" in this harness)
+    // whereas `until` checks `observed_at` (the real-world time we
+    // stamped during ingest).
+    let until = if temporal {
+        q.question_date.as_deref().and_then(parse_question_date)
+    } else {
+        None
+    };
     let opts = SearchOpts {
         limit: Some(top_k),
         bm25_only: true,
         current_only: true,
+        until,
         ..Default::default()
     };
     let results = wiki.hybrid_search(&q.question, opts).ok()?;
@@ -196,14 +283,21 @@ fn evaluate(q: &Question, wiki: &WikiGraph, top_k: usize) -> Option<usize> {
     None
 }
 
-fn run(data: &Path, limit: Option<usize>, top_k: usize) -> Result<(), String> {
+fn run(args: &Args) -> Result<(), String> {
+    let data = args.data.as_path();
+    let limit = args.limit;
+    let top_k = args.top_k;
+    let temporal = args.temporal;
     let raw = std::fs::read_to_string(data).map_err(|e| format!("read {data:?}: {e}"))?;
     let v: Value = serde_json::from_str(&raw).map_err(|e| format!("parse: {e}"))?;
-    let questions: Vec<Question> = if v.is_array() {
+    let mut questions: Vec<Question> = if v.is_array() {
         serde_json::from_value(v).map_err(|e| format!("array parse: {e}"))?
     } else {
         vec![serde_json::from_value(v).map_err(|e| format!("single parse: {e}"))?]
     };
+    if let Some(only) = &args.only_type {
+        questions.retain(|q| q.question_type == *only);
+    }
     let n = limit
         .map(|l| l.min(questions.len()))
         .unwrap_or(questions.len());
@@ -211,6 +305,10 @@ fn run(data: &Path, limit: Option<usize>, top_k: usize) -> Result<(), String> {
     println!("dataset:  {data:?}");
     println!("questions: {n} (of {})", questions.len());
     println!("top_k:    {top_k}");
+    println!("temporal: {temporal}");
+    if let Some(only) = &args.only_type {
+        println!("only:     {only}");
+    }
     println!();
 
     let mut hit_at_1 = 0usize;
@@ -220,8 +318,8 @@ fn run(data: &Path, limit: Option<usize>, top_k: usize) -> Result<(), String> {
     let mut by_type: std::collections::BTreeMap<String, (usize, usize)> = Default::default();
     let started = Instant::now();
     for (i, q) in questions.iter().take(n).enumerate() {
-        let (_dir, wiki) = build_store_for_question(q)?;
-        let rank = evaluate(q, &wiki, top_k);
+        let (_dir, wiki) = build_store_for_question(q, temporal)?;
+        let rank = evaluate(q, &wiki, top_k, temporal);
         if let Some(r) = rank {
             if r <= 1 {
                 hit_at_1 += 1;
@@ -268,7 +366,7 @@ fn run(data: &Path, limit: Option<usize>, top_k: usize) -> Result<(), String> {
 
 fn main() -> ExitCode {
     let args = parse_args();
-    if let Err(e) = run(&args.data, args.limit, args.top_k) {
+    if let Err(e) = run(&args) {
         eprintln!("error: {e}");
         return ExitCode::FAILURE;
     }
