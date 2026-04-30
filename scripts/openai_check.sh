@@ -59,29 +59,50 @@ else:
 echo
 
 if [[ "${1:-}" == "--ping" ]]; then
-  echo "[3/3] Tiny completion ping (gpt-4o-mini, ~\$0.0001) …"
-  ping_status=$(curl -sS -o /tmp/openai_ping.json -w '%{http_code}' \
-      -H "Authorization: Bearer ${OPENAI_API_KEY}" \
-      -H "Content-Type: application/json" \
-      -d '{
-        "model": "gpt-4o-mini",
-        "messages": [{"role": "user", "content": "Reply with the single word: OK"}],
-        "max_tokens": 5
-      }' \
-      "https://api.openai.com/v1/chat/completions")
-  if [[ "$ping_status" != "200" ]]; then
-    echo "  HTTP ${ping_status} — completion failed."
-    cat /tmp/openai_ping.json | head -c 500
-    echo
+  # Ping the LongMemEval recommendation set so the operator knows
+  # which tiers are actually callable, not just listed. Each ping
+  # is ~$0.00005-0.001 depending on model — total under $0.01.
+  PING_MODELS=(
+    gpt-4o-mini
+    gpt-4o
+    gpt-4.1
+    gpt-4.1-mini
+    gpt-5.4-mini
+    gpt-5.4
+  )
+  echo "[3/3] Pinging ${#PING_MODELS[@]} candidate models (~\$0.01 total) …"
+  printf '  %-20s  %-6s  %s\n' MODEL HTTP NOTE
+  printf '  %-20s  %-6s  %s\n' --------------------- ------ ---------------
+  any_ok=0
+  for model in "${PING_MODELS[@]}"; do
+    body=$(printf '{"model":"%s","messages":[{"role":"user","content":"Reply with: OK"}],"max_tokens":5}' "$model")
+    status=$(curl -sS -o /tmp/openai_ping.json -w '%{http_code}' \
+        -H "Authorization: Bearer ${OPENAI_API_KEY}" \
+        -H "Content-Type: application/json" \
+        -d "$body" \
+        "https://api.openai.com/v1/chat/completions" || echo "ERR")
+    if [[ "$status" == "200" ]]; then
+      reply=$(python3 -c "import json; print(json.load(open('/tmp/openai_ping.json'))['choices'][0]['message']['content'].strip()[:30])")
+      printf '  %-20s  %-6s  %s\n' "$model" "$status" "✓ '$reply'"
+      any_ok=1
+    elif [[ "$status" == "404" ]]; then
+      printf '  %-20s  %-6s  %s\n' "$model" "$status" "model not found / not enabled"
+    elif [[ "$status" == "403" ]]; then
+      printf '  %-20s  %-6s  %s\n' "$model" "$status" "no access (tier-locked?)"
+    elif [[ "$status" == "429" ]]; then
+      printf '  %-20s  %-6s  %s\n' "$model" "$status" "rate-limit / quota"
+    else
+      err=$(python3 -c "import json; r=json.load(open('/tmp/openai_ping.json')); print(r.get('error',{}).get('message','')[:60])" 2>/dev/null || echo '')
+      printf '  %-20s  %-6s  %s\n' "$model" "$status" "$err"
+    fi
+  done
+  echo
+  if [[ "$any_ok" == "1" ]]; then
+    echo "  ✓ completion path verified for at least one model."
+  else
+    echo "  ✗ no model was callable — check billing / tier."
     exit 4
   fi
-  reply=$(python3 -c "
-import json
-r = json.load(open('/tmp/openai_ping.json'))
-print(r['choices'][0]['message']['content'].strip())
-print('  usage:', r['usage'])")
-  echo "  reply: ${reply}"
-  echo "  ✓ completion path verified."
 else
-  echo "[3/3] skipped completion ping. Run with --ping to verify (cost ~\$0.0001)."
+  echo "[3/3] skipped completion ping. Run with --ping to verify which models actually call (cost <\$0.01)."
 fi
