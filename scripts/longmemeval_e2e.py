@@ -112,7 +112,7 @@ def _extract_text(resp: dict) -> str:
 # ---- Reader prompts (matching LongMemEval official prompt structure) -----
 
 
-READER_SYSTEM = """You are a helpful assistant. The user has a long history with you, and you have access to summarised retrieved snippets from past conversations. Use them to answer the question concisely and factually. If the retrieved context does not contain enough information, reply with "I don't know."""
+READER_SYSTEM = """You are answering a user's question about themselves using snippets from your past conversations with them. The snippets ARE retrieved from real prior chats — extract the user-specific answer from them confidently. Quote or paraphrase the relevant snippet directly. Only say "I don't know" if NONE of the snippets touch the topic at all."""
 
 
 def _reader_messages(question: str, retrievals: list[dict]) -> list[dict]:
@@ -122,10 +122,12 @@ def _reader_messages(question: str, retrievals: list[dict]) -> list[dict]:
         sid = r.get("session_id") or "unknown"
         blocks.append(f"[snippet {r['rank']} | session {sid}] {r['content']}")
     user_prompt = (
-        "Retrieved snippets from past conversations:\n\n"
+        "Snippets from your prior conversations with this user "
+        "(numbered, ranked by retrieval score):\n\n"
         + "\n".join(blocks)
-        + f"\n\nQuestion: {question}\nAnswer concisely. If you cannot determine "
-        "the answer from the snippets, reply exactly with: I don't know."
+        + f"\n\nUser's question: {question}\n"
+        "Give the most direct, fact-based answer you can extract from "
+        "the snippets above. The answer is almost certainly in there."
     )
     return [
         {"role": "system", "content": READER_SYSTEM},
