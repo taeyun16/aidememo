@@ -50,3 +50,5 @@ crates/wg-nif/deps/
 crates/wg-nif/priv/
 crates/wg-nif/mix.lock
 dhat-heap.json
+.env
+.env.local
