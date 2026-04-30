@@ -659,23 +659,57 @@ fn tool_entity_describe(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult
     })
 }
 
+/// Outcome of resolving (and possibly creating) the entity-name list
+/// passed to `wg_fact_add{,_many}`.
+struct ResolvedEntities {
+    /// Entity IDs in the same order as the input names.
+    ids: Vec<wg_core::EntityId>,
+    /// Names that did not previously exist and were freshly created.
+    created: Vec<String>,
+    /// Per-newly-created name, the trigram-similar entities that
+    /// already exist. Empty Vec when no candidates passed the
+    /// similarity bar — the field is only populated when there's
+    /// genuine risk of typo-induced graph fragmentation, like
+    /// auto-creating "Postgrs" while "Postgres" already exists.
+    alternatives: Vec<EntityNameAlternative>,
+}
+
+struct EntityNameAlternative {
+    requested: String,
+    suggestions: Vec<String>,
+}
+
 /// Resolve entity names to IDs, **auto-creating** any name that doesn't
 /// already exist. Mirrors the CLI behavior in `wg fact add` so MCP and
 /// CLI no longer diverge: previously the MCP path silently dropped
 /// unknown names via `filter_map`, leaving the fact attached to fewer
 /// entities than the agent expected. New entities default to
-/// `EntityType::Unknown` and are surfaced in the return tuple so the
-/// caller can confirm the side effect.
+/// `EntityType::Unknown`.
+///
+/// On every auto-create the helper also runs the existing
+/// `suggest_similar_entities` fuzzy matcher; when a candidate scores
+/// above the trigram threshold the (`requested`, `suggestions`) pair is
+/// returned as an `EntityNameAlternative`. Auto-create still proceeds
+/// — the caller decides whether to merge with `wg_fact_supersede` /
+/// alias the new entity. The default is non-blocking because the agent
+/// might genuinely mean the new name, but the warning makes typo-driven
+/// fragmentation visible at the moment it would otherwise happen
+/// silently.
 fn resolve_or_create_entities(
     wiki: &WikiGraph,
     names: &[String],
-) -> Result<(Vec<wg_core::EntityId>, Vec<String>), String> {
+) -> Result<ResolvedEntities, String> {
     let mut ids = Vec::with_capacity(names.len());
     let mut created = Vec::new();
+    let mut alternatives = Vec::new();
     for name in names {
         match wiki.resolve_entity(name) {
             Ok(id) => ids.push(id),
             Err(_) => {
+                // Look for a near-miss BEFORE creating so the lookup
+                // sees only entities that pre-date this batch — keeps
+                // a "Postgres + Postgrs" pair from masking each other.
+                let suggestions = wiki.suggest_similar_entities(name).unwrap_or_default();
                 let id = wiki
                     .entity_add(wg_core::EntityInput {
                         name: name.clone(),
@@ -685,10 +719,40 @@ fn resolve_or_create_entities(
                     .map_err(|e| e.to_string())?;
                 ids.push(id);
                 created.push(name.clone());
+                if !suggestions.is_empty() {
+                    alternatives.push(EntityNameAlternative {
+                        requested: name.clone(),
+                        suggestions,
+                    });
+                }
             }
         }
     }
-    Ok((ids, created))
+    Ok(ResolvedEntities {
+        ids,
+        created,
+        alternatives,
+    })
+}
+
+/// Serialize `EntityNameAlternative` array for inclusion in MCP
+/// responses. Returns `Value::Null` when the input is empty so the
+/// JSON field is `null` rather than `[]` — agents can short-circuit
+/// the check with a simple null test.
+fn alternatives_payload(alts: &[EntityNameAlternative]) -> Value {
+    if alts.is_empty() {
+        return Value::Null;
+    }
+    let array: Vec<Value> = alts
+        .iter()
+        .map(|alt| {
+            json!({
+                "requested": alt.requested,
+                "suggestions": alt.suggestions,
+            })
+        })
+        .collect();
+    Value::Array(array)
 }
 
 fn tool_fact_add(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String> {
@@ -715,7 +779,10 @@ fn tool_fact_add(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, Strin
         })
         .unwrap_or_default();
 
-    let (entity_ids, auto_created) = resolve_or_create_entities(wiki, &entity_names)?;
+    let resolved = resolve_or_create_entities(wiki, &entity_names)?;
+    let entity_ids = resolved.ids;
+    let auto_created = resolved.created;
+    let alternatives = resolved.alternatives;
     let fact_type = parse_fact_type_arg(args.get("fact_type"))?;
 
     // Pre-add similarity check (non-blocking). BM25-only so we don't
@@ -788,6 +855,7 @@ fn tool_fact_add(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, Strin
         "entity_names": entity_names_resolved,
         "created_at": record.created_at,
         "auto_created_entities": auto_created,
+        "entity_name_alternatives": alternatives_payload(&alternatives),
         "existing_similar": existing_similar,
     });
     Ok(ToolCallResult {
@@ -816,6 +884,7 @@ fn tool_fact_add_many(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, 
     let mut inputs = Vec::with_capacity(items.len());
     let mut per_item_entity_names: Vec<Vec<String>> = Vec::with_capacity(items.len());
     let mut auto_created_total: Vec<String> = Vec::new();
+    let mut alternatives_total: Vec<EntityNameAlternative> = Vec::new();
     for (i, item) in items.iter().enumerate() {
         let obj = item
             .as_object()
@@ -834,12 +903,21 @@ fn tool_fact_add_many(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, 
                     .collect()
             })
             .unwrap_or_default();
-        let (entity_ids_vec, mut created) = resolve_or_create_entities(wiki, &names)?;
+        let resolved = resolve_or_create_entities(wiki, &names)?;
+        let entity_ids_vec = resolved.ids;
         // Dedup auto-created across items in case the same new entity
         // is referenced by multiple facts in this batch.
-        for name in created.drain(..) {
+        for name in resolved.created {
             if !auto_created_total.contains(&name) {
                 auto_created_total.push(name);
+            }
+        }
+        for alt in resolved.alternatives {
+            if !alternatives_total
+                .iter()
+                .any(|a| a.requested == alt.requested)
+            {
+                alternatives_total.push(alt);
             }
         }
         per_item_entity_names.push(names);
@@ -886,6 +964,7 @@ fn tool_fact_add_many(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, 
         "count": ids.len(),
         "facts": facts_array,
         "auto_created_entities": auto_created_total,
+        "entity_name_alternatives": alternatives_payload(&alternatives_total),
     });
     Ok(ToolCallResult {
         content: vec![ContentBlock::text(payload.to_string())],
@@ -1229,7 +1308,7 @@ pub fn list_tools() -> Vec<Tool> {
         },
         Tool {
             name: "wg_fact_add".into(),
-            description: "Add a fact to the wiki graph. By default the tool runs a BM25 dedup check on the new content first — if a high-overlap existing fact is found it appears as `existing_similar` in the response (the new fact is still added; the agent decides whether to wg_fact_supersede the older one). Missing entities are auto-created (default type Unknown) and reported in `auto_created_entities` so you can confirm the side effect. Returns {id, content, entity_names, created_at, auto_created_entities, existing_similar}."
+            description: "Add a fact to the wiki graph. By default the tool runs a BM25 dedup check on the new content first — if a high-overlap existing fact is found it appears as `existing_similar` in the response (the new fact is still added; the agent decides whether to wg_fact_supersede the older one). Missing entities are auto-created (default type Unknown) and reported in `auto_created_entities`. If an auto-created name is fuzzily similar to an existing entity (e.g. typo: 'Postgrs' vs existing 'Postgres'), the candidates appear as `entity_name_alternatives` so the agent can decide to alias or merge instead of leaving a fragmented graph. Returns {id, content, entity_names, created_at, auto_created_entities, entity_name_alternatives, existing_similar}."
                 .into(),
             input_schema: json!({
                 "type": "object",
@@ -1889,6 +1968,61 @@ mod tests {
                 .contains("relations"),
             "action hint should explain how to resolve an orphan",
         );
+    }
+
+    #[test]
+    fn fact_add_surfaces_entity_name_alternatives_for_typos() {
+        // Live agent test caught this: "Postgres" exists, agent
+        // accidentally posts a fact about "Postgrs", auto-create
+        // silently splits the graph. Now the response must surface a
+        // typo hint pointing at the existing entity so the agent can
+        // wg_fact_supersede / alias instead of leaving the fragment.
+        let (_dir, wiki) = open_temp_wiki();
+        add_fact(&wiki, "PostgreSQL is a relational DB", "Postgres");
+        let result = tool_fact_add(
+            &json!({
+                "content": "Postgres has VACUUM",
+                "entities": ["Postgrs"],
+            }),
+            &wiki,
+        )
+        .unwrap();
+        let payload: Value =
+            serde_json::from_str(result.content[0].text.as_deref().unwrap()).unwrap();
+        let alts = payload["entity_name_alternatives"]
+            .as_array()
+            .expect("alternatives present for typo");
+        assert_eq!(alts.len(), 1);
+        assert_eq!(alts[0]["requested"], "Postgrs");
+        let suggestions: Vec<&str> = alts[0]["suggestions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
+        assert!(
+            suggestions.iter().any(|s| s.contains("Postgres")),
+            "Postgres must appear as a suggestion: {suggestions:?}",
+        );
+    }
+
+    #[test]
+    fn fact_add_omits_alternatives_when_no_near_match() {
+        // Brand-new entity name with no fuzzy neighbours — the field
+        // must be `null` (not `[]`) so callers can short-circuit with
+        // a single null check.
+        let (_dir, wiki) = open_temp_wiki();
+        let result = tool_fact_add(
+            &json!({
+                "content": "MongoDB document store",
+                "entities": ["MongoDB"],
+            }),
+            &wiki,
+        )
+        .unwrap();
+        let payload: Value =
+            serde_json::from_str(result.content[0].text.as_deref().unwrap()).unwrap();
+        assert!(payload["entity_name_alternatives"].is_null());
     }
 
     #[test]

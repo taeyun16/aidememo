@@ -60,7 +60,11 @@ pub enum WgError {
     },
 
     // === Entity ===
-    #[error("entity not found: '{name}'")]
+    // Display includes the fuzzy suggestions when any were collected so
+    // the agent doesn't see a bare "entity not found" — the description
+    // for `wg_entity_get` advertises this hint and callers depend on
+    // pattern-matching on the message to recover from typos.
+    #[error("entity not found: '{name}'{}", format_entity_suggestions(suggestions))]
     EntityNotFound {
         name: String,
         suggestions: Vec<String>,
@@ -227,3 +231,54 @@ impl WgError {
 
 /// Result type alias for WikiGraph operations.
 pub type Result<T> = std::result::Result<T, WgError>;
+
+/// Render the suggestion list as ` (did you mean: a, b, c?)` or "" when
+/// none. Capped at three entries so the message stays readable on a
+/// terminal and an LLM doesn't have to scan a long alias dump.
+fn format_entity_suggestions(suggestions: &[String]) -> String {
+    if suggestions.is_empty() {
+        return String::new();
+    }
+    let preview: Vec<&str> = suggestions.iter().take(3).map(|s| s.as_str()).collect();
+    format!(" (did you mean: {}?)", preview.join(", "))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn entity_not_found_display_includes_suggestions() {
+        let err = WgError::entity_not_found(
+            "Postgrs".into(),
+            vec!["Postgres".into(), "Postgresql".into()],
+        );
+        let msg = err.to_string();
+        assert!(msg.contains("Postgrs"), "name present: {msg}");
+        assert!(msg.contains("did you mean"), "hint present: {msg}");
+        assert!(msg.contains("Postgres"), "first suggestion present: {msg}");
+    }
+
+    #[test]
+    fn entity_not_found_display_omits_hint_when_no_suggestions() {
+        let err = WgError::entity_not_found("Unknown".into(), vec![]);
+        let msg = err.to_string();
+        assert_eq!(msg, "entity not found: 'Unknown'");
+    }
+
+    #[test]
+    fn entity_not_found_display_caps_suggestions_at_three() {
+        let many = vec!["a", "b", "c", "d", "e"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        let err = WgError::entity_not_found("x".into(), many);
+        let msg = err.to_string();
+        // Should mention a/b/c but not d/e — keeps the line readable.
+        // Substring "d" hits the literal "did" in "did you mean", so
+        // assert against the comma-separated tail explicitly.
+        assert!(msg.contains("a, b, c?"), "first three present: {msg}");
+        assert!(!msg.contains(", d"), "trailing entries omitted: {msg}");
+        assert!(!msg.contains("e?"), "last entry omitted: {msg}");
+    }
+}

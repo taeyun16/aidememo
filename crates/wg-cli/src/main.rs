@@ -381,6 +381,7 @@ fn handle_fact(
             }
             with_wiki_mut(path, config, |wiki| {
                 let mut auto_created: Vec<String> = Vec::new();
+                let mut alternatives: Vec<serde_json::Value> = Vec::new();
                 let entity_ids = match entities {
                     Some(names) => {
                         // Allow comma-separated names in a single --entities flag.
@@ -398,6 +399,14 @@ fn handle_fact(
                             match wiki.resolve_entity(name) {
                                 Ok(id) => ids.push(id),
                                 Err(_) => {
+                                    // Same fuzzy guard as the MCP tool —
+                                    // surface near-miss candidates so a
+                                    // typo doesn't silently fork the
+                                    // graph (live agent test caught
+                                    // "Postgres" + "Postgrs" coexisting
+                                    // as separate entities).
+                                    let suggestions =
+                                        wiki.suggest_similar_entities(name).unwrap_or_default();
                                     let new_id = wiki.entity_add(EntityInput {
                                         name: name.clone(),
                                         entity_type: Some(EntityType::Unknown),
@@ -405,6 +414,12 @@ fn handle_fact(
                                     })?;
                                     auto_created.push(name.clone());
                                     ids.push(new_id);
+                                    if !suggestions.is_empty() {
+                                        alternatives.push(serde_json::json!({
+                                            "requested": name,
+                                            "suggestions": suggestions,
+                                        }));
+                                    }
                                 }
                             }
                         }
@@ -412,6 +427,32 @@ fn handle_fact(
                     }
                     None => None,
                 };
+
+                // Pre-add similarity check so the JSON envelope matches
+                // wg_fact_add's `existing_similar` field. Mirrors the
+                // MCP behaviour: BM25-only (no model load) and
+                // non-blocking — we still add the fact, the caller
+                // decides whether to wg_fact_supersede.
+                let existing_similar = wiki
+                    .hybrid_search(
+                        &content,
+                        wg_core::SearchOpts {
+                            limit: Some(1),
+                            bm25_only: true,
+                            current_only: true,
+                            ..Default::default()
+                        },
+                    )
+                    .ok()
+                    .and_then(|hits| hits.into_iter().next())
+                    .filter(|hit| hit.score >= 1.0)
+                    .map(|hit| {
+                        serde_json::json!({
+                            "fact_id": hit.fact_id.to_string(),
+                            "content": hit.content,
+                            "score": hit.score,
+                        })
+                    });
 
                 let id = wiki.add_fact(FactInput {
                     content: content.clone(),
@@ -423,13 +464,31 @@ fn handle_fact(
                     observed_at: observed_at_ms,
                 })?;
                 if json {
-                    // Stable shape for programmatic callers (the
-                    // hermes-wg plugin and any other client that
-                    // would otherwise have to grep for a ULID in
-                    // free-form prose).
+                    // Match the MCP wg_fact_add response shape exactly
+                    // so callers (hermes-wg plugin, scripts) see a
+                    // stable envelope regardless of whether the daemon
+                    // was online or the local in-process path was
+                    // used.
+                    let record = wiki.fact_get(&id)?;
+                    let entity_names_resolved: Vec<String> = record
+                        .entity_ids
+                        .iter()
+                        .filter_map(|eid| wiki.entity_get_by_id(*eid).ok())
+                        .map(|e| e.name)
+                        .collect();
+                    let alternatives_field = if alternatives.is_empty() {
+                        serde_json::Value::Null
+                    } else {
+                        serde_json::Value::Array(alternatives)
+                    };
                     let payload = serde_json::json!({
                         "id": id.to_string(),
+                        "content": record.content,
+                        "entity_names": entity_names_resolved,
+                        "created_at": record.created_at,
                         "auto_created_entities": auto_created,
+                        "entity_name_alternatives": alternatives_field,
+                        "existing_similar": existing_similar,
                     });
                     return serde_json::to_string_pretty(&payload).map_err(|e| {
                         WgError::Serialize {
@@ -450,6 +509,34 @@ fn handle_fact(
                         label,
                         auto_created.join(", ")
                     ));
+                }
+                if let Some(similar) = &existing_similar {
+                    if let (Some(fid), Some(sim_content)) = (
+                        similar.get("fact_id").and_then(|v| v.as_str()),
+                        similar.get("content").and_then(|v| v.as_str()),
+                    ) {
+                        msg.push_str(&format!(
+                            "\n  similar existing fact: [{fid}] {}",
+                            sim_content.chars().take(80).collect::<String>(),
+                        ));
+                    }
+                }
+                for alt in &alternatives {
+                    if let (Some(req), Some(suggestions)) = (
+                        alt.get("requested").and_then(|v| v.as_str()),
+                        alt.get("suggestions").and_then(|v| v.as_array()),
+                    ) {
+                        let preview: Vec<&str> = suggestions
+                            .iter()
+                            .filter_map(|s| s.as_str())
+                            .take(3)
+                            .collect();
+                        msg.push_str(&format!(
+                            "\n  note: '{req}' looks similar to existing entit{}: {}",
+                            if preview.len() == 1 { "y" } else { "ies" },
+                            preview.join(", "),
+                        ));
+                    }
                 }
                 Ok(msg)
             })
@@ -1083,11 +1170,9 @@ fn run_fact_add_via_daemon(
         })
         .unwrap_or_default();
     if json {
-        return Ok(serde_json::json!({
-            "id": id,
-            "auto_created_entities": auto_created,
-        })
-        .to_string());
+        // Forward the daemon's full envelope verbatim — daemon-on and
+        // daemon-off `wg fact add --json` outputs are now identical.
+        return Ok(payload.to_string());
     }
     let mut msg = format!("Added fact with ID {id}");
     if !auto_created.is_empty() {
@@ -1095,6 +1180,42 @@ fn run_fact_add_via_daemon(
             "\nAuto-created entities: {}",
             auto_created.join(", ")
         ));
+    }
+    // Surface dedup / typo hints in the human output too — agents that
+    // run via `wg` interactively shouldn't have to switch to --json to
+    // see them.
+    if let Some(similar) = payload.get("existing_similar").and_then(|v| v.as_object()) {
+        if let (Some(fid), Some(content)) = (
+            similar.get("fact_id").and_then(|v| v.as_str()),
+            similar.get("content").and_then(|v| v.as_str()),
+        ) {
+            msg.push_str(&format!(
+                "\nSimilar existing fact: [{fid}] {}",
+                content.chars().take(80).collect::<String>(),
+            ));
+        }
+    }
+    if let Some(alts) = payload
+        .get("entity_name_alternatives")
+        .and_then(|v| v.as_array())
+    {
+        for alt in alts {
+            if let (Some(req), Some(suggestions)) = (
+                alt.get("requested").and_then(|v| v.as_str()),
+                alt.get("suggestions").and_then(|v| v.as_array()),
+            ) {
+                let preview: Vec<&str> = suggestions
+                    .iter()
+                    .filter_map(|s| s.as_str())
+                    .take(3)
+                    .collect();
+                msg.push_str(&format!(
+                    "\nNote: '{req}' looks similar to existing entit{}: {}",
+                    if preview.len() == 1 { "y" } else { "ies" },
+                    preview.join(", "),
+                ));
+            }
+        }
     }
     Ok(msg)
 }

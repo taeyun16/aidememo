@@ -145,13 +145,19 @@ fn check_orphans(entities: &[EntitySummary], relations: &[RelationRecord]) -> Ve
         connected.insert(r.target_id);
     }
 
+    // An entity counts as truly orphaned only when it has *neither*
+    // relations nor facts. The previous "no relations" condition flagged
+    // every entity auto-created by `wg_fact_add`, which is the dominant
+    // way agents grow the wiki — so a normal usage pattern made every
+    // entity show up as a warning. Requiring both signals to be empty
+    // limits the warning to genuine dangling records.
     entities
         .iter()
-        .filter(|e| !connected.contains(&e.id))
+        .filter(|e| !connected.contains(&e.id) && e.fact_count == 0)
         .map(|e| LintIssue {
             severity: LintSeverity::Warning,
             code: "orphan".to_string(),
-            message: format!("Entity '{}' has no relations", e.name),
+            message: format!("Entity '{}' has no relations and no facts", e.name),
             entity_id: Some(e.id),
             fact_id: None,
         })
@@ -538,6 +544,36 @@ mod tests {
         let issues = check_duplicates(&entities);
         assert_eq!(issues.len(), 1, "expected one duplicate, got {:?}", issues);
         assert_eq!(issues[0].code, "duplicate");
+    }
+
+    #[test]
+    fn orphan_check_does_not_flag_entities_that_have_facts() {
+        // Live test surfaced a false positive: every entity auto-created
+        // by `wg_fact_add` had relations=0 and was tagged orphan, even
+        // though the agent had attached facts to it. The orphan rule must
+        // require BOTH "no relations" AND "no facts" — otherwise normal
+        // usage drowns the lint output in noise.
+        let with_facts = EntityId::new();
+        let truly_orphaned = EntityId::new();
+        let entities = vec![
+            EntitySummary {
+                id: with_facts,
+                name: "Postgres".into(),
+                entity_type: EntityType::Technology,
+                fact_count: 5,
+                tags: vec![],
+            },
+            EntitySummary {
+                id: truly_orphaned,
+                name: "Floating".into(),
+                entity_type: EntityType::Unknown,
+                fact_count: 0,
+                tags: vec![],
+            },
+        ];
+        let issues = check_orphans(&entities, &[]);
+        assert_eq!(issues.len(), 1, "only the no-fact entity should orphan");
+        assert_eq!(issues[0].entity_id, Some(truly_orphaned));
     }
 
     #[test]
