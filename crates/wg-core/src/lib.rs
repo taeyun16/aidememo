@@ -4,6 +4,7 @@ pub mod adapt;
 pub mod config;
 pub mod embedding;
 pub mod error;
+pub mod extract;
 pub mod fuzzy;
 pub mod graph;
 pub mod index;
@@ -392,6 +393,18 @@ impl WikiGraph {
     // === Fact Operations ===
 
     /// Add a new fact.
+    /// Run the heuristic conversation-to-fact extractor against a
+    /// chunk of text. Returns ranked [`extract::ExtractCandidate`]s
+    /// the agent can review before persisting via `fact_add_many`.
+    /// See `crates/wg-core/src/extract.rs` for the scoring rules.
+    pub fn extract_candidates(
+        &self,
+        text: &str,
+        max_candidates: usize,
+    ) -> Result<Vec<extract::ExtractCandidate>> {
+        extract::extract_candidates(text, &self.store.read(), max_candidates)
+    }
+
     pub fn add_fact(&self, input: FactInput) -> Result<FactId> {
         let id = {
             let mut store = self.store.write();

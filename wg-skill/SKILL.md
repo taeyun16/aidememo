@@ -101,6 +101,7 @@ out. They return structured JSON.
 | `wg_fact_supersede` | Mark old fact replaced by a new one |
 | `wg_fact_edit` | Patch a fact's content (append / prepend / find+replace / content) |
 | `wg_feedback` | Mark a fact returned by wg_search as helpful / not-helpful (closes the adapter loop) |
+| `wg_extract` | Heuristic conversation → candidate facts. `apply:true` persists them; otherwise returns previews to edit |
 
 `wg_search` / `wg_query` / `wg_fact_list` default `current_only=true` — the
 result set is "what we know now". Pass `current_only:false` for historical

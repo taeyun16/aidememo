@@ -299,6 +299,89 @@ fn tool_feedback(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, Strin
     })
 }
 
+fn tool_extract(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String> {
+    let text = args
+        .get("text")
+        .and_then(|v| v.as_str())
+        .ok_or("text required")?;
+    let max_candidates = args
+        .get("max_candidates")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(20) as usize;
+    let apply = args.get("apply").and_then(|v| v.as_bool()).unwrap_or(false);
+    let min_confidence = args
+        .get("min_confidence")
+        .and_then(|v| v.as_f64())
+        .map(|x| x as f32)
+        .unwrap_or(0.5);
+
+    let mut candidates = wiki
+        .extract_candidates(text, max_candidates)
+        .map_err(|e| e.to_string())?;
+    candidates.retain(|c| c.confidence >= min_confidence);
+
+    // Preview path: hand back the structured candidates so the agent
+    // can edit / drop / approve before committing.
+    if !apply {
+        let payload = json!({
+            "applied": false,
+            "candidates": candidates.iter().map(|c| json!({
+                "content": c.content,
+                "suggested_entities": c.suggested_entities,
+                "suggested_fact_type": c.suggested_fact_type.to_string(),
+                "confidence": c.confidence,
+            })).collect::<Vec<_>>(),
+        });
+        return Ok(ToolCallResult {
+            content: vec![ContentBlock::text(payload.to_string())],
+            is_error: None,
+        });
+    }
+
+    // Apply path: persist every candidate that survived the
+    // confidence filter via fact_add (one redb commit each so we
+    // capture the per-fact dedup hint and entity-name alternatives;
+    // batch insert path doesn't run those checks). This is the
+    // observational-memory shape — agent dumps a transcript, gets
+    // back a list of `id`s plus the candidates that were used.
+    let mut added: Vec<Value> = Vec::new();
+    for cand in &candidates {
+        let resolved = resolve_or_create_entities(wiki, &cand.suggested_entities)?;
+        let entity_ids = if resolved.ids.is_empty() {
+            None
+        } else {
+            Some(resolved.ids)
+        };
+        let input = wg_core::types::FactInput {
+            content: cand.content.clone(),
+            fact_type: Some(cand.suggested_fact_type),
+            entity_ids,
+            tags: None,
+            source: None,
+            source_confidence: Some(cand.confidence),
+            observed_at: None,
+        };
+        let id = wiki.add_fact(input).map_err(|e| e.to_string())?;
+        added.push(json!({
+            "id": id.to_string(),
+            "content": cand.content,
+            "fact_type": cand.suggested_fact_type.to_string(),
+            "entities": cand.suggested_entities,
+            "confidence": cand.confidence,
+            "auto_created_entities": resolved.created,
+        }));
+    }
+
+    let payload = json!({
+        "applied": true,
+        "added": added,
+    });
+    Ok(ToolCallResult {
+        content: vec![ContentBlock::text(payload.to_string())],
+        is_error: None,
+    })
+}
+
 fn tool_path(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String> {
     let from = args
         .get("from")
@@ -1166,6 +1249,20 @@ pub fn list_tools() -> Vec<Tool> {
             }),
         },
         Tool {
+            name: "wg_extract".into(),
+            description: "Heuristic conversation → fact extractor. Pass a chat transcript / paragraph as `text`; the tool splits it into sentence-like chunks, scores each one against the existing entity list (substring match) and a fact-type keyword detector (decided / always / pattern / claim / question), and returns ranked candidates above `min_confidence`. By default returns previews so the agent can edit / approve before committing — pass `apply: true` to persist every surviving candidate via `fact_add` (each one runs the dedup-hint and entity-name-alternatives checks). Designed to run fully offline; agents that have a hosted LLM can still extract themselves and call wg_fact_add_many directly.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string", "description": "Raw text to extract from. Dialog markers (`> `, `Speaker:`) are auto-stripped from each sentence."},
+                    "max_candidates": {"type": "number", "default": 20, "description": "Cap on candidates returned, scored highest first."},
+                    "min_confidence": {"type": "number", "default": 0.5, "description": "Drop candidates below this threshold. 0.0 returns everything; 0.7 keeps only high-signal hits."},
+                    "apply": {"type": "boolean", "default": false, "description": "If true, persist every surviving candidate via fact_add (each runs the standard dedup + typo guards) and return the ULIDs alongside."}
+                },
+                "required": ["text"]
+            }),
+        },
+        Tool {
             name: "wg_path".into(),
             description: "Find the shortest path between two entities (BFS over typed relations). Returns {from, to, path: [hops]}. For breadth-first exploration of one neighborhood, use wg_traverse instead.".into(),
             input_schema: json!({
@@ -1403,6 +1500,7 @@ fn call_tool(name: &str, args: &Value, wiki: &WikiGraph) -> Result<ToolCallResul
     match name {
         "wg_search" => tool_search(args, wiki),
         "wg_feedback" => tool_feedback(args, wiki),
+        "wg_extract" => tool_extract(args, wiki),
         "wg_entity_get" => tool_entity_get(args, wiki),
         "wg_entity_list" => tool_entity_list(args, wiki),
         "wg_fact_get" => tool_fact_get(args, wiki),
@@ -2004,6 +2102,68 @@ mod tests {
             suggestions.iter().any(|s| s.contains("Postgres")),
             "Postgres must appear as a suggestion: {suggestions:?}",
         );
+    }
+
+    #[test]
+    fn extract_returns_ranked_candidates_for_dialog_text() {
+        let (_dir, wiki) = open_temp_wiki();
+        wiki.entity_add(EntityInput {
+            name: "Postgres".into(),
+            entity_type: Some(wg_core::EntityType::Technology),
+            ..Default::default()
+        })
+        .unwrap();
+
+        let text = "Alice: We decided to use Postgres for hot writes.\n\
+                    > the deploy ran fine on staging\n\
+                    why does the cache miss after restart?\n\
+                    short";
+        let result = tool_extract(
+            &json!({"text": text, "min_confidence": 0.4, "max_candidates": 10}),
+            &wiki,
+        )
+        .unwrap();
+        let payload: Value =
+            serde_json::from_str(result.content[0].text.as_deref().unwrap()).unwrap();
+        assert_eq!(payload["applied"], false);
+        let cands = payload["candidates"].as_array().unwrap();
+        assert!(!cands.is_empty(), "expected at least one candidate");
+        // The decision sentence with Postgres entity match must rank highest.
+        let top = &cands[0];
+        assert_eq!(top["suggested_fact_type"], "decision");
+        let entities: Vec<&str> = top["suggested_entities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
+        assert_eq!(entities, vec!["Postgres"]);
+        // "short" must be filtered out (below MIN_SENTENCE_CHARS).
+        let contents: Vec<&str> = cands.iter().filter_map(|c| c["content"].as_str()).collect();
+        assert!(contents.iter().all(|c| !c.eq(&"short")));
+    }
+
+    #[test]
+    fn extract_apply_persists_facts_and_returns_ids() {
+        let (_dir, wiki) = open_temp_wiki();
+        let text =
+            "We decided to use Redis for hot caching. The migration is scheduled for Tuesday.";
+        let result = tool_extract(
+            &json!({"text": text, "apply": true, "min_confidence": 0.4}),
+            &wiki,
+        )
+        .unwrap();
+        let payload: Value =
+            serde_json::from_str(result.content[0].text.as_deref().unwrap()).unwrap();
+        assert_eq!(payload["applied"], true);
+        let added = payload["added"].as_array().unwrap();
+        assert!(!added.is_empty());
+        for entry in added {
+            let id_str = entry["id"].as_str().unwrap();
+            let id = wg_core::ulid::Ulid::from_string(id_str).unwrap();
+            // Round-trip: every persisted fact must be retrievable.
+            wiki.fact_get(&wg_core::FactId(id)).unwrap();
+        }
     }
 
     #[test]
