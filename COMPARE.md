@@ -66,7 +66,8 @@ that slice carries the smallest footprint.
 | Bindings | Python | 4 native (Py / Node / Elixir / C) |
 | **Insert tokens / session** | ~12,000 (LLM extraction) | **0** (regex) |
 | **Insert cost / 100K sessions** | $180 (gpt-4o-mini) – $3,000 (gpt-4o) | **$0** |
-| LongMemEval E2E (gpt-4o, gpt-4o judge) | 71.2% | **67.6%** (-3.6pt) |
+| LongMemEval E2E (gpt-4o reader, gpt-4o judge) | 71.2% | 67.6% (-3.6pt) |
+| **LongMemEval E2E (best reader, gpt-4o judge)** | 71.2% (gpt-4o) | **74.0% (MiniMax-M2.7-highspeed) +2.8pt** ⭐ |
 | Retrieval R@10 (LongMemEval-S) | not published | **0.992** |
 
 **Pick Graphiti if** you need community / cluster detection, LLM-grade entity extraction at insert time, and the +3.6pt E2E margin justifies the per-insert LLM cost + Neo4j footprint.
@@ -128,7 +129,7 @@ that slice carries the smallest footprint.
 | Multi-writer merge | beads has git-style cell merge; wg is single-writer. | Use `wg mcp-serve` to share one daemon; full distributed merge isn't in scope. |
 | Community / cluster detection | Graphiti groups related entities into communities. | Not implemented; out of scope for v0.x. |
 | LongMemEval retrieval ceiling | Mem0 / Zep / Mastra don't publish R@K — only LLM-graded E2E. | **wg ships R@10 = 0.992, R@1 = 0.940, MRR = 0.958** with `bge-small-en-v1.5` + `bge-reranker-base` (both via `fastembed` ONNX, in-process), two-stage retrieval K=20→10. 470/500 questions land the gold evidence at the FIRST retrieved slot. The cross-encoder reranker is wired the same way OMEGA wires it (in-process, no service). |
-| LongMemEval E2E (LLM-graded) | mem0 / Zep / Mastra publish gpt-4o + gpt-4o-judge numbers. | **wg @ bge + reranker wide K=20→10 measured 2026-05-01: 67.6% (gpt-4o), 65.6% (gpt-4o-mini)** with gpt-4o judge — beats Mem0 (49%) by **+18.6pt**, trails Zep/Graphiti (71.2%) by only **3.6pt** (down from 10.8pt vs the model2vec stack). Below Mastra (84%) and SOTA local systems (OMEGA 95.4%). Worst category is `temporal-reasoning` (39.8%) — capped by LongMemEval-S timestamp noise, not retrieval (R@10 there is 0.977). See [`.notes/compare-graphiti.md`](.notes/compare-graphiti.md) for the head-to-head + token-trade-off matrix. |
+| LongMemEval E2E (LLM-graded) | mem0 / Zep / Mastra publish gpt-4o + gpt-4o-judge numbers. | **wg @ bge + reranker wide K=20→10 measured 2026-05-01: 74.0% (MiniMax-M2.7-highspeed), 67.6% (gpt-4o), 66.0% (gpt-5.4-mini), 65.6% (gpt-4o-mini)** with gpt-4o judge — beats Mem0 (49%) by **+25.0pt** and edges past Zep/Graphiti (71.2%) by **+2.8pt** with a reasoning reader. Below Mastra (84%) and OMEGA (95.4%, gpt-4.1). MiniMax wins multi-session +9.7pt and temporal +9.1pt vs gpt-4o. Worst remaining category: temporal-reasoning (48.9%) — partly capped by LongMemEval-S timestamp noise, not retrieval (R@10 there is 0.977). See [`.notes/compare-graphiti.md`](.notes/compare-graphiti.md) for the wg vs Graphiti head-to-head + token-trade-off matrix. |
 | Cross-encoder rerank in default | OMEGA pipeline — type-weighted + cross-encoder + graph BFS. | wg now has cross-encoder rerank wired both ways: TEI (server) and `fastembed` (in-process). Two-stage retrieval (wider candidate pool → rerank → trim) shipped in commit `debf40b`. |
 | Type-aware ranking | OMEGA boosts decisions / lessons 2× and exempts preferences from decay. | wg has `search.fact_type_weights` (commit `fd5dcbe`) and `search.decay_exempt_types` (commit `24bd7bd`) — both default-on with the OMEGA-style boost shape. |
 | Entity centrality | Zep / Graphiti boost facts on central nodes. | wg ships `search.entity_centrality_weight` (commit `0d67e47`); default off but turning it on adds `1 + w * log10(1 + max_fact_count)` to the rrf weight. |

@@ -210,23 +210,28 @@ End-to-end with an LLM reader (`scripts/longmemeval_e2e.py`, judge =
 | wg @ model2vec + decay τ=90 | gpt-4o-mini | 60.0% |
 | wg @ model2vec + decay τ=90 | gpt-4o | 60.4% |
 | wg @ model2vec + decay τ=90 | gpt-5.4-mini | 62.6% |
-| **wg @ bge + reranker wide K=20→10** ★ | **gpt-4o-mini** | **65.6%** |
-| **wg @ bge + reranker wide K=20→10** ★ | **gpt-5.4-mini** | **66.0%** |
-| **wg @ bge + reranker wide K=20→10** ★ | **gpt-4o** | **67.6%** |
+| wg @ bge + reranker wide K=20→10 | gpt-4o-mini | 65.6% |
+| wg @ bge + reranker wide K=20→10 | gpt-5.4-mini | 66.0% |
+| wg @ bge + reranker wide K=20→10 | gpt-4o | 67.6% |
+| **wg @ bge + reranker wide K=20→10** ★ | **MiniMax-M2.7-highspeed** | **74.0%** |
 | Zep / Graphiti 2026 (published) | gpt-4o | 71.2% |
 | Supermemory (published) | — | 85.4% |
 | Mastra (published) | gpt-4o | 84.2% |
 | Mastra (published) | gpt-5-mini | 94.9% |
 | OMEGA (published, local) | gpt-4.1 | 95.4% |
 
-`wg + gpt-4o` beats `mem0 + gpt-4o` by **+18.6pt** and trails
-Zep/Graphiti by only **3.6pt** (down from 10.8pt) — single Rust
+`wg + MiniMax-M2.7-highspeed` lands at **74.0%** — beating Mem0
+(49%) by **+25.0pt** and edging past Zep/Graphiti (71.2%) by
+**+2.8pt** while keeping the entire stack local: a single Rust
 binary + ONNX bge embedder + cross-encoder reranker, no Python
-services, no vector DB, no graph store. Below SOTA local systems
-(OMEGA 95.4% with cross-encoder rerank + type-weighted scoring) —
-see [`.notes/compare-graphiti.md`](.notes/compare-graphiti.md) for
-the wg vs Graphiti head-to-head and [`COMPARE.md`](COMPARE.md) for
-the broader architecture gap analysis. Of wg's remaining errors,
+services, no vector DB, no graph store, the only network call is
+the reader LLM itself (and that can be any OpenAI-compatible
+endpoint — MiniMax / OpenAI / Kimi / Ollama / vLLM). Below Mastra
+(84.2%) and SOTA local systems (OMEGA 95.4% with 25 lifecycle
+tools) — see [`.notes/compare-graphiti.md`](.notes/compare-graphiti.md)
+for the wg vs Graphiti head-to-head, [`.notes/omega-pipeline-analysis.md`](.notes/omega-pipeline-analysis.md)
+for the OMEGA gap analysis, and [`COMPARE.md`](COMPARE.md) for the
+broader architecture comparison. Of wg's remaining errors,
 **99% had the right context in the top-10 retrievals**; the failures
 are reader-side reasoning (multi-session synthesis, temporal
 comparison) — and the worst category (`temporal-reasoning` 39.8%) is

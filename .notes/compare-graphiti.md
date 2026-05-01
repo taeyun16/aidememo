@@ -1,8 +1,10 @@
 # wg vs Graphiti / Zep — head-to-head (2026-05)
 
-> **결론 한 줄**: insert 토큰 100% 절감, retrieval R@K가 더 높지만 E2E
-> 정확도는 -3.6pt. 이전 측정(60.4% — Graphiti 71.2%, 격차 10.8pt)에서
-> wide-rerank + 슬림화 후 67.6%로 격차 1/3로 좁아짐.
+> **결론 한 줄**: 같은 retrieval에 reasoning reader (MiniMax-M2.7-
+> highspeed) 적용 시 **wg 74.0% > Graphiti 71.2% (+2.8pt)** — 처음
+> 추월. insert 토큰 100% 절감 (Graphiti는 ~$180-3000/100K sessions).
+> retrieval R@10 0.992 (Graphiti 미공시). 단 OMEGA / Mastra와 격차
+> 여전 (lifecycle management).
 
 `Graphiti` (Zep의 오픈소스 temporal-KG 엔진)는 wg가 가장 자주 비교되는
 시스템. "토큰 절감과 정확도" 두 축에서 정직하게 비교한 결과.
@@ -52,16 +54,19 @@
 
 ## 정확도 비교
 
-### LongMemEval E2E (gpt-4o reader, gpt-4o judge)
+### LongMemEval E2E (gpt-4o judge, 2026-05-01 측정)
 
-| 시스템 | Overall | wg와의 차이 |
-|---|---|---|
-| Mem0 (publish) | 49.0% | wg **+18.6pt** ✅ |
-| **wg @ bge+reranker** (2026-05-01) | **67.6%** | — |
-| Zep / Graphiti (publish) | 71.2% | -3.6pt |
-| Mastra (publish) | 84.2% | -16.6pt |
-| Supermemory (publish) | 85.4% | -17.8pt |
-| OMEGA (publish, gpt-4.1) | 95.4% | -27.8pt |
+| 시스템 | Reader | Overall | wg와의 차이 |
+|---|---|---|---|
+| Mem0 (publish) | gpt-4o | 49.0% | wg **+25.0pt** ✅ |
+| wg @ bge+reranker | gpt-4o-mini | 65.6% | — |
+| wg @ bge+reranker | gpt-5.4-mini | 66.0% | — |
+| wg @ bge+reranker | gpt-4o | 67.6% | — |
+| Zep / Graphiti (publish) | gpt-4o | 71.2% | -2.8pt (after MiniMax) |
+| **wg @ bge+reranker** ⭐ | **MiniMax-M2.7-highspeed** | **74.0%** | — (best) |
+| Mastra (publish) | gpt-4o | 84.2% | -10.2pt |
+| Supermemory (publish) | (?) | 85.4% | -11.4pt |
+| OMEGA (publish, local) | gpt-4.1 | 95.4% | -21.4pt |
 
 ### wg E2E 카테고리별 (gpt-4o / gpt-5.4-mini / gpt-4o-mini)
 
