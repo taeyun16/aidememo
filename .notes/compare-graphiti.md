@@ -63,17 +63,21 @@
 | Supermemory (publish) | 85.4% | -17.8pt |
 | OMEGA (publish, gpt-4.1) | 95.4% | -27.8pt |
 
-### wg E2E 카테고리별 (gpt-4o / gpt-4o-mini)
+### wg E2E 카테고리별 (gpt-4o / gpt-5.4-mini / gpt-4o-mini)
 
-| Category | gpt-4o | gpt-4o-mini |
-|---|---|---|
-| knowledge-update | 80.8% (63/78) | 74.4% (58/78) |
-| multi-session | 61.7% (82/133) | 59.4% (79/133) |
-| single-session-assistant | **94.6%** (53/56) | 94.6% (53/56) |
-| single-session-user | **97.1%** (68/70) | **100%** (70/70) |
-| single-session-preference | 63.3% (19/30) | 60.0% (18/30) |
-| **temporal-reasoning** ⚠ | 39.8% (53/133) | 37.6% (50/133) |
-| **Overall** | **67.6%** | **65.6%** |
+| Category | gpt-4o | gpt-5.4-mini | gpt-4o-mini |
+|---|---|---|---|
+| knowledge-update | **80.8%** (63/78) | 69.2% (54/78) | 74.4% (58/78) |
+| multi-session | 61.7% (82/133) | **62.4%** (83/133) | 59.4% (79/133) |
+| single-session-assistant | 94.6% (53/56) | **96.4%** (54/56) | 94.6% (53/56) |
+| single-session-user | 97.1% (68/70) | 97.1% (68/70) | **100%** (70/70) |
+| **single-session-preference** ⭐ | 63.3% (19/30) | **80.0%** (24/30) | 60.0% (18/30) |
+| **temporal-reasoning** ⚠ | **39.8%** (53/133) | 35.3% (47/133) | 37.6% (50/133) |
+| **Overall** | **67.6%** | **66.0%** | **65.6%** |
+
+→ gpt-5.4-mini의 single-session-preference 80.0%는 gpt-4o(63.3%) 대비 **+17pt** —
+선호 추론에서 reasoning 모델 강점이 명확히 드러남. 비용 1/3로 이 카테고리만
+보면 gpt-5.4-mini가 ROI 최강.
 
 ### vs Zep/Graphiti 카테고리별
 
@@ -94,12 +98,13 @@ LongMemEval-S의 dating noise 때문에 wg는 temporal에서 39.8%에 막힘.
 
 ## E2E 향상 추적 (wg 자체)
 
-| Stack | Reader | Overall | Δ |
+| Stack | Reader | Overall | Δ vs model2vec same reader |
 |---|---|---|---|
 | model2vec + decay τ=90 | gpt-4o-mini | 60.0% | baseline |
 | model2vec + decay τ=90 | gpt-4o | 60.4% | baseline |
-| model2vec + decay τ=90 | gpt-5.4-mini | 62.6% | +2.6 |
-| **bge + reranker wide K=20→10 (2026-05)** | **gpt-4o-mini** | **65.6%** | **+5.6** |
+| model2vec + decay τ=90 | gpt-5.4-mini | 62.6% | baseline |
+| **bge + reranker wide K=20→10 (2026-05)** | gpt-4o-mini | **65.6%** | **+5.6** |
+| **bge + reranker wide K=20→10 (2026-05)** | gpt-5.4-mini | **66.0%** | **+3.4** |
 | **bge + reranker wide K=20→10 (2026-05)** | **gpt-4o** | **67.6%** | **+7.2** |
 
 retrieval R@10 0.978 → 0.992 (+1.4pt)가 E2E에서 **+7.2pt로 증폭**.

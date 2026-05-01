@@ -211,6 +211,7 @@ End-to-end with an LLM reader (`scripts/longmemeval_e2e.py`, judge =
 | wg @ model2vec + decay τ=90 | gpt-4o | 60.4% |
 | wg @ model2vec + decay τ=90 | gpt-5.4-mini | 62.6% |
 | **wg @ bge + reranker wide K=20→10** ★ | **gpt-4o-mini** | **65.6%** |
+| **wg @ bge + reranker wide K=20→10** ★ | **gpt-5.4-mini** | **66.0%** |
 | **wg @ bge + reranker wide K=20→10** ★ | **gpt-4o** | **67.6%** |
 | Zep / Graphiti 2026 (published) | gpt-4o | 71.2% |
 | Supermemory (published) | — | 85.4% |

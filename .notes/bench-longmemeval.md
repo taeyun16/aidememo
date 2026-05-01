@@ -515,6 +515,7 @@ multi-session과 temporal-reasoning이 모델 ceiling. retrieval은 R@10 0.985
 | wg @ model2vec + decay-90 | gpt-4o | 0.604 |
 | wg @ model2vec + decay-90 | gpt-5.4-mini | 0.626 |
 | **wg @ bge + reranker wide K=20→10** ★ | **gpt-4o-mini** | **0.656** |
+| **wg @ bge + reranker wide K=20→10** ★ | **gpt-5.4-mini** | **0.660** |
 | **wg @ bge + reranker wide K=20→10** ★ | **gpt-4o** | **0.676** |
 | Zep / Graphiti 2026 (published) | gpt-4o | 0.712 |
 | Supermemory (published) | (?) | 0.854 |
@@ -525,15 +526,31 @@ multi-session과 temporal-reasoning이 모델 ceiling. retrieval은 R@10 0.985
 
 ### 2026-05-01 재측정 카테고리별 (bge + reranker wide K=20→10)
 
-| Category | gpt-4o | gpt-4o-mini |
-|---|---|---|
-| knowledge-update | 80.8% (63/78) | 74.4% (58/78) |
-| multi-session | 61.7% (82/133) | 59.4% (79/133) |
-| **single-session-assistant** | **94.6%** (53/56) | **94.6%** (53/56) |
-| **single-session-user** | **97.1%** (68/70) | **100%** (70/70) |
-| single-session-preference | 63.3% (19/30) | 60.0% (18/30) |
-| **temporal-reasoning** ⚠ | 39.8% (53/133) | 37.6% (50/133) |
-| **Overall** | **67.6%** | **65.6%** |
+| Category | gpt-4o | gpt-5.4-mini | gpt-4o-mini |
+|---|---|---|---|
+| knowledge-update | **80.8%** (63/78) | 69.2% (54/78) | 74.4% (58/78) |
+| multi-session | 61.7% (82/133) | **62.4%** (83/133) | 59.4% (79/133) |
+| single-session-assistant | 94.6% (53/56) | **96.4%** (54/56) | 94.6% (53/56) |
+| single-session-user | 97.1% (68/70) | 97.1% (68/70) | **100%** (70/70) |
+| **single-session-preference** ⭐ | 63.3% (19/30) | **80.0%** (24/30) | 60.0% (18/30) |
+| **temporal-reasoning** ⚠ | **39.8%** (53/133) | 35.3% (47/133) | 37.6% (50/133) |
+| **Overall** | **67.6%** | **66.0%** | **65.6%** |
+
+**Reader 선택 트레이드오프:**
+- **gpt-4o** — 절대 best (67.6%). knowledge-update에서 압도적 (80.8%).
+  비용 ~$5/500q.
+- **gpt-5.4-mini** — best ROI (66.0%, $1.50). single-session-preference
+  에서 +17pt 격차 (80.0% vs 63.3%) — 선호 추론 강점. 비용 1/3.
+- **gpt-4o-mini** — 운영 minimum (65.6%, $0.30). single-session-user
+  100% 도달.
+
+**retrieval 개선 amplification 모델별 차이:**
+- gpt-4o: model2vec → bge+reranker로 **+7.2pt** (가장 큰 수혜)
+- gpt-4o-mini: +5.6pt
+- gpt-5.4-mini: +3.4pt (이미 reasoning 능력 있어서 retrieval gain이 작음)
+
+→ retrieval 개선은 **smaller / older 모델에 더 도움**. reasoning 모델은
+이미 부족한 retrieval에서도 답을 만들어냄.
 
 ### 핵심 결론 (2026-05-01 갱신)
 
