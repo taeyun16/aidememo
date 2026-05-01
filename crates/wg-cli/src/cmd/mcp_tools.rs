@@ -1123,6 +1123,147 @@ fn tool_query(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String> 
     })
 }
 
+/// `wg_context` — single-call agent-turn entry point. Returns one
+/// envelope with everything an agent typically wants at the top of
+/// a turn: pinned facts (always-on tier), personalisation
+/// (preference / lesson / error), recent activity, top entities,
+/// and (when `topic` is given) topic-specific search hits +
+/// traverse + topic-related lessons / errors.
+///
+/// Replaces the common 3-call chain (`wg_session_start` →
+/// `wg_query` → `wg_search`) with one round-trip. Designed so the
+/// agent can call it on every turn without worrying about which
+/// retrieval shape to use first. When `topic` is omitted the
+/// response is identical in scope to `wg_session_start` plus the
+/// new personalisation tier.
+fn tool_context(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String> {
+    let topic = args
+        .get("topic")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty());
+    let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(10) as usize;
+    let pinned_limit = args
+        .get("pinned_limit")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(10) as usize;
+    let recent_limit = args
+        .get("recent_limit")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(10) as usize;
+    let recent_days = args
+        .get("recent_days")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(7);
+    let depth = args.get("depth").and_then(|v| v.as_u64()).unwrap_or(2) as u32;
+
+    // ── Tier 1: always-on context ─────────────────────────────────
+    let pinned: Vec<Value> = wiki
+        .pinned_facts(pinned_limit)
+        .map_err(|e| e.to_string())?
+        .iter()
+        .map(|f| slim_fact_record(f, wiki))
+        .collect();
+    let personalisation = collect_personalisation(wiki, 50);
+
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    let since = Some(now_ms.saturating_sub(recent_days * 24 * 60 * 60 * 1000));
+    let recent: Vec<Value> = wiki
+        .fact_list(wg_core::FactListOpts {
+            fact_type: None,
+            entity_id: None,
+            min_confidence: None,
+            limit: Some(recent_limit),
+            offset: 0,
+            since,
+            until: None,
+            current_only: true,
+            as_of: None,
+        })
+        .map_err(|e| e.to_string())?
+        .iter()
+        .map(|f| slim_fact_record(f, wiki))
+        .collect();
+
+    // ── Tier 2: topic-specific context (optional) ─────────────────
+    let topic_section = if let Some(t) = topic {
+        let q_opts = wg_core::QueryOpts {
+            search_limit: limit,
+            depth,
+            recent_limit: 5,
+            since: None,
+            current_only: true,
+            mode: wg_core::QueryMode::default(),
+            bm25_only: false,
+        };
+        let qres = wiki.query(t, q_opts).map_err(|e| e.to_string())?;
+
+        // Topic-specific lessons + errors — pull all that match the
+        // hybrid_search hits' entity ids so the agent gets prior
+        // attempts + known failure patterns inline. Cheaper than a
+        // separate wg_search per type.
+        let mut topic_entity_ids: std::collections::HashSet<wg_core::EntityId> =
+            std::collections::HashSet::new();
+        for hit in &qres.search {
+            for name in &hit.entity_names {
+                if let Ok(id) = wiki.resolve_entity(name) {
+                    topic_entity_ids.insert(id);
+                }
+            }
+        }
+        let mut topic_lessons: Vec<Value> = Vec::new();
+        let mut topic_errors: Vec<Value> = Vec::new();
+        for eid in topic_entity_ids {
+            for ftype in [wg_core::FactType::Lesson, wg_core::FactType::Error] {
+                let facts = wiki
+                    .fact_list(wg_core::FactListOpts {
+                        fact_type: Some(ftype),
+                        entity_id: Some(eid),
+                        min_confidence: None,
+                        limit: Some(5),
+                        offset: 0,
+                        since: None,
+                        until: None,
+                        current_only: true,
+                        as_of: None,
+                    })
+                    .unwrap_or_default();
+                for f in facts {
+                    let v = slim_fact_record(&f, wiki);
+                    match ftype {
+                        wg_core::FactType::Lesson => topic_lessons.push(v),
+                        wg_core::FactType::Error => topic_errors.push(v),
+                        _ => {}
+                    }
+                }
+            }
+        }
+        Some(json!({
+            "topic": t,
+            "query_result": qres,
+            "topic_lessons": topic_lessons,
+            "topic_errors": topic_errors,
+        }))
+    } else {
+        None
+    };
+
+    let mut payload = serde_json::Map::new();
+    payload.insert("pinned".into(), Value::Array(pinned));
+    payload.insert("personalisation".into(), Value::Array(personalisation));
+    payload.insert("recent".into(), Value::Array(recent));
+    if let Some(t) = topic_section {
+        payload.insert("topic".into(), t);
+    }
+    let text = serde_json::to_string(&Value::Object(payload)).map_err(|e| e.to_string())?;
+    Ok(ToolCallResult {
+        content: vec![ContentBlock::text(text)],
+        is_error: None,
+    })
+}
+
 fn tool_entity_describe(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String> {
     let name = args
         .get("name")
@@ -1826,8 +1967,23 @@ pub fn list_tools() -> Vec<Tool> {
             }),
         },
         Tool {
+            name: "wg_context".into(),
+            description: "Single-call agent-turn entry point. One round-trip returns the full retrieval envelope: pinned facts (always-on tier), personalisation (preference / lesson / error — decay-exempt), recent activity, and (when `topic` is given) topic-specific search hits + traverse + relevant lessons + relevant errors for the matched entities. Replaces the wg_session_start → wg_query → wg_search chain most agents do at the top of every turn. Use wg_search / wg_query / wg_fact_list for follow-up specific lookups; use wg_context for the broad opening read.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "topic": {"type": "string", "description": "Optional topic / entity name. Without it the response is session-start-style (pinned + personalisation + recent). With it, adds topic-specific search + traverse + topic-related lessons / errors."},
+                    "limit": {"type": "number", "default": 10, "description": "Max topic search hits"},
+                    "pinned_limit": {"type": "number", "default": 10},
+                    "recent_limit": {"type": "number", "default": 10},
+                    "recent_days": {"type": "number", "default": 7},
+                    "depth": {"type": "number", "default": 2, "description": "Traverse depth if topic resolves to an entity"}
+                }
+            }),
+        },
+        Tool {
             name: "wg_query".into(),
-            description: "Unified context fetch for a topic — preferred entry point when an agent needs context. One call returns: hybrid search hits, the resolved entity (if any), related entities (graph traversal), and recent facts. Defaults to current_only=true. Modes: naive (search only), local (entity + neighbors, no global search), hybrid (default), global (broader scan). For pure search without graph context use wg_search; for last-N-days listing use wg_recent."
+            description: "Topic-only retrieval (search + entity + traverse + recent). Lighter than wg_context — no pinned / personalisation tier. Prefer wg_context for an agent's opening turn; use wg_query for follow-up topic dives. Defaults to current_only=true. Modes: naive (search only), local (entity + neighbors, no global search), hybrid (default), global (broader scan)."
                 .into(),
             input_schema: json!({
                 "type": "object",
@@ -1968,6 +2124,7 @@ fn call_tool(name: &str, args: &Value, wiki: &WikiGraph) -> Result<ToolCallResul
         "wg_recent" => tool_recent(args, wiki),
         "wg_backlinks" => tool_backlinks(args, wiki),
         "wg_query" => tool_query(args, wiki),
+        "wg_context" => tool_context(args, wiki),
         "wg_entity_describe" => tool_entity_describe(args, wiki),
         "wg_fact_add" => tool_fact_add(args, wiki),
         "wg_fact_add_many" => tool_fact_add_many(args, wiki),

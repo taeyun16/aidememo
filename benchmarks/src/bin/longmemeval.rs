@@ -139,6 +139,21 @@ struct Args {
     /// LongMemEval evaluator (or the internal `e2e` script) to do
     /// LLM-graded answer correctness.
     emit_retrievals: Option<PathBuf>,
+    /// LLM-aided ingestion. When set, each haystack session's turns
+    /// are concatenated and fed to `wg_extract --llm` (uses
+    /// extract.provider — defaults to gpt-4o-mini via OpenAI). The
+    /// classified facts (decision / pattern / preference / lesson /
+    /// error / …) are added ALONGSIDE the raw turns so retrieval
+    /// has both the verbatim evidence AND the distilled signal —
+    /// new fact_type weights + decay-exempt rules then fire. This
+    /// is the OMEGA / Mastra pattern: ingest-time LLM normalisation
+    /// → retrieval gets a richer signal than raw chat dump.
+    llm_extract: bool,
+    /// Cap candidates per session (default 10). Lower values keep
+    /// noise low for long sessions; higher values let the LLM
+    /// surface more nuance per session at the cost of more facts
+    /// in the BM25 index.
+    llm_extract_per_session: usize,
 }
 
 /// Parse "2023/02/01 (Wed) 10:20" → epoch ms. Returns None on any
@@ -184,6 +199,8 @@ fn parse_args() -> Args {
     let mut time_decay_days: Option<f64> = None;
     let mut only_type: Option<String> = None;
     let mut emit_retrievals: Option<PathBuf> = None;
+    let mut llm_extract = false;
+    let mut llm_extract_per_session: usize = 10;
 
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
@@ -237,6 +254,14 @@ fn parse_args() -> Args {
                 emit_retrievals = Some(PathBuf::from(&argv[i + 1]));
                 i += 2;
             }
+            "--llm-extract" => {
+                llm_extract = true;
+                i += 1;
+            }
+            "--llm-extract-per-session" if i + 1 < argv.len() => {
+                llm_extract_per_session = argv[i + 1].parse().unwrap_or(10);
+                i += 2;
+            }
             _ => i += 1,
         }
     }
@@ -253,6 +278,8 @@ fn parse_args() -> Args {
         time_decay_days,
         only_type,
         emit_retrievals,
+        llm_extract,
+        llm_extract_per_session,
     }
 }
 
@@ -269,6 +296,8 @@ struct BuildOpts<'a> {
     bm25_weight: Option<f32>,
     semantic_weight: Option<f32>,
     decay_days_for_hybrid: Option<f64>,
+    llm_extract: bool,
+    llm_extract_per_session: usize,
 }
 
 fn build_store_for_question(
@@ -284,10 +313,20 @@ fn build_store_for_question(
         bm25_weight,
         semantic_weight,
         decay_days_for_hybrid,
+        llm_extract,
+        llm_extract_per_session,
     } = opts;
     let dir = tempfile::TempDir::new().map_err(|e| e.to_string())?;
     let mut config = Config::default();
     config.store.path = dir.path().join("store").to_string_lossy().into_owned();
+    if llm_extract {
+        // Wire wg-core's LLM extractor — gpt-4o-mini via OPENAI_API_KEY
+        // by default. The harness inherits the env from the caller.
+        config.extract.provider = "openai".into();
+        config.extract.model =
+            std::env::var("WG_EXTRACT_MODEL").unwrap_or_else(|_| "gpt-4o-mini".into());
+        config.extract.max_candidates = llm_extract_per_session;
+    }
     // BM25-only by default; --hybrid flips to the in-process semantic
     // path (model2vec embeddings + HNSW) at the cost of a one-time
     // model load per WikiGraph instance.
@@ -383,6 +422,73 @@ fn build_store_for_question(
     }
     if !inputs.is_empty() {
         wiki.fact_add_many(inputs).map_err(|e| e.to_string())?;
+    }
+
+    // ── LLM-aided extraction (opt-in) ─────────────────────────────
+    // For each session, concatenate its turns and ask the LLM to
+    // surface up to `llm_extract_per_session` durable facts with
+    // proper fact_type / entity classification. These distilled
+    // facts are added ALONGSIDE the raw turns so retrieval has both
+    // the verbatim evidence (matches the gold session_id) AND the
+    // type-classified signal that fires the new fact_type weights +
+    // decay-exempt rules. Mirrors OMEGA's ingest-time LLM
+    // normalisation pass.
+    //
+    // Cost: one chat-completion per haystack session. Skip on any
+    // failure (rate limit, transient error) — the raw-turn ingest
+    // is already in place, so the question still scores correctly,
+    // just without the extra signal.
+    if llm_extract {
+        for (sess_idx, session) in q.haystack_sessions.iter().enumerate() {
+            if session.is_empty() {
+                continue;
+            }
+            let session_text = session
+                .iter()
+                .map(|t| format!("{}: {}", t.role, t.content))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let candidates =
+                match wiki.extract_candidates_llm(&session_text, llm_extract_per_session) {
+                    Ok(c) => c,
+                    Err(_) => continue,
+                };
+            let entity_id = session_eids.get(sess_idx).copied();
+            let observed_at = if stamp_observed_at {
+                q.haystack_dates
+                    .get(sess_idx)
+                    .and_then(|d| parse_question_date(d))
+            } else {
+                None
+            };
+            let mut classified: Vec<FactInput> = Vec::with_capacity(candidates.len());
+            for c in candidates {
+                if c.confidence < 0.5 {
+                    continue;
+                }
+                classified.push(FactInput {
+                    content: c.content,
+                    fact_type: Some(c.suggested_fact_type),
+                    // Same session entity as the raw turns so the
+                    // gold-session match logic still credits this
+                    // fact when retrieved. No new entity_add here —
+                    // wg-core's LLM extractor returns names, not
+                    // ids, and creating per-question vocabulary on
+                    // the fly would muddy the retrieval space.
+                    entity_ids: entity_id.map(|e| vec![e]),
+                    tags: Some(vec![format!(
+                        "session:{}",
+                        q.haystack_session_ids[sess_idx]
+                    )]),
+                    source: Some("llm-extract".into()),
+                    source_confidence: Some(c.confidence),
+                    observed_at,
+                });
+            }
+            if !classified.is_empty() {
+                let _ = wiki.fact_add_many(classified);
+            }
+        }
     }
     Ok((dir, wiki))
 }
@@ -604,6 +710,8 @@ fn run(args: &Args) -> Result<(), String> {
                 } else {
                     None
                 },
+                llm_extract: args.llm_extract,
+                llm_extract_per_session: args.llm_extract_per_session,
             },
         )?;
         let (rank, retrievals) =
