@@ -154,6 +154,20 @@ struct Args {
     /// surface more nuance per session at the cost of more facts
     /// in the BM25 index.
     llm_extract_per_session: usize,
+    /// Override the LLM extract provider's base URL. Default
+    /// `https://api.openai.com/v1`. Use to swap in MiniMax
+    /// (`https://api.minimax.io/v1`), Ollama
+    /// (`http://localhost:11434/v1`), or any OpenAI-compatible
+    /// endpoint without touching wg config.
+    llm_extract_base_url: Option<String>,
+    /// Env var holding the LLM extract API key. Default
+    /// `OPENAI_API_KEY`; pair with `--llm-extract-base-url` for
+    /// alt providers (e.g. `MINIMAX_API_KEY`). Empty string ⇒
+    /// no Authorization header (Ollama / vLLM local).
+    llm_extract_api_key_env: Option<String>,
+    /// Override the LLM extract model. Default `gpt-4o-mini`.
+    /// Use `MiniMax-M2.7-highspeed`, `qwen2.5:7b`, etc.
+    llm_extract_model: Option<String>,
 }
 
 /// Parse "2023/02/01 (Wed) 10:20" → epoch ms. Returns None on any
@@ -201,6 +215,9 @@ fn parse_args() -> Args {
     let mut emit_retrievals: Option<PathBuf> = None;
     let mut llm_extract = false;
     let mut llm_extract_per_session: usize = 10;
+    let mut llm_extract_base_url: Option<String> = None;
+    let mut llm_extract_api_key_env: Option<String> = None;
+    let mut llm_extract_model: Option<String> = None;
 
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
@@ -262,6 +279,18 @@ fn parse_args() -> Args {
                 llm_extract_per_session = argv[i + 1].parse().unwrap_or(10);
                 i += 2;
             }
+            "--llm-extract-base-url" if i + 1 < argv.len() => {
+                llm_extract_base_url = Some(argv[i + 1].clone());
+                i += 2;
+            }
+            "--llm-extract-api-key-env" if i + 1 < argv.len() => {
+                llm_extract_api_key_env = Some(argv[i + 1].clone());
+                i += 2;
+            }
+            "--llm-extract-model" if i + 1 < argv.len() => {
+                llm_extract_model = Some(argv[i + 1].clone());
+                i += 2;
+            }
             _ => i += 1,
         }
     }
@@ -280,6 +309,9 @@ fn parse_args() -> Args {
         emit_retrievals,
         llm_extract,
         llm_extract_per_session,
+        llm_extract_base_url,
+        llm_extract_api_key_env,
+        llm_extract_model,
     }
 }
 
@@ -298,6 +330,9 @@ struct BuildOpts<'a> {
     decay_days_for_hybrid: Option<f64>,
     llm_extract: bool,
     llm_extract_per_session: usize,
+    llm_extract_base_url: Option<&'a str>,
+    llm_extract_api_key_env: Option<&'a str>,
+    llm_extract_model: Option<&'a str>,
 }
 
 fn build_store_for_question(
@@ -315,16 +350,30 @@ fn build_store_for_question(
         decay_days_for_hybrid,
         llm_extract,
         llm_extract_per_session,
+        llm_extract_base_url,
+        llm_extract_api_key_env,
+        llm_extract_model,
     } = opts;
     let dir = tempfile::TempDir::new().map_err(|e| e.to_string())?;
     let mut config = Config::default();
     config.store.path = dir.path().join("store").to_string_lossy().into_owned();
     if llm_extract {
-        // Wire wg-core's LLM extractor — gpt-4o-mini via OPENAI_API_KEY
-        // by default. The harness inherits the env from the caller.
+        // Wire wg-core's LLM extractor. Defaults aim at OpenAI
+        // (gpt-4o-mini) to match the published baselines, but every
+        // knob is overridable so the harness can exercise the same
+        // path against MiniMax / Ollama / Kimi / OpenRouter without
+        // touching wg config.
         config.extract.provider = "openai".into();
-        config.extract.model =
-            std::env::var("WG_EXTRACT_MODEL").unwrap_or_else(|_| "gpt-4o-mini".into());
+        config.extract.model = llm_extract_model
+            .map(str::to_string)
+            .or_else(|| std::env::var("WG_EXTRACT_MODEL").ok())
+            .unwrap_or_else(|| "gpt-4o-mini".into());
+        if let Some(url) = llm_extract_base_url {
+            config.extract.endpoint = url.to_string();
+        }
+        if let Some(env_var) = llm_extract_api_key_env {
+            config.extract.api_key_env = env_var.to_string();
+        }
         config.extract.max_candidates = llm_extract_per_session;
     }
     // BM25-only by default; --hybrid flips to the in-process semantic
@@ -712,6 +761,9 @@ fn run(args: &Args) -> Result<(), String> {
                 },
                 llm_extract: args.llm_extract,
                 llm_extract_per_session: args.llm_extract_per_session,
+                llm_extract_base_url: args.llm_extract_base_url.as_deref(),
+                llm_extract_api_key_env: args.llm_extract_api_key_env.as_deref(),
+                llm_extract_model: args.llm_extract_model.as_deref(),
             },
         )?;
         let (rank, retrievals) =
