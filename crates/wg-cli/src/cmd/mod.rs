@@ -110,6 +110,7 @@ pub struct ExtractSub {
     pub apply: bool,
     pub min_confidence: Option<f32>,
     pub max_candidates: Option<usize>,
+    pub llm: bool,
     pub from_stdin: bool,
     pub text: Option<String>,
 }
@@ -412,6 +413,13 @@ fn extract_command() -> impl Parser<Command> {
         .help("Cap on candidates returned (default 20)")
         .argument::<usize>("N")
         .optional();
+    let llm = long("llm")
+        .help(
+            "Use the configured LLM extractor (extract.provider) instead of \
+             the heuristic. Falls back to heuristic with a warning if the \
+             provider is unset or the call fails.",
+        )
+        .switch();
     let from_stdin = long("from-stdin")
         .help("Read text from stdin instead of the TEXT positional")
         .switch();
@@ -421,13 +429,17 @@ fn extract_command() -> impl Parser<Command> {
         apply,
         min_confidence,
         max_candidates,
+        llm,
         from_stdin,
         text,
     })
     .map(Command::Extract)
     .to_options()
     .command("extract")
-    .help("Heuristic conversation/text → candidate facts (preview or --apply)")
+    .help(
+        "Conversation / text → candidate facts (preview by default, --apply to \
+         persist). Heuristic by default; --llm dispatches to extract.provider.",
+    )
 }
 
 fn session_command() -> impl Parser<Command> {

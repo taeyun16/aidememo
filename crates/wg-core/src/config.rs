@@ -18,6 +18,12 @@ pub struct Config {
     /// Disabled by default; set `rerank.provider = "tei"` to enable.
     #[serde(default)]
     pub rerank: RerankConfig,
+    /// Optional LLM-aided fact extraction. Disabled by default — the
+    /// heuristic extractor (regex + entity-match scoring) ships as the
+    /// always-on baseline. Set `extract.provider = "openai"` and the
+    /// model/endpoint to opt into LLM extraction.
+    #[serde(default)]
+    pub extract: ExtractConfig,
     /// Named projects (multi-store support). Empty by default.
     #[serde(default)]
     pub projects: BTreeMap<String, ProjectConfig>,
@@ -450,6 +456,119 @@ impl RerankConfig {
     }
 }
 
+/// LLM-aided fact extraction config. Drives the optional `provider =
+/// "openai"` (or any OpenAI-compatible chat completions endpoint) path
+/// in `extract_candidates_llm`. The heuristic extractor is always
+/// available and is the default when `provider` is empty.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ExtractConfig {
+    /// Provider name. Empty (default) = heuristic only. Currently
+    /// `"openai"` enables LLM extraction via the chat completions
+    /// `response_format = json_object` endpoint.
+    #[serde(default)]
+    pub provider: String,
+    /// Base URL of the chat completions endpoint. Defaults to
+    /// `https://api.openai.com/v1` when empty. Set to a self-hosted
+    /// or proxy host for OpenAI-compatible servers.
+    #[serde(default)]
+    pub endpoint: String,
+    /// Model id passed in the request body. `gpt-4o-mini` is the
+    /// recommended default — ~$0.0001 per ~1000-char extraction.
+    #[serde(default = "default_extract_model")]
+    pub model: String,
+    /// Env var name that holds the API key. Defaults to
+    /// `OPENAI_API_KEY`. Empty value means no auth header.
+    #[serde(default = "default_extract_api_key_env")]
+    pub api_key_env: String,
+    /// Cap on the number of candidates returned. Mirrors the
+    /// heuristic extractor's `max_candidates` ceiling so callers see
+    /// a uniform shape.
+    #[serde(default = "default_extract_max_candidates")]
+    pub max_candidates: usize,
+    /// Maximum output tokens to request from the LLM. The JSON object
+    /// is bounded by `max_candidates × ~80 tokens/candidate`, plus
+    /// envelope. 800 is comfortable for the default 20 candidates.
+    #[serde(default = "default_extract_max_tokens")]
+    pub max_tokens: u32,
+}
+
+fn default_extract_model() -> String {
+    "gpt-4o-mini".to_string()
+}
+
+fn default_extract_api_key_env() -> String {
+    "OPENAI_API_KEY".to_string()
+}
+
+fn default_extract_max_candidates() -> usize {
+    20
+}
+
+fn default_extract_max_tokens() -> u32 {
+    800
+}
+
+impl Default for ExtractConfig {
+    fn default() -> Self {
+        Self {
+            provider: String::new(),
+            endpoint: String::new(),
+            model: default_extract_model(),
+            api_key_env: default_extract_api_key_env(),
+            max_candidates: default_extract_max_candidates(),
+            max_tokens: default_extract_max_tokens(),
+        }
+    }
+}
+
+impl ExtractConfig {
+    fn get(&self, key: &str) -> Option<String> {
+        match key {
+            "provider" => Some(self.provider.clone()),
+            "endpoint" => Some(self.endpoint.clone()),
+            "model" => Some(self.model.clone()),
+            "api_key_env" => Some(self.api_key_env.clone()),
+            "max_candidates" => Some(self.max_candidates.to_string()),
+            "max_tokens" => Some(self.max_tokens.to_string()),
+            _ => None,
+        }
+    }
+
+    fn set(&mut self, key: &str, value: &str) -> Result<()> {
+        match key {
+            "provider" => {
+                self.provider = value.to_string();
+                Ok(())
+            }
+            "endpoint" => {
+                self.endpoint = value.to_string();
+                Ok(())
+            }
+            "model" => {
+                self.model = value.to_string();
+                Ok(())
+            }
+            "api_key_env" => {
+                self.api_key_env = value.to_string();
+                Ok(())
+            }
+            "max_candidates" => {
+                self.max_candidates = value
+                    .parse::<usize>()
+                    .map_err(|e| WgError::InvalidInput(format!("extract.max_candidates: {e}")))?;
+                Ok(())
+            }
+            "max_tokens" => {
+                self.max_tokens = value
+                    .parse::<u32>()
+                    .map_err(|e| WgError::InvalidInput(format!("extract.max_tokens: {e}")))?;
+                Ok(())
+            }
+            _ => Err(WgError::ConfigKeyNotFound(format!("extract.{}", key))),
+        }
+    }
+}
+
 impl Config {
     /// Resolve the store path for a named project.
     ///
@@ -535,6 +654,7 @@ impl Config {
             ["search", k] => self.search.get(k),
             ["lint", k] => self.lint.get(k),
             ["rerank", k] => self.rerank.get(k),
+            ["extract", k] => self.extract.get(k),
             _ => None,
         }
     }
@@ -548,6 +668,7 @@ impl Config {
             ["search", k] => self.search.set(k, value),
             ["lint", k] => self.lint.set(k, value),
             ["rerank", k] => self.rerank.set(k, value),
+            ["extract", k] => self.extract.set(k, value),
             _ => Err(WgError::ConfigKeyNotFound(key.to_string())),
         }
     }

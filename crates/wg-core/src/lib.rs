@@ -405,6 +405,25 @@ impl WikiGraph {
         extract::extract_candidates(text, &self.store.read(), max_candidates)
     }
 
+    /// LLM-aided extractor — same return shape as
+    /// [`Self::extract_candidates`], but routes through the chat
+    /// completions endpoint configured by `extract.provider`. Returns
+    /// an error if the provider is unset; callers should fall back to
+    /// the heuristic in that case.
+    #[cfg(feature = "semantic")]
+    pub fn extract_candidates_llm(
+        &self,
+        text: &str,
+        max_candidates: usize,
+    ) -> Result<Vec<extract::ExtractCandidate>> {
+        extract::extract_candidates_llm(
+            text,
+            &self.store.read(),
+            &self.config.extract,
+            max_candidates,
+        )
+    }
+
     /// Top-N currently-pinned (`pinned=true` AND not superseded)
     /// facts, sorted by `last_accessed_at` descending. The agent's
     /// "always loaded" tier — Letta-style memory hierarchy without

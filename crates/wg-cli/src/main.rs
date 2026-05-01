@@ -710,6 +710,7 @@ fn handle_extract(
         apply,
         min_confidence,
         max_candidates,
+        llm,
         from_stdin,
         text,
     } = sub;
@@ -729,7 +730,19 @@ fn handle_extract(
     let max_candidates = max_candidates.unwrap_or(20);
 
     with_wiki_mut(store_path, config, |wiki| {
-        let mut candidates = wiki.extract_candidates(&raw_text, max_candidates)?;
+        let mut candidates = if llm {
+            // Try LLM; on any failure, fall back to heuristic with a
+            // tracing warning so the agent still gets a useful result.
+            match wiki.extract_candidates_llm(&raw_text, max_candidates) {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::warn!("LLM extract failed, falling back to heuristic: {e}");
+                    wiki.extract_candidates(&raw_text, max_candidates)?
+                }
+            }
+        } else {
+            wiki.extract_candidates(&raw_text, max_candidates)?
+        };
         candidates.retain(|c| c.confidence >= min_confidence);
 
         if !apply {

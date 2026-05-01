@@ -478,15 +478,26 @@ fn tool_extract(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String
         .and_then(|v| v.as_u64())
         .unwrap_or(20) as usize;
     let apply = args.get("apply").and_then(|v| v.as_bool()).unwrap_or(false);
+    let llm = args.get("llm").and_then(|v| v.as_bool()).unwrap_or(false);
     let min_confidence = args
         .get("min_confidence")
         .and_then(|v| v.as_f64())
         .map(|x| x as f32)
         .unwrap_or(0.5);
 
-    let mut candidates = wiki
-        .extract_candidates(text, max_candidates)
-        .map_err(|e| e.to_string())?;
+    let mut candidates = if llm {
+        match wiki.extract_candidates_llm(text, max_candidates) {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!("LLM extract failed, falling back to heuristic: {e}");
+                wiki.extract_candidates(text, max_candidates)
+                    .map_err(|e| e.to_string())?
+            }
+        }
+    } else {
+        wiki.extract_candidates(text, max_candidates)
+            .map_err(|e| e.to_string())?
+    };
     candidates.retain(|c| c.confidence >= min_confidence);
 
     // Preview path: hand back the structured candidates so the agent
@@ -1608,13 +1619,14 @@ pub fn list_tools() -> Vec<Tool> {
         },
         Tool {
             name: "wg_extract".into(),
-            description: "Heuristic conversation → fact extractor. Pass a chat transcript / paragraph as `text`; the tool splits it into sentence-like chunks, scores each one against the existing entity list (substring match) and a fact-type keyword detector (decided / always / pattern / claim / question), and returns ranked candidates above `min_confidence`. By default returns previews so the agent can edit / approve before committing — pass `apply: true` to persist every surviving candidate via `fact_add` (each one runs the dedup-hint and entity-name-alternatives checks). Designed to run fully offline; agents that have a hosted LLM can still extract themselves and call wg_fact_add_many directly.".into(),
+            description: "Conversation → fact extractor. Pass a chat transcript / paragraph as `text`; returns ranked candidate facts above `min_confidence`. Default extractor is heuristic (sentence split + entity-substring + fact-type keyword cues — fully offline). Pass `llm: true` to dispatch to the LLM provider configured by `extract.provider` (e.g. `gpt-4o-mini` via OpenAI) for higher-quality extraction; the call falls back to heuristic with a warning if the provider is unset or the request fails. By default returns previews so the agent can edit / approve before committing — pass `apply: true` to persist every surviving candidate via `fact_add` (each runs the dedup-hint and entity-name-alternatives checks).".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "text": {"type": "string", "description": "Raw text to extract from. Dialog markers (`> `, `Speaker:`) are auto-stripped from each sentence."},
                     "max_candidates": {"type": "number", "default": 20, "description": "Cap on candidates returned, scored highest first."},
                     "min_confidence": {"type": "number", "default": 0.5, "description": "Drop candidates below this threshold. 0.0 returns everything; 0.7 keeps only high-signal hits."},
+                    "llm": {"type": "boolean", "default": false, "description": "Use the LLM extractor (extract.provider). Falls back to heuristic on failure."},
                     "apply": {"type": "boolean", "default": false, "description": "If true, persist every surviving candidate via fact_add (each runs the standard dedup + typo guards) and return the ULIDs alongside."}
                 },
                 "required": ["text"]

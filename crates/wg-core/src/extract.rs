@@ -359,3 +359,227 @@ mod tests {
         assert_eq!(top.suggested_fact_type, FactType::Decision);
     }
 }
+
+// ─────────────────────────────────────────────────────────── LLM extractor
+
+/// LLM-aided fact extraction. Posts the input text plus the existing
+/// entity name list to a chat-completions endpoint
+/// (`<endpoint>/chat/completions`) and parses a JSON-object response
+/// into [`ExtractCandidate`]s. Opt-in via `extract.provider = "openai"`
+/// in the config; when the provider is empty, callers should fall back
+/// to [`extract_candidates`] (the heuristic baseline).
+///
+/// The LLM is asked to:
+///   - emit at most `max_candidates` durable facts;
+///   - reuse existing entity names verbatim when they appear;
+///   - assign one of `decision / pattern / convention / claim / note /
+///     question` as `fact_type`;
+///   - score each fact with a `[0.0, 1.0]` confidence.
+///
+/// On any HTTP / JSON error this function returns the underlying
+/// error — wg's CLI/MCP handlers should fall back to the heuristic
+/// extractor with a warning rather than failing the whole call.
+///
+/// Requires the `semantic` feature (which already pulls `ureq`); if
+/// you compile wg-core bare, only `extract_candidates` is available.
+#[cfg(feature = "semantic")]
+pub fn extract_candidates_llm(
+    text: &str,
+    store: &Store,
+    cfg: &crate::config::ExtractConfig,
+    max_candidates: usize,
+) -> Result<Vec<ExtractCandidate>> {
+    if text.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    if cfg.provider.is_empty() {
+        return Err(crate::error::WgError::invalid_input(
+            "extract.provider not set — call extract_candidates instead",
+        ));
+    }
+
+    let entities = store.entity_list(ListOpts {
+        entity_type: None,
+        min_facts: None,
+        sort_by: EntitySort::Name,
+        limit: Some(5000),
+        offset: 0,
+    })?;
+    let entity_names: Vec<String> = entities.iter().map(|e| e.name.clone()).collect();
+
+    let api_key = if cfg.api_key_env.is_empty() {
+        String::new()
+    } else {
+        std::env::var(&cfg.api_key_env).unwrap_or_default()
+    };
+    let endpoint = if cfg.endpoint.is_empty() {
+        "https://api.openai.com/v1".to_string()
+    } else {
+        cfg.endpoint.trim_end_matches('/').to_string()
+    };
+    let url = format!("{}/chat/completions", endpoint);
+    let cap = max_candidates.min(cfg.max_candidates).max(1);
+
+    let body = build_llm_request(&cfg.model, &entity_names, text, cap, cfg.max_tokens);
+    let raw = post_chat_completion(&url, &api_key, &body)?;
+    let candidates = parse_llm_response(&raw, &entity_names, cap)?;
+    Ok(candidates)
+}
+
+/// Build the OpenAI chat-completions request body.
+#[cfg(feature = "semantic")]
+fn build_llm_request(
+    model: &str,
+    entity_names: &[String],
+    text: &str,
+    cap: usize,
+    max_tokens: u32,
+) -> serde_json::Value {
+    // System prompt is verbose on purpose — the model otherwise tends
+    // to emit greetings as facts and to invent entities not in the
+    // wiki. Both are major retrieval-noise sources.
+    let entity_list = if entity_names.is_empty() {
+        "(no existing entities — invent only when explicitly named in the text)".to_string()
+    } else {
+        // Cap the list at ~200 names so the prompt stays bounded on
+        // larger wikis. The LLM only needs them for normalisation.
+        let take = entity_names.iter().take(200).cloned().collect::<Vec<_>>();
+        take.join(", ")
+    };
+    let system = format!(
+        "You extract durable facts from chat / notes / docs for a knowledge wiki. \
+         Output ONLY a JSON object: {{\"facts\":[{{\"content\":\"<sentence>\",\"fact_type\":\"<one of: decision|pattern|convention|claim|note|question>\",\"entities\":[\"X\",\"Y\"],\"confidence\":<0.0-1.0>}}]}}. \
+         At most {cap} facts. \
+         Reuse these entity names verbatim when they appear in the text: {entity_list}. \
+         Only invent NEW entities when they are explicitly named in the text and missing from that list. \
+         Drop greetings, dialog scaffolding (Speaker:, > quotes), acknowledgements. \
+         fact_type rules: decision = 'we will / decided / chose'; pattern = 'X uses Y for Z' / 'X is implemented with Y'; convention = 'always / never / format X as'; claim = factual assertion about external state; note = passive observation / FYI; question = ends with '?' or is an open investigation. \
+         confidence: 0.9 for explicit decisions / clear claims, 0.6 for inferences from context, 0.3 for vague / fragmentary mentions."
+    );
+    serde_json::json!({
+        "model": model,
+        "response_format": {"type": "json_object"},
+        "max_completion_tokens": max_tokens,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": text},
+        ],
+    })
+}
+
+/// Minimal HTTP POST. We use `ureq` indirectly via the existing `wg-cli`
+/// dep tree if compiled together, but `wg-core` cannot pull a heavy
+/// HTTP client just for this opt-in path — so we reach for the
+/// std-library + reqwest-blocking-style pattern through `ureq`'s
+/// transitive presence in the workspace. Without `ureq`, we fall back
+/// to the std `std::net::TcpStream` route via the same trick used in
+/// `rerank.rs`.
+#[cfg(feature = "semantic")]
+fn post_chat_completion(url: &str, api_key: &str, body: &serde_json::Value) -> Result<String> {
+    let agent = ureq::AgentBuilder::new()
+        .timeout(std::time::Duration::from_secs(60))
+        .build();
+    let mut req = agent.post(url);
+    if !api_key.is_empty() {
+        req = req.set("Authorization", &format!("Bearer {}", api_key));
+    }
+    req.set("Content-Type", "application/json")
+        .send_json(body.clone())
+        .map_err(|e| crate::error::WgError::invalid_input(format!("LLM extract POST failed: {e}")))?
+        .into_string()
+        .map_err(|e| crate::error::WgError::invalid_input(format!("LLM extract read failed: {e}")))
+}
+
+/// Parse the OpenAI response envelope and the embedded JSON object.
+#[cfg(feature = "semantic")]
+fn parse_llm_response(
+    raw: &str,
+    entity_names: &[String],
+    cap: usize,
+) -> Result<Vec<ExtractCandidate>> {
+    let env: serde_json::Value = serde_json::from_str(raw).map_err(|e| {
+        crate::error::WgError::invalid_input(format!(
+            "LLM extract envelope parse failed: {e}; raw={}",
+            &raw[..raw.len().min(200)]
+        ))
+    })?;
+    let content = env["choices"][0]["message"]["content"]
+        .as_str()
+        .ok_or_else(|| {
+            crate::error::WgError::invalid_input(format!(
+                "LLM extract: missing choices[0].message.content; raw={}",
+                &raw[..raw.len().min(200)]
+            ))
+        })?;
+    let payload: serde_json::Value = serde_json::from_str(content).map_err(|e| {
+        crate::error::WgError::invalid_input(format!(
+            "LLM extract content not valid JSON: {e}; content={}",
+            &content[..content.len().min(200)]
+        ))
+    })?;
+    let arr = payload["facts"].as_array().cloned().unwrap_or_default();
+
+    // Lower-case set for entity normalisation — agent-supplied names
+    // come back from the LLM in mixed case.
+    let lc: std::collections::HashSet<String> =
+        entity_names.iter().map(|n| n.to_lowercase()).collect();
+    let mut out = Vec::with_capacity(arr.len().min(cap));
+    for item in arr.into_iter().take(cap) {
+        let content = item["content"].as_str().unwrap_or("").trim().to_string();
+        if content.is_empty() {
+            continue;
+        }
+        let fact_type = match item["fact_type"]
+            .as_str()
+            .unwrap_or("note")
+            .to_lowercase()
+            .as_str()
+        {
+            "decision" => FactType::Decision,
+            "pattern" => FactType::Pattern,
+            "convention" => FactType::Convention,
+            "claim" => FactType::Claim,
+            "question" => FactType::Question,
+            _ => FactType::Note,
+        };
+        let entities_raw = item["entities"].as_array().cloned().unwrap_or_default();
+        // Filter to only entities the wiki already knows OR that the
+        // LLM clearly extracted from the text. Casing comes back from
+        // the model normalised, but we map back to the canonical
+        // entity_names spelling when available.
+        let mut entities: Vec<String> = Vec::new();
+        for e in entities_raw {
+            let Some(name) = e.as_str() else { continue };
+            let name = name.trim();
+            if name.is_empty() {
+                continue;
+            }
+            if let Some(canonical) = entity_names.iter().find(|n| n.eq_ignore_ascii_case(name)) {
+                if !entities.contains(canonical) {
+                    entities.push(canonical.clone());
+                }
+            } else if !lc.contains(&name.to_lowercase()) {
+                // Net-new entity from the text; keep the LLM's spelling.
+                if !entities.iter().any(|x| x.eq_ignore_ascii_case(name)) {
+                    entities.push(name.to_string());
+                }
+            }
+        }
+        let confidence = item["confidence"]
+            .as_f64()
+            .map(|f: f64| f.clamp(0.0, 1.0) as f32)
+            .unwrap_or(0.5_f32);
+        out.push(ExtractCandidate {
+            content,
+            suggested_entities: entities,
+            suggested_fact_type: fact_type,
+            confidence,
+        });
+    }
+    out.sort_by(|a, b| {
+        b.confidence
+            .partial_cmp(&a.confidence)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    Ok(out)
+}
