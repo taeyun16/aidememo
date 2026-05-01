@@ -101,6 +101,9 @@ wg skill check <path> [--json]            validate SKILL.md files
 wg ingest <root> [-i]                     ingest markdown
 wg watch <root> [--search Q]              live re-ingest + optional live search
 wg vector-rebuild [--json]                 rebuild HNSW from scratch (after model swap)
+wg auto-relate [--top-k 3] [--threshold 0.0] [--dry-run] [--json]
+                                            mine `related` edges from semantic similarity
+                                            (one-shot; idempotent; semantic feature only)
 wg export [--scope all|...] / wg import
 wg config get/set/list
 

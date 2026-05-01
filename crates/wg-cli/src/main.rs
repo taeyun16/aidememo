@@ -114,6 +114,7 @@ fn main() {
         cmd::Command::Daemon(sub) => cmd::daemon::run_daemon(sub, store_path.clone()),
         cmd::Command::Extract(sub) => handle_extract(&store_path, config, sub, json),
         cmd::Command::Session(sub) => handle_session(&store_path, config, sub, json),
+        cmd::Command::AutoRelate(sub) => handle_auto_relate(&store_path, config, sub),
     };
 
     match result {
@@ -1634,6 +1635,63 @@ fn handle_vector_rebuild(
                 count, elapsed_ms
             ))
         }
+    })
+}
+
+fn handle_auto_relate(
+    path: &Path,
+    config: Config,
+    sub: cmd::AutoRelateSub,
+) -> Result<String, WgError> {
+    with_wiki(path, config, |wiki| {
+        let started = std::time::Instant::now();
+        let mut opts = wg_core::AutoRelateOpts::default();
+        if let Some(t) = sub.threshold {
+            opts.threshold = t;
+        }
+        if let Some(k) = sub.top_k {
+            opts.top_k = k;
+        }
+        opts.dry_run = sub.dry_run;
+        let stats = wiki.auto_relate(opts)?;
+        let elapsed_ms = started.elapsed().as_millis();
+
+        if sub.json {
+            let payload = serde_json::json!({
+                "facts_processed": stats.facts_processed,
+                "pairs_evaluated": stats.pairs_evaluated,
+                "edges_created": stats.edges_created,
+                "edges_skipped_same_entity": stats.edges_skipped_same_entity,
+                "edges_skipped_existing": stats.edges_skipped_existing,
+                "dry_run": sub.dry_run,
+                "elapsed_ms": elapsed_ms,
+            });
+            return serde_json::to_string_pretty(&payload).map_err(|e| WgError::Serialize {
+                context: "auto-relate".to_string(),
+                source: e,
+            });
+        }
+
+        let header = if sub.dry_run {
+            "auto-relate (dry-run)"
+        } else {
+            "auto-relate"
+        };
+        Ok(format!(
+            "{} — {} facts processed, {} pairs evaluated, {} edges {} ({} same-entity, {} pre-existing skipped) in {} ms.",
+            header,
+            stats.facts_processed,
+            stats.pairs_evaluated,
+            stats.edges_created,
+            if sub.dry_run {
+                "would create"
+            } else {
+                "created"
+            },
+            stats.edges_skipped_same_entity,
+            stats.edges_skipped_existing,
+            elapsed_ms,
+        ))
     })
 }
 

@@ -552,6 +552,99 @@ impl WikiGraph {
         self.store.write().relation_add(input)
     }
 
+    /// Auto-relate sweep: for every fact in the store, find the top-K
+    /// semantically-similar OTHER facts (cosine ≥ `threshold`) and add
+    /// a `related` relation between every distinct entity pair across
+    /// the two facts. Mirrors OMEGA's "auto-relate top-3 ≥ 0.45" pass:
+    /// a one-shot graph-richening operation users invoke after bulk
+    /// ingest, not a per-fact-add hook (the per-add cost would be
+    /// prohibitive on big wikis).
+    ///
+    /// Idempotent — re-running just refreshes existing edges (the redb
+    /// key is `{source}\0{rel_type}\0{target}` so writes overwrite).
+    /// Pure same-entity pairs are skipped; pairs already linked by a
+    /// non-`related` relation are also skipped so domain-specific
+    /// edges (`uses`, `decided_by`, …) don't get downgraded.
+    #[cfg(feature = "semantic")]
+    pub fn auto_relate(&self, opts: AutoRelateOpts) -> Result<AutoRelateStats> {
+        use std::collections::HashSet;
+        let limit = opts.top_k.saturating_add(1).max(2);
+        let threshold = opts.threshold;
+        let facts = self.fact_list(crate::types::FactListOpts {
+            limit: None,
+            ..Default::default()
+        })?;
+        let mut stats = AutoRelateStats {
+            facts_processed: 0,
+            pairs_evaluated: 0,
+            edges_created: 0,
+            edges_skipped_same_entity: 0,
+            edges_skipped_existing: 0,
+        };
+
+        // Cache existing relations so repeated lookups don't re-query
+        // redb per pair. Set of (source_id, target_id) regardless of
+        // rel_type — wg's auto-relate refuses to overwrite a richer
+        // edge with a generic `related`.
+        let mut existing: HashSet<(types::EntityId, types::EntityId)> = HashSet::new();
+        for r in self.store.read().relations_list_all()? {
+            existing.insert((r.source_id, r.target_id));
+        }
+
+        for fact in &facts {
+            stats.facts_processed += 1;
+            // Find similar facts. We use hybrid_search with the fact's
+            // own content as query; the first hit will usually BE the
+            // fact itself, so we filter it out before inspecting hits.
+            let results = self.hybrid_search(
+                &fact.content,
+                crate::types::SearchOpts {
+                    limit: Some(limit),
+                    bm25_only: false,
+                    current_only: true,
+                    ..Default::default()
+                },
+            )?;
+            for hit in results {
+                if hit.fact_id == fact.id {
+                    continue;
+                }
+                if hit.score < threshold {
+                    continue;
+                }
+                let other = self.fact_get(&hit.fact_id)?;
+                for src in &fact.entity_ids {
+                    for tgt in &other.entity_ids {
+                        stats.pairs_evaluated += 1;
+                        if src == tgt {
+                            stats.edges_skipped_same_entity += 1;
+                            continue;
+                        }
+                        let pair = (*src, *tgt);
+                        if existing.contains(&pair) {
+                            stats.edges_skipped_existing += 1;
+                            continue;
+                        }
+                        if !opts.dry_run {
+                            let src_name = self.entity_get_by_id(*src)?.name;
+                            let tgt_name = self.entity_get_by_id(*tgt)?.name;
+                            self.relation_add(crate::types::RelationInput {
+                                source: src_name,
+                                target: tgt_name,
+                                relation_type: crate::types::RelationType::new("related"),
+                                weight: Some(hit.score),
+                                evidence: Some(vec![format!("auto-relate via fact {}", fact.id)]),
+                            })?;
+                        }
+                        existing.insert(pair);
+                        stats.edges_created += 1;
+                    }
+                }
+            }
+        }
+        Ok(stats)
+    }
+
     /// Remove a relation.
     pub fn relation_remove(&self, source: &str, target: &str, rel_type: &str) -> Result<()> {
         self.store.write().relation_remove(source, target, rel_type)
@@ -897,12 +990,12 @@ impl WikiGraph {
 
 // Re-export types for convenience
 pub use types::{
-    AdaptEvalReport, AdaptResult, AdaptStatus, EntityId, EntityInput, EntityRecord, EntitySort,
-    EntitySummary, EntityType, EntityUpdate, ExportScope, ExportStats, FactId, FactInput,
-    FactListOpts, FactRecord, FactType, FactUpdate, ImportStats, LintIssue, LintReport,
-    LintSeverity, ListOpts, PathStep, QueryMode, QueryOpts, QueryResult, RelationInput,
-    RelationRecord, RelationType, SearchFeedback, SearchOpts, SearchResult, SearchSession,
-    StoreStats, TraverseDirection, TraverseOpts, TraverseResult,
+    AdaptEvalReport, AdaptResult, AdaptStatus, AutoRelateOpts, AutoRelateStats, EntityId,
+    EntityInput, EntityRecord, EntitySort, EntitySummary, EntityType, EntityUpdate, ExportScope,
+    ExportStats, FactId, FactInput, FactListOpts, FactRecord, FactType, FactUpdate, ImportStats,
+    LintIssue, LintReport, LintSeverity, ListOpts, PathStep, QueryMode, QueryOpts, QueryResult,
+    RelationInput, RelationRecord, RelationType, SearchFeedback, SearchOpts, SearchResult,
+    SearchSession, StoreStats, TraverseDirection, TraverseOpts, TraverseResult,
 };
 
 #[cfg(feature = "semantic")]

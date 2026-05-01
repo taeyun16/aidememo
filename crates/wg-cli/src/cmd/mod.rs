@@ -86,6 +86,15 @@ pub enum Command {
     Daemon(daemon::DaemonSub),
     Extract(ExtractSub),
     Session(SessionSub),
+    AutoRelate(AutoRelateSub),
+}
+
+#[derive(Debug, Clone)]
+pub struct AutoRelateSub {
+    pub threshold: Option<f32>,
+    pub top_k: Option<usize>,
+    pub dry_run: bool,
+    pub json: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -365,6 +374,7 @@ pub fn build_cli() -> OptionParser<Args> {
         daemon_cmd,
         extract_command(),
         session_command(),
+        auto_relate_command(),
     ]);
 
     construct!(Args {
@@ -956,6 +966,42 @@ fn vector_rebuild_command() -> impl Parser<Command> {
              from a corrupted sidecar; otherwise the index is \
              refreshed lazily on ingest.",
         )
+}
+
+fn auto_relate_command() -> impl Parser<Command> {
+    let threshold = long("threshold")
+        .help(
+            "Minimum hybrid-search score to count two facts as similar \
+             (default 0.0 = off; top-k is the primary cutoff). RRF-fused \
+             scores run ~0.01-0.04, BM25-only fallback runs 1-5.",
+        )
+        .argument::<f32>("FLOAT")
+        .optional();
+    let top_k = long("top-k")
+        .help("Top-K similar facts to inspect per source fact (default 3)")
+        .argument::<usize>("N")
+        .optional();
+    let dry_run = long("dry-run")
+        .help("Evaluate pairs but don't write edges")
+        .switch();
+    let json = long("json")
+        .help("Emit JSON stats instead of human-readable output")
+        .switch();
+
+    construct!(AutoRelateSub {
+        threshold,
+        top_k,
+        dry_run,
+        json,
+    })
+    .map(Command::AutoRelate)
+    .to_options()
+    .command("auto-relate")
+    .help(
+        "Discover entity-to-entity `related` edges from semantic \
+         similarity between facts. Run after a big ingest; idempotent. \
+         Requires the semantic feature (HNSW index).",
+    )
 }
 
 fn ingest_command() -> impl Parser<Command> {

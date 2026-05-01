@@ -579,6 +579,43 @@ pub enum TraverseDirection {
     Both,
 }
 
+/// Options for `WikiGraph::auto_relate` — discovers entity-to-entity
+/// `related` edges from semantic similarity between facts.
+#[derive(Debug, Clone)]
+pub struct AutoRelateOpts {
+    /// Minimum hybrid-search score to count two facts as similar.
+    /// Default `0.0` (off) — top_k is the primary cutoff. Score scale
+    /// depends on the active retrieval path: ~0.01-0.04 for RRF
+    /// fusion (HNSW + BM25), 1-5 for BM25-only fallback. Tune per
+    /// wiki if top_k alone is too noisy.
+    pub threshold: f32,
+    /// Top-K similar facts to inspect per source fact (excluding the
+    /// fact itself). Default 3.
+    pub top_k: usize,
+    /// If true, evaluate pairs but don't write edges.
+    pub dry_run: bool,
+}
+
+impl Default for AutoRelateOpts {
+    fn default() -> Self {
+        Self {
+            threshold: 0.0,
+            top_k: 3,
+            dry_run: false,
+        }
+    }
+}
+
+/// Statistics returned by `auto_relate`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AutoRelateStats {
+    pub facts_processed: usize,
+    pub pairs_evaluated: usize,
+    pub edges_created: usize,
+    pub edges_skipped_same_entity: usize,
+    pub edges_skipped_existing: usize,
+}
+
 /// Result of a graph traversal.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TraverseResult {

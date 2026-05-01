@@ -71,6 +71,7 @@ wg --project personal stats             # one-off override
 - `wg watch <wiki_root> [--search QUERY]` — re-ingest on file changes (live search optional)
 - `wg sync <wiki_root>` — alias for incremental ingest
 - `wg vector-rebuild [--json]` — rebuild the HNSW index (after a model swap)
+- `wg auto-relate [--top-k N] [--threshold F] [--dry-run] [--json]` — add `related` edges between entities whose facts cluster semantically (one-shot; idempotent)
 - `wg export [--scope all|entities|relations|facts]` / `wg import`
 - `wg config get/set/list`
   - `wg config set store.durability eventual` — drop per-commit fsync (~13× faster writes; survives process crash, not power loss)
