@@ -455,7 +455,64 @@ impl WikiGraph {
         // holds inferred-once vectors keyed by FactId; new IDs simply
         // get computed lazily on first search.
         self.bm25_mark_dirty();
+        // Auto-supersede any existing decision/convention fact on the
+        // same entity — atomic types are mutually exclusive per entity
+        // by design (mirrors OMEGA's "newer decision auto-resolves").
+        // Silently no-op for non-atomic types or when the new fact
+        // happens to be a duplicate of an existing one.
+        let _ = self.maybe_resolve_atomic_conflict(&id);
         Ok(id)
+    }
+
+    /// If the just-inserted fact is an atomic type (decision /
+    /// convention) attached to one or more entities, mark any other
+    /// not-yet-superseded fact of the same type on the same entity
+    /// as superseded by this new one. The intent: the agent's
+    /// "current state" view of an entity (`current_only=true`) only
+    /// ever shows the most recent decision per entity.
+    ///
+    /// Best-effort: errors are returned to the caller, but the new
+    /// fact is already inserted, so callers may choose to log and
+    /// continue.
+    fn maybe_resolve_atomic_conflict(&self, new_id: &FactId) -> Result<()> {
+        let new_fact = self.fact_get(new_id)?;
+        // Skip when this insert was a dedup-collapsed return — the
+        // returned id matches an existing record whose entities /
+        // type we don't want to touch.
+        let is_atomic = matches!(
+            new_fact.fact_type,
+            FactType::Decision | FactType::Convention
+        );
+        if !is_atomic || new_fact.entity_ids.is_empty() {
+            return Ok(());
+        }
+        let mut to_supersede: Vec<FactId> = Vec::new();
+        for entity_id in &new_fact.entity_ids {
+            let opts = types::FactListOpts {
+                fact_type: Some(new_fact.fact_type),
+                entity_id: Some(*entity_id),
+                min_confidence: None,
+                limit: None,
+                offset: 0,
+                since: None,
+                until: None,
+                current_only: true,
+                as_of: None,
+            };
+            let candidates = self.store.read().fact_list(opts)?;
+            for c in candidates {
+                if c.id != *new_id && !to_supersede.contains(&c.id) {
+                    to_supersede.push(c.id);
+                }
+            }
+        }
+        if to_supersede.is_empty() {
+            return Ok(());
+        }
+        for old in &to_supersede {
+            self.fact_supersede(old, new_id)?;
+        }
+        Ok(())
     }
 
     /// Backwards-compatible alias for add_fact.

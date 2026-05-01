@@ -22,6 +22,14 @@ pub(crate) const RELATIONS_REV_TABLE: TableDefinition<&[u8], &[u8]> =
 pub(crate) const FACTS_TABLE: TableDefinition<&[u8], &[u8]> = TableDefinition::new("facts");
 pub(crate) const FACT_BY_ENTITY_TABLE: TableDefinition<&str, &[u8]> =
     TableDefinition::new("fact_by_entity");
+/// Index from `sha256(content)` (hex string) → first FactId that
+/// committed that exact content. Powers exact-dedup at write time:
+/// when two facts have byte-identical `content`, the second insert
+/// returns the first one's id instead of creating a new record.
+/// Modeled after OMEGA's SHA-256 dedup pass — see
+/// `.notes/omega-pipeline-analysis.md`.
+pub(crate) const FACT_CONTENT_HASH_TABLE: TableDefinition<&str, &[u8]> =
+    TableDefinition::new("fact_content_hash");
 pub(crate) const SEARCH_SESSIONS_TABLE: TableDefinition<&str, &[u8]> =
     TableDefinition::new("search_sessions");
 pub(crate) const SEARCH_FEEDBACK_TABLE: TableDefinition<&str, &[u8]> =
@@ -135,6 +143,7 @@ impl Store {
         write_txn.open_table(RELATIONS_REV_TABLE).ok();
         write_txn.open_table(FACTS_TABLE).ok();
         write_txn.open_table(FACT_BY_ENTITY_TABLE).ok();
+        write_txn.open_table(FACT_CONTENT_HASH_TABLE).ok();
         write_txn.open_table(SEARCH_SESSIONS_TABLE).ok();
         write_txn.open_table(SEARCH_FEEDBACK_TABLE).ok();
 
@@ -973,16 +982,76 @@ impl Store {
     /// one-by-one `fact_add` pays ~3-5 ms per fsync on macOS APFS;
     /// `fact_add_many` pays it once for the whole vec.
     ///
-    /// All-or-nothing: a serialization or write failure aborts the
-    /// transaction and no facts land. The returned `Vec<FactId>` is
-    /// in the same order as `inputs`.
+    /// **Exact-content dedup**: each input's `content` is SHA-256
+    /// hashed and compared against the `fact_content_hash` index. If
+    /// an existing fact has the same content, its ID is returned in
+    /// place — no new record is written. Same-content inputs inside
+    /// the same batch also dedupe to a single insert. This matches
+    /// OMEGA's write-time dedup pass and protects retrieval from
+    /// near-zero-signal duplicate spam (re-ingest, log replays, etc).
+    ///
+    /// All-or-nothing for the inserts that DO need to land: a
+    /// serialization or write failure aborts the transaction and no
+    /// facts land. The returned `Vec<FactId>` is in the same order
+    /// as `inputs` — duplicate slots get the existing id.
     pub fn fact_add_many(&mut self, inputs: Vec<FactInput>) -> Result<Vec<FactId>> {
         if inputs.is_empty() {
             return Ok(Vec::new());
         }
 
-        let mut records: Vec<FactRecord> = Vec::with_capacity(inputs.len());
-        for input in inputs {
+        // Phase 1: hash every input content, look up existing matches in
+        // a single read transaction, and resolve each input slot to either
+        // (a) a `Pending` new record or (b) an `Existing` fact id.
+        let hashes: Vec<String> = inputs.iter().map(|i| sha256_hex(&i.content)).collect();
+        let mut existing_by_hash: std::collections::HashMap<String, FactId> =
+            std::collections::HashMap::new();
+        {
+            let read_txn = self
+                .db
+                .begin_read()
+                .map_err(|e| WgError::TransactionBegin {
+                    source: Box::new(e),
+                })?;
+            // The hash table didn't exist in pre-dedup wikis; treat
+            // "table not found" the same as "no hits" so we never crash
+            // on a legacy store.
+            if let Ok(table) = read_txn.open_table(FACT_CONTENT_HASH_TABLE) {
+                for h in &hashes {
+                    if existing_by_hash.contains_key(h.as_str()) {
+                        continue;
+                    }
+                    if let Ok(Some(v)) = table.get(h.as_str()) {
+                        let bytes = v.value();
+                        if bytes.len() == 16 {
+                            let mut arr = [0u8; 16];
+                            arr.copy_from_slice(bytes);
+                            let id = FactId(ulid::Ulid::from_bytes(arr));
+                            existing_by_hash.insert(h.clone(), id);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Phase 2: build records to insert, deduping inside the batch
+        // too. `resolved_ids[i]` mirrors the input order.
+        let mut resolved_ids: Vec<FactId> = Vec::with_capacity(inputs.len());
+        let mut records: Vec<FactRecord> = Vec::new();
+        let mut record_hashes: Vec<String> = Vec::new();
+        let mut batch_seen: std::collections::HashMap<String, FactId> =
+            std::collections::HashMap::new();
+
+        for (input, hash) in inputs.into_iter().zip(hashes.iter()) {
+            // Pre-existing in store? Reuse the id, skip the insert.
+            if let Some(id) = existing_by_hash.get(hash.as_str()) {
+                resolved_ids.push(*id);
+                continue;
+            }
+            // Already queued earlier in this batch? Reuse that id.
+            if let Some(id) = batch_seen.get(hash) {
+                resolved_ids.push(*id);
+                continue;
+            }
             let id = FactId::new();
             let mut record = FactRecord::new(
                 input.content.clone(),
@@ -1003,7 +1072,16 @@ impl Store {
             if let Some(observed_at) = input.observed_at {
                 record.observed_at = Some(observed_at);
             }
+            batch_seen.insert(hash.clone(), id);
             records.push(record);
+            record_hashes.push(hash.clone());
+            resolved_ids.push(id);
+        }
+
+        // Nothing actually new — all inputs collapsed to existing facts.
+        // Skip the write transaction entirely.
+        if records.is_empty() {
+            return Ok(resolved_ids);
         }
 
         let write_txn = self.begin_write()?;
@@ -1024,8 +1102,16 @@ impl Store {
                         key: "<batch>".to_string(),
                         source: Box::new(e),
                     })?;
+            let mut content_hash_index =
+                write_txn
+                    .open_table(FACT_CONTENT_HASH_TABLE)
+                    .map_err(|e| WgError::StoreWrite {
+                        table: "fact_content_hash",
+                        key: "<batch>".to_string(),
+                        source: Box::new(e),
+                    })?;
 
-            for record in &records {
+            for (record, hash) in records.iter().zip(record_hashes.iter()) {
                 let id = record.id;
                 let record_bytes = serde_json::to_vec(record).map_err(|e| WgError::Serialize {
                     context: format!("fact {:?}", id),
@@ -1037,6 +1123,14 @@ impl Store {
                     .map_err(|e| WgError::StoreWrite {
                         table: "facts",
                         key: id.to_string(),
+                        source: Box::new(e),
+                    })?;
+
+                content_hash_index
+                    .insert(hash.as_str(), id.as_bytes().as_slice())
+                    .map_err(|e| WgError::StoreWrite {
+                        table: "fact_content_hash",
+                        key: hash.clone(),
                         source: Box::new(e),
                     })?;
 
@@ -1059,7 +1153,7 @@ impl Store {
             source: Box::new(e),
         })?;
 
-        Ok(records.into_iter().map(|r| r.id).collect())
+        Ok(resolved_ids)
     }
 
     /// Get a fact by ID.
@@ -1843,6 +1937,18 @@ impl Store {
         }
         Ok(results)
     }
+}
+
+/// SHA-256 hex digest of the input. Used as the dedup key in
+/// `FACT_CONTENT_HASH_TABLE`. We hash the raw bytes (no
+/// normalisation, no lowercasing) so semantically-equivalent but
+/// punctuation-different content does NOT collide — that's the
+/// semantic-dedup pass's job, not exact-dedup's.
+fn sha256_hex(s: &str) -> String {
+    use sha2::Digest;
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(s.as_bytes());
+    format!("{:x}", hasher.finalize())
 }
 
 #[cfg(test)]
