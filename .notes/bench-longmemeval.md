@@ -518,6 +518,7 @@ multi-session과 temporal-reasoning이 모델 ceiling. retrieval은 R@10 0.985
 | wg @ bge + reranker wide K=20→10 | gpt-5.4-mini | 0.660 |
 | wg @ bge + reranker wide K=20→10 | gpt-4o | 0.676 |
 | wg @ bge + reranker wide K=20→10 + dedup | gpt-4o-mini | 0.662 |
+| **wg @ bge + reranker wide K=20→10** | **gpt-4.1** | **0.726** |
 | **wg @ bge + reranker wide K=20→10** ★ | **MiniMax-M2.7-highspeed** | **0.740** |
 | Zep / Graphiti 2026 (published) | gpt-4o | 0.712 |
 | Supermemory (published) | (?) | 0.854 |

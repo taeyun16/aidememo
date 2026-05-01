@@ -213,6 +213,7 @@ End-to-end with an LLM reader (`scripts/longmemeval_e2e.py`, judge =
 | wg @ bge + reranker wide K=20→10 | gpt-4o-mini | 65.6% |
 | wg @ bge + reranker wide K=20→10 | gpt-5.4-mini | 66.0% |
 | wg @ bge + reranker wide K=20→10 | gpt-4o | 67.6% |
+| **wg @ bge + reranker wide K=20→10** | **gpt-4.1** | **72.6%** |
 | **wg @ bge + reranker wide K=20→10** ★ | **MiniMax-M2.7-highspeed** | **74.0%** |
 | Zep / Graphiti 2026 (published) | gpt-4o | 71.2% |
 | Supermemory (published) | — | 85.4% |

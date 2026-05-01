@@ -13,27 +13,43 @@
 - 직접 측정: `/tmp/wg_e2e_*` (2026-05-01), 본 저장소의
   `.notes/bench-longmemeval.md`
 
-## 종합 점수 (LongMemEval E2E, gpt-4o judge)
+## 종합 점수 (LongMemEval E2E, gpt-4o judge, basic prompt)
 
 | 시스템 | reader | Overall | Δ vs OMEGA |
 |---|---|---|---|
-| **OMEGA** | gpt-4.1 | **95.4%** | — |
+| **OMEGA** | gpt-4.1 (+omega-tricks prompt) | **95.4%** | — |
 | wg + MiniMax | MiniMax-M2.7-highspeed | 74.0% | -21.4 |
+| **wg + gpt-4.1** ⭐ | gpt-4.1 (basic prompt) | **72.6%** | **-22.8** |
 | wg + gpt-4o | gpt-4o | 67.6% | -27.8 |
 | wg + dedup + mini | gpt-4o-mini | 66.2% | -29.2 |
 | Mem0 (publish) | gpt-4o | 49.0% | -46.4 |
 
-## 카테고리별 (OMEGA / wg+MiniMax)
+→ **wg + gpt-4.1 (same reader as OMEGA, no prompt tricks) = 72.6%**.
+즉 같은 reader 모델로 비교 시 격차는 **22.8pt**, 그 중:
+  - **prompting tricks** (omega-tricks vs basic): 측정 진행 중 (`be260683m`)
+  - **lifecycle / hook-based ingestion**: 나머지
 
-| Category | OMEGA | wg+MiniMax | Δ |
-|---|---|---|---|
-| Single-Session-User | (saturated) | **97.1%** | ≈ 동등 |
-| Single-Session-Assistant | (saturated) | 92.9% | ≈ 동등 |
-| **Knowledge Update** | **96.2%** | 84.6% | -11.6 |
-| **Multi-Session** | **83.5%** | 71.4% | -12.1 |
-| **Preference** | **98.6%** | 80.0% | -18.6 |
-| **Temporal** | **94.0%** | 48.9% | **-45.1** ⚠ |
-| **Overall** | **95.4%** | 74.0% | -21.4 |
+reader 모델만으로는 OMEGA 격차의 **5pt만 설명** (gpt-4o → gpt-4.1).
+나머지 17.8pt는 prompting + ingestion + lifecycle.
+
+## 카테고리별 (OMEGA / wg+gpt-4.1 / wg+MiniMax)
+
+| Category | OMEGA | wg+gpt-4.1 | wg+MiniMax | Δ (best wg) |
+|---|---|---|---|---|
+| Single-Session-User | (saturated) | 97.1% | 97.1% | ≈ 동등 |
+| Single-Session-Assistant | (saturated) | 94.6% | 92.9% | ≈ 동등 |
+| **Knowledge Update** | **96.2%** | 82.1% | 84.6% (MiniMax) | -11.6 |
+| **Multi-Session** | **83.5%** | **72.9%** (gpt-4.1) | 71.4% | -10.6 |
+| **Preference** | **98.6%** | **83.3%** (gpt-4.1) | 80.0% | -15.3 |
+| **Temporal** | **94.0%** | 42.1% | **48.9%** (MiniMax) | **-45.1** ⚠ |
+| **Overall** | **95.4%** | 72.6% | **74.0%** (MiniMax) | -21.4 |
+
+→ **gpt-4.1과 MiniMax는 카테고리별 강점 다름**:
+  - MiniMax: temporal +6.8pt, KU +2.5pt 우위 (reasoning 모델 강점)
+  - gpt-4.1: multi-session +1.5pt, preference +3.3pt 우위
+
+이상적 setup: **카테고리별 reader 라우팅** (temporal → MiniMax, 나머지
+gpt-4.1) 시 추정 ~75% — 격차 좁히는 한 옵션.
 
 → 격차의 대부분이 **temporal-reasoning (45pt)** + **preference (18.6pt)**.
 OMEGA의 보고서가 명시한 4 prompting tricks (temporal +5q, KU +4q,
