@@ -458,9 +458,12 @@ impl WikiGraph {
         // Auto-supersede any existing decision/convention fact on the
         // same entity — atomic types are mutually exclusive per entity
         // by design (mirrors OMEGA's "newer decision auto-resolves").
-        // Silently no-op for non-atomic types or when the new fact
-        // happens to be a duplicate of an existing one.
-        let _ = self.maybe_resolve_atomic_conflict(&id);
+        // Off by default so the historical "every fact_add creates a
+        // new fact" contract holds; opt in via
+        // `lifecycle.auto_supersede_atomic_types = true`.
+        if self.config.lifecycle.auto_supersede_atomic_types {
+            let _ = self.maybe_resolve_atomic_conflict(&id);
+        }
         Ok(id)
     }
 
@@ -715,6 +718,104 @@ impl WikiGraph {
                         existing.insert(pair);
                         stats.edges_created += 1;
                     }
+                }
+            }
+        }
+        Ok(stats)
+    }
+
+    /// Pairwise semantic-dedup pass over current facts. For every
+    /// pair whose embeddings have cosine ≥ `opts.semantic_threshold`,
+    /// the older fact (smaller `created_at`) is marked superseded by
+    /// the newer one. Idempotent — re-running on a wiki that's
+    /// already been consolidated finds no new pairs.
+    ///
+    /// Mirrors OMEGA's compaction step (newer wins, older flows into
+    /// history). Designed for periodic batch use, not a per-write
+    /// hook — embedding every fact is O(N) and pairwise comparison is
+    /// O(N²), which is fine for the 1k-10k-fact range typical of an
+    /// agent wiki but expensive at LongMemEval scale (50k+ facts).
+    ///
+    /// `dry_run = true` returns the same stats but writes nothing —
+    /// use it to tune the threshold without committing.
+    #[cfg(feature = "semantic")]
+    pub fn consolidate_semantic(
+        &self,
+        opts: types::ConsolidateOpts,
+    ) -> Result<types::ConsolidateStats> {
+        use std::collections::{HashMap, HashSet};
+        let mut stats = types::ConsolidateStats::default();
+        if opts.semantic_threshold <= 0.0 {
+            return Ok(stats);
+        }
+
+        let facts = self.fact_list(types::FactListOpts {
+            current_only: true,
+            limit: None,
+            ..Default::default()
+        })?;
+        stats.facts_processed = facts.len();
+        if facts.len() < 2 {
+            return Ok(stats);
+        }
+
+        // Embed every fact once. The embedding provider already caches
+        // its model load and the LRU caches handle repeated calls
+        // cheaply, but we still want a single explicit map here so the
+        // pairwise loop is pure cosine arithmetic.
+        let provider = self.embed_provider()?;
+        let mut embeds: HashMap<types::FactId, Vec<f32>> = HashMap::with_capacity(facts.len());
+        for f in &facts {
+            let v = provider.embed(&f.content)?;
+            embeds.insert(f.id, v);
+        }
+
+        // Pairwise cosine. Older fact (smaller created_at) loses;
+        // ties broken by smaller ULID so the result is deterministic.
+        let mut superseded: HashSet<types::FactId> = HashSet::new();
+        let mut to_apply: Vec<(types::FactId, types::FactId, f32)> = Vec::new();
+        let mut max_cos: f32 = 0.0;
+        for i in 0..facts.len() {
+            if superseded.contains(&facts[i].id) {
+                continue;
+            }
+            for j in (i + 1)..facts.len() {
+                if superseded.contains(&facts[j].id) {
+                    continue;
+                }
+                let cos = cosine_f32(&embeds[&facts[i].id], &embeds[&facts[j].id]);
+                if cos > max_cos {
+                    max_cos = cos;
+                }
+                if cos < opts.semantic_threshold {
+                    continue;
+                }
+                let (older, newer) = if facts[i].created_at < facts[j].created_at
+                    || (facts[i].created_at == facts[j].created_at
+                        && facts[i].id.0.to_string() < facts[j].id.0.to_string())
+                {
+                    (facts[i].id, facts[j].id)
+                } else {
+                    (facts[j].id, facts[i].id)
+                };
+                superseded.insert(older);
+                to_apply.push((older, newer, cos));
+            }
+        }
+        stats.pairs_found = to_apply.len();
+        stats.max_cosine = max_cos;
+
+        if !opts.dry_run {
+            for (old, new, _) in &to_apply {
+                // Skip if a prior pair in this same pass already
+                // superseded `old` against a different `new` — the
+                // first newer wins.
+                if let Ok(rec) = self.fact_get(old) {
+                    if rec.superseded_at.is_some() {
+                        continue;
+                    }
+                    self.fact_supersede(old, new)?;
+                    stats.supersedes_applied += 1;
                 }
             }
         }
@@ -1187,15 +1288,29 @@ struct FactTypeBucketAcc {
     count: u64,
 }
 
+/// f32 cosine similarity via simsimd. Returns 0.0 on size mismatch
+/// or empty input. Range: 0 (orthogonal) → 1 (identical).
+#[cfg(feature = "semantic")]
+fn cosine_f32(a: &[f32], b: &[f32]) -> f32 {
+    use simsimd::SpatialSimilarity;
+    if a.is_empty() || b.is_empty() || a.len() != b.len() {
+        return 0.0;
+    }
+    match f32::cosine(a, b) {
+        Some(distance) => (1.0 - distance) as f32,
+        None => 0.0,
+    }
+}
+
 // Re-export types for convenience
 pub use types::{
-    AdaptEvalReport, AdaptResult, AdaptStatus, AutoRelateOpts, AutoRelateStats, EntityId,
-    EntityInput, EntityRecord, EntitySort, EntitySummary, EntityType, EntityTypeBucket,
-    EntityUpdate, ExportScope, ExportStats, FactId, FactInput, FactListOpts, FactRecord, FactType,
-    FactTypeBucket, FactUpdate, ImportStats, LintIssue, LintReport, LintSeverity, ListOpts,
-    OverviewOpts, OverviewResult, PathStep, QueryMode, QueryOpts, QueryResult, RelationInput,
-    RelationRecord, RelationType, SearchFeedback, SearchOpts, SearchResult, SearchSession,
-    StoreStats, TraverseDirection, TraverseOpts, TraverseResult,
+    AdaptEvalReport, AdaptResult, AdaptStatus, AutoRelateOpts, AutoRelateStats, ConsolidateOpts,
+    ConsolidateStats, EntityId, EntityInput, EntityRecord, EntitySort, EntitySummary, EntityType,
+    EntityTypeBucket, EntityUpdate, ExportScope, ExportStats, FactId, FactInput, FactListOpts,
+    FactRecord, FactType, FactTypeBucket, FactUpdate, ImportStats, LintIssue, LintReport,
+    LintSeverity, ListOpts, OverviewOpts, OverviewResult, PathStep, QueryMode, QueryOpts,
+    QueryResult, RelationInput, RelationRecord, RelationType, SearchFeedback, SearchOpts,
+    SearchResult, SearchSession, StoreStats, TraverseDirection, TraverseOpts, TraverseResult,
 };
 
 #[cfg(feature = "semantic")]

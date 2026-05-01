@@ -88,6 +88,14 @@ pub enum Command {
     Session(SessionSub),
     AutoRelate(AutoRelateSub),
     Overview(OverviewSub),
+    Consolidate(ConsolidateSub),
+}
+
+#[derive(Debug, Clone)]
+pub struct ConsolidateSub {
+    pub semantic_threshold: Option<f32>,
+    pub dry_run: bool,
+    pub json: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -385,6 +393,7 @@ pub fn build_cli() -> OptionParser<Args> {
         session_command(),
         auto_relate_command(),
         overview_command(),
+        consolidate_command(),
     ]);
 
     construct!(Args {
@@ -1053,6 +1062,39 @@ fn overview_command() -> impl Parser<Command> {
          entities, recent activity, current/pinned/orphan counts. \
          Designed for agents arriving at an unfamiliar wiki — one call \
          instead of stats + entity list + fact list.",
+    )
+}
+
+fn consolidate_command() -> impl Parser<Command> {
+    let semantic_threshold = long("semantic-threshold")
+        .help(
+            "Pairwise cosine threshold above which the older fact is \
+             marked superseded by the newer (default 0.85, OMEGA-style; \
+             0.9+ for stricter dedup, 0.75 for aggressive merging). \
+             Set 0.0 to disable.",
+        )
+        .argument::<f32>("FLOAT")
+        .optional();
+    let dry_run = long("dry-run")
+        .help("Evaluate pairs and report stats but don't write any supersedes")
+        .switch();
+    let json = long("json")
+        .help("Emit JSON stats instead of human-readable output")
+        .switch();
+
+    construct!(ConsolidateSub {
+        semantic_threshold,
+        dry_run,
+        json,
+    })
+    .map(Command::Consolidate)
+    .to_options()
+    .command("consolidate")
+    .help(
+        "Periodic semantic-dedup pass: for every pair of current facts \
+         whose embeddings have cosine ≥ threshold, the older one is \
+         marked superseded by the newer (history preserved). Mirrors \
+         OMEGA's compaction. Idempotent. Requires the semantic feature.",
     )
 }
 

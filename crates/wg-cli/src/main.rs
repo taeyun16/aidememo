@@ -116,6 +116,7 @@ fn main() {
         cmd::Command::Session(sub) => handle_session(&store_path, config, sub, json),
         cmd::Command::AutoRelate(sub) => handle_auto_relate(&store_path, config, sub),
         cmd::Command::Overview(sub) => handle_overview(&store_path, config, sub),
+        cmd::Command::Consolidate(sub) => handle_consolidate(&store_path, config, sub),
     };
 
     match result {
@@ -1704,6 +1705,55 @@ fn handle_auto_relate(
             },
             stats.edges_skipped_same_entity,
             stats.edges_skipped_existing,
+            elapsed_ms,
+        ))
+    })
+}
+
+fn handle_consolidate(
+    path: &Path,
+    config: Config,
+    sub: cmd::ConsolidateSub,
+) -> Result<String, WgError> {
+    with_wiki(path, config, |wiki| {
+        let started = std::time::Instant::now();
+        let mut opts = wg_core::ConsolidateOpts::default();
+        if let Some(t) = sub.semantic_threshold {
+            opts.semantic_threshold = t;
+        }
+        opts.dry_run = sub.dry_run;
+        let stats = wiki.consolidate_semantic(opts.clone())?;
+        let elapsed_ms = started.elapsed().as_millis();
+
+        if sub.json {
+            let payload = serde_json::json!({
+                "facts_processed": stats.facts_processed,
+                "pairs_found": stats.pairs_found,
+                "supersedes_applied": stats.supersedes_applied,
+                "max_cosine": stats.max_cosine,
+                "threshold": opts.semantic_threshold,
+                "dry_run": sub.dry_run,
+                "elapsed_ms": elapsed_ms,
+            });
+            return serde_json::to_string_pretty(&payload).map_err(|e| WgError::Serialize {
+                context: "consolidate".to_string(),
+                source: e,
+            });
+        }
+
+        Ok(format!(
+            "consolidate{} — {} facts processed, {} pair(s) ≥ {:.2} cosine, {} supersede(s) {} (max cosine seen: {:.3}) in {} ms.",
+            if sub.dry_run { " (dry-run)" } else { "" },
+            stats.facts_processed,
+            stats.pairs_found,
+            opts.semantic_threshold,
+            stats.supersedes_applied,
+            if sub.dry_run {
+                "would apply"
+            } else {
+                "applied"
+            },
+            stats.max_cosine,
             elapsed_ms,
         ))
     })

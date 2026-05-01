@@ -616,6 +616,44 @@ pub struct AutoRelateStats {
     pub edges_skipped_existing: usize,
 }
 
+/// Options for `WikiGraph::consolidate_semantic` — pairwise cosine
+/// dedup pass. Mirrors OMEGA's compaction step (newer entry wins,
+/// older becomes superseded). Designed as a periodic batch job, not
+/// a per-write hook.
+#[derive(Debug, Clone)]
+pub struct ConsolidateOpts {
+    /// Cosine similarity threshold above which two facts are treated
+    /// as duplicates and the older one is superseded by the newer.
+    /// 0.85 is OMEGA's default; 0.9+ for stricter dedup, 0.75 for
+    /// aggressive merging. 0.0 (or anything ≤ 0) disables the pass.
+    pub semantic_threshold: f32,
+    /// If true, evaluate pairs and report stats but don't write any
+    /// `superseded_at` updates. Useful for tuning the threshold.
+    pub dry_run: bool,
+}
+
+impl Default for ConsolidateOpts {
+    fn default() -> Self {
+        Self {
+            semantic_threshold: 0.85,
+            dry_run: false,
+        }
+    }
+}
+
+/// Statistics returned by `consolidate_semantic`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ConsolidateStats {
+    /// Total current facts examined.
+    pub facts_processed: usize,
+    /// Pairs above the cosine threshold.
+    pub pairs_found: usize,
+    /// Facts marked superseded (older of each duplicate pair).
+    pub supersedes_applied: usize,
+    /// Highest cosine seen (sanity-check signal for threshold tuning).
+    pub max_cosine: f32,
+}
+
 /// Result of a graph traversal.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TraverseResult {

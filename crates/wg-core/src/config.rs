@@ -24,6 +24,12 @@ pub struct Config {
     /// model/endpoint to opt into LLM extraction.
     #[serde(default)]
     pub extract: ExtractConfig,
+    /// Memory-lifecycle behaviour: auto-supersede on atomic-type
+    /// conflict, semantic dedup at write, etc. Off by default to
+    /// preserve the historical "every fact_add creates a new fact"
+    /// contract. Opt in for OMEGA-style lifecycle management.
+    #[serde(default)]
+    pub lifecycle: LifecycleConfig,
     /// Named projects (multi-store support). Empty by default.
     #[serde(default)]
     pub projects: BTreeMap<String, ProjectConfig>,
@@ -569,6 +575,40 @@ impl ExtractConfig {
     }
 }
 
+/// Memory-lifecycle config. Toggles the OMEGA-style write-time
+/// behaviours that diverge from the historical wg "every fact_add
+/// creates a new fact" semantics.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct LifecycleConfig {
+    /// When true, `fact_add` of a `decision` or `convention` fact
+    /// auto-supersedes any not-yet-superseded fact of the same type
+    /// on the same entity. Mirrors OMEGA's "newer decision auto-
+    /// resolves" behaviour. Default `false` for backward compat.
+    #[serde(default)]
+    pub auto_supersede_atomic_types: bool,
+}
+
+impl LifecycleConfig {
+    fn get(&self, key: &str) -> Option<String> {
+        match key {
+            "auto_supersede_atomic_types" => Some(self.auto_supersede_atomic_types.to_string()),
+            _ => None,
+        }
+    }
+
+    fn set(&mut self, key: &str, value: &str) -> Result<()> {
+        match key {
+            "auto_supersede_atomic_types" => {
+                self.auto_supersede_atomic_types = value.parse::<bool>().map_err(|e| {
+                    WgError::InvalidInput(format!("lifecycle.auto_supersede_atomic_types: {e}"))
+                })?;
+                Ok(())
+            }
+            _ => Err(WgError::ConfigKeyNotFound(format!("lifecycle.{}", key))),
+        }
+    }
+}
+
 impl Config {
     /// Resolve the store path for a named project.
     ///
@@ -655,6 +695,7 @@ impl Config {
             ["lint", k] => self.lint.get(k),
             ["rerank", k] => self.rerank.get(k),
             ["extract", k] => self.extract.get(k),
+            ["lifecycle", k] => self.lifecycle.get(k),
             _ => None,
         }
     }
@@ -669,6 +710,7 @@ impl Config {
             ["lint", k] => self.lint.set(k, value),
             ["rerank", k] => self.rerank.set(k, value),
             ["extract", k] => self.extract.set(k, value),
+            ["lifecycle", k] => self.lifecycle.set(k, value),
             _ => Err(WgError::ConfigKeyNotFound(key.to_string())),
         }
     }
