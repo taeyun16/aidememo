@@ -106,19 +106,41 @@ ingestion. wg는 인프라 있지만 default OFF (사용자 비용 부담 회피
 8. **Bench harness multi-provider**: extract / reader 둘 다 OpenAI /
    MiniMax / Ollama / Kimi / OpenRouter 자유 (기본 인프라)
 
-## 격차 좁히는 ROI 순 (다음 단계)
+## 격차 좁히는 ROI 순 (실측 갱신, 2026-05-01)
 
-1. **gpt-4.1 reader 측정** — wg + gpt-4.1 시험. 이전 측정 안 됨.
-   가장 빠른 +3-5pt. 비용 \$5.
-2. **LLM-aided ingestion 기본 활용** — `wg watch` + `extract.provider`
-   를 dogfood. 운영 환경에서 측정.
-3. **Temporal reasoning prompting 가이드** — wg-skill에 reader
-   prompt 패턴 추가 ("when comparing time periods, …"). 추정 +3pt.
-4. **Hook 강화** — wg-skill/hooks/wg-extract-facts.py를 default
-   `WG_EXTRACT_LLM=1` 권장으로 변경, 자동 fact_add (현재는 preview only).
-   Async 인프라 필요 (rate limit 처리).
-5. **Async LLM extract 인프라** — wg-core extract에 tokio + reqwest
-   async, 동시 N calls. LongMemEval 500q full 측정 가능 (~30분).
+**측정으로 확인됨** (✓ = 직접 측정):
+
+1. ✓ **gpt-4.1 reader 측정** — wg + gpt-4.1 (basic) = **72.6%**, gpt-4o
+   대비 +5pt. **reader 모델 변경만으론 5pt만 메움**.
+2. ✓ **OMEGA-style reader prompt (omega-tricks)** — 모든 reader 크기에서
+   효과 없음 또는 negative. mini -0.8, gpt-4.1 -1.6. **prompt 재현 안 됨**.
+3. ✓ **LLM-extract retrieval 60q balanced (concurrent)** — R@K 완전히
+   baseline과 동일 (R@1 0.917, R@10 1.000 둘 다). **retrieval 단에선
+   효과 0** (단, 60q baseline ceiling 때문). E2E reader 영향은 측정
+   진행 중.
+
+→ **reader + prompt + retrieval 단 작업으로는 OMEGA 격차 못 메움**.
+
+**남은 가능성** (미검증):
+
+4. **카테고리별 reader routing** — temporal → MiniMax (reasoning),
+   preference → gpt-4.1 (instruction-following). 추정 +3-5pt overall.
+5. **LLM-extract reader E2E 영향** — 같은 retrievals에 reader가 추가된
+   classified facts를 활용하나 측정 (`bda7h6raz`).
+6. **Hook auto-apply** — `wg-skill/hooks/wg-extract-facts.py` 자동
+   fact_add 모드. dogfood-only 효과 — LongMemEval로 측정 불가.
+7. **OMEGA의 25 specialized tools 일부 구현** — checkpoint/resume,
+   per-conversation context tracking. 큰 인프라.
+8. **Few-shot reader prompts** — basic + 카테고리별 in-context exemplars.
+
+**측정 인프라 개선 사항** (✓):
+
+- bench `--llm-extract-base-url / api-key-env / model` — MiniMax /
+  Ollama / Kimi 등 OpenAI-호환 endpoint 지원
+- bench `--balanced-sample N` — 카테고리별 균등 sample
+- bench rayon-concurrent LLM-extract — sequential ~43h →
+  concurrent ~5h (8× speedup)
+- e2e `--reader-prompt {basic,omega-tricks}` — prompt A/B
 
 ## 측정 시 고려사항
 
