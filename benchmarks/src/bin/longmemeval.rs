@@ -134,6 +134,13 @@ struct Args {
     /// Restrict the run to a single question_type bucket. Lets you
     /// re-measure just one slice without re-running all 500.
     only_type: Option<String>,
+    /// Take N questions from EACH question_type bucket (instead of
+    /// the first N overall, which `--limit` does). Gives every
+    /// category equal voice in the aggregate score so a small
+    /// sample is representative — critical when --llm-extract
+    /// makes full-500 runs impractical. Mutually exclusive with
+    /// --only-type.
+    balanced_sample: Option<usize>,
     /// If set, append one JSON line per question to this file with
     /// the top-K retrieval records — feed this into the official
     /// LongMemEval evaluator (or the internal `e2e` script) to do
@@ -218,6 +225,7 @@ fn parse_args() -> Args {
     let mut llm_extract_base_url: Option<String> = None;
     let mut llm_extract_api_key_env: Option<String> = None;
     let mut llm_extract_model: Option<String> = None;
+    let mut balanced_sample: Option<usize> = None;
 
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
@@ -291,6 +299,10 @@ fn parse_args() -> Args {
                 llm_extract_model = Some(argv[i + 1].clone());
                 i += 2;
             }
+            "--balanced-sample" if i + 1 < argv.len() => {
+                balanced_sample = argv[i + 1].parse().ok();
+                i += 2;
+            }
             _ => i += 1,
         }
     }
@@ -312,6 +324,7 @@ fn parse_args() -> Args {
         llm_extract_base_url,
         llm_extract_api_key_env,
         llm_extract_model,
+        balanced_sample,
     }
 }
 
@@ -694,6 +707,24 @@ fn run(args: &Args) -> Result<(), String> {
     };
     if let Some(only) = &args.only_type {
         questions.retain(|q| q.question_type == *only);
+    }
+    // Balanced sampling: take the first `n` of each question_type
+    // bucket so the aggregate isn't dominated by whichever category
+    // appears first in the JSON. Critical for small samples (e.g.
+    // when --llm-extract makes 500-question runs impractical) — the
+    // first 5 questions of LongMemEval-S are all single-session-user,
+    // so a flat --limit 5 measures one category while pretending to
+    // measure six.
+    if let Some(per_type) = args.balanced_sample {
+        let mut by_type: std::collections::BTreeMap<String, Vec<Question>> = Default::default();
+        for q in questions.drain(..) {
+            by_type.entry(q.question_type.clone()).or_default().push(q);
+        }
+        for (_t, bucket) in by_type {
+            for q in bucket.into_iter().take(per_type) {
+                questions.push(q);
+            }
+        }
     }
     let n = limit
         .map(|l| l.min(questions.len()))
