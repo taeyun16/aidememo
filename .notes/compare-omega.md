@@ -136,6 +136,21 @@ ingestion. wg는 인프라 있지만 default OFF (사용자 비용 부담 회피
 → **gpt-4o-mini extractor로는 OMEGA 디자인 (replace) 모방 불가**.
 정보 손실이 noise보다 큼.
 
+6. ✓ **LLM-extract augment with gpt-4.1 extractor (24q balanced, mini reader)** —
+   **-16.7pt 더 큰 부정 영향** (baseline 62.5 → augment 45.8). 카테고리별:
+     - KU: 75 → **25%** (-50pt)
+     - multi-session: 50 → **0%** (-50pt)
+     - 나머지 동등
+   **결정적 발견**: gpt-4.1 같은 higher-quality extractor일수록 augment
+   효과 **더 부정적**. mini augment -8.3 → gpt-4.1 augment -16.7.
+
+   원인: better distillation = stronger anchor for reader. Reader가
+   정제된 fact에 더 신뢰 → raw turn 정답 무시. Information convergence
+   가 classified fact에 보존 안 됨.
+
+→ **wg augment 디자인 자체 문제, LLM 품질 무관**. wg에 OMEGA-style
+ingest-time LLM-aided을 적용하려면 **새 디자인 필요** (단순 augment X).
+
 ## 큰 결론: OMEGA 격차 = higher-LLM extractor + 다른 ingest 디자인
 
 reader / prompt / retrieval / 우리 ingest 디자인 모든 옵션 측정 후
