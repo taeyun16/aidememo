@@ -128,12 +128,24 @@ pub struct ExtractSub {
 
 #[derive(Debug, Clone)]
 pub enum SessionSub {
+    /// Warmup envelope: pinned + recent + top entities + open issues.
+    /// Same payload as `wg_session_start` MCP tool.
     Start {
         pinned_limit: Option<usize>,
         recent_limit: Option<usize>,
         recent_days: Option<u64>,
         top_entities_limit: Option<usize>,
     },
+    /// Create a new tracked session (entity of type `session`).
+    /// Prints shell-evaluable `export WG_SESSION_ID=…`. While the env
+    /// var is set, every `wg fact add` auto-attaches the session
+    /// entity to the new fact's entity list — that's how cross-
+    /// session retrieval gets a persistent thread to follow.
+    New { topic: String },
+    /// Show the current session entity (per WG_SESSION_ID).
+    Current,
+    /// List recent session entities.
+    List { limit: Option<usize> },
 }
 
 #[derive(Debug, Clone)]
@@ -482,11 +494,36 @@ fn session_command() -> impl Parser<Command> {
     .command("start")
     .help("Return one envelope: stats + pinned + recent + top entities + open issues");
 
-    construct!([start])
+    let topic = positional::<String>("TOPIC");
+    let new_cmd = construct!(SessionSub::New { topic })
+        .to_options()
+        .command("new")
+        .help(
+            "Create a tracked session entity for TOPIC and print \
+             `export WG_SESSION_ID=...`. While that env var is set, \
+             every `wg fact add` auto-attaches the session entity. \
+             Usage:  eval \"$(wg session new 'auth migration')\"",
+        );
+
+    let current_cmd = pure(SessionSub::Current)
+        .to_options()
+        .command("current")
+        .help("Show the current session entity (per WG_SESSION_ID env)");
+
+    let limit = long("limit")
+        .help("Max sessions to return (default 20)")
+        .argument::<usize>("N")
+        .optional();
+    let list_cmd = construct!(SessionSub::List { limit })
+        .to_options()
+        .command("list")
+        .help("List recent session entities (entity_type=session)");
+
+    construct!([start, new_cmd, current_cmd, list_cmd])
         .map(Command::Session)
         .to_options()
         .command("session")
-        .help("Agent session helpers (warmup envelope)")
+        .help("Agent session helpers: warmup envelope + tracked sessions")
 }
 
 fn entity_command() -> impl Parser<Command> {

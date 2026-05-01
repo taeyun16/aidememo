@@ -433,6 +433,28 @@ fn handle_fact(
                     None => None,
                 };
 
+                // WG_SESSION_ID hook — if a tracked session is active,
+                // auto-attach its entity. Lets `wg session new …; eval`
+                // give every subsequent fact the session as a thread.
+                let entity_ids = match std::env::var("WG_SESSION_ID") {
+                    Ok(sid) if !sid.is_empty() => match wiki.resolve_entity(&sid) {
+                        Ok(sess_id) => {
+                            let mut ids = entity_ids.unwrap_or_default();
+                            if !ids.contains(&sess_id) {
+                                ids.push(sess_id);
+                            }
+                            Some(ids)
+                        }
+                        Err(_) => {
+                            tracing::warn!(
+                                "WG_SESSION_ID={sid} doesn't resolve to an entity; skipping session auto-attach"
+                            );
+                            entity_ids
+                        }
+                    },
+                    _ => entity_ids,
+                };
+
                 // Pre-add similarity check so the JSON envelope matches
                 // wg_fact_add's `existing_similar` field. Mirrors the
                 // MCP behaviour: BM25-only (no model load) and
@@ -926,6 +948,100 @@ fn handle_session(
                 ));
             }
             out.push_str(&format!("\nopen issues: {}", issues.len()));
+            Ok(out)
+        }),
+        cmd::SessionSub::New { topic } => with_wiki(store_path, config, |wiki| {
+            // Mint a session entity. Name is `session-<ULID>` so it's
+            // sortable by creation time and globally unique even
+            // across stores. source_page carries the human topic.
+            let session_name = format!("session-{}", wg_core::ulid::Ulid::new());
+            wiki.entity_add(wg_core::EntityInput {
+                name: session_name.clone(),
+                entity_type: Some(wg_core::EntityType::parse("session")),
+                source_page: Some(topic.clone()),
+                ..Default::default()
+            })?;
+            if json {
+                return serde_json::to_string_pretty(&serde_json::json!({
+                    "session_id": session_name,
+                    "topic": topic,
+                    "export": format!("export WG_SESSION_ID={}", session_name),
+                }))
+                .map_err(|e| WgError::Serialize {
+                    context: "session new (json)".into(),
+                    source: e,
+                });
+            }
+            // Stdout is shell-evaluable so users can `eval "$(wg session new …)"`.
+            // The leading comment lines start with `#` so eval ignores them.
+            Ok(format!(
+                "# wg session: {topic}\n# id: {session_name}\nexport WG_SESSION_ID={session_name}"
+            ))
+        }),
+        cmd::SessionSub::Current => with_wiki(store_path, config, |wiki| {
+            let Ok(sid) = std::env::var("WG_SESSION_ID") else {
+                if json {
+                    return Ok("null".to_string());
+                }
+                return Ok(
+                    "(no current session — set WG_SESSION_ID or run `wg session new`)".into(),
+                );
+            };
+            let entity = wiki.entity_get(&sid)?;
+            let fact_count = wiki
+                .fact_list(wg_core::FactListOpts {
+                    fact_type: None,
+                    entity_id: Some(entity.id),
+                    min_confidence: None,
+                    limit: None,
+                    offset: 0,
+                    since: None,
+                    until: None,
+                    current_only: true,
+                    as_of: None,
+                })?
+                .len();
+            if json {
+                return serde_json::to_string_pretty(&serde_json::json!({
+                    "session_id": entity.name,
+                    "topic": entity.source_page,
+                    "fact_count": fact_count,
+                    "created_at": entity.created_at,
+                }))
+                .map_err(|e| WgError::Serialize {
+                    context: "session current (json)".into(),
+                    source: e,
+                });
+            }
+            Ok(format!(
+                "session: {}\ntopic:   {}\nfacts:   {}",
+                entity.name,
+                entity.source_page.as_deref().unwrap_or("-"),
+                fact_count,
+            ))
+        }),
+        cmd::SessionSub::List { limit } => with_wiki(store_path, config, |wiki| {
+            let limit = limit.unwrap_or(20);
+            let sessions = wiki.entity_list(wg_core::ListOpts {
+                entity_type: Some(wg_core::EntityType::parse("session")),
+                min_facts: None,
+                sort_by: wg_core::EntitySort::UpdatedAt,
+                limit: Some(limit),
+                offset: 0,
+            })?;
+            if json {
+                return serde_json::to_string_pretty(&sessions).map_err(|e| WgError::Serialize {
+                    context: "session list (json)".into(),
+                    source: e,
+                });
+            }
+            if sessions.is_empty() {
+                return Ok("(no tracked sessions yet — run `wg session new <topic>`)".into());
+            }
+            let mut out = format!("{} session(s):\n", sessions.len());
+            for s in &sessions {
+                out.push_str(&format!("  {} ({} facts)\n", s.name, s.fact_count));
+            }
             Ok(out)
         }),
     }
