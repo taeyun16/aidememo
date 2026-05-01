@@ -60,14 +60,26 @@ call — prefer it when an LLM needs context. Returns
 resolved entity, top search hits, related entities (graph), and recent facts
 in a single response.
 
-`fact_type`: `decision | pattern | convention | claim | note | question`
-- *Atomic types* (decision / convention / pattern) are mutually exclusive
-  per entity — `wg lint` flags multiple current ones as conflicts. Resolve
-  with `wg fact supersede`.
-- *Non-atomic* (claim / note / question) coexist freely.
+`fact_type`: `decision | pattern | convention | claim | note | question | preference | lesson | error`
+
+| Type | Use when | Auto-behaviour |
+|---|---|---|
+| `decision` | "we'll use X for Y" | atomic per entity (when `lifecycle.auto_supersede_atomic_types=true`); 2× retrieval boost; never decays |
+| `convention` | "always X" / "format Y as Z" | atomic per entity; 2× boost; never decays |
+| `pattern` | "X uses Y for Z" / architectural pattern | 1.5× boost; never decays |
+| **`preference`** ⭐ | first-person preference ("I prefer dark mode") | 2× boost; never decays; surfaced in `wg_context.personalisation` |
+| **`lesson`** ⭐ | "tried X, hit Y" / learned-the-hard-way | 2× boost; never decays; surfaced in `wg_context.personalisation` AND `wg_context.topic.topic_lessons` |
+| **`error`** ⭐ | recurring failure mode to avoid | 2× boost; never decays; surfaced in `wg_context.personalisation` AND `wg_context.topic.topic_errors` |
+| `claim` | factual assertion | 1× weight |
+| `note` | observational, default fallback | 1× weight, decays |
+| `question` | open investigation | 0.5× (deprioritised) |
+
+**Atomic types** (`decision`/`convention`) — only one current per entity
+when `lifecycle.auto_supersede_atomic_types` is on. `wg lint` flags
+multiple current ones as conflicts; resolve with `wg fact supersede`.
 
 `entity_type`: `technology | concept | comparison | query | person | team`
-or any custom string (e.g. `service`, `rfc`, `incident`).
+or any custom string (e.g. `service`, `rfc`, `incident`, `session`).
 
 ## When to add facts
 
@@ -87,23 +99,37 @@ out. They return structured JSON.
 
 | Tool | Use for |
 |---|---|
-| `wg_query` | One-call context fetch (preferred over chaining) |
+| **`wg_context`** ⭐ | **Top-of-turn entry point** — pinned + personalisation + recent + (with topic) search/traverse/lessons. Replaces session_start → query → search chain |
+| `wg_query` | Topic-only retrieval (search + entity + traverse + recent). Lighter than wg_context — use for follow-up topic dives |
+| `wg_overview` | First-impression snapshot of an unfamiliar wiki — call once at session start |
 | `wg_search` | Pure hybrid search, no graph |
 | `wg_recent` | Last N days of facts |
 | `wg_entity_list` / `wg_entity_get` | Browse entities / fetch one by name or alias |
-| `wg_fact_list` / `wg_fact_get` | List facts (filterable) / fetch one by ULID |
+| `wg_fact_list` / `wg_fact_get` | List facts (filterable; `fact_type:"lesson"` etc) / fetch one by ULID |
 | `wg_traverse` / `wg_backlinks` | Forward / reverse graph walk |
 | `wg_path` | Shortest path between two entities |
 | `wg_doctor` / `wg_lint` | Health snapshot / raw issues |
 | `wg_entity_describe` | Set or clear an entity's prose summary |
-| `wg_fact_add` | Append a single fact |
+| `wg_fact_add` | Append a single fact (now accepts `preference` / `lesson` / `error`) |
 | `wg_fact_add_many` | Batched insert (one fsync) — prefer for ≥3 facts |
 | `wg_fact_supersede` | Mark old fact replaced by a new one |
 | `wg_fact_edit` | Patch a fact's content (append / prepend / find+replace / content) |
 | `wg_feedback` | Mark a fact returned by wg_search as helpful / not-helpful (closes the adapter loop) |
-| `wg_extract` | Heuristic conversation → candidate facts. `apply:true` persists them; otherwise returns previews to edit |
-| `wg_session_start` | One-call warmup: pinned + recent + top entities + open issues |
-| `wg_pinned_context` / `wg_fact_pin` | "Always loaded" memory tier — pin a fact for session start |
+| `wg_extract` | Conversation → candidate facts. Heuristic by default; `llm:true` uses `extract.provider`. `apply:true` persists |
+| `wg_session_start` | Warmup envelope (legacy — prefer `wg_context` without topic) |
+| `wg_pinned_context` / `wg_fact_pin` | "Always loaded" memory tier — pin a fact |
+
+### Recommended agent flow
+
+1. **Top of turn** → `wg_context(topic?: <user's intent or relevant entity>)` — one call, gets you pinned facts, user preferences, lessons, errors, recent activity, and (if topic resolves) deep retrieval + topic-specific lessons.
+2. **Need more on a sub-topic** → `wg_query(topic)` for entity + neighbors, or `wg_search(query)` for pure search.
+3. **About to record something** → pick the right `fact_type`:
+   - User shares a personal preference → `preference`
+   - You discovered a non-obvious "X works because Y" → `lesson`
+   - You hit a known recurring failure → `error`
+   - User decides on technology / approach → `decision`
+   - Project convention → `convention`
+4. **Long task** → `eval "$(wg session new '<topic>')"` once; every `wg fact add` thereafter auto-attaches the session entity. Pull the thread later with `wg fact list --entity $WG_SESSION_ID`.
 
 `wg_search` / `wg_query` / `wg_fact_list` default `current_only=true` — the
 result set is "what we know now". Pass `current_only:false` for historical

@@ -21,8 +21,29 @@ If the binary path differs from `./target/debug/wg`, edit `.mcp.json`.
 - `wg-skill/SKILL.md` is distributable — users `cp -r wg-skill ~/.claude/skills/wg/`.
 - Project-local slash commands live in `.claude/commands/` (see
   `wg-search.md`, `wg-add-fact.md`, `wg-context.md`).
-- No hooks are configured by default; suggest `wg sync` on `SessionStart` if
-  the wiki should track unsaved markdown.
+- **Hooks ship in `wg-skill/hooks/`** (3 scripts: `wg-session-start.py`,
+  `wg-post-tool.py`, `wg-extract-facts.py`). See
+  `wg-skill/hooks/README.md` for the install snippet — soft-fail
+  read-only injections, no blocking.
+
+### Agent UX defaults to surface
+
+When you (Claude) need wiki context: **call `wg_context` first**, not
+`wg_session_start` / `wg_query` separately. `wg_context` returns
+pinned + personalisation (preference/lesson/error) + recent + (with
+topic) search/traverse/lessons in one round-trip.
+
+When recording new facts, pick the right `fact_type`:
+  - `decision` / `convention` / `pattern` for governance + architecture
+  - `preference` for user 1st-person preferences
+  - `lesson` for hard-won learnings ("tried X, hit Y")
+  - `error` for recurring failure patterns to avoid
+  - `note` only when nothing else fits
+
+The Tier A+B additions (Preference/Lesson/Error types, sessions,
+freshness, consolidate) are documented in
+`AGENTS.md § Agent-UX cheatsheet` — agents loading AGENTS.md see
+the full surface.
 
 ### Running tests / building
 
