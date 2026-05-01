@@ -116,8 +116,18 @@ ingestion. wg는 인프라 있지만 default OFF (사용자 비용 부담 회피
    효과 없음 또는 negative. mini -0.8, gpt-4.1 -1.6. **prompt 재현 안 됨**.
 3. ✓ **LLM-extract retrieval 60q balanced (concurrent)** — R@K 완전히
    baseline과 동일 (R@1 0.917, R@10 1.000 둘 다). **retrieval 단에선
-   효과 0** (단, 60q baseline ceiling 때문). E2E reader 영향은 측정
-   진행 중.
+   효과 0** (단, 60q baseline ceiling 때문).
+4. ✓ **LLM-extract augment 모드 reader E2E 60q balanced** —
+   **-8.3pt 부정 영향** (66.7 → 58.3). Per-category:
+     - knowledge-update -20pt ⚠
+     - multi-session -10pt
+     - temporal -10pt
+     - user/assistant ≈ 동등
+   원인: raw turn + classified facts 둘 다 retrieval 노출 → reader
+   혼란. wg의 augment 디자인이 OMEGA의 replace 디자인과 다름.
+5. **LLM-extract replace 모드** — `--llm-extract-replace` 추가, 측정
+   진행 중 (`bqjqpeaq9`). 가설: classified facts만 노출 시 reader
+   혼란 없어지지만 정보 손실 위험 있음.
 
 → **reader + prompt + retrieval 단 작업으로는 OMEGA 격차 못 메움**.
 

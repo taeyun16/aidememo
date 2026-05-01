@@ -175,6 +175,17 @@ struct Args {
     /// Override the LLM extract model. Default `gpt-4o-mini`.
     /// Use `MiniMax-M2.7-highspeed`, `qwen2.5:7b`, etc.
     llm_extract_model: Option<String>,
+    /// Replace raw turn ingest with classified facts only. Without
+    /// this, --llm-extract adds classified facts ALONGSIDE the raw
+    /// turns (augment), which the 2026-05-01 measurement showed
+    /// confuses readers (-8.3pt mini E2E on 60q balanced — readers
+    /// can't tell raw evidence from LLM-distilled fact). With it,
+    /// raw turns are dropped and only classified facts represent
+    /// each session in the store. Mirrors OMEGA's replace-style
+    /// ingestion. Risk: low-quality LLM extracts can drop the
+    /// gold-evidence content entirely; pair with a higher-quality
+    /// `--llm-extract-model` (gpt-4.1, Claude Opus) when using.
+    llm_extract_replace: bool,
 }
 
 /// Parse "2023/02/01 (Wed) 10:20" → epoch ms. Returns None on any
@@ -225,6 +236,7 @@ fn parse_args() -> Args {
     let mut llm_extract_base_url: Option<String> = None;
     let mut llm_extract_api_key_env: Option<String> = None;
     let mut llm_extract_model: Option<String> = None;
+    let mut llm_extract_replace = false;
     let mut balanced_sample: Option<usize> = None;
 
     let argv: Vec<String> = std::env::args().skip(1).collect();
@@ -299,6 +311,10 @@ fn parse_args() -> Args {
                 llm_extract_model = Some(argv[i + 1].clone());
                 i += 2;
             }
+            "--llm-extract-replace" => {
+                llm_extract_replace = true;
+                i += 1;
+            }
             "--balanced-sample" if i + 1 < argv.len() => {
                 balanced_sample = argv[i + 1].parse().ok();
                 i += 2;
@@ -324,6 +340,7 @@ fn parse_args() -> Args {
         llm_extract_base_url,
         llm_extract_api_key_env,
         llm_extract_model,
+        llm_extract_replace,
         balanced_sample,
     }
 }
@@ -346,6 +363,7 @@ struct BuildOpts<'a> {
     llm_extract_base_url: Option<&'a str>,
     llm_extract_api_key_env: Option<&'a str>,
     llm_extract_model: Option<&'a str>,
+    llm_extract_replace: bool,
 }
 
 fn build_store_for_question(
@@ -366,6 +384,7 @@ fn build_store_for_question(
         llm_extract_base_url,
         llm_extract_api_key_env,
         llm_extract_model,
+        llm_extract_replace,
     } = opts;
     let dir = tempfile::TempDir::new().map_err(|e| e.to_string())?;
     let mut config = Config::default();
@@ -454,36 +473,48 @@ fn build_store_for_question(
     }
 
     // Batch all turns under one fact_add_many — single fsync, fast.
-    let mut inputs = Vec::new();
-    for (sess_idx, session) in q.haystack_sessions.iter().enumerate() {
-        let entity_id = session_eids.get(sess_idx).copied();
-        // Stamp observed_at when caller asks (--temporal hard cutoff
-        // OR --time-decay soft bias both need session-relative dates).
-        let observed_at = if stamp_observed_at {
-            q.haystack_dates
-                .get(sess_idx)
-                .and_then(|d| parse_question_date(d))
-        } else {
-            None
-        };
-        let _ = temporal; // disambiguation only — both paths share this stamp
-        for turn in session {
-            inputs.push(FactInput {
-                content: format!("{}: {}", turn.role, turn.content),
-                fact_type: Some(FactType::Note),
-                entity_ids: entity_id.map(|e| vec![e]),
-                tags: Some(vec![format!(
-                    "session:{}",
-                    q.haystack_session_ids[sess_idx]
-                )]),
-                source: None,
-                source_confidence: None,
-                observed_at,
-            });
+    // Skip when --llm-extract-replace is set: the LLM-extracted facts
+    // below take the place of raw turns (OMEGA-style replace mode,
+    // no augment). Reader sees only distilled signal, not raw chat.
+    if !llm_extract_replace {
+        let mut inputs = Vec::new();
+        for (sess_idx, session) in q.haystack_sessions.iter().enumerate() {
+            let entity_id = session_eids.get(sess_idx).copied();
+            // Stamp observed_at when caller asks (--temporal hard cutoff
+            // OR --time-decay soft bias both need session-relative dates).
+            let observed_at = if stamp_observed_at {
+                q.haystack_dates
+                    .get(sess_idx)
+                    .and_then(|d| parse_question_date(d))
+            } else {
+                None
+            };
+            let _ = temporal; // disambiguation only — both paths share this stamp
+            for turn in session {
+                inputs.push(FactInput {
+                    content: format!("{}: {}", turn.role, turn.content),
+                    fact_type: Some(FactType::Note),
+                    entity_ids: entity_id.map(|e| vec![e]),
+                    tags: Some(vec![format!(
+                        "session:{}",
+                        q.haystack_session_ids[sess_idx]
+                    )]),
+                    source: None,
+                    source_confidence: None,
+                    observed_at,
+                });
+            }
         }
-    }
-    if !inputs.is_empty() {
-        wiki.fact_add_many(inputs).map_err(|e| e.to_string())?;
+        if !inputs.is_empty() {
+            wiki.fact_add_many(inputs).map_err(|e| e.to_string())?;
+        }
+    } else {
+        // Surface a clear error if the user asked for replace mode
+        // without enabling --llm-extract — otherwise the store
+        // would end up empty and every search would miss.
+        if !llm_extract {
+            return Err("--llm-extract-replace requires --llm-extract".into());
+        }
     }
 
     // ── LLM-aided extraction (opt-in) ─────────────────────────────
@@ -821,6 +852,7 @@ fn run(args: &Args) -> Result<(), String> {
                 llm_extract_base_url: args.llm_extract_base_url.as_deref(),
                 llm_extract_api_key_env: args.llm_extract_api_key_env.as_deref(),
                 llm_extract_model: args.llm_extract_model.as_deref(),
+                llm_extract_replace: args.llm_extract_replace,
             },
         )?;
         let (rank, retrievals) =
