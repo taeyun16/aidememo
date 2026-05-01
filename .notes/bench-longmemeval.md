@@ -277,12 +277,28 @@ OMEGA가 95.4%로 1위 찍은 retrieval pipeline의 핵심 임베딩. wg에
 
 **500 questions, --hybrid + --embed-model bge-small-en-v1.5 + decay τ=90:**
 
-| metric | BM25 baseline | model2vec + decay | bge + decay | bge alone | **bge + bge-reranker** ★ |
-|---|---|---|---|---|---|
-| R@1 | 0.866 | 0.858 | 0.808 | 0.914 | **0.938** |
-| R@5 | 0.952 | 0.958 | 0.952 | 0.976 | **0.984** |
-| **R@10** | 0.974 | 0.978 | 0.984 | 0.986 | **0.986** |
-| MRR | 0.902 | 0.898 | 0.868 | 0.941 | **0.957** |
+| metric | BM25 baseline | model2vec + decay | bge + decay | bge alone | bge+reranker (K=10) | **two-stage K=20→10** ★ |
+|---|---|---|---|---|---|---|
+| R@1 | 0.866 | 0.858 | 0.808 | 0.914 | 0.938 | **0.940** |
+| R@5 | 0.952 | 0.958 | 0.952 | 0.976 | 0.984 | **0.984** |
+| **R@10** | 0.974 | 0.978 | 0.984 | 0.986 | 0.986 | **0.992** |
+| MRR | 0.902 | 0.898 | 0.868 | 0.941 | 0.957 | **0.958** |
+
+**Two-stage retrieval (commit pending)**: when a reranker is configured,
+the harness fetches the top-`2k` BM25+vector candidates and lets the
+cross-encoder re-rank them down to the requested top-k. The wider
+candidate pool gives the cross-encoder access to more easy-to-promote
+gold sessions, lifting R@10 from 0.986 → 0.992 (+0.6pt) without
+hurting R@1.
+
+| | narrow K=10 | **wide K=20→10** |
+|---|---|---|
+| knowledge-update R@10 | 1.000 | 1.000 |
+| multi-session R@10 | 0.985 | 0.992 |
+| single-session-assistant R@10 | 1.000 | 1.000 |
+| single-session-preference R@10 | 0.967 | 1.000 |
+| single-session-user R@10 | 1.000 | 1.000 |
+| temporal-reasoning R@10 | 0.962 | 0.977 |
 
 **Per-category R@1 (decisive metric for LLM reader):**
 

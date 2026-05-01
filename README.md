@@ -195,7 +195,8 @@ dataset, BM25 via `wg_search`, ~350 ms/question end-to-end
 | wg + time-decay soft-bias (τ=90d) | 0.858 | 0.958 | **0.978** | 0.898 |
 | wg + decay + bge-small-en-v1.5 | 0.808 | 0.952 | 0.984 | 0.868 |
 | wg + bge-small-en-v1.5 (no decay) | 0.914 | 0.976 | 0.986 | 0.941 |
-| **wg + bge + bge-reranker-base** ★ | **0.938** | **0.984** | **0.986** | **0.957** |
+| wg + bge + bge-reranker-base (narrow K=10) | 0.938 | 0.984 | 0.986 | 0.957 |
+| **wg + bge + reranker (two-stage K=20→10)** ★ | **0.940** | **0.984** | **0.992** | **0.958** |
 
 End-to-end with an LLM reader (`scripts/longmemeval_e2e.py`, judge =
 `gpt-4o` to match the published-baseline calibration):
@@ -224,8 +225,8 @@ snippets. Full per-category breakdown + judge-calibration analysis +
 methodology notes in
 [`.notes/bench-longmemeval.md`](.notes/bench-longmemeval.md).
 
-The R@10 = 97.4% number says the answer-evidence session lands in the
-top-10 retrieval set 487 / 500 times — i.e., the LLM has the right
+The R@10 = 99.2% number says the answer-evidence session lands in the
+top-10 retrieval set 496 / 500 times — i.e., the LLM has the right
 context at hand for nearly every question. End-to-end answer
 correctness is left to the LLM the agent uses; this is the slice wg
 controls. See [`.notes/bench-longmemeval.md`](.notes/bench-longmemeval.md)
