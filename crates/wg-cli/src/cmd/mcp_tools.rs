@@ -603,15 +603,79 @@ fn tool_fact_list(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, Stri
     } else {
         None
     };
+    let slim: Vec<Value> = facts.iter().map(|f| slim_fact_record(f, wiki)).collect();
     let payload = serde_json::json!({
-        "facts": facts,
+        "facts": slim,
         "next_offset": next_offset,
     });
-    let text = serde_json::to_string_pretty(&payload).map_err(|e| e.to_string())?;
+    // `to_string` (not _pretty) is intentional — the MCP wire is
+    // token-budgeted, JSON pretty-printing alone adds ~30%.
+    let text = serde_json::to_string(&payload).map_err(|e| e.to_string())?;
     Ok(ToolCallResult {
         content: vec![ContentBlock::text(text)],
         is_error: None,
     })
+}
+
+/// Compact JSON representation of a `FactRecord` for MCP wire output.
+/// Drops noise that the agent never reads:
+///   - `access_count` / `last_accessed_at` (telemetry, not content)
+///   - `relevance_score`, `source_confidence` (defaults `0.5` for ~all facts)
+///   - `created_at` / `updated_at` epoch ms (use `wg_recent` for time
+///     filtering — agents rarely diff these in answer composition)
+///   - empty `tags`, null `source` / `observed_at` / `superseded_*`
+/// Resolves `entity_ids` → entity names so the agent doesn't need a
+/// follow-up `wg_entity_get` for every reference.
+fn slim_fact_record(f: &wg_core::FactRecord, wiki: &WikiGraph) -> Value {
+    let mut entity_names: Vec<String> = Vec::with_capacity(f.entity_ids.len());
+    for id in &f.entity_ids {
+        if let Ok(rec) = wiki.entity_get_by_id(*id) {
+            entity_names.push(rec.name);
+        }
+    }
+    let mut obj = serde_json::Map::new();
+    obj.insert("id".into(), Value::String(f.id.to_string()));
+    obj.insert("content".into(), Value::String(f.content.clone()));
+    obj.insert("type".into(), Value::String(f.fact_type.to_string()));
+    obj.insert(
+        "entities".into(),
+        serde_json::to_value(entity_names).unwrap_or(Value::Null),
+    );
+    if f.pinned {
+        obj.insert("pinned".into(), Value::Bool(true));
+    }
+    if let Some(ts) = f.observed_at {
+        obj.insert("observed_at".into(), Value::Number(ts.into()));
+    }
+    if let Some(s) = &f.source {
+        obj.insert("source".into(), Value::String(s.clone()));
+    }
+    if let Some(by) = &f.superseded_by {
+        obj.insert("superseded_by".into(), Value::String(by.to_string()));
+    }
+    if !f.tags.is_empty() {
+        obj.insert(
+            "tags".into(),
+            serde_json::to_value(&f.tags).unwrap_or(Value::Null),
+        );
+    }
+    Value::Object(obj)
+}
+
+/// Compact JSON representation of an `EntitySummary` for MCP wire output.
+/// Drops the ULID (agents look up by name) and empty `tags`.
+fn slim_entity_summary(e: &wg_core::EntitySummary) -> Value {
+    let mut obj = serde_json::Map::new();
+    obj.insert("name".into(), Value::String(e.name.clone()));
+    obj.insert("type".into(), Value::String(e.entity_type.to_string()));
+    obj.insert("facts".into(), Value::Number(e.fact_count.into()));
+    if !e.tags.is_empty() {
+        obj.insert(
+            "tags".into(),
+            serde_json::to_value(&e.tags).unwrap_or(Value::Null),
+        );
+    }
+    Value::Object(obj)
 }
 
 fn tool_entity_get(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String> {
@@ -620,7 +684,30 @@ fn tool_entity_get(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, Str
         .and_then(|v| v.as_str())
         .ok_or("name required")?;
     let entity = wiki.entity_get(name).map_err(|e| e.to_string())?;
-    let text = serde_json::to_string_pretty(&entity).map_err(|e| e.to_string())?;
+    let mut obj = serde_json::Map::new();
+    obj.insert("name".into(), Value::String(entity.name.clone()));
+    obj.insert("type".into(), Value::String(entity.entity_type.to_string()));
+    if !entity.aliases.is_empty() {
+        obj.insert(
+            "aliases".into(),
+            serde_json::to_value(&entity.aliases).unwrap_or(Value::Null),
+        );
+    }
+    if !entity.tags.is_empty() {
+        obj.insert(
+            "tags".into(),
+            serde_json::to_value(&entity.tags).unwrap_or(Value::Null),
+        );
+    }
+    if let Some(s) = &entity.summary {
+        if !s.is_empty() {
+            obj.insert("summary".into(), Value::String(s.clone()));
+        }
+    }
+    if let Some(p) = &entity.source_page {
+        obj.insert("source_page".into(), Value::String(p.clone()));
+    }
+    let text = serde_json::to_string(&Value::Object(obj)).map_err(|e| e.to_string())?;
     Ok(ToolCallResult {
         content: vec![ContentBlock::text(text)],
         is_error: None,
@@ -634,7 +721,7 @@ fn tool_fact_get(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, Strin
         .ok_or("id required")?;
     let fact_id = parse_fact_id(id)?;
     let fact = wiki.fact_get(&fact_id).map_err(|e| e.to_string())?;
-    let text = serde_json::to_string_pretty(&fact).map_err(|e| e.to_string())?;
+    let text = serde_json::to_string(&slim_fact_record(&fact, wiki)).map_err(|e| e.to_string())?;
     Ok(ToolCallResult {
         content: vec![ContentBlock::text(text)],
         is_error: None,
@@ -671,20 +758,12 @@ fn tool_entity_list(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, St
         None
     };
 
-    // Build a structured payload with the page + cursor so agents can
-    // enumerate without a hidden truncation. The legacy human-readable
-    // text still ships as the first content line for backwards-compat
-    // with anything that just printed the result.
-    let lines: Vec<String> = entities
-        .iter()
-        .map(|e| format!("- {} ({}) [{} facts]", e.name, e.entity_type, e.fact_count))
-        .collect();
+    let slim: Vec<Value> = entities.iter().map(slim_entity_summary).collect();
     let payload = json!({
-        "summary": lines.join("\n"),
-        "entities": entities,
+        "entities": slim,
         "next_offset": next_offset,
     });
-    let text = serde_json::to_string_pretty(&payload).map_err(|e| e.to_string())?;
+    let text = serde_json::to_string(&payload).map_err(|e| e.to_string())?;
     Ok(ToolCallResult {
         content: vec![ContentBlock::text(text)],
         is_error: None,
@@ -771,7 +850,60 @@ fn tool_overview(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, Strin
         opts.recent_days = d;
     }
     let result = wiki.overview(opts).map_err(|e| e.to_string())?;
-    let text = serde_json::to_string_pretty(&result).map_err(|e| e.to_string())?;
+
+    // Compact wire format for the MCP tool call: strips ULIDs, empty
+    // tags, and the redundant `entity_type` repetition inside each
+    // bucket's top_examples. Cuts the agent-visible payload roughly
+    // 4× (~75%) versus the pretty-printed `OverviewResult`. The CLI
+    // and Rust API still see the full record.
+    let entity_types: Vec<Value> = result
+        .entity_types
+        .iter()
+        .map(|b| {
+            let top: Vec<Value> = b
+                .top_examples
+                .iter()
+                .map(|e| json!({"name": e.name, "facts": e.fact_count}))
+                .collect();
+            json!({
+                "type": b.entity_type.to_string(),
+                "count": b.count,
+                "top": top,
+            })
+        })
+        .collect();
+    let fact_types: Vec<Value> = result
+        .fact_types
+        .iter()
+        .map(|b| json!({"type": b.fact_type.to_string(), "count": b.count}))
+        .collect();
+    let top_entities: Vec<Value> = result
+        .top_entities
+        .iter()
+        .map(|e| {
+            json!({
+                "name": e.name,
+                "type": e.entity_type.to_string(),
+                "facts": e.fact_count,
+            })
+        })
+        .collect();
+    let payload = json!({
+        "stats": {
+            "entities": result.stats.entity_count,
+            "facts": result.stats.fact_count,
+            "relations": result.stats.relation_count,
+        },
+        "entity_types": entity_types,
+        "fact_types": fact_types,
+        "top_entities": top_entities,
+        "orphans": result.orphan_entity_count,
+        "recent_facts": result.recent_fact_count,
+        "current_facts": result.current_fact_count,
+        "pinned_facts": result.pinned_fact_count,
+    });
+    // `to_string` (not _pretty) drops indentation — saves another 30%.
+    let text = serde_json::to_string(&payload).map_err(|e| e.to_string())?;
     Ok(ToolCallResult {
         content: vec![ContentBlock::text(text)],
         is_error: None,
@@ -848,9 +980,12 @@ fn tool_recent(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String>
     };
     let facts = wiki.fact_list(opts).map_err(|e| e.to_string())?;
     // Wrap the array in {"facts": [...]} for shape consistency with
-    // the other list-style tools.
-    let payload = json!({ "facts": facts });
-    let text = serde_json::to_string_pretty(&payload).map_err(|e| e.to_string())?;
+    // the other list-style tools. Uses the same slim representation
+    // as `tool_fact_list` so the agent sees identical schema across
+    // every facts-returning tool.
+    let slim: Vec<Value> = facts.iter().map(|f| slim_fact_record(f, wiki)).collect();
+    let payload = json!({ "facts": slim });
+    let text = serde_json::to_string(&payload).map_err(|e| e.to_string())?;
     Ok(ToolCallResult {
         content: vec![ContentBlock::text(text)],
         is_error: None,
@@ -1570,7 +1705,8 @@ pub fn list_tools() -> Vec<Tool> {
         },
         Tool {
             name: "wg_overview".into(),
-            description: "First-impression snapshot of the wiki: entity-type buckets with top examples, fact-type distribution, top central entities by fact_count, recent activity, and current/pinned/orphan counts. Designed for an agent arriving at an unfamiliar wiki — one call instead of stats + entity_list + fact_list. Not for per-turn retrieval; use wg_query / wg_search for that."
+            description: "First-impression snapshot of the wiki: entity-type buckets with top examples, fact-type distribution, top central entities by fact_count, recent activity, and current/pinned/orphan counts. Designed for an agent arriving at an unfamiliar wiki — one call instead of stats + entity_list + fact_list. \
+                          IMPORTANT: This is an *orientation map* only. It tells you WHICH entities and topics exist; it does NOT contain the underlying facts. To answer any question that needs specific facts (decisions, conventions, notes, claims) you MUST follow up with `wg_query`/`wg_search`/`wg_fact_list` against the entity names this returns. Don't compose final answers from overview output alone."
                 .into(),
             input_schema: json!({
                 "type": "object",
