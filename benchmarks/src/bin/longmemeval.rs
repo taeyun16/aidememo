@@ -501,54 +501,80 @@ fn build_store_for_question(
     // is already in place, so the question still scores correctly,
     // just without the extra signal.
     if llm_extract {
-        for (sess_idx, session) in q.haystack_sessions.iter().enumerate() {
-            if session.is_empty() {
-                continue;
-            }
-            let session_text = session
-                .iter()
-                .map(|t| format!("{}: {}", t.role, t.content))
-                .collect::<Vec<_>>()
-                .join("\n");
-            let candidates =
-                match wiki.extract_candidates_llm(&session_text, llm_extract_per_session) {
-                    Ok(c) => c,
-                    Err(_) => continue,
-                };
-            let entity_id = session_eids.get(sess_idx).copied();
-            let observed_at = if stamp_observed_at {
-                q.haystack_dates
-                    .get(sess_idx)
-                    .and_then(|d| parse_question_date(d))
-            } else {
-                None
-            };
-            let mut classified: Vec<FactInput> = Vec::with_capacity(candidates.len());
-            for c in candidates {
-                if c.confidence < 0.5 {
-                    continue;
+        // Concurrent extraction: one HTTP call per session in
+        // parallel via rayon's global pool (wg-core's
+        // extract_candidates_llm only reads the store, no write
+        // lock — safe for `&wiki` from multiple threads). Sessions
+        // with empty turns are filtered upstream so the par_iter
+        // closure can stay infallible. Per-session results then
+        // collapse into a single fact_add_many serially (write txn
+        // is exclusive, but it's <10 ms vs ~3 s per LLM call).
+        use rayon::prelude::*;
+        let observed_at_per_sess: Vec<Option<u64>> = q
+            .haystack_sessions
+            .iter()
+            .enumerate()
+            .map(|(idx, _)| {
+                if stamp_observed_at {
+                    q.haystack_dates
+                        .get(idx)
+                        .and_then(|d| parse_question_date(d))
+                } else {
+                    None
                 }
-                classified.push(FactInput {
-                    content: c.content,
-                    fact_type: Some(c.suggested_fact_type),
-                    // Same session entity as the raw turns so the
-                    // gold-session match logic still credits this
-                    // fact when retrieved. No new entity_add here —
-                    // wg-core's LLM extractor returns names, not
-                    // ids, and creating per-question vocabulary on
-                    // the fly would muddy the retrieval space.
-                    entity_ids: entity_id.map(|e| vec![e]),
-                    tags: Some(vec![format!(
-                        "session:{}",
-                        q.haystack_session_ids[sess_idx]
-                    )]),
-                    source: Some("llm-extract".into()),
-                    source_confidence: Some(c.confidence),
-                    observed_at,
-                });
-            }
-            if !classified.is_empty() {
-                let _ = wiki.fact_add_many(classified);
+            })
+            .collect();
+
+        let session_facts: Vec<Vec<FactInput>> = q
+            .haystack_sessions
+            .par_iter()
+            .enumerate()
+            .map(|(sess_idx, session)| -> Vec<FactInput> {
+                if session.is_empty() {
+                    return Vec::new();
+                }
+                let session_text = session
+                    .iter()
+                    .map(|t| format!("{}: {}", t.role, t.content))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let candidates = match wiki
+                    .extract_candidates_llm(&session_text, llm_extract_per_session)
+                {
+                    Ok(c) => c,
+                    Err(_) => return Vec::new(),
+                };
+                let entity_id = session_eids.get(sess_idx).copied();
+                let observed_at = observed_at_per_sess.get(sess_idx).copied().flatten();
+                let mut classified: Vec<FactInput> = Vec::with_capacity(candidates.len());
+                for c in candidates {
+                    if c.confidence < 0.5 {
+                        continue;
+                    }
+                    classified.push(FactInput {
+                        content: c.content,
+                        fact_type: Some(c.suggested_fact_type),
+                        entity_ids: entity_id.map(|e| vec![e]),
+                        tags: Some(vec![format!(
+                            "session:{}",
+                            q.haystack_session_ids[sess_idx]
+                        )]),
+                        source: Some("llm-extract".into()),
+                        source_confidence: Some(c.confidence),
+                        observed_at,
+                    });
+                }
+                classified
+            })
+            .collect();
+
+        // Serial write: one fact_add_many per session. The redb
+        // single-writer lock makes parallel writes a non-starter,
+        // but write txns are short (~5-10 ms) so the bottleneck is
+        // safely on the network side.
+        for facts in session_facts {
+            if !facts.is_empty() {
+                let _ = wiki.fact_add_many(facts);
             }
         }
     }

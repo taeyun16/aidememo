@@ -24,6 +24,10 @@ instant-distance = "0.6"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 simsimd = "6"
+# Concurrent LLM-extract for the longmemeval bench. Sessions are
+# extracted via a thread pool so a 500q --llm-extract run doesn't
+# spend ~43h serialising sequential ureq calls.
+rayon = "1.10"
 
 [[bin]]
 name = "hnsw_miracl"

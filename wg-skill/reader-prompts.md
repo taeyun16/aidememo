@@ -147,23 +147,46 @@ python3 scripts/longmemeval_e2e.py \
 있지만 current-state / temporal / grounding 룰 복잡도가 KU
 처리에 방해. 작은 모델은 prompt 단순화 필요.
 
-### gpt-4.1 (큰 모델, OMEGA-equivalent)
+### gpt-4.1 (큰 모델, OMEGA-equivalent reader)
 
-(2026-05-01 측정 진행 중 — `b6b5d1m2u`)
+| Category | basic | omega-tricks | Δ |
+|---|---|---|---|
+| KU | 82.1 | 80.8 | -1.3 |
+| **multi-session** | 72.9 | 68.4 | **-4.5** ⚠ |
+| preference | 83.3 | 83.3 | 0 |
+| temporal | 42.1 | 41.4 | -0.7 |
+| user/assistant | ≈ saturated | ≈ saturated | ≈ |
+| **Overall** | **72.6** | **71.0** | **-1.6** ⚠ |
 
-기대: 큰 모델은 4-rule을 정확히 따라가서 +5-10pt overall.
+→ **gpt-4.1조차 우리 omega-tricks 구현은 효과 없음**. multi-session
+에서 -4.5pt 큼. 가능한 원인:
+1. 우리 prompt가 OMEGA 원본과 다름 (OMEGA prompt 비공개)
+2. OMEGA의 +5-10pt는 데이터셋-specific tuning (per-category prompt 등)
+3. OMEGA의 reader prompt 효과는 다른 baseline 대비 (이미 강한 wg
+   baseline 위에선 marginal 또는 negative)
 
-## 권고
+## 권고 (2026-05-01 실측 갱신)
 
-| Reader | 추천 prompt |
-|---|---|
-| gpt-4.1 / Claude Opus / MiniMax-M2.7 | **omega-tricks** (full 4-rule) |
-| gpt-4o / gpt-5.4-mini / Claude Sonnet | omega-tricks 시도 후 측정; preference만 효과 보장 |
-| **gpt-4o-mini / Haiku / Phi류** | **basic** (단순), 또는 preference 단일 룰 |
+| Reader | 추천 prompt | 이유 |
+|---|---|---|
+| **gpt-4.1 / gpt-4o-class** | **basic** | 우리 omega-tricks 구현은 효과 없거나 negative. 진짜 효과 있는 prompt는 별도 R&D 필요. |
+| **MiniMax-M2.7 등 reasoning** | basic | 측정 안 됨, 단 reasoning 모델은 default로 잘 함 |
+| **gpt-4o-mini / Haiku** | basic (preference만 surface 시 +10pt) | mini는 4-rule 못 소화 |
 
-omega-tricks prompt를 작은 모델용으로 줄인 'omega-tricks-lite'
-(personalisation only)는 추후 추가 가능 — preference 카테고리만
-타깃하면 mini도 +10pt 흡수.
+**중요 결론**: OMEGA 격차의 대부분은 reader prompt가 아닌
+**ingest-time LLM-aided + lifecycle**에 있음. 격차 메우려면 reader
+영역 외 작업 필요. `wg ingest --llm` / hook auto-apply / async LLM
+extract 등이 진짜 ROI.
+
+## 후속 R&D 가능성
+
+- **per-category prompt** — temporal 질문엔 temporal-only prompt,
+  preference 질문엔 personalisation-only prompt. Pre-classifier 필요.
+- **Few-shot examples** — basic prompt + 2-3 in-context exemplars
+  카테고리별. 추가 토큰 비용 ~$0.01/질문.
+- **Reader-router** — temporal → MiniMax (reasoning), preference
+  → gpt-4.1 (instruction-following), 나머지 → basic. Routing
+  overhead 1 LLM call/질문. 추정 +3-5pt overall.
 
 ## 한계
 

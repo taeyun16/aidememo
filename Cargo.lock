@@ -6404,6 +6404,7 @@ dependencies = [
  "criterion",
  "instant-distance",
  "parking_lot",
+ "rayon",
  "redb",
  "serde",
  "serde_json",
