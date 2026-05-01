@@ -1721,6 +1721,18 @@ fn handle_consolidate(
         if let Some(t) = sub.semantic_threshold {
             opts.semantic_threshold = t;
         }
+        // Parse repeated --ttl TYPE=DAYS into the BTreeMap.
+        for spec in &sub.ttl {
+            let Some((t, d)) = spec.split_once('=') else {
+                return Err(WgError::InvalidInput(format!(
+                    "--ttl expects TYPE=DAYS, got '{spec}'"
+                )));
+            };
+            let days: u64 = d
+                .parse()
+                .map_err(|e| WgError::InvalidInput(format!("--ttl '{spec}' DAYS: {e}")))?;
+            opts.ttl_days_by_type.insert(t.to_lowercase(), days);
+        }
         opts.dry_run = sub.dry_run;
         let stats = wiki.consolidate_semantic(opts.clone())?;
         let elapsed_ms = started.elapsed().as_millis();
@@ -1730,8 +1742,10 @@ fn handle_consolidate(
                 "facts_processed": stats.facts_processed,
                 "pairs_found": stats.pairs_found,
                 "supersedes_applied": stats.supersedes_applied,
+                "expired_applied": stats.expired_applied,
                 "max_cosine": stats.max_cosine,
                 "threshold": opts.semantic_threshold,
+                "ttl_days_by_type": opts.ttl_days_by_type,
                 "dry_run": sub.dry_run,
                 "elapsed_ms": elapsed_ms,
             });
@@ -1741,18 +1755,35 @@ fn handle_consolidate(
             });
         }
 
+        let verb = if sub.dry_run {
+            "would apply"
+        } else {
+            "applied"
+        };
+        let ttl_summary = if opts.ttl_days_by_type.is_empty() {
+            String::new()
+        } else {
+            let parts: Vec<String> = opts
+                .ttl_days_by_type
+                .iter()
+                .map(|(k, v)| format!("{k}={v}d"))
+                .collect();
+            format!(
+                ", {} expired ({}) {}",
+                stats.expired_applied,
+                parts.join(","),
+                verb
+            )
+        };
         Ok(format!(
-            "consolidate{} — {} facts processed, {} pair(s) ≥ {:.2} cosine, {} supersede(s) {} (max cosine seen: {:.3}) in {} ms.",
+            "consolidate{} — {} facts processed, {} pair(s) ≥ {:.2} cosine, {} supersede(s) {}{} (max cosine seen: {:.3}) in {} ms.",
             if sub.dry_run { " (dry-run)" } else { "" },
             stats.facts_processed,
             stats.pairs_found,
             opts.semantic_threshold,
             stats.supersedes_applied,
-            if sub.dry_run {
-                "would apply"
-            } else {
-                "applied"
-            },
+            verb,
+            ttl_summary,
             stats.max_cosine,
             elapsed_ms,
         ))

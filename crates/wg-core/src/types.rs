@@ -617,9 +617,9 @@ pub struct AutoRelateStats {
 }
 
 /// Options for `WikiGraph::consolidate_semantic` — pairwise cosine
-/// dedup pass. Mirrors OMEGA's compaction step (newer entry wins,
-/// older becomes superseded). Designed as a periodic batch job, not
-/// a per-write hook.
+/// dedup pass + per-type TTL pass. Mirrors OMEGA's compaction step
+/// (newer entry wins, older becomes superseded). Designed as a
+/// periodic batch job, not a per-write hook.
 #[derive(Debug, Clone)]
 pub struct ConsolidateOpts {
     /// Cosine similarity threshold above which two facts are treated
@@ -627,8 +627,16 @@ pub struct ConsolidateOpts {
     /// 0.85 is OMEGA's default; 0.9+ for stricter dedup, 0.75 for
     /// aggressive merging. 0.0 (or anything ≤ 0) disables the pass.
     pub semantic_threshold: f32,
-    /// If true, evaluate pairs and report stats but don't write any
-    /// `superseded_at` updates. Useful for tuning the threshold.
+    /// Per-fact-type TTL in days. Facts whose `created_at` is older
+    /// than `now - ttl_days` are marked superseded (with no
+    /// `superseded_by` since this is expiry, not replacement). Empty
+    /// map = no TTL pass. Mirrors OMEGA's typed forgetting (session
+    /// summaries 1d, lessons/preferences permanent). Recommended
+    /// defaults: note=30, question=14, claim=30; decision /
+    /// convention / pattern stay permanent.
+    pub ttl_days_by_type: std::collections::BTreeMap<String, u64>,
+    /// If true, evaluate pairs / TTL and report stats but don't
+    /// write any `superseded_at` updates. Useful for tuning.
     pub dry_run: bool,
 }
 
@@ -636,6 +644,7 @@ impl Default for ConsolidateOpts {
     fn default() -> Self {
         Self {
             semantic_threshold: 0.85,
+            ttl_days_by_type: std::collections::BTreeMap::new(),
             dry_run: false,
         }
     }
@@ -650,6 +659,8 @@ pub struct ConsolidateStats {
     pub pairs_found: usize,
     /// Facts marked superseded (older of each duplicate pair).
     pub supersedes_applied: usize,
+    /// Facts marked superseded due to TTL expiry (no `superseded_by`).
+    pub expired_applied: usize,
     /// Highest cosine seen (sanity-check signal for threshold tuning).
     pub max_cosine: f32,
 }

@@ -819,6 +819,56 @@ impl WikiGraph {
                 }
             }
         }
+
+        // ── TTL pass — independent of semantic dedup ───────────────
+        // For every fact whose type has a configured TTL, mark it
+        // superseded if its `created_at` is older than `now - ttl`.
+        // This is expiry, not replacement: `superseded_by` stays None,
+        // mirroring OMEGA's typed forgetting (session summaries
+        // expire to None; lessons/preferences are permanent because
+        // they're not in the TTL map).
+        if !opts.ttl_days_by_type.is_empty() {
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            for fact in &facts {
+                if superseded.contains(&fact.id) {
+                    continue;
+                }
+                if fact.superseded_at.is_some() {
+                    continue;
+                }
+                let type_str = fact.fact_type.to_string();
+                let Some(&ttl_days) = opts.ttl_days_by_type.get(&type_str) else {
+                    continue;
+                };
+                // ttl_days = 0 means "expire immediately" — `cutoff_ms`
+                // becomes `now_ms`, so any fact with `created_at <
+                // now_ms` (i.e. anything not literally just-inserted)
+                // expires. Types not present in the map stay
+                // permanent — that's the "not listed" branch above.
+                let cutoff_ms = now_ms.saturating_sub(ttl_days * 24 * 60 * 60 * 1000);
+                if fact.created_at < cutoff_ms {
+                    if !opts.dry_run {
+                        self.fact_update(
+                            &fact.id,
+                            types::FactUpdate {
+                                content: None,
+                                fact_type: None,
+                                tags: None,
+                                source: None,
+                                observed_at: None,
+                                superseded_at: Some(now_ms),
+                                superseded_by: None,
+                                pinned: None,
+                            },
+                        )?;
+                    }
+                    stats.expired_applied += 1;
+                }
+            }
+        }
         Ok(stats)
     }
 

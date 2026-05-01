@@ -94,6 +94,9 @@ pub enum Command {
 #[derive(Debug, Clone)]
 pub struct ConsolidateSub {
     pub semantic_threshold: Option<f32>,
+    /// Per-type TTL pairs of the form `TYPE=DAYS` (e.g. `note=30`,
+    /// `question=14`). Repeatable.
+    pub ttl: Vec<String>,
     pub dry_run: bool,
     pub json: bool,
 }
@@ -1075,8 +1078,17 @@ fn consolidate_command() -> impl Parser<Command> {
         )
         .argument::<f32>("FLOAT")
         .optional();
+    let ttl = long("ttl")
+        .help(
+            "Per-type TTL in days, format TYPE=DAYS (e.g. --ttl note=30 \
+             --ttl question=14). Facts of that type older than DAYS are \
+             marked superseded with no replacement (expiry, not \
+             dedup). Repeatable. Types not listed stay permanent.",
+        )
+        .argument::<String>("TYPE=DAYS")
+        .many();
     let dry_run = long("dry-run")
-        .help("Evaluate pairs and report stats but don't write any supersedes")
+        .help("Evaluate pairs / TTL and report stats but don't write any supersedes")
         .switch();
     let json = long("json")
         .help("Emit JSON stats instead of human-readable output")
@@ -1084,6 +1096,7 @@ fn consolidate_command() -> impl Parser<Command> {
 
     construct!(ConsolidateSub {
         semantic_threshold,
+        ttl,
         dry_run,
         json,
     })
@@ -1091,10 +1104,12 @@ fn consolidate_command() -> impl Parser<Command> {
     .to_options()
     .command("consolidate")
     .help(
-        "Periodic semantic-dedup pass: for every pair of current facts \
-         whose embeddings have cosine ≥ threshold, the older one is \
-         marked superseded by the newer (history preserved). Mirrors \
-         OMEGA's compaction. Idempotent. Requires the semantic feature.",
+        "Periodic memory-lifecycle pass: (1) semantic dedup — pairs \
+         of current facts with cosine ≥ threshold collapse to the \
+         newer one, older marked superseded; (2) TTL — facts of \
+         per-type configured age are marked expired. Both passes are \
+         idempotent. Mirrors OMEGA's compaction + typed forgetting. \
+         Requires the semantic feature.",
     )
 }
 

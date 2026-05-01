@@ -60,9 +60,14 @@ def _call_openai(
     messages: list[dict],
     max_tokens: int,
     timeout: int = 60,
+    base_url: str = "https://api.openai.com/v1",
 ) -> dict:
-    """Single chat completion call with simple retry on 429/5xx."""
-    url = "https://api.openai.com/v1/chat/completions"
+    """Single chat completion call with simple retry on 429/5xx.
+    Works against any OpenAI-compatible /chat/completions endpoint —
+    pass `base_url` to point at MiniMax / Kimi / OpenRouter / Ollama /
+    a self-hosted vLLM instance. Defaults to OpenAI to keep the
+    single-arg call sites unchanged."""
+    url = base_url.rstrip("/") + "/chat/completions"
     body = {
         "model": model,
         "messages": messages,
@@ -106,7 +111,13 @@ def _call_openai(
 
 
 def _extract_text(resp: dict) -> str:
-    return resp["choices"][0]["message"]["content"].strip()
+    text = resp["choices"][0]["message"]["content"].strip()
+    # Reasoning models (MiniMax-M2.7-highspeed, MiniMax-M1, DeepSeek-R1,
+    # qwen3-thinking, …) prefix the answer with a <think>…</think>
+    # block — strip it so the judge sees only the final answer.
+    if "</think>" in text:
+        text = text.split("</think>", 1)[1].strip()
+    return text
 
 
 # ---- Reader prompts (matching LongMemEval official prompt structure) -----
@@ -177,11 +188,45 @@ def main() -> int:
     ap.add_argument("--limit", type=int, default=0, help="0 = all")
     ap.add_argument("--reader-max-tokens", type=int, default=200)
     ap.add_argument("--judge-max-tokens", type=int, default=10)
+    # OpenAI-compatible endpoint plumbing — lets the same harness drive
+    # MiniMax / Kimi / OpenRouter / Ollama / vLLM with no code change.
+    # The reader and judge can run against different providers (e.g.
+    # cheap MiniMax reader + gpt-4o judge) by overriding both base+key.
+    ap.add_argument(
+        "--reader-base-url",
+        default="https://api.openai.com/v1",
+        help="OpenAI-compatible base URL for the reader (default OpenAI).",
+    )
+    ap.add_argument(
+        "--reader-api-key-env",
+        default="OPENAI_API_KEY",
+        help="Env var holding the reader's API key (default OPENAI_API_KEY).",
+    )
+    ap.add_argument(
+        "--judge-base-url",
+        default="https://api.openai.com/v1",
+        help="OpenAI-compatible base URL for the judge (default OpenAI).",
+    )
+    ap.add_argument(
+        "--judge-api-key-env",
+        default="OPENAI_API_KEY",
+        help="Env var holding the judge's API key (default OPENAI_API_KEY).",
+    )
     args = ap.parse_args()
 
-    api_key = os.environ.get("OPENAI_API_KEY")
-    if not api_key:
-        print("error: OPENAI_API_KEY not set", file=sys.stderr)
+    reader_api_key = os.environ.get(args.reader_api_key_env, "")
+    if not reader_api_key:
+        print(
+            f"error: {args.reader_api_key_env} (reader API key) not set",
+            file=sys.stderr,
+        )
+        return 2
+    judge_api_key = os.environ.get(args.judge_api_key_env, "")
+    if not judge_api_key:
+        print(
+            f"error: {args.judge_api_key_env} (judge API key) not set",
+            file=sys.stderr,
+        )
         return 2
 
     args.out.mkdir(parents=True, exist_ok=True)
@@ -215,7 +260,11 @@ def main() -> int:
             messages = _reader_messages(row["question"], row["retrievals"])
             try:
                 resp = _call_openai(
-                    api_key, args.reader, messages, args.reader_max_tokens
+                    reader_api_key,
+                    args.reader,
+                    messages,
+                    args.reader_max_tokens,
+                    base_url=args.reader_base_url,
                 )
                 hypothesis = _extract_text(resp)
             except Exception as e:
@@ -255,7 +304,11 @@ def main() -> int:
             messages = _judge_messages(hyp["question"], gold, hyp["hypothesis"])
             try:
                 resp = _call_openai(
-                    api_key, args.judge, messages, args.judge_max_tokens
+                    judge_api_key,
+                    args.judge,
+                    messages,
+                    args.judge_max_tokens,
+                    base_url=args.judge_base_url,
                 )
                 raw = _extract_text(resp)
             except Exception as e:
