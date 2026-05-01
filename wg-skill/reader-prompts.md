@@ -113,9 +113,57 @@ LongMemEval-style queries (categorical 측정 필요).
 
 ## 측정 가이드
 
-`scripts/longmemeval_e2e.py`의 `READER_SYSTEM` 상수가 reader 시스템
-prompt. 위 합쳐진 prompt로 교체하면 같은 retrievals로 +Npt 측정
-가능. 비용 X (reader call 한 번당 system prompt token 추가).
+`scripts/longmemeval_e2e.py`의 `--reader-prompt {basic,omega-tricks}`
+flag로 같은 retrievals + 같은 reader에 prompt만 바꿔 A/B 가능.
+
+```bash
+python3 scripts/longmemeval_e2e.py \
+  --retrievals /tmp/wg_retrievals_500_bge_rerank_wide.jsonl \
+  --gold /tmp/longmemeval/longmemeval_s_cleaned.json \
+  --reader gpt-4.1 --judge gpt-4o --reader-max-tokens 800 \
+  --reader-prompt omega-tricks    # vs basic
+```
+
+비용 차이 ≈ 0 (system prompt token 200개 추가 × 500q ≈ 100k tokens
+≈ \$0.02 on gpt-4o-mini).
+
+## 실측 결과 — prompt는 reader 모델 의존적 ⚠
+
+같은 retrievals + 같은 judge + 같은 reader, prompt만 변경:
+
+### gpt-4o-mini (작은 모델)
+
+| Category | basic | omega-tricks | Δ |
+|---|---|---|---|
+| **preference** | 60.0 | **70.0** | **+10.0** ⭐ |
+| single-session-assistant | 94.6 | 96.4 | +1.8 |
+| temporal | 37.6 | 39.1 | +1.5 |
+| multi-session | 59.4 | 57.9 | -1.5 |
+| single-session-user | 100 | 97.1 | -2.9 |
+| **knowledge-update** | 74.4 | **66.7** | **-7.7** ⚠ |
+| **Overall** | **65.6** | **64.8** | **-0.8** |
+
+→ **mini reader는 4-rule prompt를 못 소화**. preference 가이드는 효과
+있지만 current-state / temporal / grounding 룰 복잡도가 KU
+처리에 방해. 작은 모델은 prompt 단순화 필요.
+
+### gpt-4.1 (큰 모델, OMEGA-equivalent)
+
+(2026-05-01 측정 진행 중 — `b6b5d1m2u`)
+
+기대: 큰 모델은 4-rule을 정확히 따라가서 +5-10pt overall.
+
+## 권고
+
+| Reader | 추천 prompt |
+|---|---|
+| gpt-4.1 / Claude Opus / MiniMax-M2.7 | **omega-tricks** (full 4-rule) |
+| gpt-4o / gpt-5.4-mini / Claude Sonnet | omega-tricks 시도 후 측정; preference만 효과 보장 |
+| **gpt-4o-mini / Haiku / Phi류** | **basic** (단순), 또는 preference 단일 룰 |
+
+omega-tricks prompt를 작은 모델용으로 줄인 'omega-tricks-lite'
+(personalisation only)는 추후 추가 가능 — preference 카테고리만
+타깃하면 mini도 +10pt 흡수.
 
 ## 한계
 
