@@ -72,6 +72,7 @@ wg --project personal stats             # one-off override
 - `wg sync <wiki_root>` — alias for incremental ingest
 - `wg vector-rebuild [--json]` — rebuild the HNSW index (after a model swap)
 - `wg auto-relate [--top-k N] [--threshold F] [--dry-run] [--json]` — add `related` edges between entities whose facts cluster semantically (one-shot; idempotent)
+- `wg overview [-n N] [--recent-days D] [--json]` — first-impression snapshot of a wiki (entity-type buckets + fact-type distribution + top entities + recent activity)
 - `wg export [--scope all|entities|relations|facts]` / `wg import`
 - `wg config get/set/list`
   - `wg config set store.durability eventual` — drop per-commit fsync (~13× faster writes; survives process crash, not power loss)
@@ -88,18 +89,19 @@ wg --project personal stats             # one-off override
 ## Use as an MCP server
 
 Local agents (Claude Code, Codex CLI, …) can spawn `wg` as a stdio MCP
-server. **22 tools** exposed:
+server. **23 tools** exposed:
 
 | Read | Write |
 |---|---|
 | `wg_session_start` (one-call warmup) | `wg_fact_add` |
-| `wg_query` (one-call context) | `wg_fact_add_many` (batched, one fsync) |
-| `wg_search` | `wg_fact_supersede` |
-| `wg_recent` / `wg_pinned_context` | `wg_fact_edit` |
-| `wg_traverse` / `wg_backlinks` | `wg_fact_pin` (toggle "always loaded" tier) |
-| `wg_path` (shortest entity path) | `wg_entity_describe` |
-| `wg_entity_list` / `wg_entity_get` | `wg_feedback` (helpful/not on a search hit) |
-| `wg_fact_list` / `wg_fact_get` | `wg_extract` (text → candidate facts, optional auto-apply) |
+| `wg_overview` (first-impression snapshot) | `wg_fact_add_many` (batched, one fsync) |
+| `wg_query` (one-call context) | `wg_fact_supersede` |
+| `wg_search` | `wg_fact_edit` |
+| `wg_recent` / `wg_pinned_context` | `wg_fact_pin` (toggle "always loaded" tier) |
+| `wg_traverse` / `wg_backlinks` | `wg_entity_describe` |
+| `wg_path` (shortest entity path) | `wg_feedback` (helpful/not on a search hit) |
+| `wg_entity_list` / `wg_entity_get` | `wg_extract` (text → candidate facts, optional auto-apply) |
+| `wg_fact_list` / `wg_fact_get` | |
 | `wg_doctor` / `wg_lint` | |
 
 ```bash

@@ -104,6 +104,11 @@ wg vector-rebuild [--json]                 rebuild HNSW from scratch (after mode
 wg auto-relate [--top-k 3] [--threshold 0.0] [--dry-run] [--json]
                                             mine `related` edges from semantic similarity
                                             (one-shot; idempotent; semantic feature only)
+wg overview [-n 10] [--recent-days 7] [--json]
+                                            first-impression snapshot: entity-type buckets,
+                                            fact-type distribution, top entities, recent
+                                            activity. One call instead of stats + entity_list
+                                            + fact_list.
 wg export [--scope all|...] / wg import
 wg config get/set/list
 
@@ -236,11 +241,12 @@ crates/wg-cli/src/
 | `wg mcp` | stdio (newline-delimited JSON-RPC) | local agents (Claude Code, Codex CLI) |
 | `wg mcp-serve --port 3000` | HTTP POST `/mcp` + SSE `/sse` | browser/remote clients |
 
-**15 tools** (preferred order in agent prompts):
+**16 tools** (preferred order in agent prompts):
 
 | Tool | When |
 |---|---|
 | `wg_query` | One-call context fetch — prefer over chaining other tools |
+| `wg_overview` | First-impression snapshot — call once at session start on an unfamiliar wiki |
 | `wg_search` | Pure hybrid search, no graph |
 | `wg_recent` | Last N days of facts |
 | `wg_entity_list` | Browse entities |

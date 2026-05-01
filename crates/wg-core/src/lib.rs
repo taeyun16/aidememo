@@ -982,20 +982,144 @@ impl WikiGraph {
         self.store.read().stats()
     }
 
+    /// First-impression overview of the wiki — designed to answer
+    /// "what's in here?" in one MCP round-trip. Aggregates the
+    /// existing `stats` / `entity_list` / `fact_list` outputs into a
+    /// structured snapshot: entity-type buckets with top examples,
+    /// fact-type distribution, top-N central entities, recent
+    /// activity, current/pinned/orphan counts.
+    ///
+    /// Reads everything in a couple of full scans — fine for typical
+    /// wikis (<100 k facts). Not meant to be called per-turn; agents
+    /// invoke it once at session start or on "summarise this wiki"
+    /// prompts.
+    pub fn overview(&self, opts: types::OverviewOpts) -> Result<types::OverviewResult> {
+        use std::collections::BTreeMap;
+
+        let stats = self.stats()?;
+
+        // Entity scan — sort by fact_count descending in a single pass.
+        let entities = self.entity_list(types::ListOpts {
+            sort_by: types::EntitySort::FactCount,
+            limit: None,
+            ..Default::default()
+        })?;
+        let mut orphan_entity_count: u64 = 0;
+        let mut by_type: BTreeMap<String, EntityTypeBucketAcc> = BTreeMap::new();
+        for e in &entities {
+            if e.fact_count == 0 {
+                orphan_entity_count += 1;
+            }
+            let key = e.entity_type.to_string();
+            let bucket = by_type.entry(key).or_insert_with(|| EntityTypeBucketAcc {
+                entity_type: e.entity_type.clone(),
+                count: 0,
+                top_examples: Vec::new(),
+            });
+            bucket.count += 1;
+            if bucket.top_examples.len() < opts.top_n_entities {
+                // entity_list is already sorted by fact_count desc, so
+                // pushing in iteration order yields top-N per bucket.
+                bucket.top_examples.push(e.clone());
+            }
+        }
+        let mut entity_types: Vec<types::EntityTypeBucket> = by_type
+            .into_values()
+            .map(|b| types::EntityTypeBucket {
+                entity_type: b.entity_type,
+                count: b.count,
+                top_examples: b.top_examples,
+            })
+            .collect();
+        entity_types.sort_by(|a, b| b.count.cmp(&a.count));
+        let top_entities: Vec<types::EntitySummary> =
+            entities.into_iter().take(opts.top_n_entities).collect();
+
+        // Fact scan — count by type, count current/pinned, count
+        // recent within `recent_days`.
+        let facts = self.fact_list(types::FactListOpts {
+            limit: None,
+            ..Default::default()
+        })?;
+        let cutoff_ms: u64 = if opts.recent_days == 0 {
+            0
+        } else {
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            now_ms.saturating_sub(opts.recent_days * 24 * 60 * 60 * 1_000)
+        };
+        let mut fact_types_acc: BTreeMap<String, FactTypeBucketAcc> = BTreeMap::new();
+        let mut current_fact_count: u64 = 0;
+        let mut pinned_fact_count: u64 = 0;
+        let mut recent_fact_count: u64 = 0;
+        for f in &facts {
+            let key = f.fact_type.to_string();
+            let bucket = fact_types_acc
+                .entry(key)
+                .or_insert_with(|| FactTypeBucketAcc {
+                    fact_type: f.fact_type,
+                    count: 0,
+                });
+            bucket.count += 1;
+            if f.superseded_at.is_none() {
+                current_fact_count += 1;
+            }
+            if f.pinned {
+                pinned_fact_count += 1;
+            }
+            if f.created_at >= cutoff_ms {
+                recent_fact_count += 1;
+            }
+        }
+        let mut fact_types: Vec<types::FactTypeBucket> = fact_types_acc
+            .into_values()
+            .map(|b| types::FactTypeBucket {
+                fact_type: b.fact_type,
+                count: b.count,
+            })
+            .collect();
+        fact_types.sort_by(|a, b| b.count.cmp(&a.count));
+
+        Ok(types::OverviewResult {
+            stats,
+            entity_types,
+            fact_types,
+            top_entities,
+            orphan_entity_count,
+            recent_fact_count,
+            current_fact_count,
+            pinned_fact_count,
+        })
+    }
+
     /// Get the configuration.
     pub fn config(&self) -> &Config {
         &self.config
     }
 }
 
+struct EntityTypeBucketAcc {
+    entity_type: types::EntityType,
+    count: u64,
+    top_examples: Vec<types::EntitySummary>,
+}
+
+struct FactTypeBucketAcc {
+    fact_type: types::FactType,
+    count: u64,
+}
+
 // Re-export types for convenience
 pub use types::{
     AdaptEvalReport, AdaptResult, AdaptStatus, AutoRelateOpts, AutoRelateStats, EntityId,
-    EntityInput, EntityRecord, EntitySort, EntitySummary, EntityType, EntityUpdate, ExportScope,
-    ExportStats, FactId, FactInput, FactListOpts, FactRecord, FactType, FactUpdate, ImportStats,
-    LintIssue, LintReport, LintSeverity, ListOpts, PathStep, QueryMode, QueryOpts, QueryResult,
-    RelationInput, RelationRecord, RelationType, SearchFeedback, SearchOpts, SearchResult,
-    SearchSession, StoreStats, TraverseDirection, TraverseOpts, TraverseResult,
+    EntityInput, EntityRecord, EntitySort, EntitySummary, EntityType, EntityTypeBucket,
+    EntityUpdate, ExportScope, ExportStats, FactId, FactInput, FactListOpts, FactRecord, FactType,
+    FactTypeBucket, FactUpdate, ImportStats, LintIssue, LintReport, LintSeverity, ListOpts,
+    OverviewOpts, OverviewResult, PathStep, QueryMode, QueryOpts, QueryResult, RelationInput,
+    RelationRecord, RelationType, SearchFeedback, SearchOpts, SearchResult, SearchSession,
+    StoreStats, TraverseDirection, TraverseOpts, TraverseResult,
 };
 
 #[cfg(feature = "semantic")]

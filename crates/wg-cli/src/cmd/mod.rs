@@ -87,6 +87,7 @@ pub enum Command {
     Extract(ExtractSub),
     Session(SessionSub),
     AutoRelate(AutoRelateSub),
+    Overview(OverviewSub),
 }
 
 #[derive(Debug, Clone)]
@@ -94,6 +95,13 @@ pub struct AutoRelateSub {
     pub threshold: Option<f32>,
     pub top_k: Option<usize>,
     pub dry_run: bool,
+    pub json: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct OverviewSub {
+    pub top_n: Option<usize>,
+    pub recent_days: Option<u64>,
     pub json: bool,
 }
 
@@ -375,6 +383,7 @@ pub fn build_cli() -> OptionParser<Args> {
         extract_command(),
         session_command(),
         auto_relate_command(),
+        overview_command(),
     ]);
 
     construct!(Args {
@@ -1001,6 +1010,37 @@ fn auto_relate_command() -> impl Parser<Command> {
         "Discover entity-to-entity `related` edges from semantic \
          similarity between facts. Run after a big ingest; idempotent. \
          Requires the semantic feature (HNSW index).",
+    )
+}
+
+fn overview_command() -> impl Parser<Command> {
+    let top_n = long("top-n")
+        .short('n')
+        .help("Top-N entities per bucket and globally (default 10)")
+        .argument::<usize>("N")
+        .optional();
+    let recent_days = long("recent-days")
+        .help("Window in days for the recent-fact-count field (default 7)")
+        .argument::<u64>("DAYS")
+        .optional();
+    let json = long("json")
+        .help("Emit JSON instead of human-readable output")
+        .switch();
+
+    construct!(OverviewSub {
+        top_n,
+        recent_days,
+        json,
+    })
+    .map(Command::Overview)
+    .to_options()
+    .command("overview")
+    .help(
+        "First-impression snapshot of the wiki: entity-type buckets \
+         with top examples, fact-type distribution, top central \
+         entities, recent activity, current/pinned/orphan counts. \
+         Designed for agents arriving at an unfamiliar wiki — one call \
+         instead of stats + entity list + fact list.",
     )
 }
 

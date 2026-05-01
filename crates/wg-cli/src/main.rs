@@ -115,6 +115,7 @@ fn main() {
         cmd::Command::Extract(sub) => handle_extract(&store_path, config, sub, json),
         cmd::Command::Session(sub) => handle_session(&store_path, config, sub, json),
         cmd::Command::AutoRelate(sub) => handle_auto_relate(&store_path, config, sub),
+        cmd::Command::Overview(sub) => handle_overview(&store_path, config, sub),
     };
 
     match result {
@@ -1692,6 +1693,97 @@ fn handle_auto_relate(
             stats.edges_skipped_existing,
             elapsed_ms,
         ))
+    })
+}
+
+fn handle_overview(path: &Path, config: Config, sub: cmd::OverviewSub) -> Result<String, WgError> {
+    with_wiki(path, config, |wiki| {
+        let mut opts = wg_core::OverviewOpts::default();
+        if let Some(n) = sub.top_n {
+            opts.top_n_entities = n;
+        }
+        if let Some(d) = sub.recent_days {
+            opts.recent_days = d;
+        }
+        let result = wiki.overview(opts.clone())?;
+
+        if sub.json {
+            return serde_json::to_string_pretty(&result).map_err(|e| WgError::Serialize {
+                context: "overview".to_string(),
+                source: e,
+            });
+        }
+
+        let mut lines = Vec::new();
+        lines.push(format!(
+            "Wiki overview: {} entities ({} orphan), {} facts ({} current, {} pinned), {} relations.",
+            result.stats.entity_count,
+            result.orphan_entity_count,
+            result.stats.fact_count,
+            result.current_fact_count,
+            result.pinned_fact_count,
+            result.stats.relation_count,
+        ));
+        lines.push(format!(
+            "Recent activity: {} facts in the last {} day(s).",
+            result.recent_fact_count, opts.recent_days,
+        ));
+
+        if !result.entity_types.is_empty() {
+            lines.push(String::new());
+            lines.push("Entity types:".to_string());
+            for bucket in &result.entity_types {
+                let examples: Vec<String> = bucket
+                    .top_examples
+                    .iter()
+                    .take(3)
+                    .map(|e| format!("{} ({})", e.name, e.fact_count))
+                    .collect();
+                let suffix = if examples.is_empty() {
+                    String::new()
+                } else {
+                    format!(" — {}", examples.join(", "))
+                };
+                lines.push(format!(
+                    "  {} × {}{}",
+                    bucket.count, bucket.entity_type, suffix
+                ));
+            }
+        }
+
+        if !result.fact_types.is_empty() {
+            lines.push(String::new());
+            lines.push("Fact types:".to_string());
+            let total = result
+                .fact_types
+                .iter()
+                .map(|b| b.count)
+                .sum::<u64>()
+                .max(1);
+            for bucket in &result.fact_types {
+                let pct = (bucket.count as f64 / total as f64) * 100.0;
+                lines.push(format!(
+                    "  {} × {} ({:.0}%)",
+                    bucket.count, bucket.fact_type, pct
+                ));
+            }
+        }
+
+        if !result.top_entities.is_empty() {
+            lines.push(String::new());
+            lines.push(format!(
+                "Top {} entities by fact count:",
+                opts.top_n_entities
+            ));
+            for e in &result.top_entities {
+                lines.push(format!(
+                    "  {:<3} {} ({})",
+                    e.fact_count, e.name, e.entity_type
+                ));
+            }
+        }
+
+        Ok(lines.join("\n"))
     })
 }
 

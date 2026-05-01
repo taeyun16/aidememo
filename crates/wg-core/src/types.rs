@@ -831,6 +831,62 @@ pub struct StoreStats {
     pub last_ingest_at: Option<u64>,
 }
 
+/// Options for `WikiGraph::overview` — first-impression snapshot of a wiki.
+#[derive(Debug, Clone)]
+pub struct OverviewOpts {
+    /// Top-N entities to surface globally and per entity_type bucket.
+    pub top_n_entities: usize,
+    /// Window (in days) for the `recent_fact_count` field.
+    pub recent_days: u64,
+}
+
+impl Default for OverviewOpts {
+    fn default() -> Self {
+        Self {
+            top_n_entities: 10,
+            recent_days: 7,
+        }
+    }
+}
+
+/// Per-entity-type bucket for `OverviewResult`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EntityTypeBucket {
+    pub entity_type: EntityType,
+    pub count: u64,
+    /// Top entities of this type by fact_count (capped at `top_n_entities`).
+    pub top_examples: Vec<EntitySummary>,
+}
+
+/// Per-fact-type bucket for `OverviewResult`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FactTypeBucket {
+    pub fact_type: FactType,
+    pub count: u64,
+}
+
+/// First-impression snapshot of a wiki — what an agent sees on
+/// `wg_overview`. Designed to answer "what's in this wiki?" in one
+/// MCP round-trip without per-entity / per-fact follow-ups.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OverviewResult {
+    pub stats: StoreStats,
+    /// Entities grouped by entity_type, sorted by bucket size.
+    pub entity_types: Vec<EntityTypeBucket>,
+    /// Fact-type distribution, sorted by count.
+    pub fact_types: Vec<FactTypeBucket>,
+    /// Globally top entities by fact_count (capped at `top_n_entities`).
+    pub top_entities: Vec<EntitySummary>,
+    /// Entities with zero attached facts.
+    pub orphan_entity_count: u64,
+    /// Facts created within the last `recent_days` window.
+    pub recent_fact_count: u64,
+    /// Facts that are still current (not superseded).
+    pub current_fact_count: u64,
+    /// Facts that are pinned ("always-loaded" tier).
+    pub pinned_fact_count: u64,
+}
+
 /// Export scope.
 #[derive(Debug, Clone, Copy, Default)]
 pub enum ExportScope {

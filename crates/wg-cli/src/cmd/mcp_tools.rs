@@ -762,6 +762,22 @@ fn lint_action_hint(code: &str) -> &'static str {
     }
 }
 
+fn tool_overview(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String> {
+    let mut opts = wg_core::OverviewOpts::default();
+    if let Some(n) = args.get("top_n").and_then(|v| v.as_u64()) {
+        opts.top_n_entities = n as usize;
+    }
+    if let Some(d) = args.get("recent_days").and_then(|v| v.as_u64()) {
+        opts.recent_days = d;
+    }
+    let result = wiki.overview(opts).map_err(|e| e.to_string())?;
+    let text = serde_json::to_string_pretty(&result).map_err(|e| e.to_string())?;
+    Ok(ToolCallResult {
+        content: vec![ContentBlock::text(text)],
+        is_error: None,
+    })
+}
+
 fn tool_doctor(wiki: &WikiGraph) -> Result<ToolCallResult, String> {
     let issues = wiki.lint().map_err(|e| e.to_string())?;
     let stats = wiki.stats().map_err(|e| e.to_string())?;
@@ -1553,6 +1569,18 @@ pub fn list_tools() -> Vec<Tool> {
             input_schema: json!({"type": "object", "properties": {}}),
         },
         Tool {
+            name: "wg_overview".into(),
+            description: "First-impression snapshot of the wiki: entity-type buckets with top examples, fact-type distribution, top central entities by fact_count, recent activity, and current/pinned/orphan counts. Designed for an agent arriving at an unfamiliar wiki — one call instead of stats + entity_list + fact_list. Not for per-turn retrieval; use wg_query / wg_search for that."
+                .into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "top_n": {"type": "number", "default": 10, "description": "Top-N entities globally and per entity_type bucket"},
+                    "recent_days": {"type": "number", "default": 7, "description": "Window in days for the recent_fact_count field"}
+                }
+            }),
+        },
+        Tool {
             name: "wg_recent".into(),
             description: "Recently added/updated facts. Defaults to the last 7 days, 20 facts. Returns {\"facts\": [...]}. For full context on a topic (search + graph + recent in one call) use wg_query."
                 .into(),
@@ -1719,6 +1747,7 @@ fn call_tool(name: &str, args: &Value, wiki: &WikiGraph) -> Result<ToolCallResul
         "wg_traverse" => tool_traverse(args, wiki),
         "wg_lint" => tool_lint(wiki),
         "wg_doctor" => tool_doctor(wiki),
+        "wg_overview" => tool_overview(args, wiki),
         "wg_recent" => tool_recent(args, wiki),
         "wg_backlinks" => tool_backlinks(args, wiki),
         "wg_query" => tool_query(args, wiki),
