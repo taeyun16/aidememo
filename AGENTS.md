@@ -109,6 +109,14 @@ wg overview [-n 10] [--recent-days 7] [--json]
                                             fact-type distribution, top entities, recent
                                             activity. One call instead of stats + entity_list
                                             + fact_list.
+wg consolidate [--semantic-threshold 0.85] [--ttl TYPE=DAYS] [--dry-run] [--json]
+                                            periodic memory-lifecycle pass: pairwise cosine
+                                            dedup (older fact superseded) + per-type TTL
+                                            expiry. Idempotent. Mirrors OMEGA's compaction.
+wg session new <topic>                      tracked session entity + shell-evaluable
+                                            'export WG_SESSION_ID=…'. Auto-attaches to every
+                                            subsequent fact_add while the env var is set.
+wg session current / list                   current/recent tracked sessions.
 wg export [--scope all|...] / wg import
 wg config get/set/list
 
@@ -241,11 +249,12 @@ crates/wg-cli/src/
 | `wg mcp` | stdio (newline-delimited JSON-RPC) | local agents (Claude Code, Codex CLI) |
 | `wg mcp-serve --port 3000` | HTTP POST `/mcp` + SSE `/sse` | browser/remote clients |
 
-**16 tools** (preferred order in agent prompts):
+**17 tools** (preferred order in agent prompts):
 
 | Tool | When |
 |---|---|
-| `wg_query` | One-call context fetch — prefer over chaining other tools |
+| **`wg_context`** | **🟢 Top-of-turn entry point** — pinned + personalisation + recent + (with topic) search/traverse/lessons. One round-trip replaces session_start → query → search chain. |
+| `wg_query` | Topic-only retrieval (search + entity + traverse + recent). Lighter than wg_context. Use for follow-up topic dives. |
 | `wg_overview` | First-impression snapshot — call once at session start on an unfamiliar wiki |
 | `wg_search` | Pure hybrid search, no graph |
 | `wg_recent` | Last N days of facts |
@@ -257,12 +266,60 @@ crates/wg-cli/src/
 | `wg_doctor` | Health snapshot |
 | `wg_lint` | Raw issues |
 | `wg_entity_describe` | Set / clear an entity's prose summary |
-| `wg_fact_add` | Append a new fact |
+| `wg_fact_add` | Append a new fact (now accepts `preference` / `lesson` / `error` types) |
 | `wg_fact_add_many` | Append N facts in one transaction (use for bulk imports) |
 | `wg_fact_supersede` | Mark old fact replaced by a new one (validity-window invalidate) |
 | `wg_fact_edit` | Patch a fact's content (append / prepend / find+replace / content) |
 
 Tool schemas live in `cmd/mcp_tools.rs::list_tools()`.
+
+### Agent-UX cheatsheet (Tier A+B additions)
+
+**Fact types — pick the right one** (auto-boosts + decay-exempt):
+| Type | Use when | Behaviour |
+|---|---|---|
+| `decision` | "we'll use X for Y" | atomic per entity (with `lifecycle.auto_supersede_atomic_types=true`); 2× boost; decay-exempt |
+| `convention` | "always X" / "format Y as Z" | atomic per entity; 2× boost; decay-exempt |
+| `pattern` | architectural pattern, "X uses Y for Z" | 1.5× boost; decay-exempt |
+| **`preference`** | first-person preference ("I prefer dark mode") | **2× boost; decay-exempt; surfaced in personalisation** |
+| **`lesson`** | tried-X-hit-Y, learned pattern | **2× boost; decay-exempt; surfaced in personalisation + topic_lessons** |
+| **`error`** | recurring failure mode to avoid | **2× boost; decay-exempt; surfaced in personalisation + topic_errors** |
+| `claim` | factual assertion | 1× weight |
+| `note` | observational | 1× weight (default fallback) |
+| `question` | open investigation | 0.5× (deprioritised) |
+
+**Tracked sessions** — every `wg fact add` auto-attaches a session entity while `WG_SESSION_ID` is in the env:
+```bash
+eval "$(wg session new 'auth migration')"
+wg fact add 'Decided to use Keycloak for SSO' --type decision --entities Auth
+wg fact add 'Tried bare-metal Postgres, hit IO limits at 5k qps' --type lesson --entities Postgres
+wg session current     # show topic + fact count attached so far
+wg session list        # all tracked sessions
+wg fact list --entity $WG_SESSION_ID  # pull one session's full thread
+```
+
+**Lifecycle / consolidation** — periodic batch dedup + TTL pass:
+```bash
+wg consolidate --semantic-threshold 0.85          # OMEGA-style dedup
+wg consolidate --ttl note=30 --ttl question=14    # per-type expiry
+wg consolidate --semantic-threshold 0.85 --ttl note=30 --dry-run   # preview
+```
+Plus: `wg config set lifecycle.auto_supersede_atomic_types true` makes `wg fact add` of a `decision`/`convention` auto-supersede the existing same-type fact on the same entity (off by default — preserves the historical "every fact_add creates a new fact" contract).
+
+**LLM-aided extractor (opt-in)** — when `extract.provider = "openai"`:
+```bash
+wg config set extract.provider openai            # uses OPENAI_API_KEY
+wg config set extract.model gpt-4o-mini          # default
+wg extract --llm 'long chat transcript here…'    # CLI
+# MCP: wg_extract { llm: true, text: "…" }
+```
+
+**Auto-context hooks (Claude Code)** — see `wg-skill/hooks/README.md` for installation:
+| Hook | Effect |
+|---|---|
+| `SessionStart` | injects `wg overview` + `wg recent` + pinned facts as `additionalContext` |
+| `PostToolUse` (Edit/Write) | surfaces wg facts related to the just-edited file |
+| `UserPromptSubmit` | extracts candidate facts from the prompt (preview only; opt into LLM via `WG_EXTRACT_LLM=1`) |
 
 ### Register with Claude Code
 ```bash
