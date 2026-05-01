@@ -359,6 +359,21 @@ pub enum FactType {
     Claim,
     Note,
     Question,
+    /// First-person user preference. Examples: "I prefer dark mode",
+    /// "team coding convention is feature-first folders". Surfaced
+    /// at session start, exempt from time decay, ranked above
+    /// generic notes. Mirrors OMEGA's preference type.
+    Preference,
+    /// Agent-learned lesson — what was tried and why. Examples:
+    /// "tried bare-metal Postgres, hit IO limits at 5k qps".
+    /// Cross-session retrieval target; exempt from decay; gets
+    /// the same boost as decisions. Mirrors OMEGA's lessons type.
+    Lesson,
+    /// Recurring error pattern the agent should avoid. Examples:
+    /// "Vercel build flakes when pnpm cache > 4GB; clear before
+    /// deploy". Decay-exempt, high boost — these surface every
+    /// time the agent is about to repeat the mistake.
+    Error,
     #[default]
     Unknown,
 }
@@ -372,7 +387,32 @@ impl std::fmt::Display for FactType {
             FactType::Claim => write!(f, "claim"),
             FactType::Note => write!(f, "note"),
             FactType::Question => write!(f, "question"),
+            FactType::Preference => write!(f, "preference"),
+            FactType::Lesson => write!(f, "lesson"),
+            FactType::Error => write!(f, "error"),
             FactType::Unknown => write!(f, "unknown"),
+        }
+    }
+}
+
+impl FactType {
+    /// Parse from string, lowercased. Recognised aliases:
+    ///   pref / preferences → Preference
+    ///   lessons / learning → Lesson
+    ///   err / mistake / failure → Error
+    /// Anything else → Unknown.
+    pub fn parse(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "decision" | "decisions" => Self::Decision,
+            "pattern" | "patterns" => Self::Pattern,
+            "convention" | "conventions" | "rule" => Self::Convention,
+            "claim" | "claims" => Self::Claim,
+            "note" | "notes" => Self::Note,
+            "question" | "questions" => Self::Question,
+            "preference" | "preferences" | "pref" => Self::Preference,
+            "lesson" | "lessons" | "learning" => Self::Lesson,
+            "error" | "err" | "errors" | "mistake" | "failure" => Self::Error,
+            _ => Self::Unknown,
         }
     }
 }

@@ -529,18 +529,9 @@ fn parse_llm_response(
         if content.is_empty() {
             continue;
         }
-        let fact_type = match item["fact_type"]
-            .as_str()
-            .unwrap_or("note")
-            .to_lowercase()
-            .as_str()
-        {
-            "decision" => FactType::Decision,
-            "pattern" => FactType::Pattern,
-            "convention" => FactType::Convention,
-            "claim" => FactType::Claim,
-            "question" => FactType::Question,
-            _ => FactType::Note,
+        let fact_type = match FactType::parse(item["fact_type"].as_str().unwrap_or("note")) {
+            FactType::Unknown => FactType::Note,
+            t => t,
         };
         let entities_raw = item["entities"].as_array().cloned().unwrap_or_default();
         // Filter to only entities the wiki already knows OR that the

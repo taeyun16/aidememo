@@ -200,15 +200,11 @@ fn commit_entry(wiki: &WikiGraph, entry: &PendingEntry) -> Result<(), WgError> {
 }
 
 fn parse_fact_type(s: &str) -> Option<wg_core::FactType> {
-    use wg_core::FactType;
-    match s.to_lowercase().as_str() {
-        "decision" => Some(FactType::Decision),
-        "pattern" => Some(FactType::Pattern),
-        "convention" => Some(FactType::Convention),
-        "claim" => Some(FactType::Claim),
-        "note" => Some(FactType::Note),
-        "question" => Some(FactType::Question),
-        _ => None,
+    let parsed = wg_core::FactType::parse(s);
+    if matches!(parsed, wg_core::FactType::Unknown) && s.to_lowercase() != "unknown" {
+        None
+    } else {
+        Some(parsed)
     }
 }
 

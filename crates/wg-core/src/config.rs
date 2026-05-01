@@ -261,11 +261,22 @@ fn default_entity_centrality_weight() -> f32 {
 
 fn default_fact_type_weights() -> std::collections::BTreeMap<String, f32> {
     let mut m = std::collections::BTreeMap::new();
+    // Atomic / governance — we want these on top.
     m.insert("decision".to_string(), 2.0);
     m.insert("convention".to_string(), 2.0);
+    // Agent-learned / personalisation — same boost as decisions
+    // (these surface durable, repeatedly-useful signal). Mirrors
+    // OMEGA's type-weighted scoring.
+    m.insert("preference".to_string(), 2.0);
+    m.insert("lesson".to_string(), 2.0);
+    m.insert("error".to_string(), 2.0);
+    // Architectural — slightly above generic notes.
     m.insert("pattern".to_string(), 1.5);
+    // Plain / observational.
     m.insert("claim".to_string(), 1.0);
     m.insert("note".to_string(), 1.0);
+    // Open questions deprioritised — they're noise once the answer
+    // is recorded as a decision/lesson.
     m.insert("question".to_string(), 0.5);
     m.insert("unknown".to_string(), 1.0);
     m
@@ -276,6 +287,13 @@ fn default_decay_exempt_types() -> Vec<String> {
         "decision".to_string(),
         "convention".to_string(),
         "pattern".to_string(),
+        // Personalisation + learning — never decay these. A
+        // 6-month-old preference is just as relevant as a 6-day-old
+        // one. OMEGA exempts the equivalent types from its time-
+        // decay floor.
+        "preference".to_string(),
+        "lesson".to_string(),
+        "error".to_string(),
     ]
 }
 

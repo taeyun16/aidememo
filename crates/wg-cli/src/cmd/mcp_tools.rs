@@ -128,24 +128,17 @@ fn parse_fact_type_arg(arg: Option<&Value>) -> Result<Option<wg_core::FactType>,
     if v.is_null() {
         return Ok(None);
     }
-    let s = v
-        .as_str()
-        .ok_or("fact_type must be a string")?
-        .to_lowercase();
-    let parsed = match s.as_str() {
-        "decision" => wg_core::FactType::Decision,
-        "pattern" => wg_core::FactType::Pattern,
-        "convention" => wg_core::FactType::Convention,
-        "claim" => wg_core::FactType::Claim,
-        "note" => wg_core::FactType::Note,
-        "question" => wg_core::FactType::Question,
-        "unknown" => wg_core::FactType::Unknown,
-        other => {
-            return Err(format!(
-                "invalid fact_type {other:?}; accepted: decision, pattern, convention, claim, note, question, unknown"
-            ));
-        }
-    };
+    let s = v.as_str().ok_or("fact_type must be a string")?;
+    // Delegate to wg_core's central alias table. Reject only the
+    // catch-all "unknown" → that means the agent passed a string we
+    // don't recognise, which is more useful as an error than as a
+    // silent degrade to Note.
+    let parsed = wg_core::FactType::parse(s);
+    if matches!(parsed, wg_core::FactType::Unknown) && s.to_lowercase() != "unknown" {
+        return Err(format!(
+            "invalid fact_type {s:?}; accepted: decision, pattern, convention, claim, note, question, preference, lesson, error, unknown"
+        ));
+    }
     Ok(Some(parsed))
 }
 
@@ -1798,7 +1791,7 @@ pub fn list_tools() -> Vec<Tool> {
                     "tags": {"type": "array", "items": {"type": "string"}},
                     "fact_type": {
                         "type": "string",
-                        "enum": ["decision", "pattern", "convention", "claim", "note", "question", "unknown"],
+                        "enum": ["decision", "pattern", "convention", "claim", "note", "question", "preference", "lesson", "error", "unknown"],
                         "description": "Atomic types (decision/pattern/convention) are mutually exclusive per entity — use wg_fact_supersede to retire the old one. Non-atomic (claim/note/question) coexist freely."
                     },
                     "dedup_check": {
@@ -1827,7 +1820,7 @@ pub fn list_tools() -> Vec<Tool> {
                                 "tags": {"type": "array", "items": {"type": "string"}},
                                 "fact_type": {
                                     "type": "string",
-                                    "enum": ["decision", "pattern", "convention", "claim", "note", "question", "unknown"]
+                                    "enum": ["decision", "pattern", "convention", "claim", "note", "question", "preference", "lesson", "error", "unknown"]
                                 }
                             },
                             "required": ["content"]
@@ -2264,10 +2257,12 @@ mod tests {
     #[test]
     fn fact_add_rejects_unknown_fact_type_with_helpful_message() {
         let (_dir, wiki) = open_temp_wiki();
+        // 'foobar' is not in any alias list — unlike 'decisions'
+        // which now resolves to Decision via the central alias table.
         let err =
-            tool_fact_add(&json!({"content": "x", "fact_type": "decisions"}), &wiki).unwrap_err();
+            tool_fact_add(&json!({"content": "x", "fact_type": "foobar"}), &wiki).unwrap_err();
         assert!(
-            err.contains("decision") && err.contains("pattern"),
+            err.contains("decision") && err.contains("preference"),
             "expected accepted-values list in error, got {err}",
         );
     }

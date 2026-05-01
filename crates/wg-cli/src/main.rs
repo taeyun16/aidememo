@@ -1949,15 +1949,11 @@ fn parse_entity_type(s: Option<String>) -> Option<EntityType> {
 }
 
 pub(crate) fn parse_fact_type(s: Option<String>) -> Option<FactType> {
-    s.map(|t| match t.to_lowercase().as_str() {
-        "decision" | "decide" => FactType::Decision,
-        "pattern" => FactType::Pattern,
-        "convention" => FactType::Convention,
-        "claim" | "assertion" => FactType::Claim,
-        "note" | "notes" => FactType::Note,
-        "question" | "query" => FactType::Question,
-        _ => FactType::Unknown,
-    })
+    // Delegates to FactType::parse so all CLI/MCP/binding sites
+    // share one alias table (decision/decide, preference/pref/
+    // preferences, lesson/lessons/learning, error/err/mistake/
+    // failure, etc.). New types added in wg-core land here free.
+    s.map(|t| FactType::parse(&t))
 }
 
 fn parse_tags(s: Option<Vec<String>>) -> Option<Vec<String>> {
