@@ -74,6 +74,25 @@ that slice carries the smallest footprint.
 
 **Pick wg if** you want the same temporal model without committing to a graph database — and especially if you ingest at scale (the insert-token gap is the single biggest cost lever; see [`.notes/compare-graphiti.md`](.notes/compare-graphiti.md) for the head-to-head + measurement methodology).
 
+### vs **OMEGA** (current LongMemEval SOTA among local-first systems)
+
+|  | OMEGA | wg |
+|---|---|---|
+| LongMemEval E2E (gpt-4o judge) | **95.4%** (gpt-4.1 reader) | **74.0%** (MiniMax-M2.7-highspeed reader) |
+| Embedding | bge-small-en-v1.5 ONNX (384-dim) | **bge-small-en-v1.5 ONNX (384-dim)** ← same |
+| Storage | SQLite + sqlite-vec | redb single-file |
+| Bindings | Python only | **Py / Node / Elixir / C** in-process |
+| Tools | 25 core + 29 coordination (omega-pro) | 17 (after Tier A+B) |
+| Insert tokens / 100K sessions | LLM-aided default ≈ \$10-30 | **0** (regex default; opt-in \$1-3) |
+| Encryption at rest | AES-256 | ❌ (relies on OS-level FS encryption) |
+| Hook-based auto-capture | Built-in deeply integrated | wg-skill/hooks/ 3 scripts (manual install) |
+| Forgetting | 5 mechanisms (SHA-256 dedup, 0.85 evolution, TTL, Jaccard compaction, conflict detection) | 4 (exact dedup, atomic conflict, semantic dedup, TTL — all via `wg consolidate`) |
+| Multi-store | ❌ | ✅ `wg project create/use` |
+
+**Pick OMEGA if** you want the highest LongMemEval score, are happy with Python+SQLite, and accept paying for hook-based LLM-aided ingestion at every conversation turn.
+
+**Pick wg if** you want the same retrieval base (bge ONNX in-process) without Python, with 4 native bindings, multi-store native, zero insert-token cost by default, and the ability to slot any reader (gpt-4.1 / gpt-4o / MiniMax / Ollama). Trail OMEGA by ~21pt today; the gap is mostly reader (gpt-4.1) + hook-depth + temporal-prompting tricks. See [`.notes/compare-omega.md`](.notes/compare-omega.md) for the per-category breakdown + ROI ordering of the gap-closing work.
+
 ### vs **beads** (the closest neighbour)
 
 |  | beads | wg |
