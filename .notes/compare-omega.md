@@ -125,9 +125,43 @@ ingestion. wg는 인프라 있지만 default OFF (사용자 비용 부담 회피
      - user/assistant ≈ 동등
    원인: raw turn + classified facts 둘 다 retrieval 노출 → reader
    혼란. wg의 augment 디자인이 OMEGA의 replace 디자인과 다름.
-5. **LLM-extract replace 모드** — `--llm-extract-replace` 추가, 측정
-   진행 중 (`bqjqpeaq9`). 가설: classified facts만 노출 시 reader
-   혼란 없어지지만 정보 손실 위험 있음.
+5. ✓ **LLM-extract replace 모드 (60q balanced, gpt-4o-mini extractor)** —
+   **-48.4pt 처참** (baseline 66.7 → replace 18.3). 카테고리별:
+     - single-session-user 100 → **0.0%** (완전 망함)
+     - multi-session 60 → 10
+     - temporal 10 → 0
+   원인: gpt-4o-mini extract이 raw chat의 verbatim detail을 너무
+   많이 drop. R@K도 R@1 0.917 → 0.700, R@10 1.000 → 0.833.
+
+→ **gpt-4o-mini extractor로는 OMEGA 디자인 (replace) 모방 불가**.
+정보 손실이 noise보다 큼.
+
+## 큰 결론: OMEGA 격차 = higher-LLM extractor + 다른 ingest 디자인
+
+reader / prompt / retrieval / 우리 ingest 디자인 모든 옵션 측정 후
+도달한 결론:
+
+| 격차 출처 | 측정 결과 |
+|---|---|
+| Reader 모델 (gpt-4.1) | +5pt 메움 ✓ |
+| Reader prompt (omega-tricks 우리 구현) | -1.6 ~ -0.8 ✗ |
+| LLM-extract augment (raw + classified) | -8.3pt ✗ |
+| LLM-extract replace (gpt-4o-mini) | -48pt ✗ |
+| **남은 -17pt 격차** | **higher-quality extractor + 새 ingest 디자인 필요** |
+
+**OMEGA가 95% 달성하는 진짜 이유 (가설)**:
+1. **gpt-4.1+ 또는 Claude Opus extractor** — 우리 mini로는 불충분
+2. **Per-conversation tracking** — raw chat 별도 보관 + classified
+   facts는 보조 신호 (hybrid)
+3. **Hybrid retrieval** — query 종류에 따라 raw vs classified 선택
+4. **Pre-curated extraction prompt** — LongMemEval-S 특성에 tuning
+
+다음 세션 진짜 ROI 작업:
+- (a) **gpt-4.1 + replace 모드** — 같은 디자인, 더 좋은 LLM (~$5-10)
+- (b) **Hybrid ingest 디자인** — classified facts는 main entity에,
+  raw turn은 별도 retrievable layer (큰 인프라)
+- (c) **Per-question reader routing** — temporal → MiniMax,
+  preference → gpt-4.1, default → gpt-4o
 
 → **reader + prompt + retrieval 단 작업으로는 OMEGA 격차 못 메움**.
 
