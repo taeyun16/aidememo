@@ -123,10 +123,28 @@ def _extract_text(resp: dict) -> str:
 # ---- Reader prompts (matching LongMemEval official prompt structure) -----
 
 
-READER_SYSTEM = """You are answering a user's question about themselves using snippets from your past conversations with them. The snippets ARE retrieved from real prior chats — extract the user-specific answer from them confidently. Quote or paraphrase the relevant snippet directly. Only say "I don't know" if NONE of the snippets touch the topic at all."""
+READER_SYSTEM_BASIC = """You are answering a user's question about themselves using snippets from your past conversations with them. The snippets ARE retrieved from real prior chats — extract the user-specific answer from them confidently. Quote or paraphrase the relevant snippet directly. Only say "I don't know" if NONE of the snippets touch the topic at all."""
 
 
-def _reader_messages(question: str, retrievals: list[dict]) -> list[dict]:
+# Modeled after OMEGA's published 4 reader-prompt tricks (+5 / +4 / +2 /
+# +2 question lift on LongMemEval, see wg-skill/reader-prompts.md).
+# Composes with any reader (gpt-4o / gpt-4.1 / MiniMax / etc.).
+READER_SYSTEM_OMEGA_TRICKS = """You are answering a user's question using snippets retrieved from their knowledge wiki. Apply these rules in order:
+
+1. PERSONALISATION FIRST. If a snippet is a `preference`, `lesson`, or `error` type fact, treat it as the user's own ground truth — defer to it over generic best-practice answers.
+
+2. CURRENT-STATE OVER HISTORY. When the user asks 'what is X' (not 'what was X'), only use facts that are still current. The wiki's default filter already excludes superseded facts — but if you DO see one with `superseded_by != null`, treat it as historical and look for its replacement.
+
+3. TEMPORAL AWARENESS. When the question references a time window (last week / since X / between X and Y), check each snippet's `created_at` / `observed_at` / `age_days`. Downweight facts whose date doesn't fall in the asked window even when content matches. For 'recent' queries, prefer fresher facts; for 'historical' queries, prefer older facts.
+
+4. CONFIDENCE & GROUNDING. Quote or paraphrase directly from the snippets — don't extrapolate. If no snippet covers the question at all, say "I don't know" rather than guessing."""
+
+
+def _reader_messages(
+    question: str,
+    retrievals: list[dict],
+    system: str = READER_SYSTEM_BASIC,
+) -> list[dict]:
     """Format retrievals as numbered context blocks."""
     blocks = []
     for r in retrievals:
@@ -141,7 +159,7 @@ def _reader_messages(question: str, retrievals: list[dict]) -> list[dict]:
         "the snippets above. The answer is almost certainly in there."
     )
     return [
-        {"role": "system", "content": READER_SYSTEM},
+        {"role": "system", "content": system},
         {"role": "user", "content": user_prompt},
     ]
 
@@ -212,7 +230,25 @@ def main() -> int:
         default="OPENAI_API_KEY",
         help="Env var holding the judge's API key (default OPENAI_API_KEY).",
     )
+    ap.add_argument(
+        "--reader-prompt",
+        choices=["basic", "omega-tricks"],
+        default="basic",
+        help=(
+            "Reader system prompt style. 'basic' = the legacy "
+            "'extract from snippets' prompt that matches every prior "
+            "wg/Mem0/Zep measurement. 'omega-tricks' = the 4-rule "
+            "personalisation/current-state/temporal/grounding prompt "
+            "modeled after OMEGA's published reader trick (+5-10pt "
+            "estimated; see wg-skill/reader-prompts.md)."
+        ),
+    )
     args = ap.parse_args()
+    reader_system = (
+        READER_SYSTEM_OMEGA_TRICKS
+        if args.reader_prompt == "omega-tricks"
+        else READER_SYSTEM_BASIC
+    )
 
     reader_api_key = os.environ.get(args.reader_api_key_env, "")
     if not reader_api_key:
@@ -257,7 +293,7 @@ def main() -> int:
     print(f"  reader: {len(todo)} new questions to call ({args.reader})")
     with open(hyp_path, "a") as fout:
         for i, row in enumerate(todo, 1):
-            messages = _reader_messages(row["question"], row["retrievals"])
+            messages = _reader_messages(row["question"], row["retrievals"], reader_system)
             try:
                 resp = _call_openai(
                     reader_api_key,
