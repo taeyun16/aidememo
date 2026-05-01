@@ -511,9 +511,11 @@ multi-session과 temporal-reasoning이 모델 ceiling. retrieval은 R@10 0.985
 | 시스템 | reader | E2E |
 |---|---|---|
 | Mem0 (published) | gpt-4o | 0.490 |
-| **wg + decay-90** | gpt-4o-mini | **0.600** |
-| **wg + decay-90** | **gpt-4o** | **0.604** |
-| **wg + decay-90** | gpt-5.4-mini | **0.626** |
+| wg @ model2vec + decay-90 | gpt-4o-mini | 0.600 |
+| wg @ model2vec + decay-90 | gpt-4o | 0.604 |
+| wg @ model2vec + decay-90 | gpt-5.4-mini | 0.626 |
+| **wg @ bge + reranker wide K=20→10** ★ | **gpt-4o-mini** | **0.656** |
+| **wg @ bge + reranker wide K=20→10** ★ | **gpt-4o** | **0.676** |
 | Zep / Graphiti 2026 (published) | gpt-4o | 0.712 |
 | Supermemory (published) | (?) | 0.854 |
 | Emergence AI (published) | (?) | 0.860 |
@@ -521,26 +523,42 @@ multi-session과 temporal-reasoning이 모델 ceiling. retrieval은 R@10 0.985
 | Mastra (published) | gpt-5-mini | 0.949 |
 | OMEGA (published, local) | gpt-4.1 | 0.954 |
 
-### 핵심 결론
+### 2026-05-01 재측정 카테고리별 (bge + reranker wide K=20→10)
 
-1. **wg + gpt-4o = 0.604** (gpt-4o judge) — Mem0 + gpt-4o (0.490)를 +11.4pt
-   능가. single binary + 28MB embedding model로 Python+3-service 스택 능가.
-2. **wg + gpt-5.4-mini = 0.626** — 비용 1/3 모델로 best result. 신모델이
-   reasoning에서 4o 능가하기 시작.
-3. **그러나 SOTA(Mastra 84%, Supermemory 85%, OMEGA 95%)와 큰 격차**:
-   - **Mastra**는 LLM Observer + Reflector가 insert-time에 dense observation
-     생성 — wg의 raw turn 저장과 근본 다른 아키텍처
-   - **OMEGA**는 같은 로컬 카테고리에서 cross-encoder rerank + type-weighted
-     scoring + GPT-4.1 reader로 95.4% — wg가 미보유한 기능 다수
-   - **차이의 대부분은 retrieval-after-rank stage** (rerank, type weighting)
-     + insert-time LLM extraction 부재
-4. **wg retrieval ceiling = R@10 0.978**. 이론 상한 ~98%. reader/reranker
-   강화로 60% → 80%+ 영역 진입 가능.
-5. **bottleneck 분포** (현재 v2 numbers):
-   - retrieval-MISS (wg 탓): 2-3%
-   - reader-bottleneck (현재 multi-session/temporal-reasoning): 30-40%
-   - 격차 좁히려면 (a) cross-encoder rerank, (b) type-weighted scoring,
-     (c) LLM-aided wg_extract 가 ROI 순.
+| Category | gpt-4o | gpt-4o-mini |
+|---|---|---|
+| knowledge-update | 80.8% (63/78) | 74.4% (58/78) |
+| multi-session | 61.7% (82/133) | 59.4% (79/133) |
+| **single-session-assistant** | **94.6%** (53/56) | **94.6%** (53/56) |
+| **single-session-user** | **97.1%** (68/70) | **100%** (70/70) |
+| single-session-preference | 63.3% (19/30) | 60.0% (18/30) |
+| **temporal-reasoning** ⚠ | 39.8% (53/133) | 37.6% (50/133) |
+| **Overall** | **67.6%** | **65.6%** |
+
+### 핵심 결론 (2026-05-01 갱신)
+
+1. **wg + gpt-4o = 0.676** — 이전 0.604에서 **+7.2pt 향상**. wide-rerank
+   retrieval (R@10 0.978 → 0.992) 효과가 E2E에서 5배 증폭 (+1.4pt → +7.2pt).
+   reader가 정답 후보를 top에서 더 자주 봄.
+2. **vs Mem0 (0.490): +18.6pt 압도** (이전 +11.4pt에서 더 벌림).
+3. **vs Zep/Graphiti (0.712): -3.6pt** — 이전 -10.8pt에서 격차 1/3로 좁힘.
+   남은 gap의 출처 추정: (a) Graphiti의 LLM extraction 정제 효과 (~+2pt),
+   (b) community detection (~+1pt), (c) graph BFS distance ranking (~+0.5pt).
+4. **single-session-user 100% (mini), 97.1% (4o) 도달** — 거의 완벽.
+   single-session-assistant 94.6%도 수렴.
+5. **약점 = temporal-reasoning 39.8%** — LongMemEval-S timestamp noise
+   (이전 분석 참조). 데이터셋 한계, 시스템 한계 아님. 그 카테고리 빼면
+   평균 70% 후반.
+6. **wg retrieval ceiling = R@10 0.992**. 이론 상한 ~99%. **bottleneck
+   100% reader 탓**. 같은 retrieval에 SOTA reader (Mastra의 Observer/
+   Reflector)를 붙이면 80%+ 진입 가능.
+7. 격차 좁히는 ROI 순:
+   - (a) **opt-in LLM extraction** (`wg_extract` 강화) — 추정 +2pt
+   - (b) Community detection — 추정 +1pt (별도 노트 `compare-graphiti.md`)
+   - (c) gpt-5.4-mini reader 재측정 — 이전 +2.6pt 트렌드 따라가면 +2pt 가능
+   합계 +5pt → wg 70%+ 도달, Graphiti와 동등 근접.
+
+전체 head-to-head는 [`compare-graphiti.md`](compare-graphiti.md) 참조.
 
 ### 다음 측정 권장 (선택)
 

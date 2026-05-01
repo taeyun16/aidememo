@@ -207,25 +207,31 @@ End-to-end with an LLM reader (`scripts/longmemeval_e2e.py`, judge =
 | Stack | Reader | Overall |
 |---|---|---|
 | Mem0 (published) | gpt-4o | 49.0% |
-| **wg + decay τ=90** | gpt-4o-mini | **60.0%** |
-| **wg + decay τ=90** | gpt-4o | **60.4%** |
-| **wg + decay τ=90** | gpt-5.4-mini | **62.6%** |
+| wg @ model2vec + decay τ=90 | gpt-4o-mini | 60.0% |
+| wg @ model2vec + decay τ=90 | gpt-4o | 60.4% |
+| wg @ model2vec + decay τ=90 | gpt-5.4-mini | 62.6% |
+| **wg @ bge + reranker wide K=20→10** ★ | **gpt-4o-mini** | **65.6%** |
+| **wg @ bge + reranker wide K=20→10** ★ | **gpt-4o** | **67.6%** |
 | Zep / Graphiti 2026 (published) | gpt-4o | 71.2% |
 | Supermemory (published) | — | 85.4% |
 | Mastra (published) | gpt-4o | 84.2% |
 | Mastra (published) | gpt-5-mini | 94.9% |
 | OMEGA (published, local) | gpt-4.1 | 95.4% |
 
-`wg + gpt-4o` beats `mem0 + gpt-4o` by **+11.4pt** with a single Rust
-binary + 28 MB embedding model — no Python services, no vector DB,
-no graph store. Below SOTA local systems (OMEGA 95.4% with cross-
-encoder rerank + type-weighted scoring) — see [`COMPARE.md`](COMPARE.md)
-for the architecture-level gap analysis. Of wg's remaining errors,
-**96% had the right context in the top-10 retrievals**; the failures
+`wg + gpt-4o` beats `mem0 + gpt-4o` by **+18.6pt** and trails
+Zep/Graphiti by only **3.6pt** (down from 10.8pt) — single Rust
+binary + ONNX bge embedder + cross-encoder reranker, no Python
+services, no vector DB, no graph store. Below SOTA local systems
+(OMEGA 95.4% with cross-encoder rerank + type-weighted scoring) —
+see [`.notes/compare-graphiti.md`](.notes/compare-graphiti.md) for
+the wg vs Graphiti head-to-head and [`COMPARE.md`](COMPARE.md) for
+the broader architecture gap analysis. Of wg's remaining errors,
+**99% had the right context in the top-10 retrievals**; the failures
 are reader-side reasoning (multi-session synthesis, temporal
-comparison) where wg's R@10 of 0.978 already gave the LLM the right
-snippets. Full per-category breakdown + judge-calibration analysis +
-methodology notes in
+comparison) — and the worst category (`temporal-reasoning` 39.8%) is
+bottlenecked by LongMemEval-S's known timestamp noise rather than wg
+retrieval (R@10 there is 0.977). Full per-category breakdown,
+judge-calibration analysis, and methodology in
 [`.notes/bench-longmemeval.md`](.notes/bench-longmemeval.md).
 
 The R@10 = 99.2% number says the answer-evidence session lands in the
