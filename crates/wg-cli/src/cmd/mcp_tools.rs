@@ -444,10 +444,17 @@ fn tool_session_start(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, 
         })
         .collect();
 
+    // Personalisation tier — ALL preference / lesson / error facts
+    // (decay-exempt by default). These are the OMEGA-equivalent of
+    // 'profile' + 'lessons' surfaced unconditionally at session start
+    // so the agent doesn't have to remember to look them up.
+    let personalisation = collect_personalisation(wiki, 50);
+
     let stats = wiki.stats().map_err(|e| e.to_string())?;
     let payload = json!({
         "stats": stats,
         "pinned": pinned_json,
+        "personalisation": personalisation,
         "recent": recent_json,
         "top_entities": top_entities_json,
         "open_issues": {
@@ -459,6 +466,41 @@ fn tool_session_start(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, 
         content: vec![ContentBlock::text(payload.to_string())],
         is_error: None,
     })
+}
+
+/// Pull every current Preference / Lesson / Error fact, capped, as
+/// a slim JSON array. These are the durable, agent-relevant signals
+/// that should always be in the model's context window — surfaced
+/// unconditionally at session start.
+fn collect_personalisation(wiki: &WikiGraph, per_type_limit: usize) -> Vec<Value> {
+    let mut out: Vec<Value> = Vec::new();
+    for ftype in [
+        wg_core::FactType::Preference,
+        wg_core::FactType::Lesson,
+        wg_core::FactType::Error,
+    ] {
+        let facts = wiki
+            .fact_list(wg_core::FactListOpts {
+                fact_type: Some(ftype),
+                entity_id: None,
+                min_confidence: None,
+                limit: Some(per_type_limit),
+                offset: 0,
+                since: None,
+                until: None,
+                current_only: true,
+                as_of: None,
+            })
+            .unwrap_or_default();
+        for f in facts {
+            out.push(json!({
+                "id": f.id.to_string(),
+                "type": f.fact_type.to_string(),
+                "content": f.content,
+            }));
+        }
+    }
+    out
 }
 
 fn tool_extract(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String> {
@@ -645,6 +687,40 @@ fn slim_fact_record(f: &wg_core::FactRecord, wiki: &WikiGraph) -> Value {
         "entities".into(),
         serde_json::to_value(entity_names).unwrap_or(Value::Null),
     );
+    // Freshness signal — agents use this to decide whether to
+    // double-check stale info (knowledge-update category bottleneck).
+    // Decay-exempt types (preference / lesson / error / decision /
+    // convention / pattern by default) skip the warning since 'old'
+    // is fine for them.
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    let age_ms = now_ms.saturating_sub(f.created_at);
+    let age_days = (age_ms / (24 * 60 * 60 * 1000)) as u32;
+    if age_days >= 1 {
+        obj.insert("age_days".into(), Value::Number(age_days.into()));
+    }
+    let durable_types = matches!(
+        f.fact_type,
+        wg_core::FactType::Decision
+            | wg_core::FactType::Convention
+            | wg_core::FactType::Pattern
+            | wg_core::FactType::Preference
+            | wg_core::FactType::Lesson
+            | wg_core::FactType::Error
+    );
+    if !durable_types && age_days >= 60 {
+        // 60d threshold for note/claim/question/unknown — stale
+        // observational fact is the classic knowledge-update miss
+        // mode. Agent should re-verify via wg_search or the source.
+        obj.insert(
+            "freshness_warning".into(),
+            Value::String(format!(
+                "fact is {age_days} days old; consider re-verifying"
+            )),
+        );
+    }
     if f.pinned {
         obj.insert("pinned".into(), Value::Bool(true));
     }
