@@ -145,11 +145,30 @@ def _reader_messages(
     retrievals: list[dict],
     system: str = READER_SYSTEM_BASIC,
 ) -> list[dict]:
-    """Format retrievals as numbered context blocks."""
+    """Format retrievals as numbered context blocks. Annotates each
+    snippet with its source layer when the bench harness emitted one
+    (raw-chat vs llm-extract) so the reader knows which snippet
+    preserves verbatim user/assistant detail vs which is an LLM-
+    distilled summary. Hybrid-retrieval setups fail otherwise: the
+    reader anchors on the distilled summary and ignores the
+    verbatim turn that holds the actual answer (measured -16.7pt
+    with gpt-4.1 augment, see .notes/compare-omega.md)."""
     blocks = []
     for r in retrievals:
         sid = r.get("session_id") or "unknown"
-        blocks.append(f"[snippet {r['rank']} | session {sid}] {r['content']}")
+        source = r.get("source")
+        # Render source as a short tag so the reader picks up the
+        # layer distinction without needing extra prompting tokens.
+        layer_tag = ""
+        if source == "raw-chat":
+            layer_tag = " | raw chat"
+        elif source == "llm-extract":
+            layer_tag = " | distilled fact"
+        elif source:
+            layer_tag = f" | {source}"
+        blocks.append(
+            f"[snippet {r['rank']} | session {sid}{layer_tag}] {r['content']}"
+        )
     user_prompt = (
         "Snippets from your prior conversations with this user "
         "(numbered, ranked by retrieval score):\n\n"

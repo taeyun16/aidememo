@@ -499,7 +499,11 @@ fn build_store_for_question(
                         "session:{}",
                         q.haystack_session_ids[sess_idx]
                     )]),
-                    source: None,
+                    // Layer label for the hybrid-retrieval reader prompt.
+                    // Lets the e2e script render '[raw chat]' vs
+                    // '[distilled fact]' so the reader knows which
+                    // snippet preserves verbatim detail.
+                    source: Some("raw-chat".into()),
                     source_confidence: None,
                     observed_at,
                 });
@@ -616,6 +620,12 @@ fn build_store_for_question(
 /// Carries enough for a downstream LLM reader (content + which
 /// session it came from) plus the rank/score the harness saw so
 /// E2E judging can sanity-check ordering.
+///
+/// `source` distinguishes the two retrieval layers when
+/// `--llm-extract` is on: `"raw-chat"` = verbatim user/assistant
+/// turn, `"llm-extract"` = LLM-distilled classified fact. Reader
+/// prompts can label hits accordingly so the model knows which
+/// snippet preserves verbatim detail vs which is summarised.
 #[derive(serde::Serialize)]
 struct RetrievalRecord {
     rank: usize,
@@ -623,6 +633,8 @@ struct RetrievalRecord {
     content: String,
     score: f32,
     session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source: Option<String>,
 }
 
 fn evaluate(
@@ -741,6 +753,7 @@ fn evaluate(
                 content: fact.content,
                 score: hit.score,
                 session_id,
+                source: fact.source,
             });
         }
         if is_evidence && hit_rank.is_none() {
