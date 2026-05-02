@@ -19,7 +19,23 @@
 - 직접 측정: `/tmp/wg_e2e_*` (2026-05-01), 본 저장소의
   `.notes/bench-longmemeval.md`
 
-## 같은 머신 직접 측정 (2026-05-02) ⭐
+## 같은 머신 직접 측정 — Cross-encoder 활성 효과 (2026-05-02 갱신) ⭐
+
+같은 12q balanced sample, 같은 reader (gpt-4.1), 같은 official judge,
+OMEGA `pip install` standalone API. Cross-encoder reranker만 토글:
+
+| Setup | Overall | KU | temporal | wall (ingest) |
+|---|---|---|---|---|
+| **OMEGA no-rerank** | 58.3% | 100% | 50% | ~30s/q |
+| **OMEGA + rerank** | **41.7%** ⚠ | **50%** | **0%** | **~320s/q** (10× 느림) |
+| **wg + gpt-4.1** | **75.0%** ⭐ | 100% | 50% | (해당 없음) |
+
+→ **OMEGA의 cross-encoder reranker가 점수를 -16.7pt 떨어뜨림** +
+**ingest를 10× 느리게**. KU + temporal에서만 손해 (-50pt 각각),
+다른 카테고리 동등. Reranker 통합 자체 결함 또는 standalone API
+사용 시 wrong context.
+
+## 같은 머신 직접 측정 (no-rerank baseline)
 
 `pip install omega-memory` 1.4.9 → standalone Python API
 (`from omega import store, query`) → 12q balanced sample (per-type 2)
