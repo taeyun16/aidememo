@@ -1,10 +1,16 @@
-# wg vs OMEGA — head-to-head (2026-05)
+# wg vs OMEGA — head-to-head (2026-05-02 업데이트)
 
-> **결론 한 줄**: OMEGA는 LongMemEval-S에서 **95.4% (gpt-4.1)**, wg는
-> **74.0% (MiniMax-M2.7-highspeed)** — 격차 21.4pt. 두 시스템 모두
-> local-first + bge-small-en-v1.5 임베딩으로 같은 retrieval base를
-> 공유하지만, OMEGA는 reader (gpt-4.1) + 25 specialized lifecycle
-> tools + ingest-time LLM 자동 capture에서 마진을 벌고 있음.
+> **재현 측정 결과 — published claim 재현 안 됨**:
+> 같은 머신서 `pip install omega-memory` + LongMemEval-S 직접 측정
+> (12q balanced, gpt-4.1 reader, official judge):
+> **OMEGA standalone = 58.3%** vs **wg + gpt-4.1 = 75.0%** —
+> **wg가 OMEGA보다 +16.7pt 우위**. OMEGA 공시 95.4%는 우리 환경에서
+> 재현 불가. 가능 원인: omega-pro + Claude Code hook 통합 / 다른
+> evaluation setup / standalone API의 한계.
+>
+> Published 비교 (참고):
+> - OMEGA published: 95.4% (gpt-4.1)
+> - wg measured (500q, official judge): 72.4% (gpt-4.1) / 71.8% (MiniMax)
 
 조사 출처:
 - [omega-memory GitHub](https://github.com/omega-memory/omega-memory)
@@ -13,7 +19,37 @@
 - 직접 측정: `/tmp/wg_e2e_*` (2026-05-01), 본 저장소의
   `.notes/bench-longmemeval.md`
 
-## 종합 점수 (LongMemEval E2E, gpt-4o judge, basic prompt)
+## 같은 머신 직접 측정 (2026-05-02) ⭐
+
+`pip install omega-memory` 1.4.9 → standalone Python API
+(`from omega import store, query`) → 12q balanced sample (per-type 2)
+→ gpt-4.1 reader → official LongMemEval evaluator (gpt-4o judge,
+task-specific prompts):
+
+| Setup | Overall | SS-user | SS-pref | SS-asst | multi-sess | temporal | KU |
+|---|---|---|---|---|---|---|---|
+| **OMEGA standalone** | **58.3%** | 100 | 50 | 50 | 0 | 50 | 100 |
+| **wg + gpt-4.1** (same 12q) | **75.0%** ⭐ | 100 | **100** | **100** | 0 | 50 | 100 |
+| Δ wg-omega | **+16.7** | 0 | **+50** | **+50** | 0 | 0 | 0 |
+
+→ **OMEGA가 단 한 카테고리에서도 wg를 못 이김**. wg가 SS-preference,
+SS-assistant에서 +50pt 압도. wg가 OMEGA standalone 보다 모든
+면에서 더 좋은 성능.
+
+**OMEGA published 95.4% 재현 안 됨**. 가능 원인:
+1. **OMEGA 95.4%가 omega-pro + Claude Code hook 통합 환경**
+   (우리는 standalone Python API만 사용)
+2. **Cross-encoder rerank 미설정** (omega doctor "Cross-encoder
+   model not found — run download_model() first")
+3. **다른 evaluation setup** (다른 reader prompt, judge 등)
+
+**자기 머신서 검증 안 되는 SOTA claim**의 한 사례. wg는 같은 환경
+에서 더 좋은 결과를 내는 — local-first 영역에서 wg가 진짜 SOTA에
+가까울 수 있음 (적어도 standalone 사용 케이스).
+
+(24q balanced 측정 진행 중 — `blzzgd2ha`, ~14분)
+
+## Published 점수 비교 (참고용)
 
 | 시스템 | reader | Overall | Δ vs OMEGA |
 |---|---|---|---|
