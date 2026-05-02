@@ -151,6 +151,59 @@ ingestion. wg는 인프라 있지만 default OFF (사용자 비용 부담 회피
 → **wg augment 디자인 자체 문제, LLM 품질 무관**. wg에 OMEGA-style
 ingest-time LLM-aided을 적용하려면 **새 디자인 필요** (단순 augment X).
 
+7. ✓ **Hybrid w/ source labels (24q balanced, mini extract)** —
+   reader prompt에 `[raw chat]` vs `[distilled fact]` 라벨 표시:
+   **50.0% (vs baseline 62.5%, -12.5pt)**. 카테고리별:
+     - KU: 75 → 50%
+     - multi-session: 50 → 25%
+     - user: 100 → 75% (verbatim detail 회상도 손상)
+   → Source labeling이 약간 도움 (-16.7 → -12.5) 되지만 여전히
+   부정 효과. distilled facts가 retrieval set에 있는 한 reader
+   영향 못 막음.
+
+## 최종 결론: wg + LongMemEval-S에서 ingest-time LLM-aided ≠ OMEGA 격차 해결
+
+**모든 LLM-extract variant 측정 완료, 모두 부정**:
+
+| Setup | E2E (24q) | Δ |
+|---|---|---|
+| baseline | 62.5% | — |
+| augment + mini extract (60q ref) | 58.3% | -8.3 |
+| augment + gpt-4.1 extract | 45.8% | -16.7 ⚠ |
+| hybrid w/ source labels | 50.0% | -12.5 |
+| replace + mini extract (60q ref) | 18.3% | -48.4 ⚠ |
+
+**확정 사실**:
+1. LongMemEval-S는 verbatim user statements 회상에 의존
+2. LLM-distilled fact는 어떤 형태(augment / replace / hybrid)로도
+   raw turn detail을 손상
+3. Better LLM extractor일수록 augment 효과 더 부정 (-8.3 → -16.7)
+
+**OMEGA의 95.4%가 가능한 이유 (검증 불가)**:
+1. 데이터셋 setup 차이 (다른 reader/judge 조합)
+2. LongMemEval-S 데이터셋-specific tuning (per-category extraction
+   prompt 등)
+3. 별도 conversation memory layer (wg와 다른 retrieval surface)
+
+→ **wg는 LongMemEval-S에서 ingest-time LLM-aided 작업으로 OMEGA
+격차 못 메움**. 다른 평가 (dogfood / 새 fixture / 다른 데이터셋)에서
+효과 측정 필요.
+
+## wg가 강한 영역 (이미 입증)
+
+LongMemEval-S에서:
+- **wg + MiniMax-M2.7-highspeed = 74.0%** — Zep/Graphiti(71.2%) +2.8pt 추월
+- **wg + gpt-4.1 = 72.6%** — reader-only 효과 +5pt 메움
+- 이는 retrieval (R@10 0.992) + reasoning reader 조합
+
+운영 측면 (LongMemEval과 무관):
+- 4 native bindings (Py/Node/Elixir/C)
+- Multi-store native (`wg project create/use`)
+- Insert 토큰 0 (regex 기본; opt-in $1-3)
+- Single Rust binary (no Python runtime)
+- Tier A+B agent-UX 인프라 (Preference/Lesson/Error type, sessions,
+  hooks, wg_context, consolidate / TTL)
+
 ## 큰 결론: OMEGA 격차 = higher-LLM extractor + 다른 ingest 디자인
 
 reader / prompt / retrieval / 우리 ingest 디자인 모든 옵션 측정 후
