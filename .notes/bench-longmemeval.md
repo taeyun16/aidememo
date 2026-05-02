@@ -518,8 +518,10 @@ multi-session과 temporal-reasoning이 모델 ceiling. retrieval은 R@10 0.985
 | wg @ bge + reranker wide K=20→10 | gpt-5.4-mini | 0.660 |
 | wg @ bge + reranker wide K=20→10 | gpt-4o | 0.676 |
 | wg @ bge + reranker wide K=20→10 + dedup | gpt-4o-mini | 0.662 |
-| **wg @ bge + reranker wide K=20→10** | **gpt-4.1** | **0.726** |
-| **wg @ bge + reranker wide K=20→10** ★ | **MiniMax-M2.7-highspeed** | **0.740** |
+| **wg @ bge + reranker wide K=20→10** | **gpt-4.1** (generic judge) | **0.726** |
+| **wg @ bge + reranker wide K=20→10** ★ | **MiniMax-M2.7-highspeed** (generic judge) | **0.740** |
+| **wg @ bge + reranker wide K=20→10** ⭐ official-eval | **gpt-4.1** (LongMemEval task-prompts) | **0.724** (overall) / **0.774** (task-avg) |
+| **wg @ bge + reranker wide K=20→10** ⭐ official-eval | **MiniMax-M2.7-highspeed** (LongMemEval task-prompts) | **0.718** (overall) / **0.758** (task-avg) |
 | Zep / Graphiti 2026 (published) | gpt-4o | 0.712 |
 | Supermemory (published) | (?) | 0.854 |
 | Emergence AI (published) | (?) | 0.860 |
