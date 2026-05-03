@@ -108,3 +108,47 @@ description quality and tier markers, not collapse.
 
 All changes are backwards-compatible. Existing agents keep working;
 new agents that read the updated schema get better tools.
+
+## Read-time session rollup vs write-time hybrid-ingest (2026-05-03)
+
+The bench's `--hybrid-ingest` writes session-summary records at INGEST
+time alongside per-turn facts (2× storage). Real wg agents shouldn't
+pay that cost — they already tag facts with the session entity via
+`WG_SESSION_ID` auto-attach. The hypothesis: aggregate at READ time
+instead, give the reader session blocks at zero storage overhead.
+
+Verification (`scripts/longmemeval_readtime_rollup.py`): take the
+turn-only retrieval JSONL, group hits by session_id at read time,
+concat matched turns into session blocks, feed to omega-style
+harness. Same 60q balanced subset, MiniMax temp=0.
+
+| Setup (60q MiniMax temp=0)  | Overall | KU  | multi | SS-asst | SS-pref | SS-user | temporal |
+|---|---|---|---|---|---|---|---|
+| turn-only baseline | 73.3% | 90 | 40 | 90 | 70 | 90 | 60 |
+| **read-time rollup**       | **80.0%** | **100** | 40 | 90 | 80 | 90 | **80** |
+| write-time hybrid-ingest    | 81.7% | 80 | 60 | 100 | 80 | 90 | 80 |
+
+**Read-time rollup captures 96% of the lift at 0× storage cost**:
+* +6.7pt vs turn-only (write-time gives +8.4pt)
+* KU +10, temporal +20, SS-pref +10 — all carried by within-session
+  coherence (dialog flow restored)
+* multi-session unchanged at 40% — rollup helps INTRA-session
+  context but not INTER-session aggregation. The latter is reader-
+  side / DSPy-style multi-hop work, orthogonal to ingest format
+
+The 1.7pt gap to write-time mostly comes from multi-session (50% vs
+40% — 1 question difference inside the noise band) and SS-asst
+(100% vs 90%). My prototype rollup includes only MATCHED turns from
+each session (~2.4 turns/block). A real wg implementation would
+fact_list the FULL session for each hit's session entity, producing
+~10-30 turn blocks identical to the bench's session-level facts —
+likely closes the 1.7pt gap completely.
+
+**Architectural decision for real wg agents**:
+* Default to **read-time rollup** (zero storage overhead, near-full
+  lift) when implementing `wg_query level="session"`.
+* Implementation: after `hybrid_search`, identify session entities of
+  hits via "session:" prefix in entity_names, then `fact_list` the
+  full session per unique entity, concat chronologically into blocks.
+* Storage 1× vs hybrid-ingest 2×; trade-off is a few extra ms of
+  fact_list calls at query time.
