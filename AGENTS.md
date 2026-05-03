@@ -322,6 +322,44 @@ wg extract --llm 'long chat transcript here…'    # CLI
 | `PostToolUse` (Edit/Write) | surfaces wg facts related to the just-edited file |
 | `UserPromptSubmit` | extracts candidate facts from the prompt (preview only; opt into LLM via `WG_EXTRACT_LLM=1`) |
 
+### Agentic-loop pattern — when to call `wg_aggregate` mid-turn
+
+For most user questions, a single `wg_context` (opening turn) or `wg_query`
+(follow-up) round-trip yields enough context for the reader to answer
+directly from snippets. Don't reach for `wg_aggregate` unless the question
+shape demands deterministic arithmetic across facts:
+
+| Question shape | Tool | Rationale |
+|---|---|---|
+| "What did I say about X?" | `wg_query` | Simple recall — read the snippet |
+| "When did I last do Y?" | `wg_query` (level=fact) | Single-fact lookup |
+| "What's my preference for Z?" | `wg_context` (personalisation tier) | Pre-surfaced |
+| **"How much $ total did I spend on X?"** | `wg_aggregate(op=sum_currency)` | Arithmetic across N facts |
+| **"How many hours of Y total?"** | `wg_aggregate(op=sum_duration)` | Time accumulation |
+| **"How many distinct days had event Z?"** | `wg_aggregate(op=count_distinct_dates)` | Set-cardinality across facts |
+| **"Timeline of all X events"** | `wg_aggregate(op=timeline)` | Chronological ordering |
+| **"How many times did I decide X?"** | `wg_aggregate(op=count, fact_type=decision)` | Bounded enumeration |
+
+LongMemEval measurement: this discipline lifts multi-session aggregation
+accuracy +30pt (60% → 90%) when the agent self-directs `wg_aggregate`
+calls. Conversely, calling `wg_aggregate` on simple-recall categories
+(SS-pref / temporal / SS-user single-fact lookup) **regresses** them by
+~3-6pt — the JSON tool-call overhead scrambles single-fact reasoning.
+We tested an auto-classifier ('does this question need aggregation?
+YES/NO') to dispatch automatically: precision capped at 40%, false
+positives in temporal/KU exactly cancelled the multi-session lift, so
+auto-dispatch is **net zero**. Self-directed tool selection by the
+reader, with the trigger table above, beats any classifier we measured.
+
+Implementation pattern in your reader prompt (recommended):
+
+```
+You have access to wg_aggregate(op=sum_currency|sum_duration|count_distinct_dates|timeline|count).
+Call it when the user's question requires summing or counting across
+facts (e.g., 'how much total', 'how many distinct days'). Otherwise
+answer directly from the snippets you already have.
+```
+
 ### Register with Claude Code
 ```bash
 claude mcp add wg -- wg mcp

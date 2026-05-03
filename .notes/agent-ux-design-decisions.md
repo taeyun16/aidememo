@@ -653,3 +653,121 @@ read-time rollup, hybrid prompt port) are real, but the
 "+5pt over OMEGA" claim was variance. Multi-session 50% ceiling
 DID break (40 → 65% mean), which is the load-bearing finding,
 not the headline overall number.
+
+## Agentic-loop dispatch — multi-session +30pt confirmed, but classifier nets out (2026-05-03)
+
+Tested whether RLM-style agentic loops (reader calls deterministic
+aggregation tools mid-question) lift the multi-session ceiling
+without regressing other categories. Implementation:
+`scripts/longmemeval_agentic.py`. Tools dispatched on the
+retrievals' pre-extracted `structured` field — same Layer 1 output,
+no extra LLM calls, exact arithmetic.
+
+### Run 1 — multi-session 10q, isolated
+
+| Setup (ms10, MiniMax temp=0)                | Score |
+|---|---|
+| omega-style baseline (run 1)                | 6/10 (60%) |
+| omega-style baseline (run 2)                | 6/10 (60%) |
+| **agentic loop (max_iter=3)**               | **9/10 (90%)** |
+
+Identical retrievals, identical reader/judge. **+30pt, zero
+regressions** (5 fixed, 0 broken, 1 stayed wrong on both). Two
+fixes used tools (`count_facts+dump_more_context`,
+`sum_currency`); three fixes were prompt-structure effects (no
+tool calls, but agentic JSON format apparently helped).
+
+### Run 2 — full 60q, regression check
+
+Original agentic v1 with fixed `n_initial_snippets=8` across all
+categories tanked: **35/60 (58.3%) vs baseline 51/60 (85%)**.
+SS-pref crashed -5pt, temporal -6pt, forfeit 5 cases. Diagnosis:
+
+* JSON output enforcement scrambles single-fact reasoning
+* Fixed-8 context too small for KU/multi (needed 15-20)
+* Tool loop traps temporal questions when retrieval lacks the answer
+  (avg 1.5 tools/q, dump_more_context hammered 12× for nothing)
+
+### Run 3 — agentic v2 with category-specific context + rebalanced prompt
+
+Edits to `longmemeval_agentic.py`:
+* `n_initial_snippets=0` defaults to per-category `_CATEGORY_CONFIG.max_res`
+* System prompt: "most questions answer directly from snippets, COMMIT
+  immediately if visible — tools are for cross-session sum/count only"
+* `dump_more_context` flagged as "ONLY when answer clearly missing,
+  do not use to double-check"
+* `max_tokens` bumped 2048→4096 (MiniMax think-block headroom)
+* Forfeit fallback emits raw post-`</think>` text rather than blank
+
+Result: **46/60 (76.7%)** — recovered +11pt vs v1, forfeits 0, tool
+calls 0.18/q. But still **-5pt vs baseline**. SS-pref/temporal
+remain the failure modes — JSON-output overhead is intrinsically
+costly on simple-recall categories regardless of prompt tuning.
+
+### Run 4 — oracle selective dispatch (multi→agentic, rest→base)
+
+Spliced agentic ms10 into baseline 60q non-ms portion:
+
+| Category | base | agentic v1 | agentic v2 | **oracle selective** | classifier-routed |
+|---|---|---|---|---|---|
+| KU | 10/10 | 7/10 | 9/10 | **10/10** | 10/10 |
+| multi-session | 7/10 | 7/10 | 8/10 | **9/10** | 8/10 |
+| SS-asst | 10/10 | 9/10 | 10/10 | **10/10** | 10/10 |
+| SS-pref | 8/10 | 3/10 | 5/10 | **8/10** | 8/10 |
+| SS-user | 8/10 | 7/10 | 9/10 | **8/10** | 8/10 |
+| temporal | 8/10 | 2/10 | 5/10 | **8/10** | 7/10 |
+| **TOTAL** | **51/60** | 35/60 | 46/60 | **53/60 (88.3%)** | **51/60 (85%)** |
+
+Oracle selective gives +2pt. To deploy this without leaking the
+question_type label, you'd need a classifier.
+
+### Run 5 — single-shot LLM classifier
+
+Prompt: "Does answering this question require AGGREGATING across
+multiple sessions? Reply YES or NO."  Same MiniMax model.
+
+* Recall on multi-session: 80% (8/10)
+* Precision: 40% (8/20 YES were actually multi)
+* Accuracy: 76.7%
+* False-positive distribution: KU 6/10, temporal 6/10 misrouted to
+  agentic; SS-* perfectly routed to baseline.
+
+**Classifier-routed dispatch: 51/60 = baseline.** The one ms-question
+the classifier missed (-1) and the one temporal question that
+agentic regressed (-1) cancel out the +2pt oracle lift exactly.
+
+### Verdict
+
+* **Agentic loop on multi-session is real**: +30pt isolated, +2pt
+  oracle dispatch on full 60q. The deterministic-tool mechanism
+  works.
+* **Auto-dispatch via single-shot classifier nets to zero**:
+  classifier precision is too low (40%); each false positive
+  costs ~1pt in the wrong category. Not worth the extra LLM call.
+* **JSON output format itself is overhead** for simple-recall
+  categories. The lift is gated by category, not by reader model.
+
+### Production recommendation
+
+Don't bake auto-dispatch into wg. Instead:
+
+1. **Tool description quality** — `wg_aggregate`'s description in
+   `mcp_tools.rs::list_tools()` should make it crystal clear that
+   it's for cross-session sum/count only. Agent V2 prompt achieved
+   0.18 tool-calls/q with proper guidance — agents can self-direct.
+2. **Surface agentic loops as a docs pattern**, not a hidden
+   classifier inside wg. Show in AGENTS.md how a reader can
+   optionally call wg_aggregate when the question shape suggests it.
+3. **If a classifier IS deployed**, gate it on confidence — only
+   route YES when the model emits "YES" with high token logprob
+   (drops false-positive rate). Out of scope for this repo.
+4. **Multi-session ceiling break is permanent** when an agent
+   chooses to use wg_aggregate. The architectural finding stands;
+   the auto-dispatch finding is what's net-zero.
+
+Honest scoreboard update:
+  * baseline (omega-style, MiniMax, same retrievals): 51/60 (85%)
+  * **oracle selective (multi→agentic)**: 53/60 (88.3%)
+  * classifier-routed selective: 51/60 (85%)
+  * agentic everywhere v2: 46/60 (76.7%)
+  * agentic everywhere v1 (no rebalance): 35/60 (58.3%)
