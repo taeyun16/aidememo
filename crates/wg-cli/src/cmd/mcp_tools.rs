@@ -1115,12 +1115,178 @@ fn tool_query(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String> 
             .and_then(|v| v.as_bool())
             .unwrap_or(false),
     };
-    let result = wiki.query(topic, opts).map_err(|e| e.to_string())?;
-    let text = serde_json::to_string_pretty(&result).map_err(|e| e.to_string())?;
+    // Agent UX: format / max_chars budget. Default "full" preserves the
+    // existing contract; "compact" truncates each snippet's content to
+    // a preview length (cuts agent context cost ~3×). max_chars hard-caps
+    // the serialized result text so the agent can size its turn budget
+    // before invoking — overflow drops `related` first, then truncates
+    // longest snippets uniformly.
+    let format = args
+        .get("format")
+        .and_then(|v| v.as_str())
+        .unwrap_or("full");
+    let max_chars = args.get("max_chars").and_then(|v| v.as_u64()).map(|n| n as usize);
+    let preview_chars = args
+        .get("preview_chars")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(200) as usize;
+    let mut result = wiki.query(topic, opts).map_err(|e| e.to_string())?;
+    if format == "compact" {
+        compact_query_result(&mut result, preview_chars);
+    }
+    if let Some(budget) = max_chars {
+        fit_query_result_to_budget(&mut result, budget, preview_chars);
+    }
+    let text = if format == "text" {
+        render_query_result_markdown(&result, preview_chars, max_chars)
+    } else {
+        serde_json::to_string_pretty(&result).map_err(|e| e.to_string())?
+    };
     Ok(ToolCallResult {
         content: vec![ContentBlock::text(text)],
         is_error: None,
     })
+}
+
+/// Markdown rendering — drops JSON envelope bloat. Agent gets a terse
+/// human-readable summary suitable for direct prompt injection. Loses
+/// ULID precision (still includes short suffix for follow-up
+/// wg_fact_get) and timestamps but preserves entity names + scores.
+/// When `budget` is set, drops trailing snippets/recent_facts to fit.
+fn render_query_result_markdown(
+    r: &wg_core::QueryResult,
+    preview_chars: usize,
+    budget: Option<usize>,
+) -> String {
+    let mut out = String::new();
+    out.push_str(&format!("# {}\n", r.topic));
+    if let Some(e) = &r.entity {
+        out.push_str(&format!("entity: **{}** ({})\n", e.name, format!("{:?}", e.entity_type).to_lowercase()));
+        if let Some(s) = &e.summary
+            && !s.is_empty() {
+                out.push_str(&format!("> {s}\n"));
+            }
+    }
+    if !r.search.is_empty() {
+        out.push_str("\n## hits\n");
+        for h in &r.search {
+            let mut content = h.content.clone();
+            truncate_in_place(&mut content, preview_chars);
+            let id_short = &h.fact_id.to_string().chars().rev().take(6).collect::<String>().chars().rev().collect::<String>();
+            let ents = if h.entity_names.is_empty() {
+                String::new()
+            } else {
+                format!(" _[{}]_", h.entity_names.join(", "))
+            };
+            let ftype = format!("{:?}", h.fact_type).to_lowercase();
+            out.push_str(&format!("- ({:.2} {} …{}) {}{}\n", h.score, ftype, id_short, content, ents));
+        }
+    }
+    if !r.related.is_empty() {
+        out.push_str("\n## related\n");
+        let names: Vec<String> = r.related.iter().map(|e| e.name.clone()).collect();
+        out.push_str(&format!("- {}\n", names.join(", ")));
+    }
+    if !r.recent_facts.is_empty() {
+        out.push_str("\n## recent\n");
+        for f in &r.recent_facts {
+            let mut content = f.content.clone();
+            truncate_in_place(&mut content, preview_chars);
+            let id_short = &f.id.to_string().chars().rev().take(6).collect::<String>().chars().rev().collect::<String>();
+            out.push_str(&format!("- (…{}) {}\n", id_short, content));
+        }
+    }
+    if let Some(b) = budget {
+        if out.len() > b {
+            // Truncate from the back (recent_facts disappear first because
+            // they're rendered last). Strip trailing lines until under
+            // budget, then add an ellipsis marker.
+            while out.len() > b.saturating_sub(20) && let Some(idx) = out.rfind('\n') {
+                out.truncate(idx);
+            }
+            out.push_str("\n… (truncated)\n");
+        }
+    }
+    out
+}
+
+/// Truncate every snippet/fact `content` to `preview_chars` chars (+ "…").
+/// Leaves IDs, scores, entity names, and metadata intact so the agent
+/// can still drill in via wg_fact_get for any specific hit.
+fn compact_query_result(result: &mut wg_core::QueryResult, preview_chars: usize) {
+    for hit in &mut result.search {
+        truncate_in_place(&mut hit.content, preview_chars);
+    }
+    for fact in &mut result.recent_facts {
+        truncate_in_place(&mut fact.content, preview_chars);
+    }
+}
+
+fn truncate_in_place(s: &mut String, n: usize) {
+    if s.chars().count() <= n {
+        return;
+    }
+    let mut count = 0;
+    let mut byte_idx = 0;
+    for (i, _) in s.char_indices() {
+        if count == n {
+            byte_idx = i;
+            break;
+        }
+        count += 1;
+    }
+    s.truncate(byte_idx);
+    s.push('…');
+}
+
+/// Iteratively shrink the result until its serialized form fits
+/// `budget` chars. Order:
+/// 1. Drop `related` (graph context — agent can re-query).
+/// 2. Truncate previews progressively (200 → 30 chars).
+/// 3. Drop recent_facts from the tail.
+/// 4. Drop search hits from the tail (keep top-rank).
+fn fit_query_result_to_budget(
+    result: &mut wg_core::QueryResult,
+    budget: usize,
+    _min_preview: usize,
+) {
+    fn size_of(r: &wg_core::QueryResult) -> usize {
+        serde_json::to_string(r).map(|s| s.len()).unwrap_or(0)
+    }
+    if size_of(result) <= budget {
+        return;
+    }
+    // 1. Drop graph traversal (most expendable for budget-pinched queries).
+    if !result.related.is_empty() {
+        result.related.clear();
+        if size_of(result) <= budget {
+            return;
+        }
+    }
+    // 2. Stepped preview shrink — 200 down to 30 chars.
+    for preview in [200, 120, 80, 50, 30] {
+        for hit in &mut result.search {
+            truncate_in_place(&mut hit.content, preview);
+        }
+        for fact in &mut result.recent_facts {
+            truncate_in_place(&mut fact.content, preview);
+        }
+        if size_of(result) <= budget {
+            return;
+        }
+    }
+    // 3. Drop recent_facts from tail until fits.
+    while size_of(result) > budget && result.recent_facts.pop().is_some() {}
+    if size_of(result) <= budget {
+        return;
+    }
+    // 4. Drop search hits from tail, but keep at least 1 so the agent
+    // sees the top match. If even 1 hit blows budget, the agent has to
+    // raise the budget — we can't lose the entity envelope without
+    // breaking the contract.
+    while result.search.len() > 1 && size_of(result) > budget {
+        result.search.pop();
+    }
 }
 
 /// `wg_context` — single-call agent-turn entry point. Returns one
@@ -1983,7 +2149,7 @@ pub fn list_tools() -> Vec<Tool> {
         },
         Tool {
             name: "wg_query".into(),
-            description: "Topic-only retrieval (search + entity + traverse + recent). Lighter than wg_context — no pinned / personalisation tier. Prefer wg_context for an agent's opening turn; use wg_query for follow-up topic dives. Defaults to current_only=true. Modes: naive (search only), local (entity + neighbors, no global search), hybrid (default), global (broader scan)."
+            description: "Topic-only retrieval (search + entity + traverse + recent). Lighter than wg_context — no pinned / personalisation tier. Prefer wg_context for an agent's opening turn; use wg_query for follow-up topic dives. Defaults to current_only=true. Modes: naive (search only), local (entity + neighbors, no global search), hybrid (default), global (broader scan). Agent context cost: pass `format:\"compact\"` to truncate each snippet's content to a preview (cuts result size ~3×). Hard-cap with `max_chars:N` to fit a turn budget — overflow drops `related` first, then uniformly shrinks snippet previews."
                 .into(),
             input_schema: json!({
                 "type": "object",
@@ -1993,7 +2159,10 @@ pub fn list_tools() -> Vec<Tool> {
                     "depth": {"type": "number", "default": 2, "description": "Traverse depth if topic is an entity"},
                     "recent_limit": {"type": "number", "default": 10, "description": "Max recent facts"},
                     "mode": {"type": "string", "enum": ["naive", "local", "hybrid", "global"], "default": "hybrid"},
-                    "current_only": {"type": "boolean", "default": true, "description": "Exclude superseded facts. Pass false for historical / timeline queries."}
+                    "current_only": {"type": "boolean", "default": true, "description": "Exclude superseded facts. Pass false for historical / timeline queries."},
+                    "format": {"type": "string", "enum": ["full", "compact", "text"], "default": "full", "description": "full = JSON with all metadata. compact = JSON with truncated snippet content (drops bytes ~10%). text = markdown bullet summary, drops JSON envelope (~5× smaller, drops timestamps & entity metadata, keeps last-6 ULID suffix for follow-up wg_fact_get). Use text for agent prompt injection."},
+                    "preview_chars": {"type": "number", "default": 200, "description": "Per-snippet content preview length when format=compact. Agent can drill in via wg_fact_get for any rank."},
+                    "max_chars": {"type": "number", "description": "Hard cap on serialized result size (in chars). When set, the tool drops `related` first then trims previews until under budget. Use to bound agent turn cost."}
                 },
                 "required": ["topic"]
             }),

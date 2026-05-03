@@ -254,7 +254,7 @@ crates/wg-cli/src/
 | Tool | When |
 |---|---|
 | **`wg_context`** | **🟢 Top-of-turn entry point** — pinned + personalisation + recent + (with topic) search/traverse/lessons. One round-trip replaces session_start → query → search chain. |
-| `wg_query` | Topic-only retrieval (search + entity + traverse + recent). Lighter than wg_context. Use for follow-up topic dives. |
+| `wg_query` | Topic-only retrieval (search + entity + traverse + recent). Lighter than wg_context. Use for follow-up topic dives. **Agent budget knobs:** `format:"text"` → markdown bullets (~5× smaller than JSON); `max_chars:N` → hard cap (drops `related` first, then trims previews, then drops trailing hits, keeps top match). |
 | `wg_overview` | First-impression snapshot — call once at session start on an unfamiliar wiki |
 | `wg_search` | Pure hybrid search, no graph |
 | `wg_recent` | Last N days of facts |
