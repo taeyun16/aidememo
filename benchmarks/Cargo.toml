@@ -28,6 +28,7 @@ simsimd = "6"
 # extracted via a thread pool so a 500q --llm-extract run doesn't
 # spend ~43h serialising sequential ureq calls.
 rayon = "1.10"
+chrono = "0.4"  # Anchor for relative-date extraction in retrieval emit
 
 [[bin]]
 name = "hnsw_miracl"

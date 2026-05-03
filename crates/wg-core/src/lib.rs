@@ -5,6 +5,7 @@ pub mod config;
 pub mod embedding;
 pub mod error;
 pub mod extract;
+pub mod extract_structured;
 pub mod fuzzy;
 pub mod graph;
 pub mod index;

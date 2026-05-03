@@ -545,6 +545,77 @@ best-found config beats OMEGA's full 1700-line LME harness by
 production-architecture story remains theoretical for our
 measurement window.
 
+## Layer 1 structured-fact extraction — Rust impl + bench verification
+
+User's framing: stop swapping models, fix the pipeline. Multi-session
+counting and temporal arithmetic ask the reader to do work that
+should be done at ingest. Built a deterministic Layer 1 extractor in
+Rust:
+
+`crates/wg-core/src/extract_structured.rs` — pulls typed slots
+(currency / duration / event_date / count) out of raw fact text
+*without* invoking an LLM. Foundation:
+* `interim` (chrono_0_4 feature) — English natural-language dates
+  with configurable anchor (`yesterday` + 2024-03-15 → 2024-03-14)
+* `fundu` — duration normalisation (`1.5 weeks` → seconds)
+* `rusty-money` — currency parsing
+* In-house regex + word→digit substitution (`three days` → `3 days`)
+
+7/7 unit tests pass (currency, duration, duration-from-words, ISO
+date, relative date, count, empty input).
+
+Bench integration: `RetrievalRecord` gains a `structured: Vec<StructuredValue>`
+field, populated in the bench's emit path with the fact's
+`observed_at` as the relative-date anchor. 60q balanced run produces
+typed values on 21.7% of retrieved facts (currency 425, duration 523,
+event_date 135, count 61 across 1685 retrievals).
+
+Python harness (`scripts/longmemeval_structured.py`): aggregates
+structured values per question into a "STRUCTURED HINTS" block
+prepended to the reader prompt — sums currency / duration, lists
+distinct dates, surfaces explicit counts.
+
+**Result (60q balanced, MiniMax temp=0)**:
+
+| Setup                                            | Overall | KU  | multi | SS-asst | SS-pref | SS-user | temporal |
+|---|---|---|---|---|---|---|---|
+| v9 4-run mean on same 60q overlap                | 87.5% ± 4.4 (range 83.3-93.3) | 93.75 | ~64 | 100 | 70 | 95 | 80 |
+| **Layer 1 structured-hint harness** (1 run)      | **85.0%** | 90 | 60 | 100 | **80** | 90 | **90** |
+| Δ                                                | -2.5 (within ±4.4 std) | -3.75 | -4 | 0 | **+10** | -5 | **+10** |
+
+**Two suggestive per-category lifts**:
+* **temporal +10pt** — explicit `event_date` extraction with anchor
+  resolution genuinely helps date arithmetic (matches Layer 1 test
+  expectations)
+* **SS-pref +10pt** — structured signal seems to give reader more
+  confidence on niche-preference application
+
+Other categories within noise. Multi-session unchanged at 60% — the
+extractor surfaces values but reader still has to filter relevance
+(non-bike $ amounts get aggregated alongside bike $ amounts when
+both appear in retrieved context).
+
+**Verdict**:
+* **Infrastructure is real value** — deterministic typed extraction
+  is now a queryable primitive. Real wg agents could call
+  `wg_aggregate(query, op="sum_field", field="currency")` and get a
+  deterministic answer without reader arithmetic.
+* **Bench measurement: within v9 noise band**. Doesn't decisively
+  lift on this benchmark because (a) reader was already extracting
+  these values from raw text, (b) hints from off-topic facts add
+  noise, (c) for true lift we'd need semantic-relevance filtering
+  before aggregation (LLM call defeats the deterministic point).
+* **Cypher / graph engine NOT needed**: the failure mode our weak
+  categories share is "synthesise across retrieved data". A
+  ~600-line Rust module with three crate deps captures the
+  primitive without standing up a graph query language. The
+  user's instinct that we shouldn't over-engineer was right.
+
+Honest realistic-stack standing remains:
+  * wg degenerate + level=session + v9 (4-run mean): 83.9% ± 2.7
+  * OMEGA + MiniMax (1700-line):                    79.2%
+  * Layer 1 structured-hint (1 run):               85.0% (within noise)
+
 **Honest conclusion**: wg ≈ OMEGA on realistic-stack MiniMax,
 within the noise band. The architectural wins (level=session
 read-time rollup, hybrid prompt port) are real, but the

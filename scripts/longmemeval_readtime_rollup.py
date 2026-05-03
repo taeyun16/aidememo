@@ -99,6 +99,15 @@ def rollup_to_sessions(
         # Pick the lowest-rank fact_id of the group so the reader's
         # follow-up wg_fact_get still resolves to a real fact.
         sample = min(bucket["turns"], key=lambda t: t.get("rank") or 999)
+        # Carry over structured values from every contributing turn so
+        # the downstream aggregation harness can compute sums/counts
+        # over the rolled-up block. Same fact_id may appear under
+        # multiple turns when the bench surfaces it via different
+        # sub-queries; we accept duplicates here — the aggregation
+        # layer is responsible for deduping.
+        merged_structured = []
+        for t in bucket["turns"]:
+            merged_structured.extend(t.get("structured", []))
         blocks.append({
             "rank": 0,  # set below
             "fact_id": sample["fact_id"],
@@ -108,6 +117,7 @@ def rollup_to_sessions(
             "source": "session-rollup",
             "referenced_date": bucket["earliest_date"],
             "n_turns_in_block": len(bucket["turns"]),
+            "structured": merged_structured,
         })
 
     # Order blocks by max-score desc (best matching session first).

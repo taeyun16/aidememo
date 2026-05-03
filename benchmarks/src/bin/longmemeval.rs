@@ -706,6 +706,15 @@ struct RetrievalRecord {
     /// apply OMEGA-style recency boosts (esp. for knowledge-update).
     #[serde(skip_serializing_if = "Option::is_none")]
     referenced_date: Option<u64>,
+    /// Layer-1 deterministic structured values pulled out of `content`
+    /// at retrieval time (currency / duration / event_date / count).
+    /// Empty vec when the fact has no extractable typed slots — gives
+    /// the Python aggregation layer a concrete signal to compute
+    /// sums/counts/timelines without asking the reader to do
+    /// arithmetic. Anchored to `referenced_date` for relative-date
+    /// resolution.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    structured: Vec<wg_core::extract_structured::StructuredValue>,
 }
 
 fn evaluate(
@@ -818,6 +827,18 @@ fn evaluate(
                     break;
                 }
             }
+            // Layer-1 deterministic structured-value extraction.
+            // Anchor on the fact's referenced date so relative phrases
+            // ("yesterday", "two weeks ago") resolve to the right
+            // absolute date for the conversation that produced this
+            // fact. Skip extraction when no anchor is available — the
+            // structured field stays empty and the Python aggregation
+            // layer falls back to text-only reading.
+            let anchor_dt = fact.observed_at.and_then(|ms| {
+                chrono::DateTime::<chrono::Utc>::from_timestamp_millis(ms as i64)
+            });
+            let structured =
+                wg_core::extract_structured::extract(&fact.content, anchor_dt);
             records.push(RetrievalRecord {
                 rank,
                 fact_id: hit.fact_id.to_string(),
@@ -826,6 +847,7 @@ fn evaluate(
                 session_id,
                 source: fact.source,
                 referenced_date: fact.observed_at,
+                structured,
             });
         }
         if is_evidence && hit_rank.is_none() {
