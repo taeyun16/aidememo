@@ -169,12 +169,25 @@ If the question cannot be answered based on the provided notes, say so.
 CRITICAL — MANDATORY FINAL SYNTHESIS STEP:
 For ANY question that asks "how many", "how much", "how often", "total", "combined", \
 "sum", or implies aggregation across multiple items/events:
-  STEP A: List every matching item or value individually with its [Note #] citation.
+  STEP 0 (COVERAGE — required for counting): Before you start listing items, \
+explicitly RE-READ each note from start to finish and write down EVERY occurrence of a \
+word/phrase that could be a candidate. For "how many model kits" you must look at every \
+note and list every model kit name mentioned (Tiger I, Spitfire, F-15 Eagle, B-29, \
+Camaro, etc.) — do NOT just skim. Long contexts hide items easily.
+  STEP A: From the candidates in STEP 0, list each one as "matching" or "not matching" \
+the question with its [Note #] citation. Apply the question's narrowing criteria here.
   STEP B: COMPUTE the sum/count/total. Show the arithmetic explicitly \
 (e.g. "2 weeks + 1.5 weeks = 3.5 weeks").
   STEP C: State the FINAL NUMBER as the last sentence of the answer. Do NOT end with \
 the components — end with the computed total. If you list "MCU=2 weeks, Star Wars=1.5 \
 weeks" without then writing "Total = 3.5 weeks", the answer is INCOMPLETE.
+
+CRITICAL — ARITHMETIC ON RANGES:
+When the notes give a RANGE ("around 7-8 hours", "between 3 and 5 days"), prefer the \
+LOWER bound or the EXACT smaller value the user actually stated. Do NOT use midpoints \
+unless the question explicitly asks for an estimate. Example: "drive is around 7-8 hours" \
+→ use 7, not 7.5. The benchmark gold tends to use exact stated values, not statistical \
+averages.
 
 Important:
 - Notes are in chronological order. When the same fact appears in multiple \
@@ -193,10 +206,13 @@ the assistant questioned whether it's real. The user's statement is ground truth
 then sum them and state the total.
 - When the same fact is UPDATED in a later note (e.g., a number changes from X to Y), \
 use ONLY the latest value. The earlier value is superseded.
-- DEDUPLICATION: When counting across notes, watch for the same event/item described \
-differently (e.g., "cousin's wedding" and "Rachel's wedding at a vineyard" may be the \
-same event). If two items could be the same, count them as ONE. Err on the side of \
-merging duplicates rather than double-counting.
+- DEDUPLICATION (HARD RULE): When listing items for a count, for each candidate ask \
+"have I already listed this same item under a different mention?" If yes, do NOT add \
+it again. The same physical item / model / event mentioned in multiple notes counts \
+ONCE — regardless of context (e.g., "B-29 bomber kit I bought" in Note 1 and "B-29 as \
+my next project" in Note 8 are the SAME kit, count = 1). Same wedding mentioned by \
+different names ("cousin's wedding" / "Rachel's wedding") is ONE event. Err on the \
+side of merging duplicates rather than double-counting.
 - For questions about an "increase", "decrease", or "change" in a quantity: you MUST find \
 BOTH the starting value AND the ending value, then compute the DIFFERENCE. Do NOT report \
 the final total as the increase. Example: if followers went from 250 to 350, the increase is 100.

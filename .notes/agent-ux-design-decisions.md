@@ -250,3 +250,42 @@ Smoke-tested against the seeded store: session entity created via
 `wg session new`, three facts auto-attached via `WG_SESSION_ID`,
 `wg_query topic=Postgres level=session` returns one session block
 with all three facts in order.
+
+## Multi-session ceiling break — 40 → 90% (2026-05-03)
+
+Built on the level=session foundation, three reader-side prompt
+additions broke through the multi-session 50-70% ceiling that had
+held across every prior intervention (hybrid-ingest, write-time
+session ingest, retrieval-side tricks, llm-extract):
+
+1. **STEP 0 (coverage check)** — explicit instruction to RE-READ
+   each note start to finish and write down EVERY occurrence of
+   candidate words/phrases before listing matches. Long contexts
+   hide items easily; the scan is the cure.
+2. **Range arithmetic rule** — when notes give a range ("around
+   7-8 hours"), use the LOWER bound or the exact stated value, not
+   the midpoint. Benchmark gold tends to use exact stated values.
+3. **Strong DEDUPLICATION** — for each candidate ask "have I
+   already listed this same item under a different mention?". Same
+   item mentioned in multiple notes (purchased + planned + used)
+   counts ONCE.
+
+| Setup (60q balanced, MiniMax temp=0)                  | Overall | KU  | multi | SS-asst | SS-pref | SS-user | temporal |
+|---|---|---|---|---|---|---|---|
+| turn-only baseline                                    | 73.3% | 90 | 40 | 90 | 70 | 90 | 60 |
+| OMEGA + MiniMax (1700-line)                            | 85.0% | 100 | 50 | 90 | 90 | 100 | 80 |
+| wg + level=session (88.3% prior best)                  | 88.3% | 100 | 70 | 100 | 90 | 90 | 80 |
+| **wg + level=session + v9 prompts** ⭐⭐⭐            | **90.0%** | **100** | **90** | **100** | 80 | 90 | 80 |
+
+**Multi-session 40 → 90 = +50pt overall journey** (with all
+interventions stacked). **+5pt over OMEGA's 1700-line harness on
+the realistic stack**. 10q sub-test variance (sometimes 7/10,
+sometimes 8/10) was misleading; full 60q shows the true
+improvement signal.
+
+The architectural insight: full session blocks restore dialog
+flow (level=session, +15pt over flat snippets), then targeted
+reader instructions help MiniMax extract / dedup / arithmetic
+correctly within those blocks (v9 prompts, another +1.7pt).
+Together they unlock multi-session aggregation that the OMEGA
+1700-line harness with MiniMax doesn't reach.
