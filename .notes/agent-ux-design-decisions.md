@@ -289,3 +289,52 @@ reader instructions help MiniMax extract / dedup / arithmetic
 correctly within those blocks (v9 prompts, another +1.7pt).
 Together they unlock multi-session aggregation that the OMEGA
 1700-line harness with MiniMax doesn't reach.
+
+## Variance reality check — 60q "headline 90%" was lucky-run
+
+After the 90% v9 headline, we measured at 120q balanced and ran the
+SAME prompts THREE times to characterise MiniMax temp=0 variance:
+
+| Run (120q balanced, MiniMax temp=0, identical prompts) | Overall | KU  | multi | SS-asst | SS-pref | SS-user | temporal |
+|---|---|---|---|---|---|---|---|
+| Run 1 | 83.3% | 95 | 65 | 100 | 70 | 90  | 80 |
+| Run 2 | 88.3% | 95 | 70 | 100 | 80 | 100 | 85 |
+| Run 3 | 80.8% | 95 | 60 | 100 | 60 | 95  | 75 |
+| **Mean** | **84.1%** | 95 | 65 | 100 | 70 | 95 | 80 |
+| Range | 7.5pt | 0 | ±5 | 0 | ±10 | ±5 | ±5 |
+
+**Findings**:
+1. **MiniMax temp=0 is NOT deterministic** — same prompts, same
+   questions: ±5pt overall, up to ±10pt per category. Reasoning
+   models sample from think-token paths even at temp=0.
+2. **Multi-session and SS-pref have the highest variance** (±5-10pt).
+   These categories require the most reasoning; small think-path
+   differences cascade into different final answers.
+3. **The 60q v9 90% headline was the lucky-end of the variance band.**
+   Same prompt at 120q averages 84.1%, range 80.8-88.3%. The
+   "+5pt over OMEGA" framing has to be downgraded to "parity
+   within noise".
+4. **Stable categories**: KU 95% / SS-asst 100% across all 3 runs.
+   These are pinpoint lookups; less reasoning surface = less
+   variance.
+
+**Implications for measurement methodology**:
+* Single-run measurements at n≤120q are unreliable for ±5pt deltas.
+* For prompt iteration: average ≥3 runs OR use n=500q (variance
+  scales as 1/√n, so 500q ≈ ±2pt).
+* The temp=0 illusion is dangerous — practitioners assume it
+  means deterministic; it doesn't for reasoning models.
+
+**Realistic wg vs OMEGA on the MiniMax stack** (both 60q, single
+run; OMEGA 120q running):
+* wg 60q v9 (lucky run): 90.0%
+* wg 120q v9 (3-run mean): **84.1%**
+* OMEGA + MiniMax 60q (single run): 85.0%
+* OMEGA + MiniMax 120q: pending (~30 more min)
+
+**Honest conclusion**: wg ≈ OMEGA on realistic-stack MiniMax,
+within the noise band. The architectural wins (level=session
+read-time rollup, hybrid prompt port) are real, but the
+"+5pt over OMEGA" claim was variance. Multi-session 50% ceiling
+DID break (40 → 65% mean), which is the load-bearing finding,
+not the headline overall number.
