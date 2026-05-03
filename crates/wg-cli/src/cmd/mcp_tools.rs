@@ -236,8 +236,65 @@ fn tool_search(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String>
         )
         .map_err(|e| e.to_string())?;
 
-    let results_json: Vec<Value> = results
-        .into_iter()
+    // Agent UX budget knobs (mirrors wg_query). format=text emits
+    // markdown bullets — ~4× smaller than JSON envelope. max_chars
+    // hard-caps; on overflow drops trailing hits (always keeps top
+    // match). preview_chars caps each hit's content in compact/text.
+    let format = args.get("format").and_then(|v| v.as_str()).unwrap_or("full");
+    let preview_chars = args
+        .get("preview_chars")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(200) as usize;
+    let max_chars = args.get("max_chars").and_then(|v| v.as_u64()).map(|n| n as usize);
+
+    if format == "text" {
+        let mut out = format!("# search: {}\n", query);
+        out.push_str(&format!("session: {}\n\n", session_id));
+        for r in &results {
+            let mut content = r.content.clone();
+            truncate_in_place(&mut content, preview_chars);
+            let id_short: String = r
+                .fact_id
+                .to_string()
+                .chars()
+                .rev()
+                .take(6)
+                .collect::<String>()
+                .chars()
+                .rev()
+                .collect();
+            let src = r.source.as_deref().unwrap_or("");
+            out.push_str(&format!(
+                "- ({:.2}{}{} …{}) {}\n",
+                r.score,
+                if src.is_empty() { "" } else { " " },
+                src,
+                id_short,
+                content
+            ));
+        }
+        if let Some(b) = max_chars
+            && out.len() > b
+        {
+            while out.len() > b.saturating_sub(20) && let Some(idx) = out.rfind('\n') {
+                out.truncate(idx);
+            }
+            out.push_str("\n… (truncated)\n");
+        }
+        return Ok(ToolCallResult {
+            content: vec![ContentBlock::text(out)],
+            is_error: None,
+        });
+    }
+
+    let mut results_for_json: Vec<wg_core::SearchResult> = results;
+    if format == "compact" {
+        for r in &mut results_for_json {
+            truncate_in_place(&mut r.content, preview_chars);
+        }
+    }
+    let results_json: Vec<Value> = results_for_json
+        .iter()
         .map(|r| {
             json!({
                 "fact_id": r.fact_id.to_string(),
@@ -248,10 +305,26 @@ fn tool_search(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String>
             })
         })
         .collect();
-    let payload = json!({
+    let mut payload = json!({
         "session_id": session_id,
         "results": results_json,
     });
+    if let Some(b) = max_chars {
+        let mut text = payload.to_string();
+        // Drop trailing hits until under budget; always keep at least 1.
+        while text.len() > b
+            && payload
+                .get("results")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len() > 1)
+                .unwrap_or(false)
+        {
+            if let Some(arr) = payload.get_mut("results").and_then(|v| v.as_array_mut()) {
+                arr.pop();
+            }
+            text = payload.to_string();
+        }
+    }
     Ok(ToolCallResult {
         content: vec![ContentBlock::text(payload.to_string())],
         is_error: None,
@@ -2062,7 +2135,10 @@ pub fn list_tools() -> Vec<Tool> {
                     "session_id": {
                         "type": "string",
                         "description": "Optional. Pin a session_id (e.g. group several queries under one logical session). If omitted, a fresh ULID is minted and returned alongside the results — feed it back into wg_feedback to record helpful/not-helpful signal that trains the ranking adapter."
-                    }
+                    },
+                    "format": {"type": "string", "enum": ["full", "compact", "text"], "default": "full", "description": "full = JSON results array. compact = JSON with each content truncated to preview_chars. text = markdown bullet list (~4× smaller, no JSON envelope, drops session_id from rendered output but the agent still gets it via the underlying record). Use text for prompt injection, full when piping to a downstream parser, compact for budget-sensitive JSON."},
+                    "preview_chars": {"type": "number", "default": 200, "description": "Per-hit content cap when format ∈ {compact, text}. Agent drills in via wg_fact_get for full content."},
+                    "max_chars": {"type": "number", "description": "Hard cap on serialized result size. Drops trailing hits until under budget; always keeps top match. Use to bound agent turn cost."}
                 },
                 "required": ["query"]
             }),
