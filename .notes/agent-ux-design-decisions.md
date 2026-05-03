@@ -616,6 +616,37 @@ Honest realistic-stack standing remains:
   * OMEGA + MiniMax (1700-line):                    79.2%
   * Layer 1 structured-hint (1 run):               85.0% (within noise)
 
+## Semantic-only retrieval (HNSW) — net negative on this bench
+
+Hypothesis: maybe BM25 false positives are what's hurting Layer 1's
+relevance filter. Switch to pure semantic retrieval (HNSW, via
+`bm25_weight=0 semantic_weight=1`) and see if cleaner top-K helps.
+
+| Setup (60q balanced, MiniMax temp=0)        | Overall | KU  | multi | SS-asst | SS-pref | SS-user | temporal |
+|---|---|---|---|---|---|---|---|
+| hybrid (Layer 1 unfiltered)                 | 85.0%   | 90  | 60    | 100 | 80    | 90      | 90       |
+| **semantic-only (HNSW, bm25_weight=0)**     | **81.7%** | 90  | **50** | 100 | 80   | **100** | **70**   |
+| Δ                                           | -3.3pt  | 0   | -10   | 0   | 0     | **+10** | **-20**  |
+
+**Per-category trade-offs**:
+* SS-user +10 — short user-utterance lookup benefits from pure
+  semantic match (no BM25 token noise)
+* temporal -20 — temporal questions reference specific dates
+  ('last Saturday', 'March 15') where BM25 exact keyword match
+  is exactly what's needed; semantic similarity dilutes
+* multi -10 — counting/aggregation depends on finding ALL
+  instances, BM25 catches keyword variants better
+
+**Verdict**: BM25 false-positives hypothesis was wrong. BM25
+contributes real signal, especially for date / counting / specific
+keyword retrieval. The hybrid (BM25 + semantic via RRF fusion) is
+the right baseline; pure semantic retrieval loses ground.
+
+This rules out 'just switch to HNSW' as a path forward.
+The retrieval layer is at the right balance — further lift has
+to come from reader-side or ingest-side changes (already
+exhausted with our model class).
+
 **Honest conclusion**: wg ≈ OMEGA on realistic-stack MiniMax,
 within the noise band. The architectural wins (level=session
 read-time rollup, hybrid prompt port) are real, but the
