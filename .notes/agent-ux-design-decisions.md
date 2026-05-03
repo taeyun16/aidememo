@@ -300,8 +300,9 @@ SAME prompts THREE times to characterise MiniMax temp=0 variance:
 | Run 1 | 83.3% | 95 | 65 | 100 | 70 | 90  | 80 |
 | Run 2 | 88.3% | 95 | 70 | 100 | 80 | 100 | 85 |
 | Run 3 | 80.8% | 95 | 60 | 100 | 60 | 95  | 75 |
-| **Mean** | **84.1%** | 95 | 65 | 100 | 70 | 95 | 80 |
-| Range | 7.5pt | 0 | ±5 | 0 | ±10 | ±5 | ±5 |
+| Run 4 | 83.3% | 90 | 50 | 100 | 85 | 95  | 80 |
+| **Mean (n=4)** | **83.9%** | 93.75 | 61.25 | 100 | 73.75 | 95 | 80 |
+| **Std**        | **±2.7** | ±2.2 | **±7.5** | 0 | **±9.5** | ±3.5 | ±3.5 |
 
 **Findings**:
 1. **MiniMax temp=0 is NOT deterministic** — same prompts, same
