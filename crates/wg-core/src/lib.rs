@@ -19,6 +19,7 @@ pub mod rerank;
 pub mod s3;
 pub mod search;
 pub mod store;
+pub mod time;
 pub mod types;
 #[cfg(feature = "semantic")]
 pub mod vector_index;

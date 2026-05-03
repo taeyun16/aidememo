@@ -199,10 +199,7 @@ pub struct EntityRecord {
 impl EntityRecord {
     /// Create a new entity record.
     pub fn new(name: String, entity_type: EntityType) -> Self {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64;
+        let now = crate::time::current_epoch_ms();
         let name_lower = name.to_lowercase();
         Self {
             id: EntityId::new(),
@@ -221,10 +218,7 @@ impl EntityRecord {
 
     /// Update the record with new data.
     pub fn update(&mut self, input: EntityUpdate) {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64;
+        let now = crate::time::current_epoch_ms();
         if let Some(name) = input.name {
             self.name = name.clone();
             self.name_lower = name.to_lowercase();
@@ -472,10 +466,7 @@ pub struct FactRecord {
 impl FactRecord {
     /// Create a new fact record.
     pub fn new(content: String, fact_type: FactType, entity_ids: Vec<EntityId>) -> Self {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64;
+        let now = crate::time::current_epoch_ms();
         Self {
             id: FactId::new(),
             content,
@@ -498,10 +489,7 @@ impl FactRecord {
 
     /// Update the fact with new data.
     pub fn update(&mut self, input: FactUpdate) {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64;
+        let now = crate::time::current_epoch_ms();
         if let Some(content) = input.content {
             self.content = content;
         }
@@ -531,10 +519,7 @@ impl FactRecord {
 
     /// Record an access.
     pub fn record_access(&mut self) {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64;
+        let now = crate::time::current_epoch_ms();
         self.access_count += 1;
         self.last_accessed_at = now;
     }

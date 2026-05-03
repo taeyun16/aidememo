@@ -645,10 +645,17 @@ mod semantic {
             .collect();
         drop(cache_view);
 
+        // Deterministic tiebreak: BM25 score → content lex → fact_id.
+        // The previous insertion-order tiebreak (a.0.cmp(&b.0)) depended
+        // on store traversal order, which in turn depended on ULID
+        // ordering — different across ingests of the same data, yielding
+        // bench-time nondeterminism. Falling back to content first keeps
+        // semantically-equivalent facts in a stable position.
         scored.sort_by(|a, b| {
             b.1.partial_cmp(&a.1)
                 .unwrap_or(Ordering::Equal)
-                .then_with(|| a.0.cmp(&b.0))
+                .then_with(|| facts[a.0].content.cmp(&facts[b.0].content))
+                .then_with(|| facts[a.0].id.0.cmp(&facts[b.0].id.0))
         });
 
         let mut results = Vec::with_capacity(scored.len());
@@ -962,6 +969,8 @@ mod semantic {
                 .partial_cmp(&a.weighted_score)
                 .unwrap_or(Ordering::Equal)
                 .then_with(|| a.result.rank.cmp(&b.result.rank))
+                .then_with(|| a.result.content.cmp(&b.result.content))
+                .then_with(|| a.result.fact_id.0.cmp(&b.result.fact_id.0))
         });
 
         let mut results = Vec::new();
@@ -978,10 +987,10 @@ mod semantic {
 
 #[cfg(feature = "semantic")]
 fn current_epoch_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
+    // Re-export of the shared helper so the rest of search.rs doesn't
+    // need to reach into the time module — and so the WG_NOW_MS pin
+    // applies uniformly across hybrid_search + ingest.
+    crate::time::current_epoch_ms()
 }
 
 // `embed_text` was an explicit fn re-export; embedding is now done

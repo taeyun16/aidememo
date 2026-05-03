@@ -320,10 +320,7 @@ impl Store {
                 key: "last_ingest_at".to_string(),
                 source: Box::new(e),
             })?;
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64;
+        let now = crate::time::current_epoch_ms();
         meta.insert("last_ingest_at", now.to_le_bytes().as_slice())
             .map_err(|e| WgError::StoreWrite {
                 table: "meta",
@@ -1676,10 +1673,7 @@ impl Store {
             relation_type: rel_type.clone(),
             weight,
             evidence: input.evidence.unwrap_or_default(),
-            created_at: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_millis() as u64,
+            created_at: crate::time::current_epoch_ms(),
         };
 
         let write_txn = self.begin_write()?;
