@@ -511,10 +511,18 @@ fn parse_llm_response(
                 &raw[..raw.len().min(200)]
             ))
         })?;
-    let payload: serde_json::Value = serde_json::from_str(content).map_err(|e| {
+    // Reasoning models (MiniMax / DeepSeek-R1 / Qwen-thinking) prefix the
+    // answer with a <think>…</think> block. Strip it so json parsing
+    // sees only the final JSON payload.
+    let content_stripped = if let Some(idx) = content.find("</think>") {
+        content[idx + "</think>".len()..].trim()
+    } else {
+        content.trim()
+    };
+    let payload: serde_json::Value = serde_json::from_str(content_stripped).map_err(|e| {
         crate::error::WgError::invalid_input(format!(
             "LLM extract content not valid JSON: {e}; content={}",
-            &content[..content.len().min(200)]
+            &content_stripped[..content_stripped.len().min(200)]
         ))
     })?;
     let arr = payload["facts"].as_array().cloned().unwrap_or_default();
