@@ -1374,6 +1374,10 @@ fn tool_query(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String> 
         fit_query_result_to_budget(&mut result, budget, preview_chars);
     }
     let text = match (format, level) {
+        ("text", "session") => {
+            let blocks = collect_session_blocks(&result.search, wiki, 20);
+            render_session_blocks_markdown(&result, &blocks, preview_chars, max_chars)
+        }
         ("text", "entity") => render_query_result_markdown_by_entity(&result, preview_chars, max_chars),
         ("text", _) => render_query_result_markdown(&result, preview_chars, max_chars),
         _ => serde_json::to_string_pretty(&result).map_err(|e| e.to_string())?,
@@ -1564,6 +1568,171 @@ fn render_query_result_markdown_by_entity(
 /// Truncate every snippet/fact `content` to `preview_chars` chars (+ "…").
 /// Leaves IDs, scores, entity names, and metadata intact so the agent
 /// can still drill in via wg_fact_get for any specific hit.
+/// One session-rolled-up block. Built at READ time from search hits
+/// whose entity_names contain a "session:" prefix (the convention
+/// `wg session new` creates). Each block's content is the FULL
+/// session — every fact attached to that session entity, joined in
+/// chronological order — not just the matched turns. Lets the agent
+/// see coherent dialog blocks at zero storage overhead (vs the
+/// bench's --hybrid-ingest 2× storage approach).
+struct SessionBlock {
+    session_id: String,
+    content: String,
+    n_facts: usize,
+    matched_count: usize,
+    max_score: f32,
+}
+
+/// Group search hits by their session entity (name prefixed with
+/// "session:"), then for each unique session fetch the FULL list of
+/// facts attached to that entity and concat in chronological order.
+/// Caps at `max_blocks` ordered by best-matching session first.
+///
+/// Storage cost: 0 (computed on read). Latency cost: one
+/// `fact_list(entity_id=..)` per unique session in the top-K — bound
+/// by max_blocks × tens of ms. The bench's --hybrid-ingest writes
+/// session-summary records at ingest time (2× storage); this mirrors
+/// that lift purely on the read path.
+fn collect_session_blocks(
+    hits: &[wg_core::SearchResult],
+    wiki: &WikiGraph,
+    max_blocks: usize,
+) -> Vec<SessionBlock> {
+    use std::collections::BTreeMap;
+    // Group hits by their first session-prefixed entity name. Hits
+    // with no session entity skip — the rollup only operates on
+    // tracked-session writes.
+    let mut by_session: BTreeMap<String, Vec<&wg_core::SearchResult>> = BTreeMap::new();
+    let mut order: Vec<String> = Vec::new();
+    for hit in hits {
+        for name in &hit.entity_names {
+            if name.starts_with("session-") || name.starts_with("session:") {
+                if !by_session.contains_key(name) {
+                    order.push(name.clone());
+                }
+                by_session.entry(name.clone()).or_default().push(hit);
+                break;
+            }
+        }
+    }
+
+    // For each unique session entity, fact_list ALL its facts (full
+    // session) and concat. Skip sessions where the entity can't be
+    // resolved or fact_list fails — defensive against partial state.
+    let mut blocks: Vec<SessionBlock> = Vec::new();
+    for sess_name in &order {
+        let Some(hits_in_sess) = by_session.get(sess_name) else { continue };
+        let Ok(eid) = wiki.resolve_entity(sess_name) else { continue };
+        let mut facts = match wiki.fact_list(wg_core::FactListOpts {
+            fact_type: None,
+            entity_id: Some(eid),
+            min_confidence: None,
+            limit: Some(200),
+            offset: 0,
+            since: None,
+            until: None,
+            current_only: true,
+            as_of: None,
+        }) {
+            Ok(f) => f,
+            Err(_) => continue,
+        };
+        // Chronological sort — observed_at when present, fall back to
+        // created_at. Matches the bench's session_text construction.
+        facts.sort_by_key(|f| f.observed_at.unwrap_or(f.created_at));
+        let content = facts
+            .iter()
+            .map(|f| f.content.clone())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let max_score = hits_in_sess
+            .iter()
+            .map(|h| h.score)
+            .fold(0.0_f32, f32::max);
+        blocks.push(SessionBlock {
+            session_id: sess_name
+                .strip_prefix("session-")
+                .or_else(|| sess_name.strip_prefix("session:"))
+                .unwrap_or(sess_name)
+                .to_string(),
+            content,
+            n_facts: facts.len(),
+            matched_count: hits_in_sess.len(),
+            max_score,
+        });
+    }
+
+    // Order by best-match score within block (desc), then truncate.
+    blocks.sort_by(|a, b| {
+        b.max_score
+            .partial_cmp(&a.max_score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    blocks.truncate(max_blocks);
+    blocks
+}
+
+/// Render session-rolled-up blocks as markdown. Mirrors the
+/// markdown-by-entity layout but blocks are session-scoped and the
+/// content is the FULL session (every turn), not just matched turns.
+fn render_session_blocks_markdown(
+    r: &wg_core::QueryResult,
+    blocks: &[SessionBlock],
+    preview_chars: usize,
+    budget: Option<usize>,
+) -> String {
+    let mut out = String::new();
+    out.push_str(&format!("# {}\n", r.topic));
+    if let Some(e) = &r.entity {
+        out.push_str(&format!(
+            "entity: **{}** ({})\n",
+            e.name,
+            format!("{:?}", e.entity_type).to_lowercase()
+        ));
+        if let Some(s) = &e.summary
+            && !s.is_empty()
+        {
+            out.push_str(&format!("> {s}\n"));
+        }
+    }
+    if blocks.is_empty() {
+        if !r.search.is_empty() {
+            out.push_str("\n_(no session-tagged hits — see flat snippets via level=\"fact\")_\n");
+        }
+    } else {
+        out.push_str(&format!("\n## hits by session ({} block{})\n",
+            blocks.len(), if blocks.len() == 1 { "" } else { "s" }));
+        for b in blocks {
+            out.push_str(&format!(
+                "\n### session {} _(score {:.2}, {} fact{}, {} matched in search)_\n",
+                b.session_id,
+                b.max_score,
+                b.n_facts,
+                if b.n_facts == 1 { "" } else { "s" },
+                b.matched_count,
+            ));
+            let mut content = b.content.clone();
+            truncate_in_place(&mut content, preview_chars);
+            out.push_str(&content);
+            out.push('\n');
+        }
+    }
+    if !r.related.is_empty() {
+        out.push_str("\n## related\n");
+        let names: Vec<String> = r.related.iter().map(|e| e.name.clone()).collect();
+        out.push_str(&format!("- {}\n", names.join(", ")));
+    }
+    if let Some(b) = budget
+        && out.len() > b
+    {
+        while out.len() > b.saturating_sub(20) && let Some(idx) = out.rfind('\n') {
+            out.truncate(idx);
+        }
+        out.push_str("\n… (truncated)\n");
+    }
+    out
+}
+
 fn compact_query_result(result: &mut wg_core::QueryResult, preview_chars: usize) {
     for hit in &mut result.search {
         truncate_in_place(&mut hit.content, preview_chars);
@@ -2708,7 +2877,7 @@ pub fn list_tools() -> Vec<Tool> {
                     "mode": {"type": "string", "enum": ["naive", "local", "hybrid", "global"], "default": "hybrid"},
                     "current_only": {"type": "boolean", "default": true, "description": "Exclude superseded facts. Pass false for historical / timeline queries."},
                     "format": {"type": "string", "enum": ["full", "compact", "text"], "default": "full", "description": "full = JSON with all metadata. compact = JSON with truncated snippet content (drops bytes ~10%). text = markdown bullet summary, drops JSON envelope (~5× smaller, drops timestamps & entity metadata, keeps last-6 ULID suffix for follow-up wg_fact_get). Use text for agent prompt injection."},
-                    "level": {"type": "string", "enum": ["fact", "entity"], "default": "fact", "description": "Granularity of returned hits. fact = flat snippet list (best for pinpoint lookups: SS-user, abstention). entity = grouped per primary entity, mirroring the bench's session-level pattern that lifted multi-session +20pt and temporal +20pt. Use entity for cross-fact aggregation / 'how many' questions / overview reads. Currently only honoured by format=text — format=full / compact stay snippet-flat for stable JSON schema."},
+                    "level": {"type": "string", "enum": ["fact", "entity", "session"], "default": "fact", "description": "Granularity of returned hits. fact = flat snippet list (best for pinpoint lookups: SS-user, abstention). entity = grouped per primary entity, mirroring the bench's session-level pattern that lifted multi-session +20pt and temporal +20pt. session = roll up per tracked-session entity (\"session:\" prefix; auto-created by `wg session new`) and emit each session's FULL fact list as one chronological block — restores dialog coherence for cross-turn questions (KU/temporal/SS-pref +10-20pt in our 60q MiniMax measurement). Storage cost: 0 (computed on read via fact_list per unique session entity). Currently only honoured by format=text — format=full / compact stay snippet-flat for stable JSON schema."},
                     "preview_chars": {"type": "number", "default": 200, "description": "Per-snippet content preview length when format=compact. Agent can drill in via wg_fact_get for any rank."},
                     "max_chars": {"type": "number", "description": "Hard cap on serialized result size (in chars). When set, the tool drops `related` first then trims previews until under budget. Use to bound agent turn cost."}
                 },

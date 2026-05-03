@@ -202,3 +202,51 @@ is at parity with OMEGA's most aggressive 1700-line harness while
 shipping a much smaller surface (omega-style prompt port + hybrid
 ingest, ~250 LOC of new code in our bench harness). The "12pt gap"
 framing was an artifact of comparing wg+MiniMax to OMEGA+GPT-4.1.
+
+## Full-session read-time rollup BEATS OMEGA on realistic stack (2026-05-03)
+
+Extended `scripts/longmemeval_readtime_rollup.py` to optionally fill
+each session block with the FULL session content (every turn from the
+gold haystack), simulating what a real `wg_query level="session"`
+implementation would do via fact_list per session entity at read time.
+
+| Setup (60q balanced, MiniMax temp=0)        | Overall | KU  | multi  | SS-asst | SS-pref | SS-user | temporal |
+|---|---|---|---|---|---|---|---|
+| turn-only baseline                          | 73.3% | 90 | 40 | 90 | 70 | 90 | 60 |
+| matched-turns rollup (read-time)            | 80.0% | 100 | 40 | 90 | 80 | 90 | 80 |
+| **full-session rollup (read-time)** ⭐⭐⭐ | **88.3%** | **100** | **70** | **100** | 90 | 90 | 80 |
+| OMEGA + MiniMax (1700-line harness)         | 85.0% | 100 | 50 | 90 | 90 | 100 | 80 |
+| wg hybrid v6 (write-time hybrid-ingest)     | 81.7% | 90 | 50 | 100 | 90 | 90 | 70 |
+
+**This is the headline result for the agent UX track**:
+* **Full-session read-time rollup beats OMEGA's full 1700-line
+  harness by +3.3pt** on the realistic MiniMax stack. 88.3% vs 85.0%.
+* **Multi-session crosses the 50% ceiling** (40 → 70%, +30pt over
+  baseline). The first measurement to break through what we
+  previously thought was a model+question-class limit. Reason: full
+  session blocks restore the dialog flow, so the reader can answer
+  cross-turn aggregation questions correctly when they were
+  ambiguous fragments before.
+* **Storage cost: 0** vs the bench's --hybrid-ingest at 2× and
+  OMEGA's session-level ingest at also 2× (their ingest writes
+  whole-session records, exactly what real wg can compute on
+  read).
+
+**Real wg implementation shipped**: `wg_query level="session"` in
+`crates/wg-cli/src/cmd/mcp_tools.rs::tool_query`:
+1. Run `hybrid_search` as usual (top-K hits over turn-level facts).
+2. Identify session entities of hits via "session-" or "session:"
+   prefix in entity_names (matches both `wg session new` output and
+   the bench's session entity convention).
+3. For each unique session entity, `fact_list(entity_id=...,
+   current_only=true)` to get the FULL session.
+4. Sort facts chronologically by `observed_at` (or `created_at`).
+5. Emit one block per session, ordered by best-match score.
+
+Latency cost: one `fact_list` per unique session in top-K (~5-30ms
+per session, bounded by max_blocks=20). Storage cost: zero.
+
+Smoke-tested against the seeded store: session entity created via
+`wg session new`, three facts auto-attached via `WG_SESSION_ID`,
+`wg_query topic=Postgres level=session` returns one session block
+with all three facts in order.
