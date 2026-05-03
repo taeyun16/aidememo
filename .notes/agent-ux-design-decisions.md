@@ -326,12 +326,26 @@ SAME prompts THREE times to characterise MiniMax temp=0 variance:
 * The temp=0 illusion is dangerous — practitioners assume it
   means deterministic; it doesn't for reasoning models.
 
-**Realistic wg vs OMEGA on the MiniMax stack** (both 60q, single
-run; OMEGA 120q running):
-* wg 60q v9 (lucky run): 90.0%
-* wg 120q v9 (3-run mean): **84.1%**
-* OMEGA + MiniMax 60q (single run): 85.0%
-* OMEGA + MiniMax 120q: pending (~30 more min)
+**Realistic wg vs OMEGA on the MiniMax stack** — final 120q apples-to-apples:
+
+| Setup (120q balanced)                    | Overall | KU  | multi | SS-asst | SS-pref | SS-user | temporal |
+|---|---|---|---|---|---|---|---|
+| **wg + level=session + v9 (4-run mean)** | **83.9%** | 93.75 | 61.25 | 100 | 73.75 | 95  | 80 |
+| **OMEGA + MiniMax (1700-line, 1 run)**   | **79.2%** | 90    | 55    | 95  | 80    | 80  | 75 |
+| **Δ wg − OMEGA**                         | **+4.7** | +3.75 | +6.25 | +5  | -6.25 | **+15** | +5 |
+
+wg wins 5 of 6 categories. Only loses SS-pref by 6.25pt (within wg's
+±9.5pt SS-pref variance — inside noise band). SS-user gap +15pt is
+striking and load-bearing.
+
+OMEGA is 1 run so its single-sample score also has ~±5pt variance.
+Even at the upper end of OMEGA's noise (~84%), wg's mean (83.9%) holds
+parity.
+
+To get OMEGA past its rate-limit crashes we patched its `_call_llm`
+with the same jittered backoff our harness uses. OMEGA's stock harness
+crashed twice during grading on the MiniMax tier without any retry
+logic — worth flagging upstream.
 
 **Honest conclusion**: wg ≈ OMEGA on realistic-stack MiniMax,
 within the noise band. The architectural wins (level=session
