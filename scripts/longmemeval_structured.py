@@ -56,14 +56,28 @@ from longmemeval_omega_style import (  # noqa: E402
 )
 
 
-def _aggregate_structured(retrievals: list) -> dict:
+def _aggregate_structured(retrievals: list, relevance_threshold: float = 0.0) -> dict:
     """Walk every retrieval's structured values and compute totals.
 
+    `relevance_threshold` filters out structured values from facts whose
+    semantic similarity to the question (computed by the bench at emit
+    time, stored in `relevance`) is below the threshold. Defaults to 0
+    (no filtering — backwards compat). Set to ~0.4 (median observed)
+    to drop off-topic facts that BM25 surfaced but are semantically
+    unrelated to the question — e.g., $400 currency mention in an
+    unrelated travel-quote fact bleeding into a "bike expenses" sum.
+
     Returns a dict with summary stats per kind. Empty if no structured
-    values are present.
+    values are present (or all filtered out).
     """
     by_kind = defaultdict(list)
     for hit in retrievals:
+        rel = hit.get("relevance")
+        # Skip when below threshold AND we have a relevance signal.
+        # Missing relevance (legacy retrievals from before the bench
+        # gained the field) passes through unfiltered.
+        if rel is not None and rel < relevance_threshold:
+            continue
         for v in hit.get("structured", []):
             by_kind[v["kind"]].append(v)
     out = {}
@@ -173,7 +187,11 @@ def _format_structured_hint(agg: dict) -> str:
     return "\n".join(lines)
 
 
-def _build_structured_prompt(question_data: dict, retrievals: list) -> tuple:
+def _build_structured_prompt(
+    question_data: dict,
+    retrievals: list,
+    relevance_threshold: float = 0.0,
+) -> tuple:
     """Build a reader prompt that prepends the structured-hints block
     before the standard category-aware prompt."""
     qtype = question_data["question_type"]
@@ -184,9 +202,11 @@ def _build_structured_prompt(question_data: dict, retrievals: list) -> tuple:
     # Filter retrievals exactly like the omega harness, then aggregate
     # ONLY over the filtered set (so off-topic facts don't pollute the
     # hint). This keeps hints aligned with what the reader sees.
+    # Relevance threshold further drops facts whose semantic
+    # similarity to the question is too low.
     retr_copy = [dict(r) for r in retrievals]
     filtered = _filter_and_sort(retr_copy, cfg)
-    agg = _aggregate_structured(filtered)
+    agg = _aggregate_structured(filtered, relevance_threshold=relevance_threshold)
     hint_block = _format_structured_hint(agg)
 
     # Build the rest exactly like the omega harness.
@@ -208,6 +228,15 @@ def main():
     ap.add_argument("--judge-base-url", default="https://api.minimax.io/v1")
     ap.add_argument("--judge-api-key-env", default="MINIMAX_API_KEY")
     ap.add_argument("--workers", type=int, default=16)
+    ap.add_argument(
+        "--relevance-threshold",
+        type=float,
+        default=0.0,
+        help="Filter structured values from facts whose question-similarity "
+        "is below this. 0 = no filter (default). Empirically observed "
+        "median ~0.37 on 60q balanced, p25 ~0.28 — try 0.4 to drop "
+        "off-topic facts.",
+    )
     args = ap.parse_args()
 
     reader_key = os.environ.get(args.reader_api_key_env, "")
@@ -243,7 +272,10 @@ def main():
             "question": row["question"],
             "question_date": row.get("question_date"),
         }
-        prompt, max_tokens, n_used = _build_structured_prompt(qdata, row.get("retrievals", []))
+        prompt, max_tokens, n_used = _build_structured_prompt(
+            qdata, row.get("retrievals", []),
+            relevance_threshold=args.relevance_threshold,
+        )
         try:
             resp = _call_openai(
                 reader_key, args.reader,

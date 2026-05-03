@@ -1300,8 +1300,23 @@ fn tool_aggregate(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, Stri
                 "groups": group_arr,
             })
         }
+        "sum_currency" | "sum_duration" | "count_distinct_dates" | "timeline" => {
+            // Layer-1 structured-extraction ops. Walk every matching
+            // fact's text through wg_core::extract_structured, then
+            // aggregate by the requested kind. Deterministic — no
+            // LLM call. Respects the `relevance` cosine threshold
+            // when set so off-topic facts that happen to match BM25
+            // don't pollute the sum.
+            let relevance_threshold: f32 = args
+                .get("relevance_threshold")
+                .and_then(|v| v.as_f64())
+                .map(|x| x as f32)
+                .unwrap_or(0.0);
+            structured_aggregate(op, query, &filtered, wiki, relevance_threshold)?
+        }
         _ => return Err(format!(
-            "invalid op '{op}': must be one of count, enumerate, by_entity"
+            "invalid op '{op}': must be one of count, enumerate, by_entity, \
+             sum_currency, sum_duration, count_distinct_dates, timeline"
         )),
     };
 
@@ -1310,6 +1325,175 @@ fn tool_aggregate(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, Stri
         content: vec![ContentBlock::text(text)],
         is_error: None,
     })
+}
+
+/// Walk each matched fact's text through Layer-1 structured extraction
+/// and aggregate the typed slots. Deterministic — no LLM call. The
+/// query embedding is computed once and re-used to score per-fact
+/// semantic relevance so the caller can drop off-topic facts that
+/// BM25 surfaced (e.g., a $400 hotel quote leaking into a "bike
+/// expenses" sum).
+fn structured_aggregate(
+    op: &str,
+    query: &str,
+    facts: &[&wg_core::SearchResult],
+    wiki: &WikiGraph,
+    relevance_threshold: f32,
+) -> Result<Value, String> {
+    use std::collections::BTreeSet;
+    use chrono::{DateTime, Utc};
+
+    // Embed the query once for relevance filtering. If embedding
+    // fails (semantic feature off) we fall through with everything
+    // included — caller can opt out by setting threshold=0.
+    #[cfg(feature = "semantic")]
+    let q_vec: Option<Vec<f32>> = wiki.embed(query).ok();
+    #[cfg(not(feature = "semantic"))]
+    let q_vec: Option<Vec<f32>> = None;
+
+    let mut currency_total: std::collections::BTreeMap<String, f64> =
+        std::collections::BTreeMap::new();
+    let mut currency_mentions: std::collections::BTreeMap<String, Vec<String>> =
+        std::collections::BTreeMap::new();
+    let mut duration_total_secs: f64 = 0.0;
+    let mut duration_mentions: Vec<String> = Vec::new();
+    let mut distinct_dates: BTreeSet<String> = BTreeSet::new();
+    let mut timeline: Vec<(i64, String, String)> = Vec::new(); // (epoch_ms, fact_id, raw)
+
+    let mut considered = 0;
+    let mut filtered_out = 0;
+    for hit in facts {
+        // Per-fact relevance filter via cosine similarity.
+        if let Some(q) = &q_vec {
+            #[cfg(feature = "semantic")]
+            let rel = wiki
+                .embed(&hit.content)
+                .ok()
+                .map(|f| WikiGraph::cosine_similarity(q, &f))
+                .unwrap_or(1.0);
+            #[cfg(not(feature = "semantic"))]
+            let rel = 1.0_f32;
+            if rel < relevance_threshold {
+                filtered_out += 1;
+                continue;
+            }
+        }
+        considered += 1;
+        // Anchor relative dates ("yesterday") on this fact's
+        // observed_at if present.
+        let anchor = hit.observed_at.and_then(|ms| {
+            DateTime::<Utc>::from_timestamp_millis(ms as i64)
+        });
+        for v in wg_core::extract_structured::extract(&hit.content, anchor) {
+            match v.kind {
+                wg_core::extract_structured::ValueKind::Currency => {
+                    let divisor = if matches!(v.unit.as_str(), "KRW" | "JPY") {
+                        1.0
+                    } else {
+                        100.0
+                    };
+                    *currency_total.entry(v.unit.clone()).or_insert(0.0) += v.value / divisor;
+                    currency_mentions
+                        .entry(v.unit.clone())
+                        .or_default()
+                        .push(v.raw.clone());
+                }
+                wg_core::extract_structured::ValueKind::Duration => {
+                    duration_total_secs += v.value;
+                    duration_mentions.push(v.raw.clone());
+                }
+                wg_core::extract_structured::ValueKind::EventDate => {
+                    let d = DateTime::<Utc>::from_timestamp_millis(v.value as i64)
+                        .map(|dt| dt.date_naive().to_string())
+                        .unwrap_or_default();
+                    if !d.is_empty() {
+                        distinct_dates.insert(d);
+                        timeline.push((v.value as i64, hit.fact_id.to_string(), v.raw.clone()));
+                    }
+                }
+                wg_core::extract_structured::ValueKind::Count => {
+                    // Counts aren't summed by these ops — caller asks
+                    // for op="count" / "enumerate" if they want raw
+                    // count semantics.
+                }
+            }
+        }
+    }
+    let payload = match op {
+        "sum_currency" => {
+            let totals: Vec<Value> = currency_total
+                .iter()
+                .map(|(unit, total)| {
+                    let mentions = currency_mentions.get(unit).cloned().unwrap_or_default();
+                    let preview: Vec<String> = mentions.iter().take(20).cloned().collect();
+                    json!({
+                        "unit": unit,
+                        "total": total,
+                        "mentions": mentions.len(),
+                        "samples": preview,
+                    })
+                })
+                .collect();
+            json!({
+                "op": "sum_currency",
+                "query": query,
+                "facts_considered": considered,
+                "facts_filtered_out": filtered_out,
+                "by_unit": totals,
+            })
+        }
+        "sum_duration" => {
+            json!({
+                "op": "sum_duration",
+                "query": query,
+                "facts_considered": considered,
+                "facts_filtered_out": filtered_out,
+                "total_seconds": duration_total_secs,
+                "total_minutes": duration_total_secs / 60.0,
+                "total_hours": duration_total_secs / 3600.0,
+                "total_days": duration_total_secs / 86400.0,
+                "total_weeks": duration_total_secs / (86400.0 * 7.0),
+                "mentions": duration_mentions.len(),
+                "samples": duration_mentions.iter().take(20).cloned().collect::<Vec<_>>(),
+            })
+        }
+        "count_distinct_dates" => {
+            let dates: Vec<String> = distinct_dates.iter().cloned().collect();
+            json!({
+                "op": "count_distinct_dates",
+                "query": query,
+                "facts_considered": considered,
+                "facts_filtered_out": filtered_out,
+                "distinct_count": dates.len(),
+                "dates": dates,
+            })
+        }
+        "timeline" => {
+            timeline.sort_by_key(|t| t.0);
+            let entries: Vec<Value> = timeline
+                .iter()
+                .map(|(ms, fid, raw)| {
+                    let dt = DateTime::<Utc>::from_timestamp_millis(*ms)
+                        .map(|d| d.to_rfc3339())
+                        .unwrap_or_default();
+                    json!({
+                        "date": dt,
+                        "fact_id": fid,
+                        "raw": raw,
+                    })
+                })
+                .collect();
+            json!({
+                "op": "timeline",
+                "query": query,
+                "facts_considered": considered,
+                "facts_filtered_out": filtered_out,
+                "events": entries,
+            })
+        }
+        _ => unreachable!("op pre-validated by caller"),
+    };
+    Ok(payload)
 }
 
 fn tool_query(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String> {
@@ -2776,18 +2960,19 @@ pub fn list_tools() -> Vec<Tool> {
         },
         Tool {
             name: "wg_aggregate".into(),
-            description: "Deterministic counting / enumeration on top of hybrid search. count returns N facts matching the query (after fact_type filter); enumerate returns the deduped item list with id + content preview; by_entity groups hits by primary entity with per-group count + fact_type set + max_score. Filters: fact_type, entity, since, current_only.\n\nIMPORTANT — what this counts: each result row is a STORED FACT (one wg_fact_add). count = number of facts matching the BM25/semantic query. This is the right primitive for 'how many decisions did I make about X' (each decision is a fact). It is the WRONG primitive for 'how many distinct Y did I mention' / 'how many people did I meet' / 'sum dollar values mentioned' — those need semantic dedup of items WITHIN facts, which the agent must still do downstream. Verified empirically on LongMemEval multi-session 10q: feeding matched_count to the reader gave -40pt vs raw retrieval. Use the right primitive for the right question shape.".into(),
+            description: "Deterministic aggregation primitives on top of hybrid search. Pulls the agent out of the synthesis loop for 'how much / how many / between when' questions — instead of scanning snippets and miscounting (the multi-session failure mode our LongMemEval bench surfaced), this tool walks matching facts and returns a structured count / sum / timeline the agent reads directly.\n\n**Fact-level ops** (each result row = one STORED FACT):\n  * count — N facts matching the query\n  * enumerate — deduped item list (id + content preview)\n  * by_entity — grouped by primary entity with per-group count + fact_types + max_score\n\n**Value-level ops** (Layer-1 structured extraction; walks fact text via wg_core::extract_structured to pull typed slots — currency / duration / event_date — without any LLM call):\n  * sum_currency — sum of dollar/won/etc values across matching facts, broken down by ISO unit\n  * sum_duration — sum of durations in seconds + minutes/hours/days/weeks\n  * count_distinct_dates — count of unique dates referenced across matching facts\n  * timeline — chronological list of dated events with fact_id back-reference\n\nValue-level ops accept an optional relevance_threshold (cosine similarity 0..1) that filters facts whose semantic similarity to the query is below the threshold — drops off-topic facts BM25 surfaced (e.g., a $400 hotel quote leaking into a 'bike expenses' sum). Empirically: 0 = no filter, 0.4 ≈ p50 on LongMemEval data; threshold tuning trades coverage vs noise.\n\nIMPORTANT — what each op counts: count is fact rows, sum_currency is sum-of-dollar-values-mentioned-in-any-matching-fact. They answer different question shapes — pick the right primitive.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "Hybrid search query (BM25 + semantic). Use the natural-language form of the question — the tool widens K internally."},
-                    "op": {"type": "string", "enum": ["count", "enumerate", "by_entity"], "default": "count", "description": "count = matched count + facts_considered. enumerate = deduped item list (id + content preview). by_entity = grouped by primary entity with per-group count + fact_types + max_score."},
+                    "op": {"type": "string", "enum": ["count", "enumerate", "by_entity", "sum_currency", "sum_duration", "count_distinct_dates", "timeline"], "default": "count", "description": "Fact-level: count / enumerate / by_entity. Value-level (Layer-1 structured extraction): sum_currency / sum_duration / count_distinct_dates / timeline."},
                     "fact_type": {"type": "string", "enum": ["decision", "pattern", "convention", "claim", "note", "question", "preference", "lesson", "error"], "description": "Optional post-hoc filter on fact_type. Search runs wide; this narrows the count."},
                     "entity": {"type": "string", "description": "Optional entity scope — restrict to facts attached to this entity."},
                     "since": {"type": ["string", "number"], "description": "Lower bound on observed_at. ISO date / RFC3339 / epoch ms / duration DSL (30d, 4w)."},
                     "current_only": {"type": "boolean", "default": true, "description": "Exclude superseded facts."},
                     "limit": {"type": "number", "default": 50, "description": "Top-K to consider before fact_type filter. Larger → more recall, slower."},
-                    "preview_chars": {"type": "number", "default": 120, "description": "Per-item content preview length when op=enumerate."}
+                    "preview_chars": {"type": "number", "default": 120, "description": "Per-item content preview length when op=enumerate."},
+                    "relevance_threshold": {"type": "number", "default": 0.0, "description": "For value-level ops only. Cosine similarity 0..1; facts below the threshold are dropped before structured extraction. 0 = no filter (default). 0.4 ≈ p50 on LongMemEval data — drops half the off-topic facts."}
                 },
                 "required": ["query"]
             }),

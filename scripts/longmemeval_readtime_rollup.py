@@ -106,8 +106,12 @@ def rollup_to_sessions(
         # sub-queries; we accept duplicates here — the aggregation
         # layer is responsible for deduping.
         merged_structured = []
+        max_relevance = None
         for t in bucket["turns"]:
             merged_structured.extend(t.get("structured", []))
+            r = t.get("relevance")
+            if r is not None and (max_relevance is None or r > max_relevance):
+                max_relevance = r
         blocks.append({
             "rank": 0,  # set below
             "fact_id": sample["fact_id"],
@@ -118,6 +122,11 @@ def rollup_to_sessions(
             "referenced_date": bucket["earliest_date"],
             "n_turns_in_block": len(bucket["turns"]),
             "structured": merged_structured,
+            # Block-level relevance = max of contributing turns. If any
+            # turn in the session is on-topic, the whole session block
+            # passes the relevance filter — conservative side, matches
+            # how readers think about session relevance.
+            "relevance": max_relevance,
         })
 
     # Order blocks by max-score desc (best matching session first).

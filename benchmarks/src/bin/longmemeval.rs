@@ -715,6 +715,53 @@ struct RetrievalRecord {
     /// resolution.
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     structured: Vec<wg_core::extract_structured::StructuredValue>,
+    /// Cosine similarity (0.0..1.0) between the question's embedding
+    /// and this fact's content embedding, computed via the same
+    /// model wg uses for hybrid_search. Lets the Python aggregation
+    /// layer filter structured values by per-fact semantic
+    /// relevance — solves the "non-bike $40 leaks into bike-expense
+    /// sum" failure mode where BM25 surfaces topically similar but
+    /// off-target facts.
+    ///
+    /// Skipped when the `semantic` feature is off or the embedder
+    /// fails to load. Cheap to compute when hybrid_search already
+    /// loaded the model (one extra `embed(text)` per top-K hit, ~1ms
+    /// each with model2vec).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    relevance: Option<f32>,
+}
+
+/// Compute cosine similarity between the question's embedding and a
+/// fact's content embedding. Caches the question embedding via
+/// thread-local since `evaluate` calls this per top-K hit. Returns
+/// None when the embedder fails to load (no semantic feature, or
+/// model file missing) — the field then serialises as null and the
+/// Python harness falls back to BM25 score.
+fn relevance_score(wiki: &WikiGraph, question: &str, fact_content: &str) -> Option<f32> {
+    use std::cell::RefCell;
+    thread_local! {
+        // (question_text, embedding) — invalidates when question
+        // changes. Per-thread because rayon's session-extract loop
+        // can run concurrently; embedder is internally Sync.
+        static Q_EMBED: RefCell<Option<(String, Vec<f32>)>> = const { RefCell::new(None) };
+    }
+    let q_vec = Q_EMBED.with(|cell| -> Option<Vec<f32>> {
+        let mut slot = cell.borrow_mut();
+        if let Some((cached_q, vec)) = slot.as_ref() {
+            if cached_q == question {
+                return Some(vec.clone());
+            }
+        }
+        match wiki.embed(question) {
+            Ok(v) => {
+                *slot = Some((question.to_string(), v.clone()));
+                Some(v)
+            }
+            Err(_) => None,
+        }
+    })?;
+    let f_vec = wiki.embed(fact_content).ok()?;
+    Some(WikiGraph::cosine_similarity(&q_vec, &f_vec))
 }
 
 fn evaluate(
@@ -839,6 +886,13 @@ fn evaluate(
             });
             let structured =
                 wg_core::extract_structured::extract(&fact.content, anchor_dt);
+            // Per-fact semantic relevance to the QUESTION (not the
+            // search query — sometimes they differ when query was
+            // expanded). Same embedder hybrid_search uses; the
+            // model is already loaded, so each call is ~1ms with
+            // model2vec. Lets the downstream Python harness filter
+            // structured aggregations to only on-topic facts.
+            let relevance = relevance_score(wiki, &q.question, &fact.content);
             records.push(RetrievalRecord {
                 rank,
                 fact_id: hit.fact_id.to_string(),
@@ -848,6 +902,7 @@ fn evaluate(
                 source: fact.source,
                 referenced_date: fact.observed_at,
                 structured,
+                relevance,
             });
         }
         if is_evidence && hit_rank.is_none() {

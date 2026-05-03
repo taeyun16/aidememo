@@ -192,6 +192,39 @@ impl WikiGraph {
         self.store_path.with_extension("hnsw.bin")
     }
 
+    /// Embed an arbitrary string via the configured provider.
+    /// Public surface so callers (e.g. the bench harness) can use the
+    /// same model wg uses for hybrid search to score per-fact relevance
+    /// against a query — no need to instantiate their own embedder.
+    /// Returns an error if `semantic` feature is off or the provider
+    /// fails to load.
+    #[cfg(feature = "semantic")]
+    pub fn embed(&self, text: &str) -> Result<Vec<f32>> {
+        let provider = self.embed_provider()?;
+        provider.embed(text)
+    }
+
+    /// Cosine similarity between two equal-length embedding vectors.
+    /// Returns 0 when either vector has zero norm. Pure-Rust scalar
+    /// loop — kept here so bench / tooling can stay dependency-free.
+    pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+        if a.len() != b.len() || a.is_empty() {
+            return 0.0;
+        }
+        let mut dot = 0.0_f32;
+        let mut na = 0.0_f32;
+        let mut nb = 0.0_f32;
+        for i in 0..a.len() {
+            dot += a[i] * b[i];
+            na += a[i] * a[i];
+            nb += b[i] * b[i];
+        }
+        if na == 0.0 || nb == 0.0 {
+            return 0.0;
+        }
+        dot / (na.sqrt() * nb.sqrt())
+    }
+
     /// Get-or-load-or-build the HNSW index. Three paths:
     ///   1. already loaded → return Arc clone
     ///   2. sidecar exists + model matches → load from disk
