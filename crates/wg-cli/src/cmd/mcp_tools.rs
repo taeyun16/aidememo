@@ -1622,11 +1622,182 @@ fn tool_context(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String
     if let Some(t) = topic_section {
         payload.insert("topic".into(), t);
     }
+
+    // Agent UX: format=text emits a sectioned markdown summary much
+    // smaller than the JSON envelope. max_chars hard-caps text output
+    // by trimming sections back-to-front (topic > recent >
+    // personalisation > pinned). For format=full / compact the JSON
+    // schema stays as-is; downstream parsers don't break.
+    let format = args.get("format").and_then(|v| v.as_str()).unwrap_or("full");
+    let preview_chars = args
+        .get("preview_chars")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(160) as usize;
+    let max_chars = args.get("max_chars").and_then(|v| v.as_u64()).map(|n| n as usize);
+
+    if format == "text" {
+        let text = render_context_markdown(&payload, topic, preview_chars, max_chars);
+        return Ok(ToolCallResult {
+            content: vec![ContentBlock::text(text)],
+            is_error: None,
+        });
+    }
+
     let text = serde_json::to_string(&Value::Object(payload)).map_err(|e| e.to_string())?;
     Ok(ToolCallResult {
         content: vec![ContentBlock::text(text)],
         is_error: None,
     })
+}
+
+fn render_context_markdown(
+    payload: &serde_json::Map<String, Value>,
+    topic: Option<&str>,
+    preview_chars: usize,
+    budget: Option<usize>,
+) -> String {
+    fn fact_line(f: &Value, preview: usize) -> String {
+        let id = f
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let id_short: String = id
+            .chars()
+            .rev()
+            .take(6)
+            .collect::<String>()
+            .chars()
+            .rev()
+            .collect();
+        // slim_fact_record uses "type" / "entities" — keep render in
+        // sync with that schema.
+        let ftype = f
+            .get("type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let mut content = f
+            .get("content")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        truncate_in_place(&mut content, preview);
+        let entities = f
+            .get("entities")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|x| x.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            })
+            .unwrap_or_default();
+        let ent_tag = if entities.is_empty() {
+            String::new()
+        } else {
+            format!(" _[{}]_", entities)
+        };
+        format!("- ({} …{}) {}{}", ftype, id_short, content, ent_tag)
+    }
+
+    let mut out = String::new();
+    let header = if let Some(t) = topic {
+        format!("# context · topic: {}\n", t)
+    } else {
+        "# context\n".to_string()
+    };
+    out.push_str(&header);
+
+    if let Some(arr) = payload.get("pinned").and_then(|v| v.as_array())
+        && !arr.is_empty()
+    {
+        out.push_str(&format!("\n## pinned ({})\n", arr.len()));
+        for f in arr {
+            out.push_str(&fact_line(f, preview_chars));
+            out.push('\n');
+        }
+    }
+    if let Some(arr) = payload.get("personalisation").and_then(|v| v.as_array())
+        && !arr.is_empty()
+    {
+        out.push_str(&format!("\n## personalisation ({})\n", arr.len()));
+        for f in arr {
+            out.push_str(&fact_line(f, preview_chars));
+            out.push('\n');
+        }
+    }
+    if let Some(arr) = payload.get("recent").and_then(|v| v.as_array())
+        && !arr.is_empty()
+    {
+        out.push_str(&format!("\n## recent ({})\n", arr.len()));
+        for f in arr {
+            out.push_str(&fact_line(f, preview_chars));
+            out.push('\n');
+        }
+    }
+    if let Some(topic_section) = payload.get("topic").and_then(|v| v.as_object()) {
+        let t = topic_section
+            .get("topic")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        out.push_str(&format!("\n## topic: {}\n", t));
+        if let Some(qres) = topic_section.get("query_result")
+            && let Some(arr) = qres.get("search").and_then(|v| v.as_array())
+            && !arr.is_empty()
+        {
+            out.push_str(&format!("### hits ({})\n", arr.len()));
+            for hit in arr {
+                let mut content = hit
+                    .get("content")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                truncate_in_place(&mut content, preview_chars);
+                let id_short: String = hit
+                    .get("fact_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .chars()
+                    .rev()
+                    .take(6)
+                    .collect::<String>()
+                    .chars()
+                    .rev()
+                    .collect();
+                let score = hit.get("score").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                let ftype = hit
+                    .get("fact_type")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                out.push_str(&format!("- ({:.2} {} …{}) {}\n", score, ftype, id_short, content));
+            }
+        }
+        for (key, header) in [
+            ("topic_lessons", "### lessons"),
+            ("topic_errors", "### errors"),
+        ] {
+            if let Some(arr) = topic_section.get(key).and_then(|v| v.as_array())
+                && !arr.is_empty()
+            {
+                out.push_str(&format!("{} ({})\n", header, arr.len()));
+                for f in arr {
+                    out.push_str(&fact_line(f, preview_chars));
+                    out.push('\n');
+                }
+            }
+        }
+    }
+
+    if let Some(b) = budget
+        && out.len() > b
+    {
+        // Trim from tail — topic_section last, then recent,
+        // personalisation, pinned. Just chop suffix lines.
+        while out.len() > b.saturating_sub(20) && let Some(idx) = out.rfind('\n') {
+            out.truncate(idx);
+        }
+        out.push_str("\n… (truncated)\n");
+    }
+    out
 }
 
 fn tool_entity_describe(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String> {
@@ -2345,7 +2516,10 @@ pub fn list_tools() -> Vec<Tool> {
                     "pinned_limit": {"type": "number", "default": 10},
                     "recent_limit": {"type": "number", "default": 10},
                     "recent_days": {"type": "number", "default": 7},
-                    "depth": {"type": "number", "default": 2, "description": "Traverse depth if topic resolves to an entity"}
+                    "depth": {"type": "number", "default": 2, "description": "Traverse depth if topic resolves to an entity"},
+                    "format": {"type": "string", "enum": ["full", "text"], "default": "full", "description": "full = JSON envelope (4 sections, full metadata). text = sectioned markdown summary (~3-4× smaller, drops timestamps + entity metadata, keeps last-6 ULID for follow-up wg_fact_get). Use text for opening-turn prompt injection, full for downstream parsing."},
+                    "preview_chars": {"type": "number", "default": 160, "description": "Per-fact content cap when format=text."},
+                    "max_chars": {"type": "number", "description": "Hard cap on text output. When set, trims sections back-to-front (topic > recent > personalisation > pinned). Only honoured for format=text."}
                 }
             }),
         },
