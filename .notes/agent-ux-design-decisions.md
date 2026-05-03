@@ -347,6 +347,48 @@ with the same jittered backoff our harness uses. OMEGA's stock harness
 crashed twice during grading on the MiniMax tier without any retry
 logic — worth flagging upstream.
 
+## Self-consistency 3-vote experiment — net negative for variance recovery
+
+The 4-run analysis showed 16 questions in a variance band (1-3/4 fails).
+Hypothesis: self-consistency voting could turn coin-flips into wins.
+Theoretical lift if all 16 recover: ~13pt.
+
+Three implementations tested (`scripts/longmemeval_self_consistency.py`):
+
+| Variant | Synthesis sees | Synthesis max_tok | Score | vs 4-run mean |
+|---|---|---|---|---|
+| v1 (blind synthesis) | candidates only | 1024 | 77.5% | -6.4pt |
+| v2 (snippet-aware)   | candidates + truncated snippets | 1024 | 36.7% | -47pt (bug: empty hyps) |
+| v3 (max_tok fix)     | candidates + truncated snippets | 4096 + fallback | 78.3% | -5.6pt |
+
+**All three regress, none recover variance**. Per-category v3 vs mean:
+* KU +1.25, temporal 0, SS-asst 0 — stable categories unaffected
+* multi -6.25 — synthesis picks wrong candidate
+* **SS-pref -13.75** — temp=0.5 diversity diverges, synthesis can't tell
+  which is the user's actual preference
+* **SS-user -15** — synthesis with snippet context confuses single-
+  fact lookups (overthinks)
+
+**Why self-consistency failed for our setup**:
+* MiniMax temp=0.5 produces too much VOCABULARY diversity but not enough
+  REASONING diversity. The variance comes from reasoning paths, not
+  from vocabulary, so vote temperature doesn't sample the right axis.
+* Synthesis call doesn't have ground-truth verification ability. It
+  picks consensus by majority, which on single-fact questions
+  amplifies the model's prior bias.
+* The variance-band questions (1-3/4 fails) are structurally
+  ambiguous — voting can't fix that.
+
+**Conclusion**: 4-run mean 83.9% IS the true wg score on this stack.
+The 7 structural 4/4-fail questions cap the theoretical ceiling at
+94.2%. To reach that ceiling needs:
+  * Different model class (gpt-4.1, Claude Opus 4.7)
+  * Multi-hop retrieval / DSPy-style decomposition
+  * Structured fact extraction at ingest
+  
+Self-consistency on reader output is NOT the right lever for
+reasoning-model variance.
+
 **Honest conclusion**: wg ≈ OMEGA on realistic-stack MiniMax,
 within the noise band. The architectural wins (level=session
 read-time rollup, hybrid prompt port) are real, but the
