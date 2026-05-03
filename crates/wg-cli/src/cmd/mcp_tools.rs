@@ -2459,7 +2459,7 @@ pub fn list_tools() -> Vec<Tool> {
         },
         Tool {
             name: "wg_lint".into(),
-            description: "Raw lint issues — orphan entities, duplicate facts, stale facts, broken refs. Returns the array directly. For a friendly health summary that wraps these issues with stats, prefer wg_doctor."
+            description: "[DEPRECATED — prefer wg_doctor] Raw lint issues — orphan entities, duplicate facts, stale facts, broken refs. wg_doctor returns a strict superset: same `issues` array plus stats + per-code grouping with action hints. Kept for backwards compatibility; new agents should call wg_doctor and read .issues from its response."
                 .into(),
             input_schema: json!({"type": "object", "properties": {}}),
         },
