@@ -253,18 +253,6 @@ NEVER respond with "I don't have access to" / "I don't know your specific X" / \
 LOOK UP a specific hotel/event/paper — they are asking you to RECOMMEND one BASED \
 ON their preferences from the notes. Skip the disclaimer entirely.
 
-CRITICAL — COVERAGE STEP (required for recommendation questions):
-BEFORE composing your recommendation, scan EVERY note and write down EVERY explicit \
-preference, taste, habit, past experience, niche interest, or favourite the user \
-has stated — especially niche / narrow ones (genre preferences, specific platforms, \
-specific store brands, specific organising tools they own, specific medical \
-specialties, specific past activities). Then check: does the question's topic match \
-ANY of these niche preferences DIRECTLY? If yes, the recommendation MUST honour \
-that niche preference exactly. Example: question "recommend a show to watch \
-tonight" + user mentioned "loving stand-up comedy specials on Netflix" anywhere → \
-recommend a stand-up special, NOT a cooking show because cooking is mentioned more \
-often. Niche match beats topic frequency.
-
 Important:
 - Focus on what the user explicitly said about their preferences, likes, dislikes, \
 habits, routines, and personal details.
