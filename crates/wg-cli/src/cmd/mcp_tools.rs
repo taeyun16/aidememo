@@ -2655,6 +2655,63 @@ pub fn list_tools() -> Vec<Tool> {
     ]
 }
 
+/// Heuristic-classify a tool error string into a stable category so
+/// the agent can decide retry vs fix-input vs give-up without
+/// reading the message. Tool functions still return Result<_, String>;
+/// classification happens at the dispatcher layer to avoid touching
+/// every tool's signature. Future migration can return a typed
+/// ToolError directly and skip this step.
+///
+/// Categories (stable wire contract for agents):
+/// * `invalid_input` — required parameter missing, bad enum, malformed
+///                     input. Agent must fix the call.
+/// * `not_found`     — referenced entity / fact / session does not
+///                     exist. Agent should query first or accept the
+///                     absence — retry won't help.
+/// * `conflict`      — atomic supersede / dedup mismatch. Agent should
+///                     resolve via wg_fact_supersede / wg_fact_edit.
+/// * `unknown_tool`  — tool name typo. Agent should re-list tools.
+/// * `internal`      — fallback. Agent may retry once; persistent
+///                     internal errors mean a bug worth reporting.
+fn classify_error(msg: &str) -> &'static str {
+    let lower = msg.to_lowercase();
+    if lower.starts_with("unknown tool:") || lower.starts_with("unknown mode:") {
+        return "unknown_tool";
+    }
+    if lower.contains(" required")
+        || lower.contains("missing field")
+        || lower.contains("invalid params")
+        || lower.starts_with("invalid ")
+        || lower.contains("must be ")
+    {
+        return "invalid_input";
+    }
+    if lower.contains("not found")
+        || lower.contains("does not exist")
+        || lower.contains("no such")
+    {
+        return "not_found";
+    }
+    if lower.contains("already exists")
+        || lower.contains("conflict")
+        || lower.contains("superseded")
+        || lower.contains("duplicate")
+    {
+        return "conflict";
+    }
+    "internal"
+}
+
+fn format_tool_error(tool: &str, msg: &str) -> String {
+    let kind = classify_error(msg);
+    serde_json::to_string(&json!({
+        "error_kind": kind,
+        "tool": tool,
+        "message": msg,
+    }))
+    .unwrap_or_else(|_| msg.to_string())
+}
+
 fn call_tool(name: &str, args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String> {
     match name {
         "wg_search" => tool_search(args, wiki),
@@ -2733,7 +2790,7 @@ pub fn dispatch(req: JsonRpcRequest, wiki: &WikiGraph) -> Option<JsonRpcResponse
                 Err(e) => Some(JsonRpcResponse::success(
                     id,
                     serde_json::to_value(ToolCallResult {
-                        content: vec![ContentBlock::text(e)],
+                        content: vec![ContentBlock::text(format_tool_error(&args.name, &e))],
                         is_error: Some(true),
                     })
                     .unwrap_or_else(|_| json!({})),
