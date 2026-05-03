@@ -186,6 +186,25 @@ struct Args {
     /// gold-evidence content entirely; pair with a higher-quality
     /// `--llm-extract-model` (gpt-4.1, Claude Opus) when using.
     llm_extract_replace: bool,
+    /// OMEGA-style session-level ingest: concatenate every turn in a
+    /// session into a single fact ("user: ...\nassistant: ...\n…")
+    /// instead of one fact per turn. Mirrors OMEGA's
+    /// `store.store(content=format_session_text(turns))` exactly. Each
+    /// fact carries `observed_at = haystack_date` so chronological
+    /// sort + recency boost work session-level. Drastically reduces
+    /// fact count (~40 per question instead of ~1500) and lets the
+    /// adaptive max_res cap surface whole sessions, not turn fragments.
+    session_level_ingest: bool,
+    /// Hybrid ingest: store BOTH turn-level facts AND session-level
+    /// facts side-by-side. The reader retrieves from a unified pool;
+    /// per-question the adaptive filter picks whatever ranks best —
+    /// turn-level for position-sensitive carries (SS-pref / SS-user /
+    /// temporal), session-level for cross-snippet aggregation
+    /// (KU / multi-session / SS-asst). Trades off store size for
+    /// granularity choice. Mutually exclusive with
+    /// `--session-level-ingest` (this flag implies session-level
+    /// inclusion).
+    hybrid_ingest: bool,
 }
 
 /// Parse "2023/02/01 (Wed) 10:20" → epoch ms. Returns None on any
@@ -238,6 +257,8 @@ fn parse_args() -> Args {
     let mut llm_extract_model: Option<String> = None;
     let mut llm_extract_replace = false;
     let mut balanced_sample: Option<usize> = None;
+    let mut session_level_ingest = false;
+    let mut hybrid_ingest = false;
 
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
@@ -319,6 +340,14 @@ fn parse_args() -> Args {
                 balanced_sample = argv[i + 1].parse().ok();
                 i += 2;
             }
+            "--session-level-ingest" => {
+                session_level_ingest = true;
+                i += 1;
+            }
+            "--hybrid-ingest" => {
+                hybrid_ingest = true;
+                i += 1;
+            }
             _ => i += 1,
         }
     }
@@ -342,6 +371,8 @@ fn parse_args() -> Args {
         llm_extract_model,
         llm_extract_replace,
         balanced_sample,
+        session_level_ingest,
+        hybrid_ingest,
     }
 }
 
@@ -364,6 +395,12 @@ struct BuildOpts<'a> {
     llm_extract_api_key_env: Option<&'a str>,
     llm_extract_model: Option<&'a str>,
     llm_extract_replace: bool,
+    /// One fact per session (concat all turns) instead of one per turn.
+    session_level_ingest: bool,
+    /// Both turn-level facts AND session-level facts side-by-side.
+    /// Mutually exclusive with `session_level_ingest` semantically
+    /// (this flag wins when both are set).
+    hybrid_ingest: bool,
 }
 
 fn build_store_for_question(
@@ -385,6 +422,8 @@ fn build_store_for_question(
         llm_extract_api_key_env,
         llm_extract_model,
         llm_extract_replace,
+        session_level_ingest,
+        hybrid_ingest,
     } = opts;
     let dir = tempfile::TempDir::new().map_err(|e| e.to_string())?;
     let mut config = Config::default();
@@ -490,23 +529,50 @@ fn build_store_for_question(
                 None
             };
             let _ = temporal; // disambiguation only — both paths share this stamp
-            for turn in session {
+            // Three modes: hybrid (both), session-only, turn-only (default).
+            let want_session = session_level_ingest || hybrid_ingest;
+            let want_turns = hybrid_ingest || !session_level_ingest;
+            if want_session {
+                // OMEGA-style: one fact per session, all turns concatenated.
+                // Reader retrieves whole conversational blocks for cross-snippet
+                // aggregation tasks (KU / multi-session / SS-asst).
+                let content: String = session
+                    .iter()
+                    .map(|t| format!("{}: {}", t.role, t.content))
+                    .collect::<Vec<_>>()
+                    .join("\n");
                 inputs.push(FactInput {
-                    content: format!("{}: {}", turn.role, turn.content),
+                    content,
                     fact_type: Some(FactType::Note),
                     entity_ids: entity_id.map(|e| vec![e]),
                     tags: Some(vec![format!(
                         "session:{}",
                         q.haystack_session_ids[sess_idx]
                     )]),
-                    // Layer label for the hybrid-retrieval reader prompt.
-                    // Lets the e2e script render '[raw chat]' vs
-                    // '[distilled fact]' so the reader knows which
-                    // snippet preserves verbatim detail.
-                    source: Some("raw-chat".into()),
+                    source: Some("session".into()),
                     source_confidence: None,
                     observed_at,
                 });
+            }
+            if want_turns {
+                for turn in session {
+                    inputs.push(FactInput {
+                        content: format!("{}: {}", turn.role, turn.content),
+                        fact_type: Some(FactType::Note),
+                        entity_ids: entity_id.map(|e| vec![e]),
+                        tags: Some(vec![format!(
+                            "session:{}",
+                            q.haystack_session_ids[sess_idx]
+                        )]),
+                        // Layer label for the hybrid-retrieval reader prompt.
+                        // Lets the e2e script render '[raw chat]' vs
+                        // '[distilled fact]' so the reader knows which
+                        // snippet preserves verbatim detail.
+                        source: Some("raw-chat".into()),
+                        source_confidence: None,
+                        observed_at,
+                    });
+                }
             }
         }
         if !inputs.is_empty() {
@@ -635,6 +701,11 @@ struct RetrievalRecord {
     session_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     source: Option<String>,
+    /// epoch-ms of the session this fact came from; lets the
+    /// downstream Python harness sort retrievals chronologically and
+    /// apply OMEGA-style recency boosts (esp. for knowledge-update).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    referenced_date: Option<u64>,
 }
 
 fn evaluate(
@@ -754,6 +825,7 @@ fn evaluate(
                 score: hit.score,
                 session_id,
                 source: fact.source,
+                referenced_date: fact.observed_at,
             });
         }
         if is_evidence && hit_rank.is_none() {
@@ -866,6 +938,8 @@ fn run(args: &Args) -> Result<(), String> {
                 llm_extract_api_key_env: args.llm_extract_api_key_env.as_deref(),
                 llm_extract_model: args.llm_extract_model.as_deref(),
                 llm_extract_replace: args.llm_extract_replace,
+                session_level_ingest: args.session_level_ingest,
+                hybrid_ingest: args.hybrid_ingest,
             },
         )?;
         let (rank, retrievals) =
