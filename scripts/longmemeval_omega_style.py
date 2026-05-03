@@ -53,15 +53,16 @@ def _token_field(model: str) -> str:
     return "max_tokens"
 
 
-def _call_openai(api_key, model, messages, max_tokens, base_url, timeout=60):
+def _call_openai(api_key, model, messages, max_tokens, base_url, timeout=60, temperature=0.0):
     url = base_url.rstrip("/") + "/chat/completions"
-    # temperature=0 for reproducibility — MiniMax (and other reasoning models)
-    # show ±5pt run-to-run variance otherwise, which obscures small lifts
-    # from prompt/ingest tweaks at the 60q scale.
+    # temperature=0 default for reproducibility, but reasoning models like
+    # MiniMax-M2.7 still show ±5pt run-to-run variance because they sample
+    # from think-token paths even at temp=0. Caller can override (e.g. for
+    # self-consistency voting we want diversity at temp=0.5).
     body = {
         "model": model,
         "messages": messages,
-        "temperature": 0.0,
+        "temperature": temperature,
         _token_field(model): max_tokens,
     }
     last_err = None
