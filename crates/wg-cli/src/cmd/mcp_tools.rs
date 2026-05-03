@@ -929,6 +929,10 @@ fn tool_traverse(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, Strin
         .and_then(|v| v.as_str())
         .ok_or("entity required")?;
     let depth = args.get("depth").and_then(|v| v.as_u64()).unwrap_or(2) as u32;
+    let direction = match args.get("direction").and_then(|v| v.as_str()).unwrap_or("forward") {
+        "reverse" | "backward" | "back" => wg_core::TraverseDirection::Reverse,
+        _ => wg_core::TraverseDirection::Forward,
+    };
 
     let result = wiki
         .traverse(
@@ -936,15 +940,15 @@ fn tool_traverse(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, Strin
             wg_core::TraverseOpts {
                 depth,
                 relation_types: None,
-                direction: wg_core::TraverseDirection::Forward,
+                direction,
             },
         )
         .map_err(|e| e.to_string())?;
 
     Ok(ToolCallResult {
         content: vec![ContentBlock::text(format!(
-            "Traversed from '{}' (depth={})\n{:#?}",
-            entity, depth, result
+            "Traversed from '{}' (depth={}, direction={:?})\n{:#?}",
+            entity, depth, direction, result
         ))],
         is_error: None,
     })
@@ -2442,12 +2446,13 @@ pub fn list_tools() -> Vec<Tool> {
         },
         Tool {
             name: "wg_traverse".into(),
-            description: "Forward graph walk from a starting entity (returns reachable entities up to depth). For 'what depends on X' (reverse direction) use wg_backlinks; for shortest path between two known entities use wg_path.".into(),
+            description: "Graph walk from a starting entity. direction=\"forward\" (default) → entities X reaches; direction=\"reverse\" → entities that reach X (\"what depends on X\"). For shortest path between two known entities use wg_path. Replaces the separate wg_backlinks tool — backlinks is now an alias kept for backwards compatibility.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "entity": {"type": "string"},
-                    "depth": {"type": "number", "default": 2}
+                    "depth": {"type": "number", "default": 2},
+                    "direction": {"type": "string", "enum": ["forward", "reverse"], "default": "forward", "description": "forward = outbound (X → ?); reverse = inbound (? → X), the 'who depends on X' query."}
                 },
                 "required": ["entity"]
             }),
@@ -2495,7 +2500,7 @@ pub fn list_tools() -> Vec<Tool> {
         },
         Tool {
             name: "wg_backlinks".into(),
-            description: "Reverse relations — entities that point AT this entity. Useful for 'what depends on X?'."
+            description: "[DEPRECATED — prefer wg_traverse(direction:\"reverse\")] Reverse 1-hop relations — entities that point AT this entity. Useful for 'what depends on X?'. Kept for backwards compatibility; wg_traverse with direction=reverse + depth=1 returns equivalent information plus the option to go deeper."
                 .into(),
             input_schema: json!({
                 "type": "object",
