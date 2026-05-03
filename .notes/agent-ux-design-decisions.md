@@ -389,6 +389,55 @@ The 7 structural 4/4-fail questions cap the theoretical ceiling at
 Self-consistency on reader output is NOT the right lever for
 reasoning-model variance.
 
+## Multi-hop sub-query retrieval — net neutral on this bench
+
+Tested DSPy RAG-Fusion pattern: LLM decomposes each question into 3
+focused sub-queries, runs hybrid_search per sub-query separately,
+merges all retrievals (4 files: original + 3 sub-queries) before
+session rollup.
+
+`scripts/longmemeval_decompose_queries.py` — generates per-question
+sub-queries (e.g., "How many bike-related expenses?" →
+["bike lights cost", "bike helmet purchase", "bike maintenance fee"]).
+`scripts/longmemeval_apply_subqueries.py` — emits N modified gold
+JSONs so the bench can re-run with each sub-query as the question.
+Then merge_retrievals.py + readtime rollup + standard harness.
+
+| Setup (120q balanced)            | Overall | KU  | multi | SS-asst | SS-pref | SS-user | temporal |
+|---|---|---|---|---|---|---|---|
+| v9 (4-run mean)                  | 83.9%   | 93.75 | 61.25 | 100 | 73.75 | 95  | 80  |
+| **Multi-hop (3 sub-queries, 1 run)** | **80.8%** | 90    | 55    | 100 | **80**    | 95  | **65** |
+| Δ                                | -3.1pt (within ±2.7 std) | -3.75 | -6.25 | 0 | **+6.25** | 0 | **-15** |
+
+Mixed per-category: SS-pref +6.25 (sub-queries surface niche
+preferences), but temporal -15 (more dense session blocks confuse
+date arithmetic). Net within noise band.
+
+**Why multi-hop doesn't decisively help on this bench**:
+1. **R@30 already = 100%** — original retrieval already finds all
+   evidence sessions. Sub-queries don't unlock new evidence.
+2. **Bench entity graph is degenerate** — only session entities exist,
+   no cross-session relations. Graph traversal yields nothing.
+3. **Increased session-block density (2.4 → 5.4 matched turns/block)
+   hurts attention** — temporal questions have more dates competing
+   for reader's focus.
+
+**Where multi-hop WOULD help (real wg agent use)**:
+* Real wg facts have multiple entity_names with explicit relations
+* Single retrieval misses related context across the graph
+* Multi-hop traversal expands context to neighbours
+* This is the right lever for the agent UX layer, even though it
+  doesn't move the bench needle
+
+**Decision**: Don't ship multi-hop for the bench (it's a wash). The
+infrastructure (`longmemeval_decompose_queries.py` +
+`longmemeval_apply_subqueries.py` + bench multi-run + merge) stays
+as reproducible measurement evidence. For real wg agent use, the
+proper next step is implementing graph-traversal retrieval in
+`tool_query` (e.g., `level="graph"` that does forward traversal
+from the topic entity), which has potential value the bench can't
+measure.
+
 **Honest conclusion**: wg ≈ OMEGA on realistic-stack MiniMax,
 within the noise band. The architectural wins (level=session
 read-time rollup, hybrid prompt port) are real, but the
