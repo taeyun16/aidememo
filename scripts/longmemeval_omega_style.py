@@ -34,6 +34,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import random
 import sys
 import threading
 import time
@@ -64,7 +65,12 @@ def _call_openai(api_key, model, messages, max_tokens, base_url, timeout=60):
         _token_field(model): max_tokens,
     }
     last_err = None
-    for attempt in range(4):
+    # Jittered exponential backoff: base * 2^attempt + uniform(0, base).
+    # Pure fixed waits cause synchronized retries when many workers hit
+    # the same rate limit ("herding") — they all back off and re-fire
+    # together, blowing the limit again. Jitter spreads re-fires out.
+    base_waits = [1.5, 4, 10, 22]
+    for attempt in range(5):
         req = urllib.request.Request(
             url,
             data=json.dumps(body).encode(),
@@ -76,18 +82,23 @@ def _call_openai(api_key, model, messages, max_tokens, base_url, timeout=60):
                 return json.loads(resp.read().decode())
         except urllib.error.HTTPError as e:
             body_txt = e.read().decode("utf-8", errors="replace")
-            if e.code in (429, 500, 502, 503, 504):
-                wait = [2, 5, 12, 30][attempt]
-                print(f"  [retry {attempt+1}/4] HTTP {e.code} — sleeping {wait}s", file=sys.stderr)
+            if e.code in (429, 500, 502, 503, 504) and attempt < len(base_waits):
+                base = base_waits[attempt]
+                wait = base + random.uniform(0, base)
+                print(f"  [retry {attempt+1}/5] HTTP {e.code} — sleeping {wait:.1f}s", file=sys.stderr)
                 time.sleep(wait)
                 last_err = RuntimeError(f"HTTP {e.code}: {body_txt[:200]}")
                 continue
             raise RuntimeError(f"HTTP {e.code}: {body_txt[:200]}")
         except (urllib.error.URLError, TimeoutError) as e:
-            wait = [2, 5, 12, 30][attempt]
-            print(f"  [retry {attempt+1}/4] {e} — sleeping {wait}s", file=sys.stderr)
-            time.sleep(wait)
-            last_err = e
+            if attempt < len(base_waits):
+                base = base_waits[attempt]
+                wait = base + random.uniform(0, base)
+                print(f"  [retry {attempt+1}/5] {e} — sleeping {wait:.1f}s", file=sys.stderr)
+                time.sleep(wait)
+                last_err = e
+            else:
+                raise RuntimeError(f"all retries failed: {e}")
     raise RuntimeError(f"all retries failed: {last_err}")
 
 
@@ -241,6 +252,18 @@ NEVER respond with "I don't have access to" / "I don't know your specific X" / \
 "I can't recommend particular items in your area". The user is not asking you to \
 LOOK UP a specific hotel/event/paper — they are asking you to RECOMMEND one BASED \
 ON their preferences from the notes. Skip the disclaimer entirely.
+
+CRITICAL — COVERAGE STEP (required for recommendation questions):
+BEFORE composing your recommendation, scan EVERY note and write down EVERY explicit \
+preference, taste, habit, past experience, niche interest, or favourite the user \
+has stated — especially niche / narrow ones (genre preferences, specific platforms, \
+specific store brands, specific organising tools they own, specific medical \
+specialties, specific past activities). Then check: does the question's topic match \
+ANY of these niche preferences DIRECTLY? If yes, the recommendation MUST honour \
+that niche preference exactly. Example: question "recommend a show to watch \
+tonight" + user mentioned "loving stand-up comedy specials on Netflix" anywhere → \
+recommend a stand-up special, NOT a cooking show because cooking is mentioned more \
+often. Niche match beats topic frequency.
 
 Important:
 - Focus on what the user explicitly said about their preferences, likes, dislikes, \
@@ -585,8 +608,10 @@ def main():
     ap.add_argument(
         "--workers",
         type=int,
-        default=8,
-        help="Concurrent HTTP workers for reader+judge stages (default: 8)",
+        default=12,
+        help="Concurrent HTTP workers for reader+judge stages (default: 12 — "
+        "MiniMax tolerates this with jittered backoff. Bump to 16-20 for "
+        "MiniMax pro tier, drop to 4-6 for free tier).",
     )
     args = ap.parse_args()
 
