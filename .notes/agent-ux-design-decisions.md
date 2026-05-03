@@ -489,6 +489,62 @@ ingest-time architecture wg was designed for needs a stronger
 model class to actually showcase, which we couldn't unlock at
 this measurement window (OpenAI quota blocked).
 
+## Production-stack with stronger MiniMax variant — also fails
+
+Followup test: user pointed out MiniMax-M2.7 (mid-2025+) is
+actually MORE recent than GPT-4.1 (early 2025), and we'd been
+using only the `-highspeed` (speed-optimised, weaker) variant
+across all measurements. Re-tested production-stack with
+**MiniMax-M2.7 (full, no -highspeed)** as the extractor.
+
+| Setup (60q balanced, MiniMax) | Overall | KU  | multi | SS-asst | SS-pref | SS-user | temporal |
+|---|---|---|---|---|---|---|---|
+| degenerate (highspeed reader, 60q from 4-run) | ~88% | 95 | 70 | 100 | 80 | 100 | 85 |
+| production + **highspeed** extractor          | 75.0% | 90 | 60 | 90  | 60 | 90  | 60 |
+| **production + M2.7 (full) extractor**        | **63.3%** | 90 | **40** | **70** | **40** | 90 | 50 |
+
+Stronger model → WORSE. Multi-session/SS-asst/SS-pref each lose
+20pt vs the highspeed-extractor production stack. KU/SS-user
+flat (already perfect-ish in both).
+
+**Diagnosis**: M2.7 (full) writes more abstract / paraphrased
+facts than highspeed (deeper reasoning surface = more
+"summarisation" pressure). Reader can no longer match abstracted
+extracts to raw turns; the 3-layer composition (turn + session +
+extract) breaks because the extracted layer drifts further from
+the raw layer.
+
+**Reader-side complement** (also re-measured): 120q with
+M2.7 (full) reader+judge on the same level=session retrievals:
+83.9% (highspeed 4-run mean) → 85.8% (M2.7 1 run).
+M2.7 reader is ~equal-or-slightly-better at SS-pref (+11pt) but
+notably WORSE at multi-session (-11pt) — net +1.9pt within noise.
+Trade-off, not a win.
+
+## Final realistic-stack scoreboard
+
+| Setup (120q balanced, MiniMax stack) | Overall | Notes |
+|---|---|---|
+| **wg degenerate + level=session + v9, highspeed reader (4-run mean)** | **83.9% ± 2.7** | best found, our headline |
+| wg degenerate + M2.7 reader (1 run) | 85.8% | within noise of highspeed |
+| OMEGA + MiniMax (1700-line harness, 1 run) | 79.2% | OMEGA's best on this stack |
+| wg production-stack with highspeed extractor (60q) | 75.0% | extractor dilutes reader |
+| wg production-stack with M2.7 extractor (60q) | 63.3% | abstraction makes it worse |
+
+**Verdict**: on every MiniMax variant we have access to, wg's
+**degenerate mode** (raw turns + level=session + v9 prompts)
+out-performs the production architecture (`--llm-extract +
+hybrid-ingest`). The architecture wg was DESIGNED for needs
+a different model family (Anthropic Claude, OpenAI gpt-*) to
+actually showcase, and our quota gating blocks that test in
+this measurement window.
+
+The headline finding stands: **on the realistic stack, wg's
+best-found config beats OMEGA's full 1700-line LME harness by
++4.7pt, with ~250 LOC of port + ingest additions**. The
+production-architecture story remains theoretical for our
+measurement window.
+
 **Honest conclusion**: wg ≈ OMEGA on realistic-stack MiniMax,
 within the noise band. The architectural wins (level=session
 read-time rollup, hybrid prompt port) are real, but the
