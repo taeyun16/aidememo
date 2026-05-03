@@ -254,7 +254,8 @@ crates/wg-cli/src/
 | Tool | When |
 |---|---|
 | **`wg_context`** | **🟢 Top-of-turn entry point** — pinned + personalisation + recent + (with topic) search/traverse/lessons. One round-trip replaces session_start → query → search chain. |
-| `wg_query` | Topic-only retrieval (search + entity + traverse + recent). Lighter than wg_context. Use for follow-up topic dives. **Agent budget knobs:** `format:"text"` → markdown bullets (~5× smaller than JSON); `max_chars:N` → hard cap (drops `related` first, then trims previews, then drops trailing hits, keeps top match). |
+| `wg_query` | Topic-only retrieval (search + entity + traverse + recent). Lighter than wg_context. Use for follow-up topic dives. **Agent budget knobs:** `format:"text"` → markdown bullets (~5× smaller than JSON); `max_chars:N` → hard cap (drops `related` first, then trims previews, then drops trailing hits, keeps top match); `level:"entity"` → group hits by primary entity (mirrors the bench's hybrid-ingest pattern that lifted multi-session +20pt). |
+| `wg_aggregate` | Deterministic counting / enumeration on top of hybrid search. For "how many X", "list every Y", "group by Z" questions — pulls the agent out of the synthesis loop instead of eyeballing snippets. ops: `count`, `enumerate`, `by_entity`. Filters: `fact_type`, `entity`, `since`, `current_only`. Use when a question reduces to counting / summing / grouping. |
 | `wg_overview` | First-impression snapshot — call once at session start on an unfamiliar wiki |
 | `wg_search` | Pure hybrid search, no graph |
 | `wg_recent` | Last N days of facts |

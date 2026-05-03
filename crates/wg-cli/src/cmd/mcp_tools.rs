@@ -1164,6 +1164,154 @@ fn tool_backlinks(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, Stri
     })
 }
 
+/// `wg_aggregate` — deterministic counting / enumeration on top of
+/// hybrid search. Solves the multi-session aggregation failure mode
+/// observed in the LongMemEval bench: readers see 30 snippets but
+/// inconsistently count or sum. Pulling the reader out of the loop
+/// for the arithmetic step is the closest agentic analog to OMEGA's
+/// multi-session category prompt's STEP A/B/C synthesis.
+///
+/// Operations:
+/// * count     — N facts matching the query (after fact_type filter)
+/// * enumerate — same N as a deduped item list (id + content preview)
+/// * by_entity — N facts grouped by primary entity, with per-group
+///               count and fact_type set
+fn tool_aggregate(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String> {
+    let query = args
+        .get("query")
+        .and_then(|v| v.as_str())
+        .ok_or("query required")?;
+    let op = args.get("op").and_then(|v| v.as_str()).unwrap_or("count");
+    let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(50) as usize;
+    let preview_chars = args
+        .get("preview_chars")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(120) as usize;
+    let fact_type_filter: Option<wg_core::FactType> = args
+        .get("fact_type")
+        .and_then(|v| v.as_str())
+        .map(|s| wg_core::FactType::parse(s));
+    let entity_filter = match args.get("entity").and_then(|v| v.as_str()) {
+        Some(name) => Some(vec![wiki.resolve_entity(name).map_err(|e| e.to_string())?]),
+        None => None,
+    };
+    let since = parse_time_arg(args.get("since"), false)?;
+    let current_only = args
+        .get("current_only")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+
+    let hits = wiki
+        .hybrid_search(
+            query,
+            wg_core::SearchOpts {
+                limit: Some(limit),
+                bm25_only: false,
+                current_only,
+                since,
+                entity_filter,
+                ..Default::default()
+            },
+        )
+        .map_err(|e| e.to_string())?;
+
+    // Apply fact_type filter post-hoc (keep the search wide; don't
+    // miss candidates that the BM25/RRF fusion ranked highly even if
+    // they happen to be a different type).
+    let filtered: Vec<&wg_core::SearchResult> = hits
+        .iter()
+        .filter(|h| {
+            fact_type_filter
+                .as_ref()
+                .map(|t| &h.fact_type == t)
+                .unwrap_or(true)
+        })
+        .collect();
+
+    let payload = match op {
+        "count" => json!({
+            "op": "count",
+            "query": query,
+            "matched": filtered.len(),
+            "facts_considered": hits.len(),
+        }),
+        "enumerate" => {
+            let items: Vec<Value> = filtered
+                .iter()
+                .map(|h| {
+                    let mut content = h.content.clone();
+                    truncate_in_place(&mut content, preview_chars);
+                    json!({
+                        "id": h.fact_id.to_string(),
+                        "content": content,
+                        "fact_type": format!("{:?}", h.fact_type).to_lowercase(),
+                        "score": h.score,
+                        "entities": h.entity_names,
+                    })
+                })
+                .collect();
+            json!({
+                "op": "enumerate",
+                "query": query,
+                "matched": filtered.len(),
+                "items": items,
+            })
+        }
+        "by_entity" => {
+            use std::collections::BTreeMap;
+            let mut groups: BTreeMap<String, Vec<&wg_core::SearchResult>> = BTreeMap::new();
+            for hit in &filtered {
+                let key = hit
+                    .entity_names
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| "(no entity)".into());
+                groups.entry(key).or_default().push(hit);
+            }
+            let mut group_arr: Vec<Value> = groups
+                .into_iter()
+                .map(|(entity, hits)| {
+                    let mut types: Vec<String> = hits
+                        .iter()
+                        .map(|h| format!("{:?}", h.fact_type).to_lowercase())
+                        .collect();
+                    types.sort();
+                    types.dedup();
+                    let max_score = hits.iter().map(|h| h.score).fold(0.0_f32, f32::max);
+                    json!({
+                        "entity": entity,
+                        "count": hits.len(),
+                        "fact_types": types,
+                        "max_score": max_score,
+                    })
+                })
+                .collect();
+            // Order groups by max_score descending so the agent sees
+            // the strongest matches first.
+            group_arr.sort_by(|a, b| {
+                let s_a = a.get("max_score").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                let s_b = b.get("max_score").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                s_b.partial_cmp(&s_a).unwrap_or(std::cmp::Ordering::Equal)
+            });
+            json!({
+                "op": "by_entity",
+                "query": query,
+                "matched": filtered.len(),
+                "groups": group_arr,
+            })
+        }
+        _ => return Err(format!(
+            "invalid op '{op}': must be one of count, enumerate, by_entity"
+        )),
+    };
+
+    let text = serde_json::to_string_pretty(&payload).map_err(|e| e.to_string())?;
+    Ok(ToolCallResult {
+        content: vec![ContentBlock::text(text)],
+        is_error: None,
+    })
+}
+
 fn tool_query(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String> {
     let topic = args
         .get("topic")
@@ -2458,6 +2606,24 @@ pub fn list_tools() -> Vec<Tool> {
             }),
         },
         Tool {
+            name: "wg_aggregate".into(),
+            description: "Deterministic counting / enumeration on top of hybrid search. Pulls the agent out of the synthesis loop for 'how many X', 'list every Y', 'group by Z' questions — instead of the agent eyeballing snippets and miscounting (the multi-session failure mode in our LongMemEval bench), the tool returns a structured count / item list / group breakdown the agent can read directly. Filters: fact_type, entity, since, current_only. Operations: count, enumerate, by_entity. Use whenever the question reduces to 'how many', 'list all', 'sum the X', 'group by Y'.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Hybrid search query (BM25 + semantic). Use the natural-language form of the question — the tool widens K internally."},
+                    "op": {"type": "string", "enum": ["count", "enumerate", "by_entity"], "default": "count", "description": "count = matched count + facts_considered. enumerate = deduped item list (id + content preview). by_entity = grouped by primary entity with per-group count + fact_types + max_score."},
+                    "fact_type": {"type": "string", "enum": ["decision", "pattern", "convention", "claim", "note", "question", "preference", "lesson", "error"], "description": "Optional post-hoc filter on fact_type. Search runs wide; this narrows the count."},
+                    "entity": {"type": "string", "description": "Optional entity scope — restrict to facts attached to this entity."},
+                    "since": {"type": ["string", "number"], "description": "Lower bound on observed_at. ISO date / RFC3339 / epoch ms / duration DSL (30d, 4w)."},
+                    "current_only": {"type": "boolean", "default": true, "description": "Exclude superseded facts."},
+                    "limit": {"type": "number", "default": 50, "description": "Top-K to consider before fact_type filter. Larger → more recall, slower."},
+                    "preview_chars": {"type": "number", "default": 120, "description": "Per-item content preview length when op=enumerate."}
+                },
+                "required": ["query"]
+            }),
+        },
+        Tool {
             name: "wg_lint".into(),
             description: "[DEPRECATED — prefer wg_doctor] Raw lint issues — orphan entities, duplicate facts, stale facts, broken refs. wg_doctor returns a strict superset: same `issues` array plus stats + per-code grouping with action hints. Kept for backwards compatibility; new agents should call wg_doctor and read .issues from its response."
                 .into(),
@@ -2738,6 +2904,7 @@ fn call_tool(name: &str, args: &Value, wiki: &WikiGraph) -> Result<ToolCallResul
         "wg_fact_add_many" => tool_fact_add_many(args, wiki),
         "wg_fact_supersede" => tool_fact_supersede(args, wiki),
         "wg_fact_edit" => tool_fact_edit(args, wiki),
+        "wg_aggregate" => tool_aggregate(args, wiki),
         _ => Err(format!("Unknown tool: {}", name)),
     }
 }
