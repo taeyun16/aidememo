@@ -1130,6 +1130,17 @@ fn tool_query(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String> 
         .get("preview_chars")
         .and_then(|v| v.as_u64())
         .unwrap_or(200) as usize;
+    // level: agent's granularity choice. "fact" (default) returns flat
+    // snippets — best for SS-user / pinpoint lookup. "entity" rolls up
+    // hits into per-entity groups — closer to the bench's session-level
+    // ingest pattern that lifted multi-session +20pt and temporal +20pt
+    // on LongMemEval. Currently only the markdown text format honours
+    // level=entity; JSON formats stay snippet-flat so the schema is
+    // stable for downstream parsers.
+    let level = args
+        .get("level")
+        .and_then(|v| v.as_str())
+        .unwrap_or("fact");
     let mut result = wiki.query(topic, opts).map_err(|e| e.to_string())?;
     if format == "compact" {
         compact_query_result(&mut result, preview_chars);
@@ -1137,10 +1148,10 @@ fn tool_query(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String> 
     if let Some(budget) = max_chars {
         fit_query_result_to_budget(&mut result, budget, preview_chars);
     }
-    let text = if format == "text" {
-        render_query_result_markdown(&result, preview_chars, max_chars)
-    } else {
-        serde_json::to_string_pretty(&result).map_err(|e| e.to_string())?
+    let text = match (format, level) {
+        ("text", "entity") => render_query_result_markdown_by_entity(&result, preview_chars, max_chars),
+        ("text", _) => render_query_result_markdown(&result, preview_chars, max_chars),
+        _ => serde_json::to_string_pretty(&result).map_err(|e| e.to_string())?,
     };
     Ok(ToolCallResult {
         content: vec![ContentBlock::text(text)],
@@ -1206,6 +1217,121 @@ fn render_query_result_markdown(
             }
             out.push_str("\n… (truncated)\n");
         }
+    }
+    out
+}
+
+/// Markdown rendering with entity-level grouping. Each top-K hit is
+/// associated with its entities; we group by primary entity and emit
+/// one section per group with the top facts inside. Mirrors the
+/// bench's session-level ingest pattern at the agent UX layer —
+/// reader sees per-entity blocks instead of flat snippets, which
+/// helped multi-session aggregation +20pt and temporal +20pt on
+/// LongMemEval.
+///
+/// Group ordering: by best score within group, descending. Within a
+/// group, facts are ordered by score descending. The query topic's
+/// entity (when matched) is always emitted first.
+fn render_query_result_markdown_by_entity(
+    r: &wg_core::QueryResult,
+    preview_chars: usize,
+    budget: Option<usize>,
+) -> String {
+    use std::collections::BTreeMap;
+
+    let mut out = String::new();
+    out.push_str(&format!("# {}\n", r.topic));
+    if let Some(e) = &r.entity {
+        out.push_str(&format!(
+            "entity: **{}** ({})\n",
+            e.name,
+            format!("{:?}", e.entity_type).to_lowercase()
+        ));
+        if let Some(s) = &e.summary
+            && !s.is_empty()
+        {
+            out.push_str(&format!("> {s}\n"));
+        }
+    }
+
+    // Group hits by primary entity name (first entity in entity_names).
+    // Hits with no entity go into "(no entity)" group, last.
+    let mut groups: BTreeMap<String, Vec<&wg_core::SearchResult>> = BTreeMap::new();
+    let mut group_order: Vec<String> = Vec::new();
+    for hit in &r.search {
+        let key = hit
+            .entity_names
+            .first()
+            .cloned()
+            .unwrap_or_else(|| "(no entity)".to_string());
+        if !groups.contains_key(&key) {
+            group_order.push(key.clone());
+        }
+        groups.entry(key).or_default().push(hit);
+    }
+    // Re-order groups: topic-entity first, then by max-score per group
+    // (descending). Within a group facts already arrive in score order.
+    let topic_entity_name = r.entity.as_ref().map(|e| e.name.clone());
+    group_order.sort_by(|a, b| {
+        if Some(a) == topic_entity_name.as_ref() {
+            return std::cmp::Ordering::Less;
+        }
+        if Some(b) == topic_entity_name.as_ref() {
+            return std::cmp::Ordering::Greater;
+        }
+        let max_a = groups[a].iter().map(|h| h.score).fold(0.0_f32, f32::max);
+        let max_b = groups[b].iter().map(|h| h.score).fold(0.0_f32, f32::max);
+        max_b.partial_cmp(&max_a).unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    if !group_order.is_empty() {
+        out.push_str("\n## hits by entity\n");
+        for ent_name in &group_order {
+            let hits = &groups[ent_name];
+            let n = hits.len();
+            // List distinct fact_types in the group for at-a-glance tagging.
+            let mut types: Vec<String> = hits
+                .iter()
+                .map(|h| format!("{:?}", h.fact_type).to_lowercase())
+                .collect();
+            types.sort();
+            types.dedup();
+            out.push_str(&format!(
+                "### {} _({} · {} fact{})_\n",
+                ent_name,
+                types.join(" · "),
+                n,
+                if n == 1 { "" } else { "s" }
+            ));
+            for hit in hits {
+                let mut content = hit.content.clone();
+                truncate_in_place(&mut content, preview_chars);
+                let id_short: String = hit
+                    .fact_id
+                    .to_string()
+                    .chars()
+                    .rev()
+                    .take(6)
+                    .collect::<String>()
+                    .chars()
+                    .rev()
+                    .collect();
+                out.push_str(&format!("- ({:.2} …{}) {}\n", hit.score, id_short, content));
+            }
+        }
+    }
+    if !r.related.is_empty() {
+        out.push_str("\n## related\n");
+        let names: Vec<String> = r.related.iter().map(|e| e.name.clone()).collect();
+        out.push_str(&format!("- {}\n", names.join(", ")));
+    }
+    if let Some(b) = budget
+        && out.len() > b
+    {
+        while out.len() > b.saturating_sub(20) && let Some(idx) = out.rfind('\n') {
+            out.truncate(idx);
+        }
+        out.push_str("\n… (truncated)\n");
     }
     out
 }
@@ -2161,6 +2287,7 @@ pub fn list_tools() -> Vec<Tool> {
                     "mode": {"type": "string", "enum": ["naive", "local", "hybrid", "global"], "default": "hybrid"},
                     "current_only": {"type": "boolean", "default": true, "description": "Exclude superseded facts. Pass false for historical / timeline queries."},
                     "format": {"type": "string", "enum": ["full", "compact", "text"], "default": "full", "description": "full = JSON with all metadata. compact = JSON with truncated snippet content (drops bytes ~10%). text = markdown bullet summary, drops JSON envelope (~5× smaller, drops timestamps & entity metadata, keeps last-6 ULID suffix for follow-up wg_fact_get). Use text for agent prompt injection."},
+                    "level": {"type": "string", "enum": ["fact", "entity"], "default": "fact", "description": "Granularity of returned hits. fact = flat snippet list (best for pinpoint lookups: SS-user, abstention). entity = grouped per primary entity, mirroring the bench's session-level pattern that lifted multi-session +20pt and temporal +20pt. Use entity for cross-fact aggregation / 'how many' questions / overview reads. Currently only honoured by format=text — format=full / compact stay snippet-flat for stable JSON schema."},
                     "preview_chars": {"type": "number", "default": 200, "description": "Per-snippet content preview length when format=compact. Agent can drill in via wg_fact_get for any rank."},
                     "max_chars": {"type": "number", "description": "Hard cap on serialized result size (in chars). When set, the tool drops `related` first then trims previews until under budget. Use to bound agent turn cost."}
                 },
