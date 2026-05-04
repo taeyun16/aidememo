@@ -990,7 +990,14 @@ fn run(args: &Args) -> Result<(), String> {
     };
     let started = Instant::now();
     for (i, q) in questions.iter().take(n).enumerate() {
-        let stamp_obs = temporal || args.time_decay_days.is_some();
+        // Always stamp observed_at from the LongMemEval session date.
+        // Cost is zero when readers don't use it; without it, readers
+        // see "Date: Unknown" and refuse temporal questions (a 60→5%
+        // drop on the temporal-reasoning category we caught after
+        // measuring with --hybrid alone). --temporal stays as the
+        // search-time hard cutoff (excludes facts after question_date).
+        let stamp_obs = true;
+        let _ = (temporal, args.time_decay_days.is_some());
         let (_dir, wiki) = build_store_for_question(
             q,
             BuildOpts {
