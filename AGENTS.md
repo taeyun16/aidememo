@@ -340,16 +340,29 @@ shape demands deterministic arithmetic across facts:
 | **"Timeline of all X events"** | `wg_aggregate(op=timeline)` | Chronological ordering |
 | **"How many times did I decide X?"** | `wg_aggregate(op=count, fact_type=decision)` | Bounded enumeration |
 
-LongMemEval measurement: this discipline lifts multi-session aggregation
-accuracy +30pt (60% → 90%) when the agent self-directs `wg_aggregate`
-calls. Conversely, calling `wg_aggregate` on simple-recall categories
-(SS-pref / temporal / SS-user single-fact lookup) **regresses** them by
-~3-6pt — the JSON tool-call overhead scrambles single-fact reasoning.
-We tested an auto-classifier ('does this question need aggregation?
-YES/NO') to dispatch automatically: precision capped at 40%, false
-positives in temporal/KU exactly cancelled the multi-session lift, so
-auto-dispatch is **net zero**. Self-directed tool selection by the
-reader, with the trigger table above, beats any classifier we measured.
+LongMemEval measurement (240q balanced, MiniMax temp=0, 3-run mean,
+reproducibility-fixed bench): the agentic-loop variant is **within
+reader noise** of the omega-style single-call baseline (-1.9pt vs
+mean, σ=±1.1pt). The +30pt multi-session lift seen in our earlier
+60q run was **lucky-sample variance** — at 240q with stable retrievals
+the multi-session category sits at baseline (20-22/40 either way).
+What does survive across scales: SS-pref / temporal regressions when
+agentic-loop is forced everywhere (JSON tool-call overhead measurably
+scrambles single-fact reasoning). And one suggestive within-noise
+positive: KU "How many X?" counting questions tend to land 1-2pt
+above baseline when the agent uses `wg_aggregate(op=count|enumerate)`.
+
+Auto-dispatch via single-shot LLM classifier ("does this question
+need aggregation? YES/NO") nets to baseline at 240q (+0pt mean,
+classifier precision ≈40%; KU/temporal "false positives" are
+genuinely counting-shaped, not classifier mistakes). Don't bake
+auto-dispatch into wg — pay no extra round-trip for zero lift.
+
+The trigger table above remains the right pattern, but treat
+`wg_aggregate` as **insurance** for cross-fact arithmetic, not a
+guaranteed accuracy lever. Most lift in our measurements comes from
+`wg_query` granularity / `level` and ingest hygiene, not from
+mid-turn tool dispatch.
 
 Implementation pattern in your reader prompt (recommended):
 

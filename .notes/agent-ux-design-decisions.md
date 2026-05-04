@@ -771,3 +771,101 @@ Honest scoreboard update:
   * classifier-routed selective: 51/60 (85%)
   * agentic everywhere v2: 46/60 (76.7%)
   * agentic everywhere v1 (no rebalance): 35/60 (58.3%)
+
+## 240q reproducibility-fixed measurement — agentic loop is net negative, dates are everything (2026-05-04)
+
+After landing the WG_NOW_MS clock pin + content-cmp tiebreak, ran a
+proper 240q balanced sample with three reader runs to separate
+reader-side variance from retrievals variance.
+
+### Bug found mid-investigation: bench was emitting dateless retrievals
+
+`stamp_observed_at` only fired with `--temporal` or
+`--time-decay-days`. Without either, every fact's `observed_at` was
+None, so `referenced_date` in the rolled-up retrievals was None for
+all 1016 blocks. Reader saw "Date: Unknown" on every snippet and
+correctly refused to answer date questions:
+
+> "All notes have a 'Date: Unknown' stamp. I cannot determine how
+> many months have passed."
+
+Drove temporal from yesterday's 80% (60q with dates) to today's 5%
+(240q without). Patched bench to always stamp `observed_at`;
+`--temporal` stays as the search-time hard cutoff.
+
+### 240q baseline (3-run) with dates restored
+
+| Category | run1 | run2 | run3 | mean | σ |
+|---|---|---|---|---|---|
+| knowledge-update | 38/40 | 39/40 | 38/40 | 38.3 | 0.5 |
+| multi-session | 20/40 | 20/40 | 20/40 | 20.0 | 0 |
+| single-session-assistant | 37/40 | 38/40 | 38/40 | 37.7 | 0.5 |
+| single-session-preference | 26/30 | 24/30 | 25/30 | 25.0 | 0.8 |
+| single-session-user | 38/40 | 38/40 | 38/40 | 38.0 | 0 |
+| temporal-reasoning | 32/40 | 32/40 | 30/40 | 31.3 | 0.9 |
+| **TOTAL** | **191** | **191** | **189** | **190.3 (82.8%)** | **1.2 (0.5pt)** |
+
+* Reader-side σ on stable retrievals is 0.5pt overall. multi-session
+  is the noisiest category but even there the 3 runs landed inside
+  ±5pt of each other, not the ±15pt we'd been quoting.
+* Comparison to the dateless 240q baseline: 65.4% → 82.8%, +17.3pt
+  from dates alone — the largest single-change lift in this
+  measurement series, dwarfing any prompt/architecture variant.
+* wg vs OMEGA on realistic MiniMax stack: 82.8% vs 79.2% = +3.6pt.
+
+### Agentic vs baseline / dispatch comparison (240q with dates)
+
+| Setup | Score | Δ vs base mean | Tool calls/q |
+|---|---|---|---|
+| baseline (3-run mean) | 190.3 (82.8%) | — | — |
+| agentic v2 everywhere | 175 (76.1%) | **-6.7** | 0.11 |
+| oracle selective (multi→agentic) | 192 (83.5%) | +1.7 | n/a |
+| classifier-routed selective | 191 (83.0%) | +0.7 | n/a |
+
+Per-category agentic v2 vs baseline mean:
+* KU: 0 (38 vs 38.3 — counting questions don't gain when agent has the dates already)
+* multi-session: +1 (21 vs 20.0 — within noise)
+* SS-asst: +2.3 (40 vs 37.7 — small lift, unclear why; SS-asst is at ceiling so noise)
+* **SS-pref: -9 (16 vs 25.0)** — JSON tool-call format overhead crushes single-fact reasoning
+* SS-user: 0
+* **temporal: -9.3 (22 vs 31.3)** — even with dates, agent loops on aggregation tools instead of just reading the dates; the loop overhead costs more than it saves
+
+### Verdict (final, replaces earlier "+30pt multi" claim)
+
+The 60q "+30pt agentic multi-session lift" was lucky-sample variance
+on a small subset. At 240q with stable retrievals, multi-session is
++1pt either way (noise), but SS-pref and temporal regress hard
+under forced agentic mode. **Agentic loop is net negative as a
+default**.
+
+Where dispatch helps is small and inconsistent:
+* Oracle selective gives +1.7pt (multi only). Real but inside the
+  noise band of a single 230-question run.
+* Classifier-routed gives +0.7pt — classifier KU "false positives"
+  are genuinely counting-shaped questions that benefit a fraction,
+  but the classifier round-trip cost matters in production.
+
+### Production recommendation (revised)
+
+* **Don't auto-dispatch.** No classifier, no JSON-output requirement.
+* `wg_aggregate` exists and is well-described — readers that recognise
+  cross-session arithmetic can call it themselves. Don't force them.
+* The biggest realistic-stack lever isn't tool dispatch, it's
+  ingest hygiene. Adding session dates to retrievals was +17pt;
+  every architectural variant we've measured is ±2pt at best.
+* AGENTS.md "Agentic-loop pattern" section updated to reflect this:
+  trigger table stays as guidance, but the +30pt claim is replaced
+  with "within noise of baseline; treat as insurance not a lever."
+
+Bench infrastructure changes that made this measurement possible:
+* WG_NOW_MS clock pin (commit 99946f5) — reader-side variance
+  measurable in isolation.
+* Content+ULID sort tiebreak — repro across ingests.
+* `stamp_observed_at = true` default — dates always present.
+
+Honest scoreboard (240q, MiniMax, 3-run mean, dates on):
+  * wg degenerate baseline:                 82.8% (190.3/230)
+  * wg agentic v2 everywhere:               76.1% (175/230)
+  * wg oracle selective (multi→agentic):    83.5% (192/230)
+  * wg classifier-routed selective:         83.0% (191/230)
+  * OMEGA + MiniMax (1700-line):            79.2%
