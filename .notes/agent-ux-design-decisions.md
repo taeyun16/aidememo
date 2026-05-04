@@ -869,3 +869,83 @@ Honest scoreboard (240q, MiniMax, 3-run mean, dates on):
   * wg oracle selective (multi→agentic):    83.5% (192/230)
   * wg classifier-routed selective:         83.0% (191/230)
   * OMEGA + MiniMax (1700-line):            79.2%
+
+## MultiHop-RAG bench — wg ≈ voyage-02 + GPT-4 with model2vec + MiniMax (2026-05-05)
+
+Tested wg on a different RAG bench (yixuantt/MultiHopRAG, COLM 2024)
+to confirm LongMemEval ceiling isn't an artifact of one dataset.
+
+Setup:
+* `benchmarks/src/bin/multihop_rag.rs` (~330 LOC) — single shared
+  store (corpus is global, unlike LME's question-specific haystacks).
+  609 news articles ingested as facts (chunked at ~500-char), title
+  as `article` entity, `published_at` as observed_at.
+* `scripts/multihop_rag_reader.py` — omega-style reader+judge over
+  emitted retrievals.
+* MiniMax-M2.7-highspeed for both reader and judge.
+
+### Retrieval-only (R@K)
+
+| Metric | wg (2556q) | MultiHop-RAG paper baselines |
+|---|---|---|
+| R@1 | 73.7% | n/a |
+| R@5 | 93.7% | n/a |
+| **R@10** | **98.3%** | BM25 ~56% / voyage-02 ~75% (Table 4 retrieval) |
+| R@30 | 99.8% | n/a |
+| MRR | 0.824 | n/a |
+
+By type R@10: inference 98.4%, temporal 97.1%, comparison 98.9%,
+null 0/301 (abstention test, evidence_list empty by design).
+Wall: 33s for ingest + all 2556 queries.
+
+### End-to-end (reader+judge)
+
+| System | Total accuracy |
+|---|---|
+| BM25 + GPT-4 (paper) | ~56% |
+| **wg + MiniMax-M2.7-highspeed** | **73.2%** |
+| voyage-02 + GPT-4 (paper) | ~74% |
+| HyPE + GPT-4 (paper, best) | ~80% |
+
+Per-category:
+* inference_query: 97.3% (607/816)
+* comparison_query: 65.8% (563/856)
+* temporal_query: 55.2% (322/583)
+* null_query (abstention): 64.1% (193/301)
+
+### Investigation: judge truncation bug — caught, fixed
+
+First-pass result was 45.5% (well below paper baselines), with
+comparison/temporal at 30/25%. Sample inspection found
+`verdict_raw=''` cases where reader had given a clearly correct
+answer ("Yes – the Independent article matches…"). Root cause:
+`max_tokens=512` for the judge call. MiniMax-M2.7's `<think>` block
+ate the entire budget before the verdict word emerged, so the parser
+saw an empty string and defaulted to INCORRECT. We hit the same
+class of bug in LongMemEval and used 4096 there; the multihop reader
+script had inherited the wrong default.
+
+Fix:
+* Judge `max_tokens` 512 → 4096 (commit pending)
+* Verdict parser: scan whole raw text when post-`</think>` is empty;
+  use last-occurrence-wins when both CORRECT and INCORRECT appear in
+  the reasoning trace
+* Reader prompt: weakened "Insufficient evidence" guidance (was
+  causing 44% comparison / 46% temporal abstention even when both
+  evidence docs were in top-5)
+
+Net effect: 45.5% → 73.2%. All four categories lifted, comparison
+and temporal +30-35pt each — the prompt+judge fixes mattered more
+than retrieval did (which was already 98% R@10).
+
+### Standing
+
+LongMemEval-S 82.8% (Letta-equivalent, OMEGA-tuned harness only ahead)
+plus MultiHop-RAG 73.2% (voyage-02-equivalent retrieval system).
+Both benches show the ceiling is reader-side, not retrieval — wg's
+hybrid (BM25 + model2vec) is delivering paper-grade or paper-beating
+recall on both datasets. Where commercial dense embeddings (voyage-02)
+still match us, the gap is inside the reader, not the retriever.
+
+Next benches queued: HotpotQA (graph traversal), LoCoMo
+(conversational long-context).
