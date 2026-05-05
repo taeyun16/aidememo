@@ -291,6 +291,10 @@ pub struct SearchSub {
     pub last: Option<String>,
     pub as_of: Option<String>,
     pub limit: Option<usize>,
+    /// Also search the cold-tier archive (`<store>.cold.redb`) and
+    /// merge any matches in to fill out the result list. Off by
+    /// default — most callers want only the live (hot) facts.
+    pub include_archive: bool,
     pub query: String,
 }
 
@@ -955,6 +959,14 @@ fn search_command() -> impl Parser<Command> {
         .argument::<String>("URL")
         .optional();
 
+    let include_archive = long("include-archive")
+        .help(
+            "Also search the cold-tier archive (`<store>.cold.redb`) \
+             and merge matches in to fill out the result list. Off by \
+             default; cold facts only surface when this flag is set.",
+        )
+        .switch();
+
     construct!(SearchSub {
         json,
         all_projects,
@@ -968,6 +980,7 @@ fn search_command() -> impl Parser<Command> {
         last,
         as_of,
         limit,
+        include_archive,
         query,
     })
     .map(Command::Search)

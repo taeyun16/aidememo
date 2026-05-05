@@ -763,6 +763,12 @@ pub struct SearchOpts {
     /// the cost of semantic recall (BM25 token matching only).
     /// `false` (default) preserves the previous hybrid behaviour.
     pub bm25_only: bool,
+    /// When `true`, also search the cold-tier sibling
+    /// (`<store>.cold.redb`) and merge its results in. Hot results
+    /// keep their original ranks; cold results fill any remaining
+    /// slots up to `limit`. Default `false` — most callers don't
+    /// want archived facts surfacing in the live answer.
+    pub include_archive: bool,
 }
 
 /// Options for listing facts.

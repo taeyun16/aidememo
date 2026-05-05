@@ -1282,6 +1282,7 @@ fn handle_search(
             current_only: false,
             as_of: as_of_ms,
             bm25_only,
+            include_archive: sub.include_archive,
         };
 
         let results = if let Some(ref start) = sub.traverse_from {
@@ -1414,6 +1415,7 @@ fn run_search_all_projects(
             current_only: false,
             as_of: as_of_ms,
             bm25_only: !sub.hybrid || semantic_weight == 0.0,
+            include_archive: sub.include_archive,
         };
         match wiki.hybrid_search(&sub.query, opts) {
             Ok(hits) => {

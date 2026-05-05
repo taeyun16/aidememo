@@ -105,6 +105,14 @@ pub struct WikiGraph {
     /// called.
     #[cfg(feature = "semantic")]
     reranker: OnceLock<Option<Arc<dyn rerank::Reranker>>>,
+    /// Cold-tier sibling. Lazy-opened on first archive_facts /
+    /// include_archive search call. None on cold WikiGraphs (an
+    /// archive doesn't get its own archive — invariant) and on
+    /// hot WikiGraphs that have never archived anything yet.
+    cold_sibling: parking_lot::Mutex<Option<Arc<WikiGraph>>>,
+    /// True for cold-tier WikiGraphs so they refuse to recursively
+    /// open another cold (would create `<x>.cold.redb.cold.redb`).
+    is_cold: bool,
 }
 
 impl WikiGraph {
@@ -119,6 +127,10 @@ impl WikiGraph {
 
     /// Open or create a WikiGraph store at the given path.
     pub fn open(path: &Path, config: Config) -> Result<Self> {
+        Self::open_inner(path, config, false)
+    }
+
+    fn open_inner(path: &Path, config: Config, is_cold: bool) -> Result<Self> {
         let store = Store::open(path, config.clone())?;
         Ok(Self {
             store: Arc::new(RwLock::new(store)),
@@ -137,7 +149,33 @@ impl WikiGraph {
             bm25_index: Arc::new(parking_lot::RwLock::new(index::Bm25IndexState::new())),
             #[cfg(feature = "semantic")]
             reranker: OnceLock::new(),
+            cold_sibling: parking_lot::Mutex::new(None),
+            is_cold,
         })
+    }
+
+    /// Lazy-open the cold-tier sibling WikiGraph. Returns the same
+    /// `Arc<WikiGraph>` on every call; opens the cold redb file
+    /// and runs schema init the first time. Returns `None` when
+    /// called on a cold WikiGraph (cold's-cold is forbidden).
+    pub fn cold(&self) -> Result<Option<Arc<WikiGraph>>> {
+        if self.is_cold {
+            return Ok(None);
+        }
+        let mut guard = self.cold_sibling.lock();
+        if let Some(c) = guard.as_ref() {
+            return Ok(Some(c.clone()));
+        }
+        let cold_path = {
+            let store = self.store.read();
+            archive::cold_path_for(std::path::Path::new(&store.config().store.path))
+        };
+        let mut cfg = (*self.config).clone();
+        cfg.store.path = cold_path.to_string_lossy().into_owned();
+        let cold = WikiGraph::open_inner(&cold_path, cfg, true)?;
+        let arc = Arc::new(cold);
+        *guard = Some(arc.clone());
+        Ok(Some(arc))
     }
 
     /// Lazy-load (or return) the configured reranker. Returns `None`
@@ -623,12 +661,26 @@ impl WikiGraph {
     /// marked dirty so the next search rebuilds against the smaller
     /// hot pool. Cold-side index update lands in stage 3.
     pub fn archive_facts(&self, fact_ids: &[FactId]) -> Result<usize> {
+        if self.is_cold {
+            return Err(WgError::InvalidInput(
+                "archive_facts called on a cold WikiGraph (no nested archives)".into(),
+            ));
+        }
         let moved = {
             let mut store = self.store.write();
             store.archive_facts(fact_ids)?
         };
         if moved > 0 {
             self.bm25_mark_dirty();
+            // Cold's BM25 / semantic indexes need a rebuild too — the
+            // raw inserts that cold_insert_archived does don't go
+            // through the regular fact_add path that flips the dirty
+            // bit. Open the sibling lazily so single-archive workflows
+            // don't pay the open cost when search-with-archive isn't
+            // used.
+            if let Ok(Some(cold)) = self.cold() {
+                cold.bm25_mark_dirty();
+            }
         }
         Ok(moved)
     }
@@ -989,9 +1041,65 @@ impl WikiGraph {
     #[cfg(feature = "semantic")]
     pub fn search(&self, query: &str, opts: SearchOpts) -> Result<Vec<SearchResult>> {
         use search::SearchEngine;
-        let store = self.store.read();
-        let engine = SearchEngine::new(&store, &self.config, &self.bm25_index);
-        engine.search(query, opts)
+        let want_archive = opts.include_archive && !self.is_cold;
+        let limit = opts
+            .limit
+            .unwrap_or(self.config.search.default_limit);
+        let mut results = {
+            let store = self.store.read();
+            let engine = SearchEngine::new(&store, &self.config, &self.bm25_index);
+            engine.search(query, opts.clone())?
+        };
+        if want_archive {
+            self.merge_archive_results(query, &mut results, opts, limit, false)?;
+        }
+        Ok(results)
+    }
+
+    /// Pull cold-tier results in to fill out the hot result list, up
+    /// to `limit`. Hot results keep their order; cold supplies
+    /// fillers that don't already appear (dedup on fact_id). Used by
+    /// both `search` and `hybrid_search` so the merge logic is in one
+    /// place. `use_hybrid=true` routes the cold call through
+    /// `hybrid_search`; otherwise plain `search`.
+    #[cfg(feature = "semantic")]
+    fn merge_archive_results(
+        &self,
+        query: &str,
+        results: &mut Vec<SearchResult>,
+        opts: SearchOpts,
+        limit: usize,
+        use_hybrid: bool,
+    ) -> Result<()> {
+        if results.len() >= limit {
+            return Ok(());
+        }
+        let cold = match self.cold()? {
+            Some(c) => c,
+            None => return Ok(()),
+        };
+        let mut cold_opts = opts;
+        cold_opts.include_archive = false; // never recurse
+        let cold_results = if use_hybrid {
+            cold.hybrid_search(query, cold_opts)?
+        } else {
+            cold.search(query, cold_opts)?
+        };
+        let existing: std::collections::HashSet<FactId> =
+            results.iter().map(|r| r.fact_id).collect();
+        for cr in cold_results {
+            if results.len() >= limit {
+                break;
+            }
+            if existing.contains(&cr.fact_id) {
+                continue;
+            }
+            results.push(cr);
+        }
+        for (i, r) in results.iter_mut().enumerate() {
+            r.rank = i + 1;
+        }
+        Ok(())
     }
 
     /// Search using hybrid BM25 + semantic ranking.
@@ -1022,6 +1130,9 @@ impl WikiGraph {
         // reranker can only re-order what RRF already cut to the
         // user's `limit` — capping the upside.
         let user_limit = opts.limit.unwrap_or(self.config.search.default_limit);
+        // Capture the include_archive flag before opts moves into the
+        // engine — we need it back for the cold-tier merge step.
+        let include_archive = opts.include_archive;
         let opts = if self.config.rerank.provider.trim().is_empty() {
             opts
         } else {
@@ -1088,6 +1199,20 @@ impl WikiGraph {
             // into the top-10; truncating after the reorder is what
             // realises that gain.
             results.truncate(user_limit);
+        }
+
+        // Stage 3 of the cold-tier work: when the caller asked for
+        // archive-included search, top up from cold to fill any
+        // remaining slots up to user_limit. Reuse the captured flag
+        // (opts itself moved into the engine above).
+        if include_archive && !self.is_cold {
+            let cold_opts = SearchOpts {
+                limit: Some(user_limit),
+                bm25_only: false,
+                include_archive: false,
+                ..SearchOpts::default()
+            };
+            self.merge_archive_results(query, &mut results, cold_opts, user_limit, true)?;
         }
 
         Ok(results)

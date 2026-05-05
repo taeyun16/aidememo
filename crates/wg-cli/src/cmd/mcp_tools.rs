@@ -217,6 +217,10 @@ fn tool_search(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String>
         .and_then(|v| v.as_str())
         .map(String::from)
         .unwrap_or_else(|| wg_core::ulid::Ulid::new().to_string());
+    let include_archive = args
+        .get("include_archive")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
 
     let results = wiki
         .hybrid_search(
@@ -231,6 +235,7 @@ fn tool_search(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String>
                 entity_filter,
                 min_confidence,
                 session_id: Some(session_id.clone()),
+                include_archive,
                 ..Default::default()
             },
         )
@@ -2821,6 +2826,11 @@ pub fn list_tools() -> Vec<Tool> {
                         "type": "string",
                         "description": "Optional. Pin a session_id (e.g. group several queries under one logical session). If omitted, a fresh ULID is minted and returned alongside the results — feed it back into wg_feedback to record helpful/not-helpful signal that trains the ranking adapter."
                     },
+                    "include_archive": {
+                        "type": "boolean",
+                        "default": false,
+                        "description": "Also search the cold-tier archive (`<store>.cold.redb`) and merge any matches in to fill remaining slots up to `limit`. Off by default — most callers want only live facts. Use when an `audit / what-did-I-once-say-about-X` shape needs to reach archived content."
+                    },
                     "format": {"type": "string", "enum": ["full", "compact", "text"], "default": "full", "description": "full = JSON results array. compact = JSON with each content truncated to preview_chars. text = markdown bullet list (~4× smaller, no JSON envelope, drops session_id from rendered output but the agent still gets it via the underlying record). Use text for prompt injection, full when piping to a downstream parser, compact for budget-sensitive JSON."},
                     "preview_chars": {"type": "number", "default": 200, "description": "Per-hit content cap when format ∈ {compact, text}. Agent drills in via wg_fact_get for full content."},
                     "max_chars": {"type": "number", "description": "Hard cap on serialized result size. Drops trailing hits until under budget; always keeps top match. Use to bound agent turn cost."}
@@ -3148,12 +3158,12 @@ pub fn list_tools() -> Vec<Tool> {
             description: "Move facts from the hot store into the cold-tier \
                 archive (`<store>.cold.redb`). The hot store shrinks; cold \
                 preserves the FactId so `wg_fact_get` keeps resolving the \
-                archived fact for audit / soft-recovery. Search merge with \
-                cold lands in a follow-up — for now archived facts drop out \
-                of `wg_search` / `wg_query` results. Use sparingly, in batch, \
-                for facts you've decided are no longer hot context — old \
-                conversation logs, deprecated decisions still worth keeping \
-                for history, etc.".into(),
+                archived fact for audit / soft-recovery. Archived facts drop \
+                out of `wg_search` / `wg_query` results by default — pass \
+                `include_archive:true` to either tool to merge cold-tier \
+                matches back in. Use sparingly, in batch, for facts you've \
+                decided are no longer hot context: old conversation logs, \
+                deprecated decisions worth keeping for history, etc.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {

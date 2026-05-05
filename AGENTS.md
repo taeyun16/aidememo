@@ -65,10 +65,12 @@ rather not configure tracing.
 
 ### Read / search
 ```
-wg search <query> [-l N] [--current] [--hybrid] [--via URL]
+wg search <query> [-l N] [--current] [--hybrid] [--include-archive] [--via URL]
                                                    BM25 by default (no model load — fast path).
                                                    --hybrid = also run semantic re-rank (loads
-                                                   model). --via = dispatch via running
+                                                   model). --include-archive = also search the
+                                                   cold-tier `<store>.cold.redb` and merge any
+                                                   matches in. --via = dispatch via running
                                                    `wg mcp-serve` daemon (warm model, ~5-50 ms)
 wg query <topic> [-l N] [-d N] [--recent-limit N] [-m naive|local|hybrid|global]
                                                    unified search+traverse+recent
@@ -283,7 +285,7 @@ should lead with the core 4; the rest are there when needed.
 | `wg_fact_add_many` | Bulk fact insert in one transaction. |
 | `wg_fact_supersede` | Mark an old fact replaced by a new one (validity-window invalidate). |
 | `wg_fact_edit` | Patch fact content (append/prepend/find+replace/content). |
-| `wg_fact_archive` | Move facts to cold-tier (`<store>.cold.redb`) — hot store shrinks, FactId preserved for `wg_fact_get`. Search merge is stage-3. |
+| `wg_fact_archive` | Move facts to cold-tier (`<store>.cold.redb`) — hot store shrinks, FactId preserved for `wg_fact_get`. Pass `include_archive:true` on `wg_search` / `wg_query` to merge cold matches back in. |
 | `wg_fact_pin` | Pin / unpin a fact for the always-on tier. |
 | `wg_fact_list` | Paginated fact list with filters. |
 | `wg_pinned_context` | Just the pinned tier (subset of wg_context). |

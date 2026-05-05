@@ -375,6 +375,73 @@ mod tests {
     }
 
     #[test]
+    fn search_merges_cold_when_include_archive_set() {
+        // wg-core archive_facts test goes through Store directly. For
+        // include_archive search we need the WikiGraph wrapper because
+        // cold sibling lifecycle lives there. Build a small wiki, ingest
+        // 6 facts, archive 3, then search hot-only vs include_archive
+        // and assert the cold facts only show up in the latter.
+        use crate::WikiGraph;
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("hot.redb");
+        let mut config = crate::Config::default();
+        config.store.path = path.to_string_lossy().into_owned();
+        let wiki = WikiGraph::open(&path, config).unwrap();
+        let entity_id = wiki
+            .entity_add(EntityInput {
+                name: "T".into(),
+                entity_type: Some(EntityType::Custom("topic".into())),
+                ..Default::default()
+            })
+            .unwrap();
+        let mut ids = Vec::new();
+        for i in 0..6 {
+            ids.push(
+                wiki.fact_add(FactInput {
+                    content: format!("redis tip number {i}"),
+                    fact_type: Some(FactType::Note),
+                    entity_ids: Some(vec![entity_id]),
+                    ..Default::default()
+                })
+                .unwrap(),
+            );
+        }
+        // Archive the first three.
+        let moved = wiki.archive_facts(&ids[..3]).unwrap();
+        assert_eq!(moved, 3);
+
+        let opts = crate::SearchOpts {
+            limit: Some(10),
+            bm25_only: true,
+            ..Default::default()
+        };
+        let hot_only = wiki.search("redis", opts.clone()).unwrap();
+        assert_eq!(hot_only.len(), 3, "hot-only search returns 3 surviving facts");
+        let archived: std::collections::HashSet<FactId> = ids[..3].iter().copied().collect();
+        for r in &hot_only {
+            assert!(!archived.contains(&r.fact_id));
+        }
+
+        let merged_opts = crate::SearchOpts {
+            include_archive: true,
+            ..opts
+        };
+        let merged = wiki.search("redis", merged_opts).unwrap();
+        assert_eq!(merged.len(), 6, "include_archive search merges hot + cold");
+        // Hot results must keep their leading positions; cold fills tail.
+        for r in &merged[..3] {
+            assert!(!archived.contains(&r.fact_id), "hot keeps top slots");
+        }
+        let mut found_archived = 0;
+        for r in &merged[3..] {
+            if archived.contains(&r.fact_id) {
+                found_archived += 1;
+            }
+        }
+        assert_eq!(found_archived, 3, "all 3 archived facts surface in tail");
+    }
+
+    #[test]
     fn archive_facts_skips_unknown_ids() {
         let (_dir, mut store) = make_store();
         let unknown = FactId::new();
