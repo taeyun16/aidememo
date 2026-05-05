@@ -1,6 +1,7 @@
 //! WikiGraph — Structured index engine for LLM wikis.
 
 pub mod adapt;
+pub mod archive;
 pub mod config;
 pub mod embedding;
 pub mod error;

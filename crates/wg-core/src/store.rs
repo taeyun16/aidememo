@@ -55,6 +55,25 @@ impl Store {
         &self.config
     }
 
+    /// Access the shared `Arc<Config>` — used by the archive module to
+    /// clone hot's config when opening the cold sibling store.
+    pub(crate) fn config_arc(&self) -> &Arc<Config> {
+        &self.config
+    }
+
+    /// Access the shared `Arc<Database>` — used by the archive module
+    /// to begin a read transaction without re-implementing the helper.
+    pub(crate) fn db_arc(&self) -> &Arc<Database> {
+        &self.db
+    }
+
+    /// Public alias of `begin_write` for the archive module so the
+    /// fsync / durability config flows the same way it does for
+    /// regular writes. Renamed to make the call site searchable.
+    pub(crate) fn begin_archive_write(&self) -> Result<redb::WriteTransaction> {
+        self.begin_write()
+    }
+
     /// Open a write transaction with the durability level configured
     /// in `store.durability`. Defaults to `Immediate` (per-commit
     /// fsync); `Eventual` is honored when the user has explicitly
