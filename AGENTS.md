@@ -398,6 +398,58 @@ facts (e.g., 'how much total', 'how many distinct days'). Otherwise
 answer directly from the snippets you already have.
 ```
 
+### Self-extraction pattern — agent classifies, wg stores
+
+`wg` deliberately does **not** ship a built-in LLM-aided ingest
+pipeline (the kind Mem0 / Letta have a dedicated extractor for).
+The reason is structural: every agent that calls `wg_fact_add`
+already has its own LLM, and that LLM is almost always a stronger
+model than wg could ever embed. Asking the calling agent to do the
+classification keeps wg local-first and free of API-key /
+extractor-quality coupling, while still benefiting from the
+agent's reasoning.
+
+What this means for the calling agent:
+
+* Before `wg_fact_add`, decide which `fact_type` fits — the trigger
+  cues are baked into the tool description, but here's the short
+  form for prompt injection:
+
+  | Cue in user / assistant text | fact_type |
+  |---|---|
+  | "I prefer X" / "my favorite is Y" / "I like Z" | preference |
+  | "I decided to X" / "I chose Y" / "going with Z" | decision |
+  | "tried X but Y" / "turns out" / "wish I had" | lesson |
+  | "avoid X" / "never again" / "was a mistake" | error |
+  | "always X" / "every time" / "I never X" | convention |
+  | "X uses Y for Z" (architectural) | pattern |
+  | factual without opinion | claim |
+  | catch-all | note |
+
+* Pass the entity hints in the same call (`entities: [...]`) — wg
+  auto-creates and aliases.
+
+* `wg_fact_add_many` gets the same self-extracted classification —
+  the batch round-trip is for fsync amortisation, not classification.
+
+This is the pattern you should follow rather than reaching for a
+heavier ingest framework. wg's bench measurements show the in-pipeline
+weighting (decay-exempt + 2× boost on personalisation tiers like
+preference / lesson / error) materially shifts ranking — but only
+when those types are populated correctly. Ship-default `note`
+classification leaves the boost dormant.
+
+A historical caveat worth knowing: wg also has an opt-in
+`wg_extract` path (heuristic-only by default; `WG_EXTRACT_LLM=1`
+flips to the configured `extract.provider`). On our LongMemEval
+60q measurement, routing extraction through a same-class extractor
+(MiniMax → MiniMax) regressed accuracy by ~13pt because the
+extractor *rewrites* facts (paraphrases / summarises) and the
+reader can no longer match the rewritten extracts to the raw
+turns. Self-extraction sidesteps this: the agent only labels the
+fact_type, not the content, so the abstraction-mismatch failure
+mode doesn't apply.
+
 ### Register with Claude Code
 ```bash
 claude mcp add wg -- wg mcp

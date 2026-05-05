@@ -3085,7 +3085,33 @@ pub fn list_tools() -> Vec<Tool> {
         },
         Tool {
             name: "wg_fact_add".into(),
-            description: "Add a fact to the wiki graph. By default the tool runs a BM25 dedup check on the new content first — if a high-overlap existing fact is found it appears as `existing_similar` in the response (the new fact is still added; the agent decides whether to wg_fact_supersede the older one). Missing entities are auto-created (default type Unknown) and reported in `auto_created_entities`. If an auto-created name is fuzzily similar to an existing entity (e.g. typo: 'Postgrs' vs existing 'Postgres'), the candidates appear as `entity_name_alternatives` so the agent can decide to alias or merge instead of leaving a fragmented graph. Returns {id, content, entity_names, created_at, auto_created_entities, entity_name_alternatives, existing_similar}."
+            description: "Add a fact to the wiki graph.\n\n**SELF-EXTRACTION PATTERN**: Before calling, classify the content yourself \
+                from the menu below. wg deliberately does NOT ship a built-in LLM-aided \
+                ingest pipeline (cf. Mem0 / Letta) — instead it relies on the calling \
+                agent's own reasoning, which is almost always a stronger model than wg \
+                could ever embed. Pick the right `fact_type` (preference / lesson / \
+                error / decision / convention / claim / note) so the in-pipeline weighting \
+                (decay-exempt + 2× boost on personalisation tiers) actually fires on the \
+                right facts.\n\nClassification cues (in order of specificity):\n\
+                * 'I prefer X' / 'my favorite is Y' / 'I like Z' → preference\n\
+                * 'I decided to X' / 'I chose Y' / 'going with Z' → decision\n\
+                * 'tried X but Y' / 'turns out' / 'wish I had' → lesson\n\
+                * 'avoid X' / 'never again' / 'was a mistake' → error\n\
+                * 'always X' / 'every time' / 'I never X' → convention\n\
+                * 'X uses Y for Z' / architectural assertion → pattern\n\
+                * factual claim with no opinion → claim\n\
+                * default catch-all → note\n\n\
+                By default the tool runs a BM25 dedup check on the new content first — \
+                if a high-overlap existing fact is found it appears as `existing_similar` \
+                in the response (the new fact is still added; the agent decides whether \
+                to wg_fact_supersede the older one). Missing entities are auto-created \
+                (default type Unknown) and reported in `auto_created_entities`. If an \
+                auto-created name is fuzzily similar to an existing entity (e.g. typo: \
+                'Postgrs' vs existing 'Postgres'), the candidates appear as \
+                `entity_name_alternatives` so the agent can decide to alias or merge \
+                instead of leaving a fragmented graph. Returns {id, content, entity_names, \
+                created_at, auto_created_entities, entity_name_alternatives, \
+                existing_similar}."
                 .into(),
             input_schema: json!({
                 "type": "object",
@@ -3096,7 +3122,7 @@ pub fn list_tools() -> Vec<Tool> {
                     "fact_type": {
                         "type": "string",
                         "enum": ["decision", "pattern", "convention", "claim", "note", "question", "preference", "lesson", "error", "unknown"],
-                        "description": "Atomic types (decision/pattern/convention) are mutually exclusive per entity — use wg_fact_supersede to retire the old one. Non-atomic (claim/note/question) coexist freely."
+                        "description": "Self-classify before calling — see the trigger cues in the tool description. Atomic types (decision/pattern/convention) are mutually exclusive per entity — use wg_fact_supersede to retire the old one. Non-atomic (claim/note/question/preference/lesson/error) coexist freely."
                     },
                     "dedup_check": {
                         "type": "boolean",
