@@ -954,25 +954,6 @@ fn tool_traverse(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, Strin
     })
 }
 
-fn tool_lint(wiki: &WikiGraph) -> Result<ToolCallResult, String> {
-    let issues = wiki.lint().map_err(|e| e.to_string())?;
-
-    let text = if issues.is_empty() {
-        "Graph is healthy.".into()
-    } else {
-        issues
-            .iter()
-            .map(|i| format!("- [{}] {}: {}", i.severity, i.code, i.message))
-            .collect::<Vec<_>>()
-            .join("\n")
-    };
-
-    Ok(ToolCallResult {
-        content: vec![ContentBlock::text(text)],
-        is_error: None,
-    })
-}
-
 /// Map a lint code to an actionable hint the agent can carry out
 /// without further deliberation. Generic enough to apply to any
 /// instance of that code, specific enough to suggest the right next
@@ -1143,21 +1124,6 @@ fn tool_recent(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String>
     let slim: Vec<Value> = facts.iter().map(|f| slim_fact_record(f, wiki)).collect();
     let payload = json!({ "facts": slim });
     let text = serde_json::to_string(&payload).map_err(|e| e.to_string())?;
-    Ok(ToolCallResult {
-        content: vec![ContentBlock::text(text)],
-        is_error: None,
-    })
-}
-
-fn tool_backlinks(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String> {
-    let entity = args
-        .get("entity")
-        .and_then(|v| v.as_str())
-        .ok_or("entity required")?;
-    let relations = wiki
-        .relations_get(entity, wg_core::TraverseDirection::Reverse)
-        .map_err(|e| e.to_string())?;
-    let text = serde_json::to_string_pretty(&relations).map_err(|e| e.to_string())?;
     Ok(ToolCallResult {
         content: vec![ContentBlock::text(text)],
         is_error: None,
@@ -2978,12 +2944,6 @@ pub fn list_tools() -> Vec<Tool> {
             }),
         },
         Tool {
-            name: "wg_lint".into(),
-            description: "[DEPRECATED — prefer wg_doctor] Raw lint issues — orphan entities, duplicate facts, stale facts, broken refs. wg_doctor returns a strict superset: same `issues` array plus stats + per-code grouping with action hints. Kept for backwards compatibility; new agents should call wg_doctor and read .issues from its response."
-                .into(),
-            input_schema: json!({"type": "object", "properties": {}}),
-        },
-        Tool {
             name: "wg_doctor".into(),
             description: "Wiki health check: counts plus any lint issues (orphans, broken refs, stale facts). Call this first if results look wrong."
                 .into(),
@@ -3016,18 +2976,6 @@ pub fn list_tools() -> Vec<Tool> {
                     },
                     "last_days": {"type": "number", "default": 7}
                 }
-            }),
-        },
-        Tool {
-            name: "wg_backlinks".into(),
-            description: "[DEPRECATED — prefer wg_traverse(direction:\"reverse\")] Reverse 1-hop relations — entities that point AT this entity. Useful for 'what depends on X?'. Kept for backwards compatibility; wg_traverse with direction=reverse + depth=1 returns equivalent information plus the option to go deeper."
-                .into(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "entity": {"type": "string"}
-                },
-                "required": ["entity"]
             }),
         },
         Tool {
@@ -3246,11 +3194,9 @@ fn call_tool(name: &str, args: &Value, wiki: &WikiGraph) -> Result<ToolCallResul
         "wg_fact_list" => tool_fact_list(args, wiki),
         "wg_path" => tool_path(args, wiki),
         "wg_traverse" => tool_traverse(args, wiki),
-        "wg_lint" => tool_lint(wiki),
         "wg_doctor" => tool_doctor(wiki),
         "wg_overview" => tool_overview(args, wiki),
         "wg_recent" => tool_recent(args, wiki),
-        "wg_backlinks" => tool_backlinks(args, wiki),
         "wg_query" => tool_query(args, wiki),
         "wg_context" => tool_context(args, wiki),
         "wg_entity_describe" => tool_entity_describe(args, wiki),

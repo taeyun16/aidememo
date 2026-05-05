@@ -11,7 +11,7 @@ lives in `AGENTS.md` (cross-tool spec) — read that first.
 
 This repo ships a project-level `.mcp.json` that wires `wg mcp` (stdio) into
 Claude Code automatically. After `cargo build -p wg-cli`, the wiki tools
-(`wg_search`, `wg_fact_add`, `wg_lint`, `wg_traverse`, `wg_entity_list`) are
+(`wg_context`, `wg_query`, `wg_aggregate`, `wg_fact_add`, `wg_doctor`, …) are
 available without extra setup.
 
 If the binary path differs from `./target/debug/wg`, edit `.mcp.json`.

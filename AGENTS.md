@@ -249,30 +249,50 @@ crates/wg-cli/src/
 | `wg mcp` | stdio (newline-delimited JSON-RPC) | local agents (Claude Code, Codex CLI) |
 | `wg mcp-serve --port 3000` | HTTP POST `/mcp` + SSE `/sse` | browser/remote clients |
 
-**17 tools** (preferred order in agent prompts):
+**Tool surface — 4 core, then standard, then advanced.** Agent prompts
+should lead with the core 4; the rest are there when needed.
+
+**Core (90% of agent traffic)**:
 
 | Tool | When |
 |---|---|
-| **`wg_context`** | **🟢 Top-of-turn entry point** — pinned + personalisation + recent + (with topic) search/traverse/lessons. One round-trip replaces session_start → query → search chain. |
-| `wg_query` | Topic-only retrieval (search + entity + traverse + recent). Lighter than wg_context. Use for follow-up topic dives. **Agent budget knobs:** `format:"text"` → markdown bullets (~5× smaller than JSON); `max_chars:N` → hard cap (drops `related` first, then trims previews, then drops trailing hits, keeps top match); `level:"entity"` → group hits by primary entity (mirrors the bench's hybrid-ingest pattern that lifted multi-session +20pt). |
-| `wg_aggregate` | Deterministic counting / enumeration on top of hybrid search. For "how many X", "list every Y", "group by Z" questions — pulls the agent out of the synthesis loop instead of eyeballing snippets. ops: `count`, `enumerate`, `by_entity`. Filters: `fact_type`, `entity`, `since`, `current_only`. Use when a question reduces to counting / summing / grouping. |
-| `wg_overview` | First-impression snapshot — call once at session start on an unfamiliar wiki |
-| `wg_search` | Pure hybrid search, no graph |
-| `wg_recent` | Last N days of facts |
-| `wg_entity_list` | Browse entities |
-| `wg_entity_get` | Fetch one entity by name/alias |
-| `wg_fact_get` | Fetch one fact by ULID |
-| `wg_traverse` | Forward walk from a known entity |
-| `wg_backlinks` | Reverse walk — "what depends on X?" |
-| `wg_doctor` | Health snapshot |
-| `wg_lint` | Raw issues |
-| `wg_entity_describe` | Set / clear an entity's prose summary |
-| `wg_fact_add` | Append a new fact (now accepts `preference` / `lesson` / `error` types) |
-| `wg_fact_add_many` | Append N facts in one transaction (use for bulk imports) |
-| `wg_fact_supersede` | Mark old fact replaced by a new one (validity-window invalidate) |
-| `wg_fact_edit` | Patch a fact's content (append / prepend / find+replace / content) |
+| **`wg_context`** | **🟢 Top-of-turn entry point** — pinned + personalisation + recent + (with topic) search/traverse/lessons. One round-trip. |
+| **`wg_query`** | Topic dive after wg_context. `format:"text"` for compact prompt injection; `max_chars:N` for hard caps; `level:"entity"`/`"session"` to group by entity / by tracked session. |
+| **`wg_aggregate`** | Deterministic counting / sum / timeline across facts. Pulls agent out of in-head arithmetic for "how much / how many / between when" questions. ops: `count`/`enumerate`/`by_entity`/`sum_currency`/`sum_duration`/`count_distinct_dates`/`timeline`. |
+| **`wg_fact_add`** | Append a fact (auto-creates entities, `preference`/`lesson`/`error` types). Auto-attaches to `WG_SESSION_ID` when the env var is set. |
 
-Tool schemas live in `cmd/mcp_tools.rs::list_tools()`.
+**Standard (frequent, but optional in any single turn)**:
+
+| Tool | When |
+|---|---|
+| `wg_search` | Pure hybrid search, no graph wrapper — fastest pinpoint lookup. |
+| `wg_recent` | Last N days of facts. |
+| `wg_overview` | First-impression snapshot for an unfamiliar wiki — entity-type buckets, top centrals, recent activity. |
+| `wg_traverse` | Walk the graph from a known entity. `direction:"reverse"` for "what depends on X". |
+| `wg_doctor` | Health snapshot — counts + lint issues + per-code action hints. |
+| `wg_entity_get` | Fetch one entity (name / alias). |
+| `wg_fact_get` | Fetch one fact by ULID. |
+| `wg_entity_list` | Browse entities. |
+
+**Advanced (write-side power tools, batch ops, niche)**:
+
+| Tool | When |
+|---|---|
+| `wg_fact_add_many` | Bulk fact insert in one transaction. |
+| `wg_fact_supersede` | Mark an old fact replaced by a new one (validity-window invalidate). |
+| `wg_fact_edit` | Patch fact content (append/prepend/find+replace/content). |
+| `wg_fact_pin` | Pin / unpin a fact for the always-on tier. |
+| `wg_fact_list` | Paginated fact list with filters. |
+| `wg_pinned_context` | Just the pinned tier (subset of wg_context). |
+| `wg_session_start` | Pinned + recent only (subset of wg_context). |
+| `wg_path` | Shortest-path between two entities. |
+| `wg_entity_describe` | Set / clear an entity's prose summary. |
+| `wg_extract` | Run heuristic / optional LLM fact extraction over raw text. |
+| `wg_feedback` | Record positive / negative feedback on a search hit (training signal). |
+
+Tool schemas live in `cmd/mcp_tools.rs::list_tools()`. The deprecated
+`wg_lint` and `wg_backlinks` tools were removed in favour of
+`wg_doctor` and `wg_traverse(direction:"reverse")`.
 
 ### Agent-UX cheatsheet (Tier A+B additions)
 
