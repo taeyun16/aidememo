@@ -85,6 +85,8 @@ wg stats                                           counts + size
 ```
 wg fact add <content> --entities A,B [--type T]     auto-creates missing entities
 wg fact supersede <OLD_ID> <NEW_ID>                 validity-window invalidate
+wg fact archive --ids <ID,…>                        move to <store>.cold.redb (preserves FactId)
+wg fact archive --older-than 30d [--type note]      bulk move by age (+ optional type filter)
 wg edit fact <ID> --append/--prepend/--find+--replace/--content
 wg entity add <name> [--type service]               custom types accepted
 wg entity describe <name> "..." | --from-stdin | --clear   compiled-truth summary
@@ -281,6 +283,7 @@ should lead with the core 4; the rest are there when needed.
 | `wg_fact_add_many` | Bulk fact insert in one transaction. |
 | `wg_fact_supersede` | Mark an old fact replaced by a new one (validity-window invalidate). |
 | `wg_fact_edit` | Patch fact content (append/prepend/find+replace/content). |
+| `wg_fact_archive` | Move facts to cold-tier (`<store>.cold.redb`) — hot store shrinks, FactId preserved for `wg_fact_get`. Search merge is stage-3. |
 | `wg_fact_pin` | Pin / unpin a fact for the always-on tier. |
 | `wg_fact_list` | Paginated fact list with filters. |
 | `wg_pinned_context` | Just the pinned tier (subset of wg_context). |

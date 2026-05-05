@@ -2640,6 +2640,49 @@ fn tool_fact_supersede(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult,
     })
 }
 
+fn tool_fact_archive(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String> {
+    let raw_ids = args
+        .get("ids")
+        .and_then(|v| v.as_array())
+        .ok_or("ids array required")?;
+    let mut targets: Vec<wg_core::FactId> = Vec::with_capacity(raw_ids.len());
+    for v in raw_ids {
+        let s = v.as_str().ok_or("each id must be a string")?;
+        targets.push(parse_fact_id(s)?);
+    }
+    let dry_run = args
+        .get("dry_run")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    if targets.is_empty() {
+        return Ok(ToolCallResult {
+            content: vec![ContentBlock::text(
+                json!({"moved": 0, "candidates": 0, "dry_run": dry_run}).to_string(),
+            )],
+            is_error: None,
+        });
+    }
+    let moved = if dry_run {
+        // Pre-check existence to give the agent a useful preview count
+        // without actually moving anything.
+        targets
+            .iter()
+            .filter(|id| wiki.fact_get(id).is_ok())
+            .count()
+    } else {
+        wiki.archive_facts(&targets).map_err(|e| e.to_string())?
+    };
+    let payload = json!({
+        "moved": moved,
+        "candidates": targets.len(),
+        "dry_run": dry_run,
+    });
+    Ok(ToolCallResult {
+        content: vec![ContentBlock::text(payload.to_string())],
+        is_error: None,
+    })
+}
+
 fn tool_fact_edit(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String> {
     let id = args
         .get("id")
@@ -3101,6 +3144,34 @@ pub fn list_tools() -> Vec<Tool> {
             }),
         },
         Tool {
+            name: "wg_fact_archive".into(),
+            description: "Move facts from the hot store into the cold-tier \
+                archive (`<store>.cold.redb`). The hot store shrinks; cold \
+                preserves the FactId so `wg_fact_get` keeps resolving the \
+                archived fact for audit / soft-recovery. Search merge with \
+                cold lands in a follow-up — for now archived facts drop out \
+                of `wg_search` / `wg_query` results. Use sparingly, in batch, \
+                for facts you've decided are no longer hot context — old \
+                conversation logs, deprecated decisions still worth keeping \
+                for history, etc.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of fact ULIDs to archive."
+                    },
+                    "dry_run": {
+                        "type": "boolean",
+                        "default": false,
+                        "description": "Count valid candidates but do not move anything."
+                    }
+                },
+                "required": ["ids"]
+            }),
+        },
+        Tool {
             name: "wg_fact_edit".into(),
             description: "Edit a fact's content in place. Choose exactly one of \
                 append / prepend / find+replace / content. Use this for typo \
@@ -3203,6 +3274,7 @@ fn call_tool(name: &str, args: &Value, wiki: &WikiGraph) -> Result<ToolCallResul
         "wg_fact_add" => tool_fact_add(args, wiki),
         "wg_fact_add_many" => tool_fact_add_many(args, wiki),
         "wg_fact_supersede" => tool_fact_supersede(args, wiki),
+        "wg_fact_archive" => tool_fact_archive(args, wiki),
         "wg_fact_edit" => tool_fact_edit(args, wiki),
         "wg_aggregate" => tool_aggregate(args, wiki),
         _ => Err(format!("Unknown tool: {}", name)),

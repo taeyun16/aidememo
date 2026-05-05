@@ -239,6 +239,18 @@ pub enum FactSub {
         old_id: String,
         new_id: String,
     },
+    Archive {
+        /// Explicit fact ids to archive (comma-separated).
+        ids: Option<String>,
+        /// Archive all facts older than this duration (`30d`, `4w`, `1y`).
+        /// Compares observed_at if present, else created_at. Mutually
+        /// compatible with --type to scope by fact_type.
+        older_than: Option<String>,
+        /// Optional fact_type filter when --older-than is used.
+        fact_type: Option<String>,
+        /// Print the candidate id list but don't move anything.
+        dry_run: bool,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -809,8 +821,39 @@ fn fact_command() -> impl Parser<Command> {
         .command("pinned")
         .help("List pinned facts (the always-loaded tier), most-recently-accessed first");
 
+    let ids = long("ids")
+        .help("Explicit fact ids (comma-separated)")
+        .argument::<String>("IDS")
+        .optional();
+    let older_than = long("older-than")
+        .help("Archive facts older than DURATION (e.g. 30d, 4w, 1y). Compares observed_at if present, else created_at.")
+        .argument::<String>("DURATION")
+        .optional();
+    let fact_type = long("type")
+        .short('t')
+        .help("Optional fact_type filter when --older-than is used")
+        .argument::<String>("TYPE")
+        .optional();
+    let dry_run = long("dry-run")
+        .help("Print candidate ids without moving any fact")
+        .switch();
+    let archive = construct!(FactSub::Archive {
+        ids,
+        older_than,
+        fact_type,
+        dry_run,
+    })
+    .to_options()
+    .command("archive")
+    .help(
+        "Move facts to the cold-tier archive (<store>.cold.redb). \
+         Hot store shrinks; cold preserves FactId so wg_fact_get \
+         keeps working. Search merge is stage-3; today archived \
+         facts are retrievable only by id.",
+    );
+
     construct!([
-        add, get, list, delete, feedback, supersede, pin, unpin, pinned
+        add, get, list, delete, feedback, supersede, pin, unpin, pinned, archive
     ])
     .map(Command::Fact)
     .to_options()

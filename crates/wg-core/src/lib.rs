@@ -614,6 +614,25 @@ impl WikiGraph {
         self.store.write().fact_feedback(id, helpful)
     }
 
+    /// Move facts from the hot store to the cold-tier archive
+    /// (`<store>.cold.redb`). Returns the number actually moved
+    /// (silently skips ids not in hot — they may already be archived).
+    /// See `crates/wg-core/src/archive.rs` for the design notes
+    /// (cold preserves FactId, content-hash dedup, hot delete after
+    /// cold commit). After this returns, BM25 / semantic indexes are
+    /// marked dirty so the next search rebuilds against the smaller
+    /// hot pool. Cold-side index update lands in stage 3.
+    pub fn archive_facts(&self, fact_ids: &[FactId]) -> Result<usize> {
+        let moved = {
+            let mut store = self.store.write();
+            store.archive_facts(fact_ids)?
+        };
+        if moved > 0 {
+            self.bm25_mark_dirty();
+        }
+        Ok(moved)
+    }
+
     /// Mark `old_id` as superseded by `new_id`. Sets `old.superseded_at = now`
     /// and `old.superseded_by = new_id`. Errors if either ID doesn't exist or
     /// `old_id` is already superseded.

@@ -97,7 +97,7 @@ impl Store {
 
     /// Open or create a WikiGraph store at the given path.
     #[tracing::instrument(level = "debug", skip(config), fields(path = %path.display()))]
-    pub fn open(path: &Path, config: Config) -> Result<Self> {
+    pub fn open(path: &Path, mut config: Config) -> Result<Self> {
         // Ensure parent directory exists
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| WgError::StoreOpen {
@@ -105,6 +105,14 @@ impl Store {
                 source: Box::new(e),
             })?;
         }
+
+        // Sync config.store.path to the actual path so downstream code
+        // (cold-tier path derivation, lint reports, stats) sees the real
+        // file we opened, not the default that the caller forgot to
+        // update. CLI's --store flag and any explicit `Store::open(p,
+        // ...)` caller pass `path` as truth; this keeps the two views
+        // consistent.
+        config.store.path = path.to_string_lossy().into_owned();
 
         let db = Self::open_with_retry(path, config.store.lock_retry_ms)?;
 
