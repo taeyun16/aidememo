@@ -205,6 +205,17 @@ struct Args {
     /// `--session-level-ingest` (this flag implies session-level
     /// inclusion).
     hybrid_ingest: bool,
+    /// Path to a JSON file emitted by
+    /// `scripts/longmemeval_classify_sessions.py` that maps each
+    /// turn to a `fact_type` label. Layout: `{question_id: {sess_idx:
+    /// {turn_idx: type}}}`. When provided, ingest applies the
+    /// classified type instead of the default Note. Mirrors the
+    /// "self-extraction" pattern wg ships in production (the calling
+    /// agent does the classification; wg stores it). Pure label-only
+    /// pass — content is unchanged, so the abstraction-mismatch
+    /// failure mode of `--llm-extract` (which rewrites facts) does
+    /// not apply.
+    classify_from: Option<PathBuf>,
 }
 
 /// Parse "2023/02/01 (Wed) 10:20" → epoch ms. Returns None on any
@@ -259,6 +270,7 @@ fn parse_args() -> Args {
     let mut balanced_sample: Option<usize> = None;
     let mut session_level_ingest = false;
     let mut hybrid_ingest = false;
+    let mut classify_from: Option<PathBuf> = None;
 
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
@@ -348,6 +360,10 @@ fn parse_args() -> Args {
                 hybrid_ingest = true;
                 i += 1;
             }
+            "--classify-from" if i + 1 < argv.len() => {
+                classify_from = Some(PathBuf::from(&argv[i + 1]));
+                i += 2;
+            }
             _ => i += 1,
         }
     }
@@ -373,6 +389,7 @@ fn parse_args() -> Args {
         balanced_sample,
         session_level_ingest,
         hybrid_ingest,
+        classify_from,
     }
 }
 
@@ -401,6 +418,11 @@ struct BuildOpts<'a> {
     /// Mutually exclusive with `session_level_ingest` semantically
     /// (this flag wins when both are set).
     hybrid_ingest: bool,
+    /// Optional per-turn fact_type classification, keyed by
+    /// (sess_idx, turn_idx). Loaded from `--classify-from FILE` and
+    /// scoped to the current question by main(). When None, every
+    /// turn-level fact ingests as `Note` (the legacy default).
+    classify_for_question: Option<&'a std::collections::HashMap<usize, std::collections::HashMap<usize, String>>>,
 }
 
 fn build_store_for_question(
@@ -424,6 +446,7 @@ fn build_store_for_question(
         llm_extract_replace,
         session_level_ingest,
         hybrid_ingest,
+        classify_for_question,
     } = opts;
     let dir = tempfile::TempDir::new().map_err(|e| e.to_string())?;
     let mut config = Config::default();
@@ -555,10 +578,15 @@ fn build_store_for_question(
                 });
             }
             if want_turns {
-                for turn in session {
+                let session_classify = classify_for_question.and_then(|m| m.get(&sess_idx));
+                for (turn_idx, turn) in session.iter().enumerate() {
+                    let ft = session_classify
+                        .and_then(|c| c.get(&turn_idx))
+                        .map(|s| FactType::parse(s))
+                        .unwrap_or(FactType::Note);
                     inputs.push(FactInput {
                         content: format!("{}: {}", turn.role, turn.content),
-                        fact_type: Some(FactType::Note),
+                        fact_type: Some(ft),
                         entity_ids: entity_id.map(|e| vec![e]),
                         tags: Some(vec![format!(
                             "session:{}",
@@ -988,6 +1016,43 @@ fn run(args: &Args) -> Result<(), String> {
     } else {
         None
     };
+    // Load classify-from JSON once. Layout: {qid: {sess_idx: {turn_idx: type}}}.
+    // The file is small (~30k turns × ~10 char label) so a single
+    // up-front parse is fine.
+    let classify_map: Option<std::collections::HashMap<String, std::collections::HashMap<usize, std::collections::HashMap<usize, String>>>> =
+        if let Some(path) = &args.classify_from {
+            let raw = std::fs::read_to_string(path)
+                .map_err(|e| format!("read {path:?}: {e}"))?;
+            let raw: std::collections::HashMap<String, std::collections::HashMap<String, std::collections::HashMap<String, String>>> =
+                serde_json::from_str(&raw).map_err(|e| format!("parse classify-from: {e}"))?;
+            // Convert the inner String keys (sess_idx / turn_idx) to usize
+            // up front so the per-question lookup is a plain HashMap fetch.
+            let mut out = std::collections::HashMap::new();
+            for (qid, sess_map) in raw {
+                let mut s_out = std::collections::HashMap::new();
+                for (sk, t_map) in sess_map {
+                    let sk_u: usize = match sk.parse() {
+                        Ok(v) => v,
+                        Err(_) => continue,
+                    };
+                    let mut t_out = std::collections::HashMap::new();
+                    for (tk, ty) in t_map {
+                        let tk_u: usize = match tk.parse() {
+                            Ok(v) => v,
+                            Err(_) => continue,
+                        };
+                        t_out.insert(tk_u, ty);
+                    }
+                    s_out.insert(sk_u, t_out);
+                }
+                out.insert(qid, s_out);
+            }
+            println!("classify: loaded {} questions from {path:?}", out.len());
+            Some(out)
+        } else {
+            None
+        };
+
     let started = Instant::now();
     for (i, q) in questions.iter().take(n).enumerate() {
         // Always stamp observed_at from the LongMemEval session date.
@@ -1024,6 +1089,9 @@ fn run(args: &Args) -> Result<(), String> {
                 llm_extract_replace: args.llm_extract_replace,
                 session_level_ingest: args.session_level_ingest,
                 hybrid_ingest: args.hybrid_ingest,
+                classify_for_question: classify_map
+                    .as_ref()
+                    .and_then(|m| m.get(&q.question_id)),
             },
         )?;
         let (rank, retrievals) =
