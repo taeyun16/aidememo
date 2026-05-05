@@ -1031,22 +1031,40 @@ impl Store {
         }
 
         // Phase 2: build records to insert, deduping inside the batch
-        // too. `resolved_ids[i]` mirrors the input order.
+        // too. `resolved_ids[i]` mirrors the input order. When dedup
+        // hits an existing fact but the new input adds entity_ids the
+        // existing record didn't carry, queue an entity-merge so the
+        // graph index picks up the new attachments (otherwise the
+        // re-ingest silently drops the new entity link).
         let mut resolved_ids: Vec<FactId> = Vec::with_capacity(inputs.len());
         let mut records: Vec<FactRecord> = Vec::new();
         let mut record_hashes: Vec<String> = Vec::new();
         let mut batch_seen: std::collections::HashMap<String, FactId> =
             std::collections::HashMap::new();
+        // existing_id -> set of new entity_ids to merge in
+        let mut entity_merges: std::collections::HashMap<FactId, Vec<EntityId>> =
+            std::collections::HashMap::new();
 
         for (input, hash) in inputs.into_iter().zip(hashes.iter()) {
-            // Pre-existing in store? Reuse the id, skip the insert.
+            // Pre-existing in store? Reuse the id, skip the insert,
+            // but queue any new entity_ids for merge.
             if let Some(id) = existing_by_hash.get(hash.as_str()) {
                 resolved_ids.push(*id);
+                if let Some(eids) = input.entity_ids {
+                    if !eids.is_empty() {
+                        entity_merges.entry(*id).or_default().extend(eids);
+                    }
+                }
                 continue;
             }
             // Already queued earlier in this batch? Reuse that id.
             if let Some(id) = batch_seen.get(hash) {
                 resolved_ids.push(*id);
+                if let Some(eids) = input.entity_ids {
+                    if !eids.is_empty() {
+                        entity_merges.entry(*id).or_default().extend(eids);
+                    }
+                }
                 continue;
             }
             let id = FactId::new();
@@ -1075,9 +1093,10 @@ impl Store {
             resolved_ids.push(id);
         }
 
-        // Nothing actually new — all inputs collapsed to existing facts.
-        // Skip the write transaction entirely.
-        if records.is_empty() {
+        // Nothing actually new AND no entity merges queued — all inputs
+        // collapsed to existing facts with no new entity links. Skip
+        // the write transaction entirely.
+        if records.is_empty() && entity_merges.is_empty() {
             return Ok(resolved_ids);
         }
 
@@ -1138,6 +1157,54 @@ impl Store {
                         .map_err(|e| WgError::StoreWrite {
                             table: "fact_by_entity",
                             key,
+                            source: Box::new(e),
+                        })?;
+                }
+            }
+
+            // Phase 3: process entity merges for dedup-hit existing
+            // facts. Read each existing record, append any new
+            // entity_ids that aren't already present, write the
+            // updated record back, and add fact_by_entity index rows.
+            // Skip records we just inserted (their entity_ids are
+            // already authoritative).
+            for (existing_id, new_eids) in entity_merges.iter() {
+                if records.iter().any(|r| r.id == *existing_id) {
+                    continue;
+                }
+                let raw = match facts.get(existing_id.as_bytes().as_slice()) {
+                    Ok(Some(v)) => v.value().to_vec(),
+                    _ => continue,
+                };
+                let mut record: FactRecord = match serde_json::from_slice(&raw) {
+                    Ok(r) => r,
+                    Err(_) => continue,
+                };
+                let mut changed = false;
+                for eid in new_eids {
+                    if !record.entity_ids.contains(eid) {
+                        record.entity_ids.push(*eid);
+                        let key = format!("{}\0{}", eid, existing_id);
+                        fact_by_entity
+                            .insert(&key as &str, existing_id.as_bytes().as_slice())
+                            .map_err(|e| WgError::StoreWrite {
+                                table: "fact_by_entity",
+                                key,
+                                source: Box::new(e),
+                            })?;
+                        changed = true;
+                    }
+                }
+                if changed {
+                    let bytes = serde_json::to_vec(&record).map_err(|e| WgError::Serialize {
+                        context: format!("fact {:?}", existing_id),
+                        source: e,
+                    })?;
+                    facts
+                        .insert(existing_id.as_bytes().as_slice(), bytes.as_slice())
+                        .map_err(|e| WgError::StoreWrite {
+                            table: "facts",
+                            key: existing_id.to_string(),
                             source: Box::new(e),
                         })?;
                 }
@@ -2312,6 +2379,75 @@ mod tests {
         let mut store = create_test_store();
         let ids = store.fact_add_many(vec![]).unwrap();
         assert!(ids.is_empty());
+    }
+
+    #[test]
+    fn fact_add_dedup_merges_new_entity_ids() {
+        // Re-ingesting the same content with a different entity must
+        // (a) return the same fact id, (b) merge the new entity into
+        // the fact's entity_ids, and (c) make the fact discoverable
+        // via the second entity's index — otherwise an agent that
+        // re-ingests "I ride bikes" first under #Health then under
+        // #Cycling would silently lose the #Cycling link.
+        let mut store = create_test_store();
+        store
+            .entity_add(EntityInput {
+                name: "Health".to_string(),
+                entity_type: Some(EntityType::Custom("topic".into())),
+                ..Default::default()
+            })
+            .unwrap();
+        store
+            .entity_add(EntityInput {
+                name: "Cycling".to_string(),
+                entity_type: Some(EntityType::Custom("topic".into())),
+                ..Default::default()
+            })
+            .unwrap();
+        let health_id = store.resolve_entity("Health").unwrap();
+        let cycling_id = store.resolve_entity("Cycling").unwrap();
+
+        let id1 = store
+            .fact_add(FactInput {
+                content: "I ride bikes on weekends".into(),
+                entity_ids: Some(vec![health_id]),
+                ..Default::default()
+            })
+            .unwrap();
+        let id2 = store
+            .fact_add(FactInput {
+                content: "I ride bikes on weekends".into(),
+                entity_ids: Some(vec![cycling_id]),
+                ..Default::default()
+            })
+            .unwrap();
+
+        // Same content collapses to one fact.
+        assert_eq!(id1, id2, "same content must dedup to one fact id");
+
+        // Both entities now claim the fact.
+        let rec = store.fact_get(&id1).unwrap();
+        assert!(rec.entity_ids.contains(&health_id));
+        assert!(rec.entity_ids.contains(&cycling_id));
+        assert_eq!(rec.entity_ids.len(), 2, "no duplicate entity ids");
+
+        // fact_by_entity index has both rows.
+        assert_eq!(store.count_entity_facts(&health_id).unwrap(), 1);
+        assert_eq!(store.count_entity_facts(&cycling_id).unwrap(), 1);
+
+        // Re-ingesting under Health a second time is a no-op (no
+        // duplicate index row, no duplicate entity id in the record).
+        let id3 = store
+            .fact_add(FactInput {
+                content: "I ride bikes on weekends".into(),
+                entity_ids: Some(vec![health_id]),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(id3, id1);
+        let rec2 = store.fact_get(&id1).unwrap();
+        assert_eq!(rec2.entity_ids.len(), 2);
+        assert_eq!(store.count_entity_facts(&health_id).unwrap(), 1);
     }
 
     #[test]
