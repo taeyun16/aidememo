@@ -439,16 +439,25 @@ preference / lesson / error) materially shifts ranking — but only
 when those types are populated correctly. Ship-default `note`
 classification leaves the boost dormant.
 
-A historical caveat worth knowing: wg also has an opt-in
-`wg_extract` path (heuristic-only by default; `WG_EXTRACT_LLM=1`
-flips to the configured `extract.provider`). On our LongMemEval
-60q measurement, routing extraction through a same-class extractor
-(MiniMax → MiniMax) regressed accuracy by ~13pt because the
-extractor *rewrites* facts (paraphrases / summarises) and the
-reader can no longer match the rewritten extracts to the raw
-turns. Self-extraction sidesteps this: the agent only labels the
-fact_type, not the content, so the abstraction-mismatch failure
-mode doesn't apply.
+Historical caveats from our measurements:
+
+* Routing extraction through a same-class extractor (MiniMax →
+  MiniMax via `wg_extract --llm`) regressed LongMemEval 60q by
+  ~13pt because the extractor *rewrites* facts (paraphrases /
+  summarises) and the reader can no longer match rewritten
+  extracts to the raw turns.
+* Same model, classification-only (label fact_type without
+  rewriting content): also regressed −6pt on 60q. The boost on
+  correctly-labelled `preference` / `lesson` / etc. didn't
+  outweigh the noise from false-positive labels at MiniMax's
+  classification quality.
+
+The takeaway isn't "self-extraction is bad" — it's "the calling
+agent's classifier needs to be at least as strong as the reader
+that consumes the result". In practice production agents call wg
+from Claude Opus / GPT-5-class models, well above the bench reader
+class we measured against, so the lift hypothesis remains
+plausible — just unmeasured at this quota window.
 
 ### Register with Claude Code
 ```bash

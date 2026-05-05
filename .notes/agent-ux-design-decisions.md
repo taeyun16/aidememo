@@ -1027,3 +1027,93 @@ on for very-long conversational memory. Retrieval is universally
 strong (R@5 56-98% depending on dataset difficulty); the
 reader-side gap is the consistent ceiling, lifted by stronger
 models more than by architecture.
+
+## Self-extraction measurement — also net negative on same-class model (2026-05-05)
+
+Followed up on the prior `--llm-extract` finding (-13pt because the
+extractor *rewrites* facts) by testing a strictly weaker variant:
+**classification-only**, where the same-class LLM (MiniMax-M2.7-highspeed)
+labels each turn with a `fact_type` but the content is left untouched.
+Hypothesis: dodging the rewrite penalty would let the in-pipeline
+weighting (decay-exempt + 2× boost on personalisation tiers) kick in
+without the abstraction-mismatch failure mode.
+
+Setup:
+* `scripts/longmemeval_classify_sessions.py` — calls MiniMax once per
+  session (one prompt, all turns at once), parses JSON of {turn_idx →
+  fact_type}. ~30k turns across 60q balanced × ~2,900 sessions, 6 parallel
+  workers, ~25 min wall.
+* `benchmarks/src/bin/longmemeval.rs --classify-from FILE` — loads
+  the JSON map, applies the labels at ingest. Content unchanged.
+* Same omega-style reader/judge stack (MiniMax) on both retrievals.
+
+Classification distribution (30,035 turns):
+  note         70.6%  (default catch-all + assistant turns)
+  claim        12.9%
+  preference    8.3%
+  decision      7.1%
+  lesson        0.6%
+  pattern       0.3%
+  convention    0.1%
+  error         0.0%
+
+About 30% of turns picked up a non-Note label, with preference and
+decision dominating — plausible distribution for LongMemEval's
+chat-history shape.
+
+### Result: 60q balanced
+
+| Category | dates baseline | classified | Δ |
+|---|---|---|---|
+| knowledge-update | 10/10 | 9/10 | -1 |
+| multi-session | 6/10 | 4/10 | -2 |
+| single-session-assistant | 10/10 | 10/10 | 0 |
+| **single-session-preference** | **9/10** | **7/10** | **-2** ← lift target |
+| single-session-user | 9/10 | 10/10 | +1 |
+| temporal-reasoning | 10/10 | 8/10 | -2 |
+| **TOTAL** | **54/60 (90%)** | **48/60 (80%)** | **-6** |
+
+Retrieval-only metrics show the source: SS-pref R@10 dropped 1.00 → 0.70
+and multi-session R@10 1.00 → 0.90. The fact_type weighting either
+demoted the gold facts or promoted misclassified facts past them.
+
+### Why it failed
+
+Same root cause as `--llm-extract`: when classifier ≈ reader in
+quality, the classification noise (false-positive Preference labels
+that get the 2× boost) outweighs the boost benefit on correctly-
+labelled facts. The weighted ranking is stable enough on the legacy
+all-Note ingest because no fact gets boosted; flipping ~30% of
+turns into boosted classes turns out to make ranking worse, not
+better, when the labels themselves carry a measurable error rate.
+
+### Implication for self-extraction docs (commit bc91460)
+
+The docs change still stands — most production agents call wg from a
+stronger reader (Claude Opus 4.7, GPT-5, gpt-4.1) that should label
+fact_types more accurately than MiniMax does. With a higher-quality
+classifier the lift hypothesis is plausible but unmeasured at this
+quota window.
+
+What we DID confirm:
+* Classification-only still incurs a measurable cost on same-class
+  setups; it is **not** a free win when the calling agent is no
+  better than the bench reader.
+* Both `--llm-extract` (rewrite) and `--classify-from` (label only)
+  regress the same way on MiniMax. The penalty isn't the rewrite
+  per se — it's any LLM-injected ingest layer when classifier
+  quality ≤ reader quality.
+
+### Production guidance unchanged
+
+* AGENTS.md self-extraction section: keep as-is, it describes the
+  intended pattern. The historical-caveat paragraph already cites
+  the `--llm-extract` -13pt result; we add a one-line note that
+  classification-only also regresses on same-class measurements.
+* `wg_fact_add` description: keep the cue table — it's the right
+  guidance when the classifier is stronger than the bench reader.
+
+Honest 60q ladder (MiniMax-M2.7-highspeed, dates default):
+  * baseline (all-Note ingest)            54/60  (90.0%)
+  * --classify-from (MiniMax classifier)  48/60  (80.0%)  Δ -6.0pt
+  * --llm-extract (MiniMax extractor)     ~75%       (prior measurement, -15pt vs ~88% degenerate)
