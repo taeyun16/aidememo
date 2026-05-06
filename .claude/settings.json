@@ -1,0 +1,40 @@
+{
+  "$schema": "https://claudecode.io/schema/settings.json",
+  "_comment": "Project-scoped wg dogfooding hooks. Activates when a Claude Code session starts inside this repo. Scripts live in ~/.claude/hooks/ (cp from wg-skill/hooks/ — see wg-skill/hooks/README.md). Soft-fail if wg binary or store missing, so this is safe to commit.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/wg-session-start.py",
+            "statusMessage": "wg: loading wiki context…"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/wg-post-tool.py"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/wg-extract-facts.py"
+          }
+        ]
+      }
+    ]
+  }
+}
