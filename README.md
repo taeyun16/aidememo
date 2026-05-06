@@ -124,6 +124,10 @@ for full integration details.
 Graphiti / Zep, and beads — what `wg` wins, where it lags, and when
 to reach for something else.
 
+[`POSITIONING.md`](POSITIONING.md) is the shorter product-story version:
+who `wg` is for, what category it actually belongs in, and what claims
+it should and should not lead with.
+
 ## Architecture
 
 | Crate | Purpose |
