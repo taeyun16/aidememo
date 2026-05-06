@@ -46,6 +46,10 @@ use serde_json::Value;
 use wg_core::types::{FactInput, FactType};
 use wg_core::{Config, EntityInput, EntityType, SearchOpts, WikiGraph};
 
+type TurnTypeMap = std::collections::HashMap<usize, String>;
+type SessionTypeMap = std::collections::HashMap<usize, TurnTypeMap>;
+type ClassifyMap = std::collections::HashMap<String, SessionTypeMap>;
+
 #[derive(Debug, Deserialize)]
 struct Question {
     question_id: String,
@@ -437,7 +441,8 @@ struct BuildOpts<'a> {
     /// (sess_idx, turn_idx). Loaded from `--classify-from FILE` and
     /// scoped to the current question by main(). When None, every
     /// turn-level fact ingests as `Note` (the legacy default).
-    classify_for_question: Option<&'a std::collections::HashMap<usize, std::collections::HashMap<usize, String>>>,
+    classify_for_question:
+        Option<&'a std::collections::HashMap<usize, std::collections::HashMap<usize, String>>>,
 }
 
 /// Bundle the per-question search-time tweaks we layer on top of the
@@ -694,12 +699,11 @@ fn build_store_for_question(
                     .map(|t| format!("{}: {}", t.role, t.content))
                     .collect::<Vec<_>>()
                     .join("\n");
-                let candidates = match wiki
-                    .extract_candidates_llm(&session_text, llm_extract_per_session)
-                {
-                    Ok(c) => c,
-                    Err(_) => return Vec::new(),
-                };
+                let candidates =
+                    match wiki.extract_candidates_llm(&session_text, llm_extract_per_session) {
+                        Ok(c) => c,
+                        Err(_) => return Vec::new(),
+                    };
                 let entity_id = session_eids.get(sess_idx).copied();
                 let observed_at = observed_at_per_sess.get(sess_idx).copied().flatten();
                 let mut classified: Vec<FactInput> = Vec::with_capacity(candidates.len());
@@ -938,11 +942,10 @@ fn evaluate(
             // fact. Skip extraction when no anchor is available — the
             // structured field stays empty and the Python aggregation
             // layer falls back to text-only reading.
-            let anchor_dt = fact.observed_at.and_then(|ms| {
-                chrono::DateTime::<chrono::Utc>::from_timestamp_millis(ms as i64)
-            });
-            let structured =
-                wg_core::extract_structured::extract(&fact.content, anchor_dt);
+            let anchor_dt = fact
+                .observed_at
+                .and_then(|ms| chrono::DateTime::<chrono::Utc>::from_timestamp_millis(ms as i64));
+            let structured = wg_core::extract_structured::extract(&fact.content, anchor_dt);
             // Per-fact semantic relevance to the QUESTION (not the
             // search query — sometimes they differ when query was
             // expanded). Same embedder hybrid_search uses; the
@@ -1048,50 +1051,51 @@ fn run(args: &Args) -> Result<(), String> {
     // Load classify-from JSON once. Layout: {qid: {sess_idx: {turn_idx: type}}}.
     // The file is small (~30k turns × ~10 char label) so a single
     // up-front parse is fine.
-    let classify_map: Option<std::collections::HashMap<String, std::collections::HashMap<usize, std::collections::HashMap<usize, String>>>> =
-        if let Some(path) = &args.classify_from {
-            let raw = std::fs::read_to_string(path)
-                .map_err(|e| format!("read {path:?}: {e}"))?;
-            let raw: std::collections::HashMap<String, std::collections::HashMap<String, std::collections::HashMap<String, String>>> =
-                serde_json::from_str(&raw).map_err(|e| format!("parse classify-from: {e}"))?;
-            // Convert the inner String keys (sess_idx / turn_idx) to usize
-            // up front so the per-question lookup is a plain HashMap fetch.
-            let mut out = std::collections::HashMap::new();
-            for (qid, sess_map) in raw {
-                let mut s_out = std::collections::HashMap::new();
-                for (sk, t_map) in sess_map {
-                    let sk_u: usize = match sk.parse() {
+    let classify_map: Option<ClassifyMap> = if let Some(path) = &args.classify_from {
+        let raw = std::fs::read_to_string(path).map_err(|e| format!("read {path:?}: {e}"))?;
+        let raw: std::collections::HashMap<
+            String,
+            std::collections::HashMap<String, std::collections::HashMap<String, String>>,
+        > = serde_json::from_str(&raw).map_err(|e| format!("parse classify-from: {e}"))?;
+        // Convert the inner String keys (sess_idx / turn_idx) to usize
+        // up front so the per-question lookup is a plain HashMap fetch.
+        let mut out = std::collections::HashMap::new();
+        for (qid, sess_map) in raw {
+            let mut s_out = std::collections::HashMap::new();
+            for (sk, t_map) in sess_map {
+                let sk_u: usize = match sk.parse() {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                };
+                let mut t_out = std::collections::HashMap::new();
+                for (tk, ty) in t_map {
+                    let tk_u: usize = match tk.parse() {
                         Ok(v) => v,
                         Err(_) => continue,
                     };
-                    let mut t_out = std::collections::HashMap::new();
-                    for (tk, ty) in t_map {
-                        let tk_u: usize = match tk.parse() {
-                            Ok(v) => v,
-                            Err(_) => continue,
-                        };
-                        t_out.insert(tk_u, ty);
-                    }
-                    s_out.insert(sk_u, t_out);
+                    t_out.insert(tk_u, ty);
                 }
-                out.insert(qid, s_out);
+                s_out.insert(sk_u, t_out);
             }
-            println!("classify: loaded {} questions from {path:?}", out.len());
-            Some(out)
-        } else {
-            None
-        };
-
-    // Load HyDE JSON once (qid → hypothetical answer string).
-    let hyde_map: Option<std::collections::HashMap<String, String>> = if let Some(path) = &args.hyde_from {
-        let raw = std::fs::read_to_string(path).map_err(|e| format!("read {path:?}: {e}"))?;
-        let m: std::collections::HashMap<String, String> =
-            serde_json::from_str(&raw).map_err(|e| format!("parse hyde-from: {e}"))?;
-        println!("hyde:     loaded {} questions from {path:?}", m.len());
-        Some(m)
+            out.insert(qid, s_out);
+        }
+        println!("classify: loaded {} questions from {path:?}", out.len());
+        Some(out)
     } else {
         None
     };
+
+    // Load HyDE JSON once (qid → hypothetical answer string).
+    let hyde_map: Option<std::collections::HashMap<String, String>> =
+        if let Some(path) = &args.hyde_from {
+            let raw = std::fs::read_to_string(path).map_err(|e| format!("read {path:?}: {e}"))?;
+            let m: std::collections::HashMap<String, String> =
+                serde_json::from_str(&raw).map_err(|e| format!("parse hyde-from: {e}"))?;
+            println!("hyde:     loaded {} questions from {path:?}", m.len());
+            Some(m)
+        } else {
+            None
+        };
 
     let started = Instant::now();
     for (i, q) in questions.iter().take(n).enumerate() {
@@ -1129,16 +1133,24 @@ fn run(args: &Args) -> Result<(), String> {
                 llm_extract_replace: args.llm_extract_replace,
                 session_level_ingest: args.session_level_ingest,
                 hybrid_ingest: args.hybrid_ingest,
-                classify_for_question: classify_map
-                    .as_ref()
-                    .and_then(|m| m.get(&q.question_id)),
+                classify_for_question: classify_map.as_ref().and_then(|m| m.get(&q.question_id)),
             },
         )?;
         let knobs = EvalKnobs {
-            hyde_query: hyde_map.as_ref().and_then(|m| m.get(&q.question_id)).map(|s| s.as_str()),
+            hyde_query: hyde_map
+                .as_ref()
+                .and_then(|m| m.get(&q.question_id))
+                .map(|s| s.as_str()),
         };
-        let (rank, retrievals) =
-            evaluate(q, &wiki, top_k, temporal, args.hybrid, args.time_decay_days, knobs);
+        let (rank, retrievals) = evaluate(
+            q,
+            &wiki,
+            top_k,
+            temporal,
+            args.hybrid,
+            args.time_decay_days,
+            knobs,
+        );
         if let Some(r) = rank {
             if r <= 1 {
                 hit_at_1 += 1;

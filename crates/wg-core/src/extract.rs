@@ -247,119 +247,6 @@ fn detect_fact_type(lowered: &str) -> FactType {
     FactType::Note
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn split_sentences_handles_punctuation_and_newlines() {
-        let text = "We decided to use Redis. It's faster.\nNext step: deploy.";
-        let sentences = split_sentences(text);
-        assert_eq!(sentences.len(), 3);
-        assert!(sentences[0].contains("Redis"));
-        assert!(sentences[2].contains("Next step"));
-    }
-
-    #[test]
-    fn split_sentences_strips_dialog_markers() {
-        let text = "> we decided to use Postgres\nAlice: Postgres has VACUUM";
-        let sentences = split_sentences(text);
-        assert_eq!(sentences[0], "we decided to use Postgres");
-        // "Alice:" stripped, leading "Postgres ..." remains.
-        assert!(sentences[1].starts_with("Postgres has"));
-    }
-
-    #[test]
-    fn split_sentences_keeps_colon_prefixed_keywords() {
-        // "decision:" is content, not speaker — must not be stripped.
-        let text = "decision: use Postgres";
-        let sentences = split_sentences(text);
-        assert_eq!(sentences[0], "decision: use Postgres");
-    }
-
-    #[test]
-    fn detect_fact_type_finds_decisions_and_conventions() {
-        assert_eq!(
-            detect_fact_type("we decided to use redis for hot caching"),
-            FactType::Decision
-        );
-        assert_eq!(
-            detect_fact_type("we always run lints before merging"),
-            FactType::Convention
-        );
-        assert_eq!(
-            detect_fact_type("the antipattern here is reading after writing"),
-            FactType::Pattern
-        );
-        assert_eq!(
-            detect_fact_type("why does the cache miss after restart?"),
-            FactType::Question
-        );
-        assert_eq!(
-            detect_fact_type("we believe latency comes from network hops"),
-            FactType::Claim
-        );
-        assert_eq!(
-            detect_fact_type("the deploy ran fine on staging"),
-            FactType::Note
-        );
-    }
-
-    #[test]
-    fn score_candidate_drops_short_garbage() {
-        let entities: Vec<String> = vec![];
-        assert!(score_candidate("ok", &entities).is_none());
-        assert!(score_candidate("", &entities).is_none());
-    }
-
-    #[test]
-    fn score_candidate_boosts_with_entity_match() {
-        let entities = vec!["Redis".to_string()];
-        let with = score_candidate("we decided to use Redis for caching", &entities).unwrap();
-        let without = score_candidate(
-            "we decided to use the in-memory store for caching",
-            &entities,
-        )
-        .unwrap();
-        assert!(with.confidence > without.confidence);
-        assert_eq!(with.suggested_entities, vec!["Redis"]);
-        assert_eq!(with.suggested_fact_type, FactType::Decision);
-    }
-
-    #[test]
-    fn extract_candidates_sorts_by_confidence() {
-        // Use a temp store so we can populate it with one entity then
-        // run extraction. Top result should be the decision sentence
-        // mentioning the entity.
-        use crate::config::Config;
-        use crate::types::{EntityInput, EntityType};
-        use tempfile::TempDir;
-
-        let dir = TempDir::new().unwrap();
-        let mut config = Config::default();
-        config.store.path = dir.path().join("store").to_string_lossy().into_owned();
-        let path: std::path::PathBuf = (&config.store.path).into();
-        let mut store = Store::open(&path, config).unwrap();
-        store
-            .entity_add(EntityInput {
-                name: "Postgres".into(),
-                entity_type: Some(EntityType::Technology),
-                ..Default::default()
-            })
-            .unwrap();
-
-        let text = "We decided to use Postgres for hot writes.\n\
-                    Some other unrelated chatter.\n\
-                    The deploy ran on staging.";
-        let candidates = extract_candidates(text, &store, 5).unwrap();
-        assert!(!candidates.is_empty());
-        // Highest-confidence candidate must be the decision-with-entity one.
-        let top = &candidates[0];
-        assert!(top.suggested_entities.contains(&"Postgres".to_string()));
-        assert_eq!(top.suggested_fact_type, FactType::Decision);
-    }
-}
-
 // ─────────────────────────────────────────────────────────── LLM extractor
 
 /// LLM-aided fact extraction. Posts the input text plus the existing
@@ -581,4 +468,117 @@ fn parse_llm_response(
             .unwrap_or(std::cmp::Ordering::Equal)
     });
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn split_sentences_handles_punctuation_and_newlines() {
+        let text = "We decided to use Redis. It's faster.\nNext step: deploy.";
+        let sentences = split_sentences(text);
+        assert_eq!(sentences.len(), 3);
+        assert!(sentences[0].contains("Redis"));
+        assert!(sentences[2].contains("Next step"));
+    }
+
+    #[test]
+    fn split_sentences_strips_dialog_markers() {
+        let text = "> we decided to use Postgres\nAlice: Postgres has VACUUM";
+        let sentences = split_sentences(text);
+        assert_eq!(sentences[0], "we decided to use Postgres");
+        // "Alice:" stripped, leading "Postgres ..." remains.
+        assert!(sentences[1].starts_with("Postgres has"));
+    }
+
+    #[test]
+    fn split_sentences_keeps_colon_prefixed_keywords() {
+        // "decision:" is content, not speaker — must not be stripped.
+        let text = "decision: use Postgres";
+        let sentences = split_sentences(text);
+        assert_eq!(sentences[0], "decision: use Postgres");
+    }
+
+    #[test]
+    fn detect_fact_type_finds_decisions_and_conventions() {
+        assert_eq!(
+            detect_fact_type("we decided to use redis for hot caching"),
+            FactType::Decision
+        );
+        assert_eq!(
+            detect_fact_type("we always run lints before merging"),
+            FactType::Convention
+        );
+        assert_eq!(
+            detect_fact_type("the antipattern here is reading after writing"),
+            FactType::Pattern
+        );
+        assert_eq!(
+            detect_fact_type("why does the cache miss after restart?"),
+            FactType::Question
+        );
+        assert_eq!(
+            detect_fact_type("we believe latency comes from network hops"),
+            FactType::Claim
+        );
+        assert_eq!(
+            detect_fact_type("the deploy ran fine on staging"),
+            FactType::Note
+        );
+    }
+
+    #[test]
+    fn score_candidate_drops_short_garbage() {
+        let entities: Vec<String> = vec![];
+        assert!(score_candidate("ok", &entities).is_none());
+        assert!(score_candidate("", &entities).is_none());
+    }
+
+    #[test]
+    fn score_candidate_boosts_with_entity_match() {
+        let entities = vec!["Redis".to_string()];
+        let with = score_candidate("we decided to use Redis for caching", &entities).unwrap();
+        let without = score_candidate(
+            "we decided to use the in-memory store for caching",
+            &entities,
+        )
+        .unwrap();
+        assert!(with.confidence > without.confidence);
+        assert_eq!(with.suggested_entities, vec!["Redis"]);
+        assert_eq!(with.suggested_fact_type, FactType::Decision);
+    }
+
+    #[test]
+    fn extract_candidates_sorts_by_confidence() {
+        // Use a temp store so we can populate it with one entity then
+        // run extraction. Top result should be the decision sentence
+        // mentioning the entity.
+        use crate::config::Config;
+        use crate::types::{EntityInput, EntityType};
+        use tempfile::TempDir;
+
+        let dir = TempDir::new().unwrap();
+        let mut config = Config::default();
+        config.store.path = dir.path().join("store").to_string_lossy().into_owned();
+        let path: std::path::PathBuf = (&config.store.path).into();
+        let mut store = Store::open(&path, config).unwrap();
+        store
+            .entity_add(EntityInput {
+                name: "Postgres".into(),
+                entity_type: Some(EntityType::Technology),
+                ..Default::default()
+            })
+            .unwrap();
+
+        let text = "We decided to use Postgres for hot writes.\n\
+                    Some other unrelated chatter.\n\
+                    The deploy ran on staging.";
+        let candidates = extract_candidates(text, &store, 5).unwrap();
+        assert!(!candidates.is_empty());
+        // Highest-confidence candidate must be the decision-with-entity one.
+        let top = &candidates[0];
+        assert!(top.suggested_entities.contains(&"Postgres".to_string()));
+        assert_eq!(top.suggested_fact_type, FactType::Decision);
+    }
 }

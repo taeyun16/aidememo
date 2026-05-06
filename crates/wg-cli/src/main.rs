@@ -691,46 +691,52 @@ fn handle_fact(
             wiki.fact_pin(&fact_id, false)?;
             Ok(format!("Unpinned fact {id}"))
         }),
-        cmd::FactSub::Archive { ids, older_than, fact_type, dry_run } => {
-            with_wiki_mut(path, config, |wiki| {
-                let mut targets: Vec<wg_core::FactId> = Vec::new();
-                if let Some(spec) = &ids {
-                    for s in spec.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()) {
-                        targets.push(parse_fact_id_str(s)?);
+        cmd::FactSub::Archive {
+            ids,
+            older_than,
+            fact_type,
+            dry_run,
+        } => with_wiki_mut(path, config, |wiki| {
+            let mut targets: Vec<wg_core::FactId> = Vec::new();
+            if let Some(spec) = &ids {
+                for s in spec.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()) {
+                    targets.push(parse_fact_id_str(s)?);
+                }
+            }
+            if let Some(dur) = &older_than {
+                let dur_ms = parse_duration_to_ms(dur)?;
+                let cutoff_ms = wg_core::time::current_epoch_ms().saturating_sub(dur_ms);
+                let mut opts = wg_core::FactListOpts::default();
+                if let Some(t) = &fact_type {
+                    opts.fact_type = Some(wg_core::FactType::parse(t));
+                }
+                let candidates = wiki.fact_list(opts)?;
+                for f in candidates {
+                    let ts = f.observed_at.unwrap_or(f.created_at);
+                    if ts <= cutoff_ms {
+                        targets.push(f.id);
                     }
                 }
-                if let Some(dur) = &older_than {
-                    let dur_ms = parse_duration_to_ms(dur)?;
-                    let cutoff_ms = wg_core::time::current_epoch_ms().saturating_sub(dur_ms);
-                    let mut opts = wg_core::FactListOpts::default();
-                    if let Some(t) = &fact_type {
-                        opts.fact_type = Some(wg_core::FactType::parse(t));
-                    }
-                    let candidates = wiki.fact_list(opts)?;
-                    for f in candidates {
-                        let ts = f.observed_at.unwrap_or(f.created_at);
-                        if ts <= cutoff_ms {
-                            targets.push(f.id);
-                        }
-                    }
+            }
+            if targets.is_empty() {
+                return Ok("No facts matched (give --ids or --older-than).".into());
+            }
+            if dry_run {
+                let mut out = format!("would archive {} fact(s):", targets.len());
+                for id in targets.iter().take(50) {
+                    out.push_str(&format!("\n  {id}"));
                 }
-                if targets.is_empty() {
-                    return Ok("No facts matched (give --ids or --older-than).".into());
+                if targets.len() > 50 {
+                    out.push_str(&format!("\n  ... and {} more", targets.len() - 50));
                 }
-                if dry_run {
-                    let mut out = format!("would archive {} fact(s):", targets.len());
-                    for id in targets.iter().take(50) {
-                        out.push_str(&format!("\n  {id}"));
-                    }
-                    if targets.len() > 50 {
-                        out.push_str(&format!("\n  ... and {} more", targets.len() - 50));
-                    }
-                    return Ok(out);
-                }
-                let moved = wiki.archive_facts(&targets)?;
-                Ok(format!("archived {moved} fact(s) to cold tier ({} candidate(s) considered)", targets.len()))
-            })
-        }
+                return Ok(out);
+            }
+            let moved = wiki.archive_facts(&targets)?;
+            Ok(format!(
+                "archived {moved} fact(s) to cold tier ({} candidate(s) considered)",
+                targets.len()
+            ))
+        }),
         cmd::FactSub::Pinned { limit } => with_wiki(path, config, |wiki| {
             let limit = limit.unwrap_or(20);
             let pinned = wiki.pinned_facts(limit)?;

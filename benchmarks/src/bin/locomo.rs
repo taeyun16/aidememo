@@ -12,7 +12,7 @@
 //!   * entity_ids   = [speaker_entity, session_entity]
 //!   * tags         = ["dia_id:Dn:k", "session:Dn"]
 //!   * observed_at  = parsed `session_n_date_time` (chrono::NaiveDateTime
-//!                    of "1:56 pm on 8 May, 2023" → epoch ms UTC)
+//!     of "1:56 pm on 8 May, 2023" → epoch ms UTC)
 //!
 //! Retrieval grading checks whether any gold `Dn:k` appears in the
 //! top-K results' tag list. Reader/judge stage reuses the omega-style
@@ -36,6 +36,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use wg_core::types::{FactInput, FactType};
 use wg_core::{Config, EntityInput, EntityType, SearchOpts, WikiGraph};
+
+type TurnMeta = (String, String, String);
+type ConversationStore = (
+    tempfile::TempDir,
+    WikiGraph,
+    HashMap<wg_core::types::FactId, TurnMeta>,
+);
 
 #[derive(Debug, Deserialize)]
 struct Turn {
@@ -138,7 +145,13 @@ fn parse_args() -> Args {
             _ => i += 1,
         }
     }
-    Args { data, out, top_k, hybrid, limit }
+    Args {
+        data,
+        out,
+        top_k,
+        hybrid,
+        limit,
+    }
 }
 
 /// LoCoMo session timestamps look like `1:56 pm on 8 May, 2023`. Parse
@@ -146,13 +159,13 @@ fn parse_args() -> Args {
 /// the wall clock as UTC — fine for relative ordering / decay weights).
 fn parse_locomo_dt(s: &str) -> Option<u64> {
     let dt = chrono::NaiveDateTime::parse_from_str(s.trim(), "%I:%M %p on %d %B, %Y").ok()?;
-    Some(chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(dt, chrono::Utc).timestamp_millis() as u64)
+    Some(
+        chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(dt, chrono::Utc)
+            .timestamp_millis() as u64,
+    )
 }
 
-fn build_store_for_conv(
-    conv: &Conversation,
-    hybrid: bool,
-) -> Result<(tempfile::TempDir, WikiGraph, HashMap<wg_core::types::FactId, (String, String, String)>), String> {
+fn build_store_for_conv(conv: &Conversation, hybrid: bool) -> Result<ConversationStore, String> {
     let dir = tempfile::tempdir().map_err(|e| e.to_string())?;
     let path = dir.path().join("locomo.redb");
     let mut config = Config::default();
@@ -164,8 +177,18 @@ fn build_store_for_conv(
     let wiki = WikiGraph::open(&path, config).map_err(|e| e.to_string())?;
 
     // Resolve speakers up front — every fact carries one speaker entity.
-    let speaker_a = conv.conversation.get("speaker_a").and_then(|v| v.as_str()).unwrap_or("speaker_a").to_string();
-    let speaker_b = conv.conversation.get("speaker_b").and_then(|v| v.as_str()).unwrap_or("speaker_b").to_string();
+    let speaker_a = conv
+        .conversation
+        .get("speaker_a")
+        .and_then(|v| v.as_str())
+        .unwrap_or("speaker_a")
+        .to_string();
+    let speaker_b = conv
+        .conversation
+        .get("speaker_b")
+        .and_then(|v| v.as_str())
+        .unwrap_or("speaker_b")
+        .to_string();
     let mut speaker_id: HashMap<String, wg_core::types::EntityId> = HashMap::new();
     for name in [&speaker_a, &speaker_b] {
         let id = match wiki.entity_add(EntityInput {
@@ -184,7 +207,11 @@ fn build_store_for_conv(
     for n in 1..=35usize {
         let session_key = format!("session_{n}");
         let dt_key = format!("session_{n}_date_time");
-        let Some(turns) = conv.conversation.get(&session_key).and_then(|v| v.as_array()) else {
+        let Some(turns) = conv
+            .conversation
+            .get(&session_key)
+            .and_then(|v| v.as_array())
+        else {
             continue;
         };
         let observed_at = conv
@@ -200,7 +227,9 @@ fn build_store_for_conv(
             ..Default::default()
         }) {
             Ok(id) => id,
-            Err(_) => wiki.resolve_entity(&session_label).map_err(|e| e.to_string())?,
+            Err(_) => wiki
+                .resolve_entity(&session_label)
+                .map_err(|e| e.to_string())?,
         };
         for raw in turns {
             let turn: Turn = match serde_json::from_value(raw.clone()) {
@@ -223,7 +252,11 @@ fn build_store_for_conv(
                 source_confidence: None,
                 observed_at,
             });
-            id_to_meta_seq.push((turn.dia_id.clone(), session_label.clone(), turn.speaker.clone()));
+            id_to_meta_seq.push((
+                turn.dia_id.clone(),
+                session_label.clone(),
+                turn.speaker.clone(),
+            ));
         }
     }
     let fact_ids = wiki.fact_add_many(inputs).map_err(|e| e.to_string())?;
@@ -282,12 +315,10 @@ fn main() -> ExitCode {
                     break;
                 }
             }
-            let results = wiki
-                .search(&qa.question, opts.clone())
-                .unwrap_or_else(|e| {
-                    eprintln!("  ! search fail conv={} q={qi}: {e}", conv.sample_id);
-                    Vec::new()
-                });
+            let results = wiki.search(&qa.question, opts.clone()).unwrap_or_else(|e| {
+                eprintln!("  ! search fail conv={} q={qi}: {e}", conv.sample_id);
+                Vec::new()
+            });
             let gold: HashSet<String> = qa.evidence.iter().cloned().collect();
             let mut first_rank: Option<usize> = None;
             let mut hits = Vec::new();
@@ -348,7 +379,11 @@ fn main() -> ExitCode {
             }
             q_emitted += 1;
         }
-        eprintln!("    conv {} done — {} elapsed", conv.sample_id, format!("{:.1?}", started.elapsed()));
+        eprintln!(
+            "    conv {} done — {:.1?} elapsed",
+            conv.sample_id,
+            started.elapsed()
+        );
         if args.limit.map(|n| q_emitted >= n).unwrap_or(false) {
             break;
         }
@@ -366,7 +401,12 @@ fn main() -> ExitCode {
     );
     for k in [1, 5, 10, 30] {
         let h = *hits_at_k.get(&k).unwrap_or(&0);
-        println!("  R@{k}: {:.3} ({}/{})", h as f64 / denom, h, total_with_evidence);
+        println!(
+            "  R@{k}: {:.3} ({}/{})",
+            h as f64 / denom,
+            h,
+            total_with_evidence
+        );
     }
     println!("  MRR: {:.3}", mrr_sum / denom);
     println!("  wall: {:.2?}", started.elapsed());
@@ -376,7 +416,10 @@ fn main() -> ExitCode {
     cats.sort();
     for c in cats {
         let (ok, total) = by_cat_ok_at_5[&c];
-        println!("  cat {c:<2} {ok}/{total} ({:.3})", ok as f64 / total as f64);
+        println!(
+            "  cat {c:<2} {ok}/{total} ({:.3})",
+            ok as f64 / total as f64
+        );
     }
     ExitCode::SUCCESS
 }

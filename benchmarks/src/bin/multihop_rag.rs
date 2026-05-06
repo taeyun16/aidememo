@@ -35,6 +35,7 @@ use serde_json::Value;
 use wg_core::types::{FactInput, FactType};
 use wg_core::{Config, EntityInput, EntityType, SearchOpts, WikiGraph};
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct Doc {
     title: String,
@@ -51,6 +52,7 @@ struct Doc {
     url: Option<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct Evidence {
     title: String,
@@ -134,7 +136,14 @@ fn parse_args() -> Args {
             _ => i += 1,
         }
     }
-    Args { dir, out, top_k, hybrid, limit, only_type }
+    Args {
+        dir,
+        out,
+        top_k,
+        hybrid,
+        limit,
+        only_type,
+    }
 }
 
 fn parse_iso_to_epoch_ms(s: &str) -> Option<u64> {
@@ -226,14 +235,22 @@ fn main() -> ExitCode {
     if let Some(n) = args.limit {
         queries.truncate(n);
     }
-    println!("MultiHop-RAG: corpus={} docs, queries={}", corpus.len(), queries.len());
+    println!(
+        "MultiHop-RAG: corpus={} docs, queries={}",
+        corpus.len(),
+        queries.len()
+    );
 
     let ingest_start = Instant::now();
     let (_dir, wiki) = build_store(&corpus, args.hybrid).unwrap_or_else(|e| {
         eprintln!("ingest failed: {e}");
         std::process::exit(1);
     });
-    println!("ingest: {} docs, {:.2?}", corpus.len(), ingest_start.elapsed());
+    println!(
+        "ingest: {} docs, {:.2?}",
+        corpus.len(),
+        ingest_start.elapsed()
+    );
 
     let mut writer: Option<std::io::BufWriter<std::fs::File>> = args.out.as_ref().map(|p| {
         let f = std::fs::File::create(p).expect("create output");
@@ -254,12 +271,10 @@ fn main() -> ExitCode {
     };
 
     for (qid, q) in queries.iter().enumerate() {
-        let results = wiki
-            .search(&q.query, opts.clone())
-            .unwrap_or_else(|e| {
-                eprintln!("  ! search fail q={qid}: {e}");
-                Vec::new()
-            });
+        let results = wiki.search(&q.query, opts.clone()).unwrap_or_else(|e| {
+            eprintln!("  ! search fail q={qid}: {e}");
+            Vec::new()
+        });
         let gold_titles: Vec<String> = q.evidence_list.iter().map(|e| e.title.clone()).collect();
 
         // Find first hit whose doc title is in evidence_list.
@@ -296,8 +311,7 @@ fn main() -> ExitCode {
                     doc_title: doc_title.clone(),
                     source: r.source.clone(),
                     published_at: r.observed_at.and_then(|ms| {
-                        chrono::DateTime::from_timestamp_millis(ms as i64)
-                            .map(|dt| dt.to_rfc3339())
+                        chrono::DateTime::from_timestamp_millis(ms as i64).map(|dt| dt.to_rfc3339())
                     }),
                 });
             }
@@ -331,7 +345,9 @@ fn main() -> ExitCode {
                 .iter()
                 .filter(|t| surfaced_top30.contains(*t))
                 .count();
-            let e = all_evidence_recall.entry(q.question_type.clone()).or_insert((0, 0));
+            let e = all_evidence_recall
+                .entry(q.question_type.clone())
+                .or_insert((0, 0));
             e.0 += hit;
             e.1 += gold_titles.len();
         }
@@ -351,7 +367,12 @@ fn main() -> ExitCode {
         }
 
         if (qid + 1) % 200 == 0 {
-            eprintln!("    [{:>4}/{}] elapsed {:.1?}", qid + 1, queries.len(), started.elapsed());
+            eprintln!(
+                "    [{:>4}/{}] elapsed {:.1?}",
+                qid + 1,
+                queries.len(),
+                started.elapsed()
+            );
         }
     }
 
@@ -361,9 +382,17 @@ fn main() -> ExitCode {
     }
 
     let n = queries.len() as f64;
-    let n_with_evidence = queries.iter().filter(|q| !q.evidence_list.is_empty()).count() as f64;
+    let n_with_evidence = queries
+        .iter()
+        .filter(|q| !q.evidence_list.is_empty())
+        .count() as f64;
     println!();
-    println!("Result: {} queries, top_k={}, hybrid={}", queries.len(), args.top_k, args.hybrid);
+    println!(
+        "Result: {} queries, top_k={}, hybrid={}",
+        queries.len(),
+        args.top_k,
+        args.hybrid
+    );
     for k in [1, 5, 10, 30] {
         let hit = *hits_at_k.get(&k).unwrap_or(&0);
         // Only count among queries with evidence (null_query has none).
@@ -375,12 +404,18 @@ fn main() -> ExitCode {
     println!();
     println!("By question_type (R@10):");
     for (qt, (ok, total)) in by_type_ok.iter() {
-        println!("  {qt:<20} {ok}/{total} ({:.3})", *ok as f64 / *total as f64);
+        println!(
+            "  {qt:<20} {ok}/{total} ({:.3})",
+            *ok as f64 / *total as f64
+        );
     }
     println!();
     println!("Per-evidence-doc recall (top-30, fraction of gold docs surfaced):");
     for (qt, (hit, total)) in all_evidence_recall.iter() {
-        println!("  {qt:<20} {hit}/{total} ({:.3})", *hit as f64 / *total as f64);
+        println!(
+            "  {qt:<20} {hit}/{total} ({:.3})",
+            *hit as f64 / *total as f64
+        );
     }
 
     let _ = n;

@@ -245,12 +245,18 @@ fn tool_search(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String>
     // markdown bullets — ~4× smaller than JSON envelope. max_chars
     // hard-caps; on overflow drops trailing hits (always keeps top
     // match). preview_chars caps each hit's content in compact/text.
-    let format = args.get("format").and_then(|v| v.as_str()).unwrap_or("full");
+    let format = args
+        .get("format")
+        .and_then(|v| v.as_str())
+        .unwrap_or("full");
     let preview_chars = args
         .get("preview_chars")
         .and_then(|v| v.as_u64())
         .unwrap_or(200) as usize;
-    let max_chars = args.get("max_chars").and_then(|v| v.as_u64()).map(|n| n as usize);
+    let max_chars = args
+        .get("max_chars")
+        .and_then(|v| v.as_u64())
+        .map(|n| n as usize);
 
     if format == "text" {
         let mut out = format!("# search: {}\n", query);
@@ -281,7 +287,9 @@ fn tool_search(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String>
         if let Some(b) = max_chars
             && out.len() > b
         {
-            while out.len() > b.saturating_sub(20) && let Some(idx) = out.rfind('\n') {
+            while out.len() > b.saturating_sub(20)
+                && let Some(idx) = out.rfind('\n')
+            {
                 out.truncate(idx);
             }
             out.push_str("\n… (truncated)\n");
@@ -748,6 +756,7 @@ fn tool_fact_list(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, Stri
 ///   - `created_at` / `updated_at` epoch ms (use `wg_recent` for time
 ///     filtering — agents rarely diff these in answer composition)
 ///   - empty `tags`, null `source` / `observed_at` / `superseded_*`
+///
 /// Resolves `entity_ids` → entity names so the agent doesn't need a
 /// follow-up `wg_entity_get` for every reference.
 fn slim_fact_record(f: &wg_core::FactRecord, wiki: &WikiGraph) -> Value {
@@ -934,7 +943,11 @@ fn tool_traverse(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, Strin
         .and_then(|v| v.as_str())
         .ok_or("entity required")?;
     let depth = args.get("depth").and_then(|v| v.as_u64()).unwrap_or(2) as u32;
-    let direction = match args.get("direction").and_then(|v| v.as_str()).unwrap_or("forward") {
+    let direction = match args
+        .get("direction")
+        .and_then(|v| v.as_str())
+        .unwrap_or("forward")
+    {
         "reverse" | "backward" | "back" => wg_core::TraverseDirection::Reverse,
         _ => wg_core::TraverseDirection::Forward,
     };
@@ -1146,7 +1159,7 @@ fn tool_recent(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String>
 /// * count     — N facts matching the query (after fact_type filter)
 /// * enumerate — same N as a deduped item list (id + content preview)
 /// * by_entity — N facts grouped by primary entity, with per-group
-///               count and fact_type set
+///   count and fact_type set
 fn tool_aggregate(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String> {
     let query = args
         .get("query")
@@ -1161,7 +1174,7 @@ fn tool_aggregate(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, Stri
     let fact_type_filter: Option<wg_core::FactType> = args
         .get("fact_type")
         .and_then(|v| v.as_str())
-        .map(|s| wg_core::FactType::parse(s));
+        .map(wg_core::FactType::parse);
     let entity_filter = match args.get("entity").and_then(|v| v.as_str()) {
         Some(name) => Some(vec![wiki.resolve_entity(name).map_err(|e| e.to_string())?]),
         None => None,
@@ -1285,10 +1298,12 @@ fn tool_aggregate(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, Stri
                 .unwrap_or(0.0);
             structured_aggregate(op, query, &filtered, wiki, relevance_threshold)?
         }
-        _ => return Err(format!(
-            "invalid op '{op}': must be one of count, enumerate, by_entity, \
+        _ => {
+            return Err(format!(
+                "invalid op '{op}': must be one of count, enumerate, by_entity, \
              sum_currency, sum_duration, count_distinct_dates, timeline"
-        )),
+            ));
+        }
     };
 
     let text = serde_json::to_string_pretty(&payload).map_err(|e| e.to_string())?;
@@ -1311,16 +1326,13 @@ fn structured_aggregate(
     wiki: &WikiGraph,
     relevance_threshold: f32,
 ) -> Result<Value, String> {
-    use std::collections::BTreeSet;
     use chrono::{DateTime, Utc};
+    use std::collections::BTreeSet;
 
     // Embed the query once for relevance filtering. If embedding
-    // fails (semantic feature off) we fall through with everything
-    // included — caller can opt out by setting threshold=0.
-    #[cfg(feature = "semantic")]
+    // fails we fall through with everything included — caller can opt
+    // out by setting threshold=0.
     let q_vec: Option<Vec<f32>> = wiki.embed(query).ok();
-    #[cfg(not(feature = "semantic"))]
-    let q_vec: Option<Vec<f32>> = None;
 
     let mut currency_total: std::collections::BTreeMap<String, f64> =
         std::collections::BTreeMap::new();
@@ -1336,14 +1348,11 @@ fn structured_aggregate(
     for hit in facts {
         // Per-fact relevance filter via cosine similarity.
         if let Some(q) = &q_vec {
-            #[cfg(feature = "semantic")]
             let rel = wiki
                 .embed(&hit.content)
                 .ok()
                 .map(|f| WikiGraph::cosine_similarity(q, &f))
                 .unwrap_or(1.0);
-            #[cfg(not(feature = "semantic"))]
-            let rel = 1.0_f32;
             if rel < relevance_threshold {
                 filtered_out += 1;
                 continue;
@@ -1352,9 +1361,9 @@ fn structured_aggregate(
         considered += 1;
         // Anchor relative dates ("yesterday") on this fact's
         // observed_at if present.
-        let anchor = hit.observed_at.and_then(|ms| {
-            DateTime::<Utc>::from_timestamp_millis(ms as i64)
-        });
+        let anchor = hit
+            .observed_at
+            .and_then(|ms| DateTime::<Utc>::from_timestamp_millis(ms as i64));
         for v in wg_core::extract_structured::extract(&hit.content, anchor) {
             match v.kind {
                 wg_core::extract_structured::ValueKind::Currency => {
@@ -1505,7 +1514,10 @@ fn tool_query(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String> 
         .get("format")
         .and_then(|v| v.as_str())
         .unwrap_or("full");
-    let max_chars = args.get("max_chars").and_then(|v| v.as_u64()).map(|n| n as usize);
+    let max_chars = args
+        .get("max_chars")
+        .and_then(|v| v.as_u64())
+        .map(|n| n as usize);
     let preview_chars = args
         .get("preview_chars")
         .and_then(|v| v.as_u64())
@@ -1517,10 +1529,7 @@ fn tool_query(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String> 
     // on LongMemEval. Currently only the markdown text format honours
     // level=entity; JSON formats stay snippet-flat so the schema is
     // stable for downstream parsers.
-    let level = args
-        .get("level")
-        .and_then(|v| v.as_str())
-        .unwrap_or("fact");
+    let level = args.get("level").and_then(|v| v.as_str()).unwrap_or("fact");
     let mut result = wiki.query(topic, opts).map_err(|e| e.to_string())?;
     if format == "compact" {
         compact_query_result(&mut result, preview_chars);
@@ -1533,7 +1542,9 @@ fn tool_query(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String> 
             let blocks = collect_session_blocks(&result.search, wiki, 20);
             render_session_blocks_markdown(&result, &blocks, preview_chars, max_chars)
         }
-        ("text", "entity") => render_query_result_markdown_by_entity(&result, preview_chars, max_chars),
+        ("text", "entity") => {
+            render_query_result_markdown_by_entity(&result, preview_chars, max_chars)
+        }
         ("text", _) => render_query_result_markdown(&result, preview_chars, max_chars),
         _ => serde_json::to_string_pretty(&result).map_err(|e| e.to_string())?,
     };
@@ -1556,25 +1567,42 @@ fn render_query_result_markdown(
     let mut out = String::new();
     out.push_str(&format!("# {}\n", r.topic));
     if let Some(e) = &r.entity {
-        out.push_str(&format!("entity: **{}** ({})\n", e.name, format!("{:?}", e.entity_type).to_lowercase()));
+        out.push_str(&format!(
+            "entity: **{}** ({})\n",
+            e.name,
+            format!("{:?}", e.entity_type).to_lowercase()
+        ));
         if let Some(s) = &e.summary
-            && !s.is_empty() {
-                out.push_str(&format!("> {s}\n"));
-            }
+            && !s.is_empty()
+        {
+            out.push_str(&format!("> {s}\n"));
+        }
     }
     if !r.search.is_empty() {
         out.push_str("\n## hits\n");
         for h in &r.search {
             let mut content = h.content.clone();
             truncate_in_place(&mut content, preview_chars);
-            let id_short = &h.fact_id.to_string().chars().rev().take(6).collect::<String>().chars().rev().collect::<String>();
+            let id_short = &h
+                .fact_id
+                .to_string()
+                .chars()
+                .rev()
+                .take(6)
+                .collect::<String>()
+                .chars()
+                .rev()
+                .collect::<String>();
             let ents = if h.entity_names.is_empty() {
                 String::new()
             } else {
                 format!(" _[{}]_", h.entity_names.join(", "))
             };
             let ftype = format!("{:?}", h.fact_type).to_lowercase();
-            out.push_str(&format!("- ({:.2} {} …{}) {}{}\n", h.score, ftype, id_short, content, ents));
+            out.push_str(&format!(
+                "- ({:.2} {} …{}) {}{}\n",
+                h.score, ftype, id_short, content, ents
+            ));
         }
     }
     if !r.related.is_empty() {
@@ -1587,7 +1615,16 @@ fn render_query_result_markdown(
         for f in &r.recent_facts {
             let mut content = f.content.clone();
             truncate_in_place(&mut content, preview_chars);
-            let id_short = &f.id.to_string().chars().rev().take(6).collect::<String>().chars().rev().collect::<String>();
+            let id_short = &f
+                .id
+                .to_string()
+                .chars()
+                .rev()
+                .take(6)
+                .collect::<String>()
+                .chars()
+                .rev()
+                .collect::<String>();
             out.push_str(&format!("- (…{}) {}\n", id_short, content));
         }
     }
@@ -1596,7 +1633,9 @@ fn render_query_result_markdown(
             // Truncate from the back (recent_facts disappear first because
             // they're rendered last). Strip trailing lines until under
             // budget, then add an ellipsis marker.
-            while out.len() > b.saturating_sub(20) && let Some(idx) = out.rfind('\n') {
+            while out.len() > b.saturating_sub(20)
+                && let Some(idx) = out.rfind('\n')
+            {
                 out.truncate(idx);
             }
             out.push_str("\n… (truncated)\n");
@@ -1665,7 +1704,9 @@ fn render_query_result_markdown_by_entity(
         }
         let max_a = groups[a].iter().map(|h| h.score).fold(0.0_f32, f32::max);
         let max_b = groups[b].iter().map(|h| h.score).fold(0.0_f32, f32::max);
-        max_b.partial_cmp(&max_a).unwrap_or(std::cmp::Ordering::Equal)
+        max_b
+            .partial_cmp(&max_a)
+            .unwrap_or(std::cmp::Ordering::Equal)
     });
 
     if !group_order.is_empty() {
@@ -1712,7 +1753,9 @@ fn render_query_result_markdown_by_entity(
     if let Some(b) = budget
         && out.len() > b
     {
-        while out.len() > b.saturating_sub(20) && let Some(idx) = out.rfind('\n') {
+        while out.len() > b.saturating_sub(20)
+            && let Some(idx) = out.rfind('\n')
+        {
             out.truncate(idx);
         }
         out.push_str("\n… (truncated)\n");
@@ -1776,8 +1819,12 @@ fn collect_session_blocks(
     // resolved or fact_list fails — defensive against partial state.
     let mut blocks: Vec<SessionBlock> = Vec::new();
     for sess_name in &order {
-        let Some(hits_in_sess) = by_session.get(sess_name) else { continue };
-        let Ok(eid) = wiki.resolve_entity(sess_name) else { continue };
+        let Some(hits_in_sess) = by_session.get(sess_name) else {
+            continue;
+        };
+        let Ok(eid) = wiki.resolve_entity(sess_name) else {
+            continue;
+        };
         let mut facts = match wiki.fact_list(wg_core::FactListOpts {
             fact_type: None,
             entity_id: Some(eid),
@@ -1800,10 +1847,7 @@ fn collect_session_blocks(
             .map(|f| f.content.clone())
             .collect::<Vec<_>>()
             .join("\n");
-        let max_score = hits_in_sess
-            .iter()
-            .map(|h| h.score)
-            .fold(0.0_f32, f32::max);
+        let max_score = hits_in_sess.iter().map(|h| h.score).fold(0.0_f32, f32::max);
         blocks.push(SessionBlock {
             session_id: sess_name
                 .strip_prefix("session-")
@@ -1855,8 +1899,11 @@ fn render_session_blocks_markdown(
             out.push_str("\n_(no session-tagged hits — see flat snippets via level=\"fact\")_\n");
         }
     } else {
-        out.push_str(&format!("\n## hits by session ({} block{})\n",
-            blocks.len(), if blocks.len() == 1 { "" } else { "s" }));
+        out.push_str(&format!(
+            "\n## hits by session ({} block{})\n",
+            blocks.len(),
+            if blocks.len() == 1 { "" } else { "s" }
+        ));
         for b in blocks {
             out.push_str(&format!(
                 "\n### session {} _(score {:.2}, {} fact{}, {} matched in search)_\n",
@@ -1880,7 +1927,9 @@ fn render_session_blocks_markdown(
     if let Some(b) = budget
         && out.len() > b
     {
-        while out.len() > b.saturating_sub(20) && let Some(idx) = out.rfind('\n') {
+        while out.len() > b.saturating_sub(20)
+            && let Some(idx) = out.rfind('\n')
+        {
             out.truncate(idx);
         }
         out.push_str("\n… (truncated)\n");
@@ -1901,15 +1950,7 @@ fn truncate_in_place(s: &mut String, n: usize) {
     if s.chars().count() <= n {
         return;
     }
-    let mut count = 0;
-    let mut byte_idx = 0;
-    for (i, _) in s.char_indices() {
-        if count == n {
-            byte_idx = i;
-            break;
-        }
-        count += 1;
-    }
+    let byte_idx = s.char_indices().nth(n).map(|(i, _)| i).unwrap_or(s.len());
     s.truncate(byte_idx);
     s.push('…');
 }
@@ -2104,12 +2145,18 @@ fn tool_context(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String
     // by trimming sections back-to-front (topic > recent >
     // personalisation > pinned). For format=full / compact the JSON
     // schema stays as-is; downstream parsers don't break.
-    let format = args.get("format").and_then(|v| v.as_str()).unwrap_or("full");
+    let format = args
+        .get("format")
+        .and_then(|v| v.as_str())
+        .unwrap_or("full");
     let preview_chars = args
         .get("preview_chars")
         .and_then(|v| v.as_u64())
         .unwrap_or(160) as usize;
-    let max_chars = args.get("max_chars").and_then(|v| v.as_u64()).map(|n| n as usize);
+    let max_chars = args
+        .get("max_chars")
+        .and_then(|v| v.as_u64())
+        .map(|n| n as usize);
 
     if format == "text" {
         let text = render_context_markdown(&payload, topic, preview_chars, max_chars);
@@ -2133,10 +2180,7 @@ fn render_context_markdown(
     budget: Option<usize>,
 ) -> String {
     fn fact_line(f: &Value, preview: usize) -> String {
-        let id = f
-            .get("id")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let id = f.get("id").and_then(|v| v.as_str()).unwrap_or("");
         let id_short: String = id
             .chars()
             .rev()
@@ -2147,10 +2191,7 @@ fn render_context_markdown(
             .collect();
         // slim_fact_record uses "type" / "entities" — keep render in
         // sync with that schema.
-        let ftype = f
-            .get("type")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let ftype = f.get("type").and_then(|v| v.as_str()).unwrap_or("");
         let mut content = f
             .get("content")
             .and_then(|v| v.as_str())
@@ -2240,11 +2281,11 @@ fn render_context_markdown(
                     .rev()
                     .collect();
                 let score = hit.get("score").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                let ftype = hit
-                    .get("fact_type")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
-                out.push_str(&format!("- ({:.2} {} …{}) {}\n", score, ftype, id_short, content));
+                let ftype = hit.get("fact_type").and_then(|v| v.as_str()).unwrap_or("");
+                out.push_str(&format!(
+                    "- ({:.2} {} …{}) {}\n",
+                    score, ftype, id_short, content
+                ));
             }
         }
         for (key, header) in [
@@ -2268,7 +2309,9 @@ fn render_context_markdown(
     {
         // Trim from tail — topic_section last, then recent,
         // personalisation, pinned. Just chop suffix lines.
-        while out.len() > b.saturating_sub(20) && let Some(idx) = out.rfind('\n') {
+        while out.len() > b.saturating_sub(20)
+            && let Some(idx) = out.rfind('\n')
+        {
             out.truncate(idx);
         }
         out.push_str("\n… (truncated)\n");
@@ -3239,15 +3282,15 @@ pub fn list_tools() -> Vec<Tool> {
 ///
 /// Categories (stable wire contract for agents):
 /// * `invalid_input` — required parameter missing, bad enum, malformed
-///                     input. Agent must fix the call.
+///   input. Agent must fix the call.
 /// * `not_found`     — referenced entity / fact / session does not
-///                     exist. Agent should query first or accept the
-///                     absence — retry won't help.
+///   exist. Agent should query first or accept the absence — retry
+///   won't help.
 /// * `conflict`      — atomic supersede / dedup mismatch. Agent should
-///                     resolve via wg_fact_supersede / wg_fact_edit.
+///   resolve via wg_fact_supersede / wg_fact_edit.
 /// * `unknown_tool`  — tool name typo. Agent should re-list tools.
 /// * `internal`      — fallback. Agent may retry once; persistent
-///                     internal errors mean a bug worth reporting.
+///   internal errors mean a bug worth reporting.
 fn classify_error(msg: &str) -> &'static str {
     let lower = msg.to_lowercase();
     if lower.starts_with("unknown tool:") || lower.starts_with("unknown mode:") {
@@ -3261,9 +3304,7 @@ fn classify_error(msg: &str) -> &'static str {
     {
         return "invalid_input";
     }
-    if lower.contains("not found")
-        || lower.contains("does not exist")
-        || lower.contains("no such")
+    if lower.contains("not found") || lower.contains("does not exist") || lower.contains("no such")
     {
         return "not_found";
     }

@@ -116,15 +116,35 @@ fn normalise_number_words(text: &str) -> String {
     // of ten up to 100. Anything bigger is rare in conversation and
     // would risk false positives on proper nouns / addresses.
     static WORDS: &[(&str, &str)] = &[
-        ("zero", "0"), ("one", "1"), ("two", "2"), ("three", "3"),
-        ("four", "4"), ("five", "5"), ("six", "6"), ("seven", "7"),
-        ("eight", "8"), ("nine", "9"), ("ten", "10"), ("eleven", "11"),
-        ("twelve", "12"), ("thirteen", "13"), ("fourteen", "14"),
-        ("fifteen", "15"), ("sixteen", "16"), ("seventeen", "17"),
-        ("eighteen", "18"), ("nineteen", "19"), ("twenty", "20"),
-        ("thirty", "30"), ("forty", "40"), ("fifty", "50"),
-        ("sixty", "60"), ("seventy", "70"), ("eighty", "80"),
-        ("ninety", "90"), ("hundred", "100"),
+        ("zero", "0"),
+        ("one", "1"),
+        ("two", "2"),
+        ("three", "3"),
+        ("four", "4"),
+        ("five", "5"),
+        ("six", "6"),
+        ("seven", "7"),
+        ("eight", "8"),
+        ("nine", "9"),
+        ("ten", "10"),
+        ("eleven", "11"),
+        ("twelve", "12"),
+        ("thirteen", "13"),
+        ("fourteen", "14"),
+        ("fifteen", "15"),
+        ("sixteen", "16"),
+        ("seventeen", "17"),
+        ("eighteen", "18"),
+        ("nineteen", "19"),
+        ("twenty", "20"),
+        ("thirty", "30"),
+        ("forty", "40"),
+        ("fifty", "50"),
+        ("sixty", "60"),
+        ("seventy", "70"),
+        ("eighty", "80"),
+        ("ninety", "90"),
+        ("hundred", "100"),
         // Common fractional / approximation tokens
         ("half", "0.5"),
     ];
@@ -155,9 +175,7 @@ fn extract_currencies(text: &str, out: &mut Vec<StructuredValue>) {
     // Bigger-symbol regex is OK — false positives are filtered by the
     // rusty_money parse step below.
     static RE: OnceLock<Regex> = OnceLock::new();
-    let re = RE.get_or_init(|| {
-        Regex::new(r"([\$₩€£¥])\s?([0-9][0-9,]*(?:\.[0-9]+)?)").unwrap()
-    });
+    let re = RE.get_or_init(|| Regex::new(r"([\$₩€£¥])\s?([0-9][0-9,]*(?:\.[0-9]+)?)").unwrap());
     for cap in re.captures_iter(text) {
         let symbol = &cap[1];
         let amount_str = cap[2].replace(',', "");
@@ -215,19 +233,18 @@ fn extract_durations(text: &str, out: &mut Vec<StructuredValue>) {
         let short = match unit.trim_end_matches('s') {
             "second" | "sec" => "s",
             "minute" | "min" => "m",
-            "hour" | "hr"  => "h",
-            "day"          => "d",
-            "week" | "wk"  => "w",
-            "month"        => "M",
-            "year" | "yr"  => "y",
+            "hour" | "hr" => "h",
+            "day" => "d",
+            "week" | "wk" => "w",
+            "month" => "M",
+            "year" | "yr" => "y",
             _ => continue,
         };
         let normalized = format!("{amount}{short}");
         let Ok(dur) = fundu::parse_duration(&normalized) else {
             continue;
         };
-        let secs = dur.as_secs() as f64
-            + (dur.subsec_nanos() as f64) / 1_000_000_000.0;
+        let secs = dur.as_secs() as f64 + (dur.subsec_nanos() as f64) / 1_000_000_000.0;
         out.push(StructuredValue {
             kind: ValueKind::Duration,
             value: secs,
@@ -242,11 +259,7 @@ fn extract_durations(text: &str, out: &mut Vec<StructuredValue>) {
 // Event dates (relative + absolute)
 // ------------------------------------------------------------------
 
-fn extract_event_dates(
-    text: &str,
-    anchor: DateTime<Utc>,
-    out: &mut Vec<StructuredValue>,
-) {
+fn extract_event_dates(text: &str, anchor: DateTime<Utc>, out: &mut Vec<StructuredValue>) {
     // Discover candidate spans via regex (interim doesn't expose a
     // free-text "find dates anywhere" mode — it parses one phrase at a
     // time). We catch:
@@ -272,9 +285,7 @@ fn extract_event_dates(
 
     for m in re.find_iter(text) {
         let raw = m.as_str();
-        let phrase = raw
-            .trim_start_matches("on ")
-            .trim_start_matches("in ");
+        let phrase = raw.trim_start_matches("on ").trim_start_matches("in ");
         // ISO fast path — no need to bother interim.
         if let Some(parsed) = try_parse_iso_date(phrase) {
             out.push(StructuredValue {
@@ -303,11 +314,8 @@ fn extract_event_dates(
 fn try_parse_iso_date(s: &str) -> Option<DateTime<Utc>> {
     // Accept YYYY-MM-DD or YYYY/MM/DD with no time component.
     let normalised = s.replace('/', "-");
-    let nd = NaiveDateTime::parse_from_str(
-        &format!("{normalised} 00:00:00"),
-        "%Y-%m-%d %H:%M:%S",
-    )
-    .ok()?;
+    let nd = NaiveDateTime::parse_from_str(&format!("{normalised} 00:00:00"), "%Y-%m-%d %H:%M:%S")
+        .ok()?;
     Some(DateTime::<Utc>::from_naive_utc_and_offset(nd, Utc))
 }
 
@@ -328,7 +336,9 @@ fn extract_explicit_counts(text: &str, out: &mut Vec<StructuredValue>) {
     });
     for cap in re.captures_iter(text) {
         let raw = cap.get(0).unwrap();
-        let Ok(n) = cap[1].parse::<f64>() else { continue };
+        let Ok(n) = cap[1].parse::<f64>() else {
+            continue;
+        };
         out.push(StructuredValue {
             kind: ValueKind::Count,
             value: n,
@@ -388,7 +398,10 @@ mod tests {
             .collect();
         assert_eq!(dates.len(), 1);
         let dt = chrono::DateTime::<Utc>::from_timestamp_millis(dates[0].value as i64).unwrap();
-        assert_eq!(dt.date_naive(), chrono::NaiveDate::from_ymd_opt(2024, 3, 14).unwrap());
+        assert_eq!(
+            dt.date_naive(),
+            chrono::NaiveDate::from_ymd_opt(2024, 3, 14).unwrap()
+        );
     }
 
     #[test]
@@ -400,7 +413,10 @@ mod tests {
             .collect();
         assert_eq!(dates.len(), 1);
         let dt = chrono::DateTime::<Utc>::from_timestamp_millis(dates[0].value as i64).unwrap();
-        assert_eq!(dt.date_naive(), chrono::NaiveDate::from_ymd_opt(2024, 1, 20).unwrap());
+        assert_eq!(
+            dt.date_naive(),
+            chrono::NaiveDate::from_ymd_opt(2024, 1, 20).unwrap()
+        );
     }
 
     #[test]

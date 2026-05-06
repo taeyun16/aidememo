@@ -68,6 +68,13 @@ struct Hit {
     sentence_idx: usize,
 }
 
+type SentenceMeta = (String, usize);
+type QuestionStore = (
+    tempfile::TempDir,
+    WikiGraph,
+    HashMap<wg_core::types::FactId, SentenceMeta>,
+);
+
 struct Args {
     data: PathBuf,
     out: Option<PathBuf>,
@@ -107,10 +114,16 @@ fn parse_args() -> Args {
             _ => i += 1,
         }
     }
-    Args { data, out, top_k, hybrid, limit }
+    Args {
+        data,
+        out,
+        top_k,
+        hybrid,
+        limit,
+    }
 }
 
-fn build_store_for_question(q: &Question, hybrid: bool) -> Result<(tempfile::TempDir, WikiGraph, HashMap<wg_core::types::FactId, (String, usize)>), String> {
+fn build_store_for_question(q: &Question, hybrid: bool) -> Result<QuestionStore, String> {
     let dir = tempfile::tempdir().map_err(|e| e.to_string())?;
     let path = dir.path().join("hotpot.redb");
     let mut config = Config::default();
@@ -137,7 +150,10 @@ fn build_store_for_question(q: &Question, hybrid: bool) -> Result<(tempfile::Tem
                 content: sent.clone(),
                 fact_type: Some(FactType::Note),
                 entity_ids: Some(vec![entity_id]),
-                tags: Some(vec![format!("title:{title}"), format!("sent_idx:{sent_idx}")]),
+                tags: Some(vec![
+                    format!("title:{title}"),
+                    format!("sent_idx:{sent_idx}"),
+                ]),
                 source: Some(title.clone()),
                 source_confidence: None,
                 observed_at: None,
@@ -164,7 +180,12 @@ fn main() -> ExitCode {
     if let Some(n) = args.limit {
         questions.truncate(n);
     }
-    println!("HotpotQA: {} questions, top_k={}, hybrid={}", questions.len(), args.top_k, args.hybrid);
+    println!(
+        "HotpotQA: {} questions, top_k={}, hybrid={}",
+        questions.len(),
+        args.top_k,
+        args.hybrid
+    );
 
     let mut writer: Option<std::io::BufWriter<std::fs::File>> = args.out.as_ref().map(|p| {
         let f = std::fs::File::create(p).expect("create output");
@@ -193,14 +214,13 @@ fn main() -> ExitCode {
                 continue;
             }
         };
-        let results = wiki
-            .search(&q.question, opts.clone())
-            .unwrap_or_else(|e| {
-                eprintln!("  ! search fail q={qid}: {e}");
-                Vec::new()
-            });
+        let results = wiki.search(&q.question, opts.clone()).unwrap_or_else(|e| {
+            eprintln!("  ! search fail q={qid}: {e}");
+            Vec::new()
+        });
 
-        let gold_set: std::collections::HashSet<(String, usize)> = q.supporting_facts.iter().cloned().collect();
+        let gold_set: std::collections::HashSet<(String, usize)> =
+            q.supporting_facts.iter().cloned().collect();
         let mut first_rank: Option<usize> = None;
         let mut hits = Vec::new();
         let top5_set: std::collections::HashSet<(String, usize)> = results
@@ -208,7 +228,11 @@ fn main() -> ExitCode {
             .take(5)
             .filter_map(|r| id_to_meta.get(&r.fact_id).cloned())
             .collect();
-        let recall_in_top5 = q.supporting_facts.iter().filter(|sf| top5_set.contains(*sf)).count();
+        let recall_in_top5 = q
+            .supporting_facts
+            .iter()
+            .filter(|sf| top5_set.contains(*sf))
+            .count();
         sup_fact_recall_at_5 += recall_in_top5;
         sup_fact_total += q.supporting_facts.len();
 
@@ -235,7 +259,9 @@ fn main() -> ExitCode {
         }
         for k in [1usize, 3, 5, 10] {
             if let Some(rr) = first_rank {
-                if rr <= k { *hits_at_k.entry(k).or_insert(0) += 1; }
+                if rr <= k {
+                    *hits_at_k.entry(k).or_insert(0) += 1;
+                }
             }
         }
         if let Some(rr) = first_rank {
@@ -243,7 +269,9 @@ fn main() -> ExitCode {
         }
         let entry = by_type_ok_at_5.entry(q.qtype.clone()).or_insert((0, 0));
         entry.1 += 1;
-        if first_rank.map(|r| r <= 5).unwrap_or(false) { entry.0 += 1; }
+        if first_rank.map(|r| r <= 5).unwrap_or(false) {
+            entry.0 += 1;
+        }
 
         if let Some(w) = writer.as_mut() {
             let row = RetrievalRow {
@@ -260,26 +288,50 @@ fn main() -> ExitCode {
             writeln!(w, "{}", serde_json::to_string(&row).unwrap()).unwrap();
         }
         if (qid + 1) % 500 == 0 {
-            eprintln!("    [{:>4}/{}] elapsed {:.1?}", qid + 1, questions.len(), started.elapsed());
+            eprintln!(
+                "    [{:>4}/{}] elapsed {:.1?}",
+                qid + 1,
+                questions.len(),
+                started.elapsed()
+            );
         }
     }
-    if let Some(w) = writer.as_mut() { use std::io::Write; w.flush().unwrap(); }
+    if let Some(w) = writer.as_mut() {
+        use std::io::Write;
+        w.flush().unwrap();
+    }
 
     let n = questions.len() as f64;
     println!();
-    println!("Result: n={}, top_k={}, hybrid={}", questions.len(), args.top_k, args.hybrid);
+    println!(
+        "Result: n={}, top_k={}, hybrid={}",
+        questions.len(),
+        args.top_k,
+        args.hybrid
+    );
     for k in [1, 3, 5, 10] {
         let h = *hits_at_k.get(&k).unwrap_or(&0);
-        println!("  R@{k} (any sup-fact): {:.3} ({}/{})", h as f64 / n, h, questions.len());
+        println!(
+            "  R@{k} (any sup-fact): {:.3} ({}/{})",
+            h as f64 / n,
+            h,
+            questions.len()
+        );
     }
     println!("  MRR: {:.3}", mrr_sum / n);
-    println!("  Sentence-level Sup-Fact recall @ 5: {:.3} ({}/{})",
-             sup_fact_recall_at_5 as f64 / sup_fact_total.max(1) as f64,
-             sup_fact_recall_at_5, sup_fact_total);
+    println!(
+        "  Sentence-level Sup-Fact recall @ 5: {:.3} ({}/{})",
+        sup_fact_recall_at_5 as f64 / sup_fact_total.max(1) as f64,
+        sup_fact_recall_at_5,
+        sup_fact_total
+    );
     println!();
     println!("By question_type (R@5 first sup-fact):");
     for (qt, (ok, total)) in by_type_ok_at_5.iter() {
-        println!("  {qt:<14} {ok}/{total} ({:.3})", *ok as f64 / *total as f64);
+        println!(
+            "  {qt:<14} {ok}/{total} ({:.3})",
+            *ok as f64 / *total as f64
+        );
     }
     println!("  wall: {:.2?}", started.elapsed());
     ExitCode::SUCCESS

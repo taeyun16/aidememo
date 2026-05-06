@@ -1042,9 +1042,7 @@ impl WikiGraph {
     pub fn search(&self, query: &str, opts: SearchOpts) -> Result<Vec<SearchResult>> {
         use search::SearchEngine;
         let want_archive = opts.include_archive && !self.is_cold;
-        let limit = opts
-            .limit
-            .unwrap_or(self.config.search.default_limit);
+        let limit = opts.limit.unwrap_or(self.config.search.default_limit);
         let mut results = {
             let store = self.store.read();
             let engine = SearchEngine::new(&store, &self.config, &self.bm25_index);

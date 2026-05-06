@@ -29,9 +29,7 @@ use std::path::PathBuf;
 use redb::ReadableTable;
 
 use crate::error::{Result, WgError};
-use crate::store::{
-    FACTS_TABLE, FACT_BY_ENTITY_TABLE, FACT_CONTENT_HASH_TABLE, Store,
-};
+use crate::store::{FACT_BY_ENTITY_TABLE, FACT_CONTENT_HASH_TABLE, FACTS_TABLE, Store};
 use crate::types::{FactId, FactRecord};
 
 /// Compute the cold-tier db path for a hot db file. Both files sit
@@ -144,14 +142,13 @@ impl Store {
 
         let write_txn = self.begin_archive_write()?;
         {
-            let mut facts =
-                write_txn
-                    .open_table(FACTS_TABLE)
-                    .map_err(|e| WgError::StoreWrite {
-                        table: "facts",
-                        key: "<archive-delete>".to_string(),
-                        source: Box::new(e),
-                    })?;
+            let mut facts = write_txn
+                .open_table(FACTS_TABLE)
+                .map_err(|e| WgError::StoreWrite {
+                    table: "facts",
+                    key: "<archive-delete>".to_string(),
+                    source: Box::new(e),
+                })?;
             let mut fact_by_entity =
                 write_txn
                     .open_table(FACT_BY_ENTITY_TABLE)
@@ -235,12 +232,7 @@ impl Store {
                         source: Box::new(e),
                     })?;
             for (id, record) in items {
-                if facts
-                    .get(id.as_bytes().as_slice())
-                    .ok()
-                    .flatten()
-                    .is_some()
-                {
+                if facts.get(id.as_bytes().as_slice()).ok().flatten().is_some() {
                     continue; // already archived
                 }
                 let bytes = serde_json::to_vec(record).map_err(|e| WgError::Serialize {
@@ -292,7 +284,10 @@ mod tests {
     #[test]
     fn cold_path_sits_next_to_hot() {
         let p = std::path::Path::new("/tmp/x.redb");
-        assert_eq!(cold_path_for(p), std::path::PathBuf::from("/tmp/x.redb.cold.redb"));
+        assert_eq!(
+            cold_path_for(p),
+            std::path::PathBuf::from("/tmp/x.redb.cold.redb")
+        );
     }
 
     #[test]
@@ -417,7 +412,11 @@ mod tests {
             ..Default::default()
         };
         let hot_only = wiki.search("redis", opts.clone()).unwrap();
-        assert_eq!(hot_only.len(), 3, "hot-only search returns 3 surviving facts");
+        assert_eq!(
+            hot_only.len(),
+            3,
+            "hot-only search returns 3 surviving facts"
+        );
         let archived: std::collections::HashSet<FactId> = ids[..3].iter().copied().collect();
         for r in &hot_only {
             assert!(!archived.contains(&r.fact_id));
