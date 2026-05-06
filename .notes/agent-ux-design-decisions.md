@@ -1117,3 +1117,76 @@ Honest 60q ladder (MiniMax-M2.7-highspeed, dates default):
   * baseline (all-Note ingest)            54/60  (90.0%)
   * --classify-from (MiniMax classifier)  48/60  (80.0%)  Δ -6.0pt
   * --llm-extract (MiniMax extractor)     ~75%       (prior measurement, -15pt vs ~88% degenerate)
+
+## Cross-encoder rerank on LongMemEval — net negative on reader (2026-05-06)
+
+Followup to `bench-rerank-miracl-ko.md` which showed BGE-reranker
+delivered +5.8% MRR on Korean Wikipedia retrieval. Question:
+does the same lift carry over to LongMemEval's reader+judge
+end-to-end accuracy?
+
+Setup:
+* `--reranker bge-reranker-base` (fastembed in-process ONNX, no
+  TEI server). top_k=20.
+* 60q balanced, dates default, hybrid (BM25 + model2vec semantic).
+* Same MiniMax-M2.7-highspeed reader+judge as the baseline.
+
+Retrieval-only (vs baseline):
+  R@1   0.65 → 0.93   (+28%)
+  R@5   1.00 → 1.00   (saturated)
+  R@10  1.00 → 1.00   (saturated)
+  MRR   0.79 → 0.96   (+22%)
+  wall  60s   → 295s   (5× slower)
+
+Reranker did its job: top-of-list precision climbed sharply, MRR
+followed. But the reader+judge end-to-end:
+
+| Category | baseline | rerank | Δ |
+|---|---|---|---|
+| KU | 10/10 | 10/10 | 0 |
+| multi-session | 6/10 | 5/10 | -1 |
+| SS-asst | 10/10 | 10/10 | 0 |
+| **SS-pref** | **9/10** | **7/10** | **-2** |
+| SS-user | 9/10 | 10/10 | +1 |
+| temporal | 10/10 | 10/10 | 0 |
+| **TOTAL** | **54/60 (90%)** | **52/60 (86.7%)** | **-2pt** |
+
+Why it didn't transfer:
+
+* Baseline R@10 was already 100% on this 60q sample. The
+  reranker only reorders the head — there's nothing to recover
+  in recall, and the readtime_rollup harness folds top-10 hits
+  into ~5 session blocks anyway, so a more accurate top-1
+  doesn't change what the reader sees.
+* SS-pref −2 fits the same pattern we saw with `--classify-from`
+  (-2 SS-pref) and `--llm-extract` (whole-category regression):
+  any retrieval-side intervention that promotes "looks similar
+  but isn't the gold turn" facts past the gold cuts SS-pref the
+  hardest because preference questions hinge on exactly the
+  right turn, not on a near-paraphrase.
+
+Combined with the self-extraction and agentic-loop measurements,
+the LongMemEval ceiling we keep hitting (~83-90% depending on
+sample) is **reader-bound, not retrieval-bound**. Every
+retrieval / ingest / scoring intervention we've tried saturates
+or regresses against MiniMax-class readers. Stronger reader
+class (Claude Opus 4.7 / GPT-5) is the unmeasured axis — quota
+gating blocks it at this measurement window.
+
+### Implication for production defaults
+
+* `rerank.provider = ""` (off) stays the right default. Rerank
+  pays a 5× latency tax for a metric improvement (MRR/R@1) the
+  bench doesn't reward, plus a small reader-accuracy regression
+  on the personalisation tier.
+* On benches where retrieval R@10 is NOT saturated (MIRACL/ko
+  R@10 0.816 → 0.820), reranker still earns its keep — see
+  `bench-rerank-miracl-ko.md`. So the default-off is a
+  scenario-dependent trade-off, not a universal "rerank is bad".
+* For wg's typical agent memory use (LongMemEval-shaped
+  conversational long-context), keep rerank off.
+
+Honest 60q ladder (MiniMax-M2.7-highspeed, dates default):
+  baseline (no rerank)              54/60  (90.0%)
+  --classify-from                   48/60  (80.0%)  Δ -6pt
+  --reranker bge-reranker-base      52/60  (86.7%)  Δ -2pt (5× slower)
