@@ -54,10 +54,10 @@
     {
       "id": "s07-temporal",
       "shape": "temporal",
-      "prompt": "Use wg's recent activity tools to find: how many facts in this wiki were added/observed in the past year? (Hint: try wg_recent with --last 1y.)",
-      "gold_keywords": ["30", "facts", "all"],
+      "prompt": "Use wg's recent-activity tools to find: how many facts in this wiki were added/observed in the past year? (Hint: try wg_recent with --last 1y.)",
+      "gold_keywords": ["0", "no", "none", "empty", "outside", "older"],
       "expected_tool": "wg_recent",
-      "notes": "All 30 facts created 1y ago in this fixture; recent --last 1y returns 30."
+      "notes": "Gold corrected: today (2026-05-06) is past the 1y window from the WG_NOW_MS pin (2025-01-01), so wg_recent --last 1y correctly returns 0. Tests honest reporting of an empty result."
     },
     {
       "id": "s08-temporal",

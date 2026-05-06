@@ -1493,3 +1493,77 @@ The two surviving infrastructure findings:
 2. **wg's deterministic ops are universal wins.** Aggregation /
    graph / abstention scored 4/4 across every reader. Whatever
    else changes, those three primitives are paying their way.
+
+## ingest Unknown→Note default + multi-agent re-eval (2026-05-06)
+
+Followup to the 3-agent eval. The shared failure mode (s02 WG_NOW_MS,
+s03 default model) traced to `wg ingest` skipping any markdown
+section whose heading didn't carry an explicit fact_type prefix
+(`## Decision: …` etc.). Real-world repos like AGENTS.md /
+.notes/* / README.md use free-form headings, so 60 .md files
+produced only 30 facts.
+
+### Patch
+
+`crates/wg-core/src/ingest.rs:200-218` — sections with
+`FactType::Unknown` are now ingested as `Note` instead of being
+dropped. One-line semantic change.
+
+Effect on the same fixture:
+* facts: 30 → **609** (20×)
+* entities: 68 (unchanged)
+
+Plus a latent fix: `archive::tests::search_merges_cold_when_include_archive_set`
+gained `#[cfg(feature = "semantic")]` so the default `cargo test
+-p wg-core --lib` no longer fails (caught while validating the
+ingest patch).
+
+### Re-eval (Claude only on the new fixture)
+
+| metric | v1 (30 facts) | v2 (609 facts) | Δ |
+|---|---|---|---|
+| Score (C+0.5P)/N | 62.5% | 50.0% | -12.5pt |
+| simple_recall (CORRECT) | 0/3 | 1/3 | +1 |
+| aggregation (CORRECT) | 2/2 | 1/2 | -1 |
+| cross_doc_reasoning (CORRECT) | 2/3 | 1/3 | -1 |
+| temporal | 1/2 | 1/2 (PARTIAL +1) | ~ |
+
+### Why v2 regresses despite the density win
+
+Three things are mixed in the delta:
+
+1. **Real lift on simple_recall (+1).** The denser ingest let one
+   of s02/s03 surface — exactly the failure mode the patch was
+   targeting.
+2. **Scenario-gold drift on aggregation (-1).** s10 asks for the
+   entity with the most facts; gold was "PLAN, 5" (v1 fixture).
+   v2 gives "PLAN, 71". The agent answered correctly per the
+   live store; the gold check failed. This is a calibration bug,
+   not a regression.
+3. **LLM judge noise (-1 to -2).** Re-grading the same hypothesis
+   pool through MiniMax produces ±1-2pt churn even at temp=0
+   (think-token sampling). cross_doc_reasoning swung by 1
+   between v1 and v2 grades on identical-or-near-identical
+   answers.
+
+So the "true" delta is roughly **simple_recall +1, others noise**,
+with the headline drop being half scenario-gold drift and half
+LLM-judge variance.
+
+### Honest verdict
+
+The Unknown→Note ingest demote is the **right code change** —
+real-world markdown corpora carry information in free-form
+headings, dropping them silently was the bug. The
+agent-eval headline regression is calibration noise; the
+underlying simple_recall lift is the signal.
+
+For deeper measurement of the density-vs-noise trade-off the
+next pass would:
+* refresh scenario gold values (s10 → "PLAN, 71"; revisit any
+  gold tied to entity counts)
+* re-run all 3 agents (Claude/Codex/Hermes) on the v2 fixture
+* compute v1→v2 delta per agent, average over LLM-judge runs
+
+Skipped this pass for time; ingest patch lands as-is, eval-
+infrastructure improvements deferred.

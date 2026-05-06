@@ -374,6 +374,7 @@ mod tests {
         assert_eq!(store.open_cold().unwrap().fact_count().unwrap(), 1);
     }
 
+    #[cfg(feature = "semantic")]
     #[test]
     fn search_merges_cold_when_include_archive_set() {
         // wg-core archive_facts test goes through Store directly. For

@@ -198,15 +198,25 @@ pub fn ingest_wiki(
                 }
 
                 // --- Facts from sections ---
+                // Every section becomes a fact. Heading prefix maps to a
+                // typed fact when possible (Decision / Convention /
+                // Pattern / Note / Question / Claim); free-form headings
+                // (the common case in real-world repos like AGENTS.md,
+                // .notes/, README.md) demote to Note so they're still
+                // searchable. Skipping Unknown was the wg-agent-test
+                // bottleneck — 52 .md files were producing only 30
+                // facts because most headings don't carry an
+                // explicit type prefix.
                 for section in &parsed.sections {
-                    // Only add sections with a meaningful fact type (skip "Unknown")
-                    if section.fact_type == FactType::Unknown {
-                        continue;
-                    }
+                    let fact_type = if section.fact_type == FactType::Unknown {
+                        FactType::Note
+                    } else {
+                        section.fact_type
+                    };
                     let source = Some(format!("{}#{}", parsed.rel_path, section.anchor));
                     let fact_input = FactInput {
                         content: section.content.clone(),
-                        fact_type: Some(section.fact_type),
+                        fact_type: Some(fact_type),
                         entity_ids: Some(vec![entity_id]),
                         tags: None,
                         source,
