@@ -163,7 +163,7 @@ fn build_store_for_question(q: &Question, hybrid: bool) -> Result<QuestionStore,
     }
     let fact_ids = wiki.fact_add_many(inputs).map_err(|e| e.to_string())?;
     let mut id_to_meta = HashMap::new();
-    for (fid, meta) in fact_ids.into_iter().zip(sentence_lookup.into_iter()) {
+    for (fid, meta) in fact_ids.into_iter().zip(sentence_lookup) {
         id_to_meta.insert(fid, meta);
     }
     Ok((dir, wiki, id_to_meta))

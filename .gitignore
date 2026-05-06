@@ -24,6 +24,7 @@ _meta/
 # Temp files
 *.bak
 *.tmp
+__pycache__/
 
 # Node bindings — built artifacts
 crates/wg-napi/node_modules/
