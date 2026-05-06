@@ -8,7 +8,8 @@ minimal — fast iteration over heavy process.
 ```bash
 # Required
 rustup toolchain install 1.95.0 --component rustfmt --component clippy
-# Workspace MSRV remains 1.85, but CI parity is currently validated on 1.95.0.
+# Or let rustup auto-install from rust-toolchain.toml on first cargo run.
+# Workspace MSRV remains 1.85, but CI parity is pinned to 1.95.0.
 
 # Recommended
 brew install lefthook                    # or `npm i -g lefthook`
@@ -26,7 +27,8 @@ the situation calls for it (very rare).
 | pre-commit | `cargo fmt --all --check` | `cargo fmt --all` |
 | pre-commit | `cargo check --features semantic` | fix the errors |
 | pre-commit (Elixir only) | `mix format --check-formatted` | `mix format` |
-| pre-push | `cargo clippy --features semantic` | fix or `#[allow(…)]` with reason |
+| pre-push | `cargo clippy --features semantic -- -D warnings` | fix or `#[allow(…)]` with reason |
+| pre-push | `cargo doc --workspace --no-deps --features semantic` | fix rustdoc warnings |
 | pre-push | `cargo test -p wg-core --features semantic` | fix the test |
 | pre-push | `cargo test -p wg-cli --bin wg` | fix the test |
 | CI | all of the above + `cargo doc -D warnings` + macOS test matrix | — |
@@ -41,8 +43,9 @@ of the `unsafe_code` deny because they intentionally bridge raw pointers).
 cargo test --workspace                              # default features
 cargo test -p wg-core --features semantic           # includes hybrid search
 cargo test -p wg-cli --bin wg                       # CLI parsing + helpers
-RUSTUP_TOOLCHAIN=1.95.0 cargo clippy --workspace --all-targets --features semantic -- -D warnings
-RUSTUP_TOOLCHAIN=1.95.0 cargo doc --workspace --no-deps --features semantic
+./scripts/ci-local.sh lint
+./scripts/ci-local.sh test
+./scripts/ci-local.sh
 ```
 
 Bindings (Python / Node / Elixir / C) are not part of the default

@@ -27,8 +27,8 @@ cargo build -p wg-cli                   # debug binary at target/debug/wg
 cargo build -p wg-cli --release         # release binary
 cargo test -p wg-core --features semantic
 cargo test -p wg-cli --bin wg
-RUSTUP_TOOLCHAIN=1.95.0 cargo clippy --workspace --all-targets --features semantic -- -D warnings
-RUSTUP_TOOLCHAIN=1.95.0 cargo doc --workspace --no-deps --features semantic
+./scripts/ci-local.sh lint
+./scripts/ci-local.sh test
 # Tests that download a HuggingFace embedding model are #[ignore]'d
 # (CI skips them — first run hits HF lock races). Run locally for the
 # full surface once the model is cached:

@@ -41,8 +41,12 @@ pre-push:
   parallel: false  # tests can race on shared resources (model cache, redb files)
   commands:
     clippy:
-      run: cargo clippy --workspace --all-targets --features semantic --quiet
-      fail_text: "fix clippy errors before pushing (warnings tolerated, errors block)"
+      run: cargo clippy --workspace --all-targets --features semantic --quiet -- -D warnings
+      fail_text: "fix clippy warnings/errors before pushing (CI treats warnings as failures)"
+
+    doc:
+      run: RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --features semantic --quiet
+      fail_text: "rustdoc warnings fail CI; fix them before pushing"
 
     test-core:
       run: cargo test -p wg-core --features semantic --quiet
@@ -55,6 +59,7 @@ pre-push:
 # Long-running operations live in pre-push only:
 # - cargo clippy (1st run = slow)
 # - cargo test (full suite, ~10–15s with semantic)
+# - cargo doc (workspace rustdoc warnings are CI-fatal)
 #
 # Bindings (Python wheel build, NAPI .node, NIF .so, FFI staticlib) are
 # NOT in pre-push because they require external toolchains (maturin / npm /

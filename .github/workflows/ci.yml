@@ -49,6 +49,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: 1.95.0
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
         with:
@@ -79,6 +80,8 @@ jobs:
         with:
           python-version: "3.13"
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.95.0
       - uses: Swatinem/rust-cache@v2
         with:
           # ubuntu test reuses lint's cache; macOS gets its own.
@@ -111,6 +114,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.95.0
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-audit
@@ -139,6 +144,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.95.0
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: ubuntu-wg-v2
@@ -167,6 +174,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.95.0
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: ubuntu-wg-v2
@@ -180,6 +189,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.95.0
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: ubuntu-wg-v2
@@ -209,6 +220,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.95.0
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: ubuntu-wg-v2
