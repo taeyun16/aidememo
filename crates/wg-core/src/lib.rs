@@ -1436,7 +1436,7 @@ impl WikiGraph {
                 top_examples: b.top_examples,
             })
             .collect();
-        entity_types.sort_by(|a, b| b.count.cmp(&a.count));
+        entity_types.sort_by_key(|b| std::cmp::Reverse(b.count));
         let top_entities: Vec<types::EntitySummary> =
             entities.into_iter().take(opts.top_n_entities).collect();
 
@@ -1485,7 +1485,7 @@ impl WikiGraph {
                 count: b.count,
             })
             .collect();
-        fact_types.sort_by(|a, b| b.count.cmp(&a.count));
+        fact_types.sort_by_key(|b| std::cmp::Reverse(b.count));
 
         Ok(types::OverviewResult {
             stats,
