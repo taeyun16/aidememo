@@ -138,6 +138,21 @@ wg config set store.durability immediate   # default (recommended)
 #   rerank.model    = "BAAI/bge-reranker-base"
 #   rerank.top_k    = 32
 # Reranker failure is non-fatal — wg falls back to RRF order with a warning.
+#
+# When to enable rerank — measured trade-offs (default: off):
+#   * Retrieval-bound workload: corpus where top-K recall is < 95%
+#     (e.g. Wikipedia-scale BM25-only on MIRACL/ko: R@10 ~0.81).
+#     Rerank lifts MRR @+5-6%, R@1 @+10-30%. KEEP ON.
+#   * Reader-bound workload: corpus where top-K recall is already
+#     saturated (e.g. LongMemEval per-question haystack: R@10 1.00
+#     after dates default). Rerank reorders the head but the
+#     reader doesn't see the difference (top-K context overlaps);
+#     measured 60q drop -2pt and 5× latency. KEEP OFF.
+#   * Latency budget: cross-encoder is ~85× slower than HNSW alone
+#     (Apple Metal: 9 ms → 765 ms p50 at top_k=8). Most agent hot
+#     paths can't afford it. Reserve for offline batch / high-stakes
+#     low-volume queries. Detail in `.notes/bench-rerank-miracl-ko.md`
+#     and the LME finding in `.notes/agent-ux-design-decisions.md`.
 ```
 
 ### Multi-project
