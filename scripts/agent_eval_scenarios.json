@@ -1,0 +1,103 @@
+{
+  "store_path": "/tmp/wg-agent-test/wiki.redb",
+  "store_description": "wg repo (.md files: AGENTS.md, CLAUDE.md, .notes/*, wg-skill/*) ingested 2026-05-06 with WG_NOW_MS=1735689600000. ~52 markdown files → 68 entities / 30 facts / 41 relations. All facts have created_at = 2025-01-01 (1y ago).",
+  "scoring": "Each scenario is graded by (1) keyword overlap on the model's hypothesis text, (2) whether the expected wg tool was called at least once. LLM-judge layer optional.",
+  "scenarios": [
+    {
+      "id": "s01-simple-recall",
+      "shape": "simple_recall",
+      "prompt": "Use the wg MCP tools to answer this question against the wiki at /tmp/wg-agent-test/wiki.redb: in the AGENTS guide, what does wg_aggregate's `sum_currency` operation do? One sentence.",
+      "gold_keywords": ["sum", "currency", "matching"],
+      "expected_tool": "wg_search|wg_query",
+      "notes": "AGENTS.md describes sum_currency."
+    },
+    {
+      "id": "s02-simple-recall",
+      "shape": "simple_recall",
+      "prompt": "Use wg to answer: what is the purpose of the WG_NOW_MS environment variable? Cite where you read it.",
+      "gold_keywords": ["clock", "deterministic", "bench", "reproducib", "WG_NOW_MS"],
+      "expected_tool": "wg_search|wg_query",
+      "notes": "AGENTS.md / commit notes."
+    },
+    {
+      "id": "s03-simple-recall",
+      "shape": "simple_recall",
+      "prompt": "Use wg: what is wg's default embedding model (the one used when no override is configured)? Just the name.",
+      "gold_keywords": ["model2vec", "potion"],
+      "expected_tool": "wg_search|wg_query",
+      "notes": "Documented as model2vec / potion-128M."
+    },
+    {
+      "id": "s04-cross-doc",
+      "shape": "cross_doc_reasoning",
+      "prompt": "Use wg to look up: are both 'self-extraction' (LLM classify-from) and 'agentic-loop' interventions reported as net negative on LongMemEval at the MiniMax reader class? If yes, give the approximate point delta for each.",
+      "gold_keywords": ["self-extraction", "-6", "agentic", "noise", "0pt"],
+      "expected_tool": "wg_query|wg_search",
+      "notes": "Both findings live in .notes/agent-ux-design-decisions.md."
+    },
+    {
+      "id": "s05-cross-doc",
+      "shape": "cross_doc_reasoning",
+      "prompt": "Use wg to find: in the cold-tier archive design, where do entity records live — hot store, cold store, or both?",
+      "gold_keywords": ["hot", "facts only", "entities", "cross-reference"],
+      "expected_tool": "wg_search|wg_query",
+      "notes": "Architectural invariant: cold stores facts only; entities stay in hot."
+    },
+    {
+      "id": "s06-cross-doc",
+      "shape": "cross_doc_reasoning",
+      "prompt": "Use wg: across the four benches measured (LongMemEval, MultiHop-RAG, HotpotQA, LoCoMo), which TWO did wg score 80%+ on? Just the two names.",
+      "gold_keywords": ["LongMemEval", "MultiHop-RAG"],
+      "expected_tool": "wg_query|wg_search",
+      "notes": "Per the 4-bench scoreboard in design notes."
+    },
+    {
+      "id": "s07-temporal",
+      "shape": "temporal",
+      "prompt": "Use wg's recent activity tools to find: how many facts in this wiki were added/observed in the past year? (Hint: try wg_recent with --last 1y.)",
+      "gold_keywords": ["30", "facts", "all"],
+      "expected_tool": "wg_recent",
+      "notes": "All 30 facts created 1y ago in this fixture; recent --last 1y returns 30."
+    },
+    {
+      "id": "s08-temporal",
+      "shape": "temporal",
+      "prompt": "Use wg to find: by how much did adding the dates default (`stamp_observed_at = true`) lift the LongMemEval baseline overall? Give the approximate delta in percentage points.",
+      "gold_keywords": ["+17", "17pt", "65", "82", "dates"],
+      "expected_tool": "wg_search|wg_query",
+      "notes": "+17pt finding from the bench commit / notes."
+    },
+    {
+      "id": "s09-aggregation",
+      "shape": "aggregation",
+      "prompt": "Use wg to find: how many distinct fact types does wg's data model recognise? List them.",
+      "gold_keywords": ["decision", "pattern", "convention", "claim", "note", "question", "preference", "lesson", "error"],
+      "expected_tool": "wg_search|wg_aggregate",
+      "notes": "Nine fact types per AGENTS.md table."
+    },
+    {
+      "id": "s10-aggregation",
+      "shape": "aggregation",
+      "prompt": "Using wg_aggregate or wg_entity_list, find the entity with the most facts attached in this wiki, and report its name and fact count.",
+      "gold_keywords": ["PLAN", "5"],
+      "expected_tool": "wg_entity_list|wg_aggregate",
+      "notes": "Top: PLAN (5 facts). agent-ux-design-decisions and POSITIONING tied at 4."
+    },
+    {
+      "id": "s11-graph-traversal",
+      "shape": "graph_traversal",
+      "prompt": "Use wg_traverse from the entity 'AGENTS' with depth 2. How many entities and relations does it visit?",
+      "gold_keywords": ["1", "0", "AGENTS"],
+      "expected_tool": "wg_traverse",
+      "notes": "Actual: visits 1 entity (AGENTS) with 0 relations — markdown ingest doesn't auto-create entity-entity edges. Tests honest reporting."
+    },
+    {
+      "id": "s12-abstention",
+      "shape": "abstention",
+      "prompt": "Use wg to look up: what is Mem0's exact LongMemEval score recorded as a fact in this wiki? If it isn't a fact in this store, say so explicitly — don't guess.",
+      "gold_keywords": ["not", "no", "absent", "no explicit", "not recorded", "isn't", "not present"],
+      "expected_tool": "wg_search|wg_query",
+      "notes": "Mem0 ~49% mentioned in the prose of design notes but may not surface as a discrete fact. Tests abstention vs hallucination."
+    }
+  ]
+}
