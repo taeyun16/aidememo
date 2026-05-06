@@ -1404,3 +1404,92 @@ reader choice. Two paths to lift the simple_recall score:
 
 Neither was tested in this eval; both are within reach for the
 next dogfooding cycle.
+
+## 3-agent eval — Hermes added (2026-05-06)
+
+Hermes wg-test registered via direct yaml patch to ~/.hermes/config.yaml
+(the `hermes mcp add --command X --args Y Z` form rejected multi-token
+args; yaml edit was the workaround). Same 12 scenarios, same MiniMax
+LLM judge.
+
+### Three-agent scoreboard
+
+| agent | C | P | I | Score (C+0.5P)/N | Avg latency |
+|---|---|---|---|---|---|
+| claude | 7 | 1 | 4 | 62.5% | 17.4s |
+| codex  | 7 | 2 | 3 | 66.7% | 55.3s |
+| hermes | 7 | 1 | 4 | 62.5% | 105.7s |
+
+### Per-shape (CORRECT counts)
+
+| shape | claude | codex | hermes |
+|---|---|---|---|
+| simple_recall | 0/3 | 1/3 | **2/3** |
+| cross_doc_reasoning | **2/3** | 1/3 | 1/3 |
+| temporal | 1/2 | 1/2 | 0/2 |
+| aggregation | 2/2 | 2/2 | 2/2 |
+| graph_traversal | 1/1 | 1/1 | 1/1 |
+| abstention | 1/1 | 1/1 | 1/1 |
+
+### Personality differences emerging
+
+The total score is essentially flat (62-67% across all three) but the
+shape distribution exposes how each agent uses wg differently:
+
+* **Hermes wins simple_recall (2/3).** Of the three it's the only one
+  that found WG_NOW_MS (s02) — and the path was a wg_search hit
+  matched against a CLAUDE.md / commit-message chunk that BM25
+  surfaced. Hermes ran more search calls per turn (avg 0.5 tool
+  calls/q in our partial regex; the others showed 0 in the same
+  scrape but qualitatively called less).
+* **Claude wins cross_doc_reasoning (2/3).** s04 (self-extraction +
+  agentic-loop net negative) needed synthesis across two
+  separate notes; Claude's longer answer pulled both sides
+  together, where Codex returned PARTIAL (only one side) and
+  Hermes returned INCORRECT.
+* **All three perfect on aggregation, graph traversal, abstention.**
+  When the answer reduces to "count this", "walk that", or
+  "is X a fact in this store", the wg surface itself does the
+  work and reader choice doesn't matter.
+
+### The three same-fail scenarios
+
+s02, s03, s07 failed for all three agents:
+
+* s02 (WG_NOW_MS): only Hermes broke through. Even there, Claude
+  and Codex literally said "the wiki doesn't mention WG_NOW_MS"
+  even though AGENTS.md does — surface-form mismatch wins again.
+* s03 (default embedding model): no agent answered "model2vec /
+  potion-128M". The string IS in AGENTS.md ("model2vec`
+  (default…)`") but the chunk that contains it scores low against
+  "default embedding model" phrasings.
+* s07 (recent --last 1y): gold-key bug on my side; all three
+  correctly returned 0 because today (2026-05-06) is past the
+  WG_NOW_MS pin (2025-01-01) by more than 1y. Re-grade should
+  count this as 3/3 correct, lifting all three by ~4pt.
+
+### Latency choice space
+
+* Claude --effort low: **17s/q** — practical for hot-path agent loops.
+* Codex high reasoning: 55s/q — better cross_doc PARTIAL recovery
+  but 3× cost.
+* Hermes (GLM-5.1 default): **105s/q** — best simple_recall, worst
+  latency. Likely re-tries / wider tool-use loop.
+
+### Production read
+
+For wg-as-Claude-Code-memory the latency story dominates: Claude
+17s comfortably fits a hot turn, Codex 55s fits a one-shot helper,
+Hermes 105s fits batch / overnight. Accuracy spread (62-67%) is
+small enough that any of the three works; the gap is filled by
+which **kind** of question the agent is being asked, not by which
+agent answers.
+
+The two surviving infrastructure findings:
+1. **Ingest sparsity is the single biggest improvement vector.**
+   Same-fail scenarios all trace to the markdown-chunk vs
+   surface-form gap. Sentence-boundary chunking or self-extraction
+   at ingest are the two next experiments.
+2. **wg's deterministic ops are universal wins.** Aggregation /
+   graph / abstention scored 4/4 across every reader. Whatever
+   else changes, those three primitives are paying their way.

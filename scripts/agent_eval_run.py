@@ -134,7 +134,7 @@ def run_hermes(prompt: str, mcp_config: str, timeout: int = 120) -> dict:
         "/tmp/wg-agent-test/wiki.redb to answer. Be concise. Don't guess."
     )
     full = f"{sys_prompt}\n\nQuestion: {prompt}"
-    cmd = ["hermes", "chat", full]
+    cmd = ["hermes", "--yolo", "chat", "-Q", "-q", full]
     started = time.time()
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
