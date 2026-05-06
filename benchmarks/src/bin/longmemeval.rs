@@ -216,6 +216,15 @@ struct Args {
     /// failure mode of `--llm-extract` (which rewrites facts) does
     /// not apply.
     classify_from: Option<PathBuf>,
+    /// Path to a JSON file emitted by
+    /// `scripts/longmemeval_hyde_questions.py` that maps each
+    /// question_id to a single hypothetical-answer sentence. Layout:
+    /// `{question_id: "..."}`. When provided, hybrid_search runs
+    /// against the hypothetical text instead of the literal question
+    /// (HyDE pattern). Reader prompt downstream still sees the
+    /// original question. Tests whether question→answer surface-form
+    /// mismatch is a measurable retrieval bottleneck.
+    hyde_from: Option<PathBuf>,
 }
 
 /// Parse "2023/02/01 (Wed) 10:20" → epoch ms. Returns None on any
@@ -271,6 +280,7 @@ fn parse_args() -> Args {
     let mut session_level_ingest = false;
     let mut hybrid_ingest = false;
     let mut classify_from: Option<PathBuf> = None;
+    let mut hyde_from: Option<PathBuf> = None;
 
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
@@ -364,6 +374,10 @@ fn parse_args() -> Args {
                 classify_from = Some(PathBuf::from(&argv[i + 1]));
                 i += 2;
             }
+            "--hyde-from" if i + 1 < argv.len() => {
+                hyde_from = Some(PathBuf::from(&argv[i + 1]));
+                i += 2;
+            }
             _ => i += 1,
         }
     }
@@ -390,6 +404,7 @@ fn parse_args() -> Args {
         session_level_ingest,
         hybrid_ingest,
         classify_from,
+        hyde_from,
     }
 }
 
@@ -423,6 +438,18 @@ struct BuildOpts<'a> {
     /// scoped to the current question by main(). When None, every
     /// turn-level fact ingests as `Note` (the legacy default).
     classify_for_question: Option<&'a std::collections::HashMap<usize, std::collections::HashMap<usize, String>>>,
+}
+
+/// Bundle the per-question search-time tweaks we layer on top of the
+/// raw question. Currently just HyDE (hypothetical-answer query) but
+/// the struct gives us a place to grow query-side knobs without
+/// turning evaluate() into a 12-arg function.
+#[derive(Default, Clone)]
+struct EvalKnobs<'a> {
+    /// HyDE override — when present, evaluate() uses this string as
+    /// the search query instead of `q.question`. The reader prompt
+    /// (downstream) still gets the original question.
+    hyde_query: Option<&'a str>,
 }
 
 fn build_store_for_question(
@@ -799,6 +826,7 @@ fn evaluate(
     temporal: bool,
     hybrid: bool,
     time_decay_days: Option<f64>,
+    knobs: EvalKnobs<'_>,
 ) -> (Option<usize>, Vec<RetrievalRecord>) {
     // BM25-only baseline. Returns the 1-indexed rank of the first hit
     // whose entity matches one of the answer-session entities, or
@@ -832,7 +860,8 @@ fn evaluate(
         until,
         ..Default::default()
     };
-    let mut results = match wiki.hybrid_search(&q.question, opts) {
+    let search_query: &str = knobs.hyde_query.unwrap_or(&q.question);
+    let mut results = match wiki.hybrid_search(search_query, opts) {
         Ok(r) => r,
         Err(_) => return (None, Vec::new()),
     };
@@ -1053,6 +1082,17 @@ fn run(args: &Args) -> Result<(), String> {
             None
         };
 
+    // Load HyDE JSON once (qid → hypothetical answer string).
+    let hyde_map: Option<std::collections::HashMap<String, String>> = if let Some(path) = &args.hyde_from {
+        let raw = std::fs::read_to_string(path).map_err(|e| format!("read {path:?}: {e}"))?;
+        let m: std::collections::HashMap<String, String> =
+            serde_json::from_str(&raw).map_err(|e| format!("parse hyde-from: {e}"))?;
+        println!("hyde:     loaded {} questions from {path:?}", m.len());
+        Some(m)
+    } else {
+        None
+    };
+
     let started = Instant::now();
     for (i, q) in questions.iter().take(n).enumerate() {
         // Always stamp observed_at from the LongMemEval session date.
@@ -1094,8 +1134,11 @@ fn run(args: &Args) -> Result<(), String> {
                     .and_then(|m| m.get(&q.question_id)),
             },
         )?;
+        let knobs = EvalKnobs {
+            hyde_query: hyde_map.as_ref().and_then(|m| m.get(&q.question_id)).map(|s| s.as_str()),
+        };
         let (rank, retrievals) =
-            evaluate(q, &wiki, top_k, temporal, args.hybrid, args.time_decay_days);
+            evaluate(q, &wiki, top_k, temporal, args.hybrid, args.time_decay_days, knobs);
         if let Some(r) = rank {
             if r <= 1 {
                 hit_at_1 += 1;

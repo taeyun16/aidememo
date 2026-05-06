@@ -1190,3 +1190,110 @@ Honest 60q ladder (MiniMax-M2.7-highspeed, dates default):
   baseline (no rerank)              54/60  (90.0%)
   --classify-from                   48/60  (80.0%)  Δ -6pt
   --reranker bge-reranker-base      52/60  (86.7%)  Δ -2pt (5× slower)
+
+## HyDE on LongMemEval — net negative on personal-memory data (2026-05-06)
+
+Tested HyDE (Hypothetical Document Embeddings, Gao et al. 2022) as
+the final query-side intervention in this measurement window. Pattern:
+LLM generates a plausible answer to the question; that answer's
+embedding becomes the search vector instead of the literal question.
+
+Setup:
+* `scripts/longmemeval_hyde_questions.py` — MiniMax generates one
+  hypothetical-answer sentence per question, ~60 calls, ~2 min wall.
+* `benchmarks/src/bin/longmemeval.rs --hyde-from FILE` — bench's
+  hybrid_search receives the hypothetical text in place of the
+  question. Reader prompt downstream still gets the original
+  question, so we measure pure retrieval-query effect.
+* Same MiniMax reader+judge as the dates baseline.
+
+Retrieval-only metrics:
+  R@1   0.65 → 0.77   +12%
+  R@5   1.00 → 0.93   -7%   (saturation broken, some questions miss)
+  R@10  1.00 → 0.98   -2%
+  MRR   0.79 → 0.84   +7%
+
+End-to-end (60q):
+| Category | baseline | hyde | Δ |
+|---|---|---|---|
+| KU | 10/10 | 9/10 | -1 |
+| multi-session | 6/10 | 6/10 | 0 |
+| SS-asst | 10/10 | 10/10 | 0 |
+| **SS-pref** | **9/10** | **6/10** | **-3** |
+| SS-user | 9/10 | 10/10 | +1 |
+| temporal | 10/10 | 8/10 | -2 |
+| **TOTAL** | **54/60 (90%)** | **49/60 (81.7%)** | **-5pt** |
+
+### Diagnosis: why HyDE fails on personal-memory benches
+
+HyDE was designed for web RAG — Wikipedia, news articles, scientific
+papers — where the relevant document SHARES SURFACE FORM with a
+plausible LLM-generated answer. LongMemEval is the opposite:
+personal memory of one specific user. The LLM's hypothetical
+answer is drawn from training-data averages; the actual fact is
+user-specific. Concrete example:
+
+* Q: "What's my favorite coffee shop?"
+* HyDE: "Your favorite is Blue Bottle on 5th Ave" (generic guess)
+* Reality: user mentioned a different shop in the haystack
+* Embedding search now points at "Blue Bottle / 5th Ave" turns,
+  not the user's actual preference turn
+
+SS-pref takes the biggest hit (−3) because preference questions
+hinge exactly on the user's specific item. Temporal (−2) follows
+because hypothetical dates are also generated rather than recalled.
+
+### The session pattern: every architectural intervention regresses
+
+Three independent retrieval/query/scoring interventions in a row,
+all net-negative on the same 60q sample:
+
+| Intervention | Δ vs baseline | Worst-cat regression |
+|---|---|---|
+| `--classify-from` (label-only LLM ingest) | -6pt | SS-pref -2 |
+| `--reranker bge-reranker-base` | -2pt | SS-pref -2 |
+| `--hyde-from` (query-side LLM rewrite) | -5pt | SS-pref -3 |
+
+SS-pref regresses in all three. The shared failure mode: any
+intervention that nudges retrieval away from the literal user-turn
+surface form costs precisely the questions that hinge on that turn.
+
+### Verdict: degenerate baseline IS the sweet spot for personal memory
+
+For LongMemEval-shaped workloads (personal-memory chat history,
+MiniMax-class reader, ingest = raw turns + observed_at metadata
++ level=session readtime rollup), every additional architectural
+intervention we measured this session regressed accuracy. The
+ceiling at ~90% is reader-bound, not retrieval-bound.
+
+What still helped, in order of magnitude:
+* dates default (`stamp_observed_at = true`)              +17pt
+* level=session readtime_rollup                            +20pt on KU/multi/SS-asst
+* hybrid (BM25 + model2vec semantic via RRF)               +5-10pt vs BM25-only
+
+What didn't (this session):
+* agentic loop                                             noise (60q +30pt → 240q +0pt)
+* classifier-routed dispatch                               net zero
+* `--llm-extract` (LLM rewrite ingest)                    -13pt
+* `--classify-from` (LLM label-only ingest)               -6pt
+* `--reranker bge-reranker-base`                          -2pt
+* `--hyde-from` (LLM hypothetical-answer query)           -5pt
+* `--time-decay-days 30`                                  -11.9pt
+* HNSW pure semantic                                       -3.3pt
+
+The retrieval/ingest layer is at its sweet spot for this workload
+class. Real lift from here requires a reader strong enough to
+exploit the perfect retrieval that's already happening — Claude
+Opus 4.7 / GPT-5 class — which we couldn't unlock at this quota
+window.
+
+For RETRIEVAL-bound benches (R@10 < 95%) the pattern flips:
+* MIRACL/ko (R@10 0.816): rerank earns its keep (+5-6% MRR)
+* Plausibly: HyDE on factual web RAG, classification on
+  topically-organised codebases, agentic on cross-document
+  arithmetic where R@10 needs help
+
+The architecture choices in wg should remain scenario-aware, not
+LongMemEval-only-optimised. AGENTS.md reranker scenarios block
+already documents this; same logic applies to HyDE / classifier
+hooks if they ever ship as production options.
