@@ -1297,3 +1297,110 @@ The architecture choices in wg should remain scenario-aware, not
 LongMemEval-only-optimised. AGENTS.md reranker scenarios block
 already documents this; same logic applies to HyDE / classifier
 hooks if they ever ship as production options.
+
+## Multi-agent eval — Claude vs Codex on wg test store (2026-05-06)
+
+First end-to-end "wg-as-agent-memory" eval where the agent runtime
+itself (not a synthetic reader) calls wg over MCP and answers
+realistic questions. 12 scenarios across 6 shapes (simple_recall,
+cross_doc_reasoning, temporal, aggregation, graph_traversal,
+abstention) against a fresh wg store ingested from this repo's
+.md files (52 files → 68 entities / 30 facts / 41 relations).
+
+Setup details:
+* Test store: `/tmp/wg-agent-test/wiki.redb`, pinned WG_NOW_MS so
+  created_at is deterministic
+* Claude Code: `claude -p` with `--mcp-config` pointing at the
+  test store, `--strict-mcp-config` + `--dangerously-skip-permissions`
+  (without skip, every wg call asks for user confirmation and the
+  eval stalls)
+* Codex: `codex exec` with `--dangerously-bypass-approvals-and-sandbox`,
+  wg-test registered globally via `codex mcp add wg-test`
+* Hermes: registration syntax (`hermes mcp add --command ... --args ...`)
+  rejected the args; deferred to a follow-up
+* Grading: keyword overlap as cheap pre-filter, then MiniMax
+  LLM-judge with bilingual prompt (Korean abstentions were
+  systematically under-counted by the keyword scorer alone)
+
+### Results
+
+| Verdict | Claude | Codex |
+|---|---|---|
+| CORRECT | 7 | 7 |
+| PARTIAL | 1 | 2 |
+| INCORRECT | 4 | 3 |
+| **Score (C + 0.5P)/N** | **62.5%** | **66.7%** |
+| **Avg latency** | **17.4s** | **55.3s** |
+
+Per-shape (CORRECT count, total):
+
+| Shape | Claude | Codex |
+|---|---|---|
+| simple_recall | 0/3 (PARTIAL 1) | 1/3 (PARTIAL 0) |
+| cross_doc_reasoning | 2/3 | 1/3 (PARTIAL 2) |
+| temporal | 1/2 | 1/2 |
+| aggregation | 2/2 | 2/2 |
+| graph_traversal | 1/1 | 1/1 |
+| abstention | 1/1 | 1/1 |
+
+### Findings
+
+1. **wg is agent-class robust.** Both readers landed within ~4pt of
+   each other on the same 12-scenario set. The wg surface (search,
+   query, aggregate, traverse, recent) doesn't favour one reader
+   class over another for these question shapes.
+
+2. **Failure mode is ingest, not reader.** s02 (WG_NOW_MS purpose),
+   s03 (default embedding model), s06 (4-bench scoreboard) all
+   failed with both agents. The information IS in the .md files —
+   AGENTS.md mentions WG_NOW_MS, the design notes carry the
+   scoreboard — but `wg ingest`'s markdown→fact pass is sparse
+   (52 files → only 30 facts). Most prose lives inside
+   markdown chunks that hybrid_search returns but with low BM25
+   scores when the question phrasing doesn't share surface form
+   with the chunk text. This is the same retrieval-vs-reader
+   tension we saw on LongMemEval, but on the producer side
+   instead of consumer.
+
+3. **wg's strong corners are deterministic operations.** Aggregation
+   (`wg_aggregate`), graph traversal, and abstention scored 4/4 and
+   2/2 across both agents. When the answer reduces to "count this",
+   "walk this graph", or "did this fact get logged", agents handle
+   it without retrieval ambiguity.
+
+4. **Latency: Codex is 3× slower.** GPT-5.4 with `reasoning_effort=high`
+   eats ~55s/scenario; Claude `--effort low` runs 17s/scenario.
+   For workflows that loop 10+ wg calls per agent turn that's the
+   difference between sub-minute and multi-minute responses.
+
+5. **Hermes integration deferred.** The `hermes mcp add --command
+   X --args Y Z W` invocation didn't reach the wg-test entry —
+   needs a different syntax (likely `--args` consumes only one
+   token at a time, or registration is via `hermes config edit`).
+   Tracking as follow-up; current 2-agent comparison still
+   informative.
+
+6. **Scenario design caveat.** s07 (recent --last 1y) is graded
+   wrong by the gold key — both agents correctly returned 0
+   (today is 2026-05-06; ingest stamped created_at to
+   2025-01-01, which is outside the 1y window today). The "30
+   facts" gold was a calibration mistake on my part; the agents
+   were right and the gold should be 0. Re-grade or scenario
+   refresh on next iteration.
+
+### Production implication
+
+If wg is going to be deployed as Claude Code / Codex / Hermes
+long-term memory, the prose-content gap matters more than the
+reader choice. Two paths to lift the simple_recall score:
+
+* **Heavier ingest** — split each markdown chunk into more facts
+  at sentence boundaries so BM25 can hit specific phrasings.
+* **Self-extraction at ingest** — the calling agent (already
+  there because it's the user's Claude session) labels chunks
+  with fact_type / entity_ids during onboarding. The
+  self-extraction pattern documented in AGENTS.md (commit
+  bc91460) is the right policy fit.
+
+Neither was tested in this eval; both are within reach for the
+next dogfooding cycle.

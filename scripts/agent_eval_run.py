@@ -89,7 +89,12 @@ def run_codex(prompt: str, mcp_config: str, timeout: int = 120) -> dict:
         "/tmp/wg-agent-test/wiki.redb to answer. Be concise. Don't guess."
     )
     full = f"{sys_prompt}\n\nQuestion: {prompt}"
-    cmd = ["codex", "exec", full]
+    cmd = [
+        "codex", "exec",
+        "--dangerously-bypass-approvals-and-sandbox",
+        "--skip-git-repo-check",
+        full,
+    ]
     started = time.time()
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
@@ -99,8 +104,18 @@ def run_codex(prompt: str, mcp_config: str, timeout: int = 120) -> dict:
             "agent": "codex", "hypothesis": "", "tool_calls": [],
             "latency_s": timeout, "exit": "timeout", "stderr_tail": "",
         }
-    hypothesis = proc.stdout.strip()
-    tool_calls = re.findall(r"wg_(\w+)", proc.stderr + proc.stdout)
+    # Codex prints both reasoning and answer interleaved on stdout.
+    # Take the LAST non-`tokens used`/`mcp:` line as the final answer.
+    raw_lines = [l for l in proc.stdout.splitlines() if l.strip()]
+    final = ""
+    for line in reversed(raw_lines):
+        if line.startswith(("mcp:", "tokens used", "codex")) or line.strip() == "":
+            continue
+        final = line.strip()
+        break
+    hypothesis = final or proc.stdout.strip()
+    # Tool calls: lines like "mcp: wg-test/wg_search started"
+    tool_calls = re.findall(r"mcp: wg-test/(\w+) started", proc.stdout)
     return {
         "agent": "codex",
         "hypothesis": hypothesis,
