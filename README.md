@@ -1,36 +1,41 @@
 # WikiGraph (`wg`)
 
 Local knowledge-graph wiki for LLM agents. Single Rust binary, redb-backed,
-hybrid BM25 + semantic search, native bindings for Python / Node / Elixir /
+BM25 + optional semantic retrieval, native bindings for Python / Node / Elixir /
 C, and a built-in MCP server (stdio + HTTP).
 
 ## Install
 
 ```bash
 # One-line installer (builds via cargo)
-curl -fsSL https://raw.githubusercontent.com/aspect-build/wg/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/taeyun16/wg/main/scripts/install.sh | bash
 
 # Or directly with cargo
-cargo install --git https://github.com/aspect-build/wg wg-cli
+cargo install --git https://github.com/taeyun16/wg wg-cli
 
 # Or from a local checkout
 cargo install --path crates/wg-cli
 ```
 
 The binary is named `wg`. Add `~/.cargo/bin` to your `PATH` if it isn't already.
+For CI parity, the project is currently validated on Rust `1.95.0` (workspace
+MSRV remains `1.85`).
 
 ## Quick start
 
 ```bash
 wg init ./my-wiki                       # create a store + ingest markdown
 wg query "Redis"                        # one-shot context (search + entity + traverse + recent)
-wg search "high availability" -l 5      # hybrid search
+wg search "high availability" -l 5 --hybrid
 wg recent -n 10                         # what changed in the last 7 days
+wg overview                             # first-impression snapshot of an unfamiliar wiki
 wg doctor                               # health check (orphans, broken refs, …)
 wg fact add "Decided to use Redis Cluster" --type decision --entities Redis
 wg edit fact <ID> --append "Updated 2026-04-26"
 wg fact supersede <OLD_ID> <NEW_ID>     # validity-window: mark superseded
+wg fact archive --older-than 30d --type note
 wg graph --from Redis --depth 2 --format mermaid
+wg daemon start                         # warm shared mcp-serve for local agents
 ```
 
 The default store lives at `~/.wg/wiki.redb` (override with `--store` or
@@ -45,9 +50,10 @@ wg --project personal stats             # one-off override
 ## CLI commands
 
 ### Read & search
-- `wg search <query> [-l N] [--last 30d] [--current]` — hybrid search
+- `wg search <query> [-l N] [--hybrid] [--include-archive] [--via URL]` — BM25 by default; `--hybrid` adds semantic retrieval
 - `wg query <topic> [--mode naive|local|hybrid|global]` — unified context (search + traverse + recent)
 - `wg recent [-n N] [--type T] [--last 30d]` — recent activity
+- `wg overview [-n N] [--recent-days D]` — first-impression snapshot
 - `wg traverse <entity> [-d N]` — graph traversal
 - `wg path <from> <to>` — find a path between entities
 - `wg graph [--from E] [--format mermaid|dot]` — visualize subgraph
@@ -57,24 +63,28 @@ wg --project personal stats             # one-off override
 ### Write
 - `wg fact add <content> --entities A,B [--type decision]` (auto-creates missing entities)
 - `wg fact supersede <OLD_ID> <NEW_ID>` — set validity window
+- `wg fact archive --ids <ID,…>` / `--older-than 30d` — move cold facts into `<store>.cold.redb`
 - `wg edit fact <ID> --append/--prepend/--find+--replace/--content`
 - `wg entity add <name> [--type service]` (custom types accepted)
 - `wg entity describe <name> "..."` (or `--from-stdin` / `--clear`) — set compiled-truth summary
-- `wg relation add <source> <target> <rel_type>` / `wg relation remove`
+- `wg relation add <source> <target> <rel_type>`
+- `wg session new <topic>` / `current` / `list` — tracked session helpers
 
 ### Maintenance
 - `wg doctor [--json]` — health check (now also reports memory + disk footprint)
 - `wg lint [--json]` — raw lint issues
 - `wg bench <golden.jsonl> [--k 5]` — measure P@K, R@K, p50/p95 latency against a golden set
 - `wg skill check <path>` — validate Claude Code SKILL.md frontmatter + tool refs
+- `wg extract [--llm] [--apply] "<text>"` — heuristic / optional LLM fact extraction
 - `wg ingest <wiki_root> [-i]` — ingest markdown
 - `wg watch <wiki_root> [--search QUERY]` — re-ingest on file changes (live search optional)
 - `wg sync <wiki_root>` — alias for incremental ingest
 - `wg vector-rebuild [--json]` — rebuild the HNSW index (after a model swap)
 - `wg auto-relate [--top-k N] [--threshold F] [--dry-run] [--json]` — add `related` edges between entities whose facts cluster semantically (one-shot; idempotent)
-- `wg overview [-n N] [--recent-days D] [--json]` — first-impression snapshot of a wiki (entity-type buckets + fact-type distribution + top entities + recent activity)
+- `wg consolidate [--semantic-threshold F] [--ttl note=30] [--dry-run] [--json]` — semantic dedup + TTL expiry pass
 - `wg export [--scope all|entities|relations|facts]` / `wg import`
 - `wg config get/set/list`
+- `wg pending` — manage dry-run extraction / auto-record review queue
   - `wg config set store.durability eventual` — drop per-commit fsync (~13× faster writes; survives process crash, not power loss)
   - `wg config set store.lock_retry_ms 5000` — auto-retry briefly when another `wg` process is holding the redb lock (multi-agent setups). Default `0` keeps the fast-fail behaviour.
 
@@ -85,24 +95,17 @@ wg --project personal stats             # one-off override
 ### Servers
 - `wg mcp` — stdio JSON-RPC MCP server (Claude Code, Codex)
 - `wg mcp-serve --port 3000` — HTTP + SSE for browser/remote clients
+- `wg daemon start|status|stop` — manage a warm local background `mcp-serve`
+- `wg mcp-install --target claude|codex|cursor|…` — write agent config for you
 
 ## Use as an MCP server
 
 Local agents (Claude Code, Codex CLI, …) can spawn `wg` as a stdio MCP
-server. **23 tools** exposed:
+server. **24 tools** exposed:
 
-| Read | Write |
-|---|---|
-| `wg_session_start` (one-call warmup) | `wg_fact_add` |
-| `wg_overview` (first-impression snapshot) | `wg_fact_add_many` (batched, one fsync) |
-| `wg_query` (one-call context) | `wg_fact_supersede` |
-| `wg_search` | `wg_fact_edit` |
-| `wg_recent` / `wg_pinned_context` | `wg_fact_pin` (toggle "always loaded" tier) |
-| `wg_traverse` / `wg_backlinks` | `wg_entity_describe` |
-| `wg_path` (shortest entity path) | `wg_feedback` (helpful/not on a search hit) |
-| `wg_entity_list` / `wg_entity_get` | `wg_extract` (text → candidate facts, optional auto-apply) |
-| `wg_fact_list` / `wg_fact_get` | |
-| `wg_doctor` / `wg_lint` | |
+- Core turn-entry: `wg_context`, `wg_query`, `wg_search`, `wg_aggregate`
+- Read/orient: `wg_recent`, `wg_overview`, `wg_traverse`, `wg_path`, `wg_entity_get`, `wg_entity_list`, `wg_fact_get`, `wg_fact_list`, `wg_doctor`, `wg_session_start`, `wg_pinned_context`
+- Write/ops: `wg_fact_add`, `wg_fact_add_many`, `wg_fact_edit`, `wg_fact_supersede`, `wg_fact_archive`, `wg_fact_pin`, `wg_entity_describe`, `wg_extract`, `wg_feedback`
 
 ```bash
 # Claude Code
@@ -162,7 +165,7 @@ file.
 - **Multi-project** — switch stores via `wg project use` or `--project`
 - **Auto-create entities** — `wg fact add --entities A,B` creates missing entities
 - **Mermaid / DOT graphs** — `wg graph --format mermaid`
-- **MCP server** — stdio (preferred) and HTTP/SSE transports, 13 tools
+- **MCP server** — stdio (preferred) and HTTP/SSE transports, 24-tool surface
 - **Native bindings** — embed wg directly in Python / Node / Elixir / C
 - **Adaptive ranking** — record search feedback, retrain ranker offline
 - **TEI integration** — opt into HuggingFace text-embeddings-inference for embeddings (`model.provider = "tei"`) and/or cross-encoder reranking (`rerank.provider = "tei"`); reranker failure falls back to RRF

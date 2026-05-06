@@ -1,6 +1,6 @@
 # wg-python
 
-Python bindings for [Wiki-Graph (`wg`)](https://github.com/aspect-build/wg) —
+Python bindings for [Wiki-Graph (`wg`)](https://github.com/taeyun16/wg) —
 a local knowledge-graph wiki indexed with BM25 + semantic vectors.
 
 ## Install

@@ -852,8 +852,8 @@ fn fact_command() -> impl Parser<Command> {
     .help(
         "Move facts to the cold-tier archive (<store>.cold.redb). \
          Hot store shrinks; cold preserves FactId so wg_fact_get \
-         keeps working. Search merge is stage-3; today archived \
-         facts are retrievable only by id.",
+         keeps working. Use `wg search --include-archive` when you \
+         want archived hits merged back into retrieval.",
     );
 
     construct!([

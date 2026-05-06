@@ -1,6 +1,6 @@
 # wg_nif
 
-Elixir bindings for [Wiki-Graph (`wg`)](https://github.com/aspect-build/wg).
+Elixir bindings for [Wiki-Graph (`wg`)](https://github.com/taeyun16/wg).
 
 ## Install
 

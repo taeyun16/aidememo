@@ -2,10 +2,10 @@
 name: wg
 description: Local knowledge-graph wiki tool. Use to search, traverse, and append facts to a private markdown wiki indexed with BM25 + semantic vectors. Ideal when the user asks "what do we know about X", wants to record decisions/conventions, or needs context from prior project notes.
 license: MIT OR Apache-2.0
-compatibility: Requires the wg CLI binary on PATH (cargo install wg-cli, or build from https://github.com/aspect-build/wg). Optionally registers as an MCP server (`wg mcp` for stdio, `wg mcp-serve` for HTTP).
+compatibility: Requires the wg CLI binary on PATH (cargo install wg-cli, or build from https://github.com/taeyun16/wg). Optionally registers as an MCP server (`wg mcp` for stdio, `wg mcp-serve` for HTTP).
 allowed-tools: Bash(wg:*)
 metadata:
-  homepage: https://github.com/aspect-build/wg
+  homepage: https://github.com/taeyun16/wg
   version: "1.0"
   claude:
     when_to_use:

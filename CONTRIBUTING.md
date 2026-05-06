@@ -7,7 +7,8 @@ minimal — fast iteration over heavy process.
 
 ```bash
 # Required
-rustup toolchain install stable          # 1.85+ (workspace MSRV)
+rustup toolchain install 1.95.0 --component rustfmt --component clippy
+# Workspace MSRV remains 1.85, but CI parity is currently validated on 1.95.0.
 
 # Recommended
 brew install lefthook                    # or `npm i -g lefthook`
@@ -40,7 +41,8 @@ of the `unsafe_code` deny because they intentionally bridge raw pointers).
 cargo test --workspace                              # default features
 cargo test -p wg-core --features semantic           # includes hybrid search
 cargo test -p wg-cli --bin wg                       # CLI parsing + helpers
-cargo clippy --workspace --all-targets --features semantic
+RUSTUP_TOOLCHAIN=1.95.0 cargo clippy --workspace --all-targets --features semantic -- -D warnings
+RUSTUP_TOOLCHAIN=1.95.0 cargo doc --workspace --no-deps --features semantic
 ```
 
 Bindings (Python / Node / Elixir / C) are not part of the default

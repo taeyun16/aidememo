@@ -1,6 +1,6 @@
 # wg-ffi
 
-C-ABI bindings for [Wiki-Graph (`wg`)](https://github.com/aspect-build/wg).
+C-ABI bindings for [Wiki-Graph (`wg`)](https://github.com/taeyun16/wg).
 
 ## Build
 

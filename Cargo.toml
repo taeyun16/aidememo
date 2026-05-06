@@ -23,7 +23,7 @@ rust-version = "1.85"
 authors = ["WikiGraph Team"]
 description = "Wiki-Graph: Structured index engine for LLM wikis"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/aspect-build/wg"
+repository = "https://github.com/taeyun16/wg"
 version = "0.1.0"
 
 [workspace.lints.rust]

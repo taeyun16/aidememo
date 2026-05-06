@@ -5,7 +5,7 @@ Codex, Cursor, Aider, Jules, and any agent that follows the
 [agents.md](https://agents.md) spec. Claude Code imports this via
 `CLAUDE.md`.
 
-> Working directory: `/Users/mixlink/dev/wg`. Edition 2024, Rust 1.85+.
+> Working directory: `/Users/mixlink/dev/wg`. Edition 2024, Rust 1.85+ (CI/tooling currently validated on Rust 1.95.0).
 
 ## What this project is
 
@@ -25,8 +25,10 @@ server, and native bindings (Python / Node / Elixir / C).
 cargo check -p wg-core -p wg-cli       # fast verify
 cargo build -p wg-cli                   # debug binary at target/debug/wg
 cargo build -p wg-cli --release         # release binary
-cargo test -p wg-core --features semantic   # 35 tests
-cargo test -p wg-cli --bin wg              # 7 tests
+cargo test -p wg-core --features semantic
+cargo test -p wg-cli --bin wg
+RUSTUP_TOOLCHAIN=1.95.0 cargo clippy --workspace --all-targets --features semantic -- -D warnings
+RUSTUP_TOOLCHAIN=1.95.0 cargo doc --workspace --no-deps --features semantic
 # Tests that download a HuggingFace embedding model are #[ignore]'d
 # (CI skips them — first run hits HF lock races). Run locally for the
 # full surface once the model is cached:
@@ -218,7 +220,7 @@ crates/wg-cli/src/
   output.rs          Format::{Table, Json} renderers + format_query_result
   cmd/mod.rs         bpaf top-level + per-command parsers (--project / --json)
   cmd/{init,watch,model,feedback,adapt,doctor,recent,edit,graph,project}.rs
-  cmd/mcp_tools.rs   shared MCP JSON-RPC types + 9-tool dispatch
+  cmd/mcp_tools.rs   shared MCP JSON-RPC types + 24-tool dispatch
   cmd/mcp_stdio.rs   `wg mcp` (stdio)
   cmd/mcp_serve.rs   `wg mcp-serve` (HTTP + SSE)
 ```

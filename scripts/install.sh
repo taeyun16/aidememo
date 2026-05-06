@@ -2,13 +2,13 @@
 # wg installer — builds & installs the `wg` CLI from source via cargo.
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/aspect-build/wg/main/scripts/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/taeyun16/wg/main/scripts/install.sh | bash
 #
 # Requirements: cargo (Rust 1.85+).
 
 set -euo pipefail
 
-REPO_URL="${WG_REPO_URL:-https://github.com/aspect-build/wg}"
+REPO_URL="${WG_REPO_URL:-https://github.com/taeyun16/wg}"
 BIN_NAME="wg"
 
 if ! command -v cargo >/dev/null 2>&1; then

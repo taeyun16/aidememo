@@ -59,7 +59,7 @@ defmodule WgNif.MixProject do
   defp package do
     [
       licenses: ["MIT", "Apache-2.0"],
-      links: %{"GitHub" => "https://github.com/aspect-build/wg"},
+      links: %{"GitHub" => "https://github.com/taeyun16/wg"},
       files: ~w(lib mix.exs priv README* LICENSE*)
     ]
   end

@@ -30,10 +30,10 @@ binding = ["wg-python>=0.1"]
 test = ["pytest>=8.0"]
 
 [project.urls]
-Homepage = "https://github.com/aspect-build/wg"
-Documentation = "https://github.com/aspect-build/wg/tree/main/plugins/hermes"
-Source = "https://github.com/aspect-build/wg/tree/main/plugins/hermes"
-Issues = "https://github.com/aspect-build/wg/issues"
+Homepage = "https://github.com/taeyun16/wg"
+Documentation = "https://github.com/taeyun16/wg/tree/main/plugins/hermes"
+Source = "https://github.com/taeyun16/wg/tree/main/plugins/hermes"
+Issues = "https://github.com/taeyun16/wg/issues"
 
 # Hermes auto-discovers plugins via this entry point group.
 [project.entry-points."hermes.plugins"]

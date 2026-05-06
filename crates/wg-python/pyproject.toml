@@ -25,7 +25,7 @@ classifiers = [
 ]
 
 [project.urls]
-Repository = "https://github.com/aspect-build/wg"
+Repository = "https://github.com/taeyun16/wg"
 
 [tool.maturin]
 module-name = "wg_python"

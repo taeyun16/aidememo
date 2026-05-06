@@ -1,6 +1,6 @@
 # hermes-wg
 
-Hermes Agent plugin for [wg (Wiki-Graph)](https://github.com/aspect-build/wg)
+Hermes Agent plugin for [wg (Wiki-Graph)](https://github.com/taeyun16/wg)
 — exposes the local knowledge graph as native tools, slash commands, and
 lifecycle hooks.
 

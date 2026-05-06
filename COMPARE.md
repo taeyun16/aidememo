@@ -116,7 +116,7 @@ that slice carries the smallest footprint.
 
 2. **MCP-native on both transports.** stdio (`wg mcp`) for in-editor
    agents, HTTP/SSE (`wg mcp-serve`) for shared / remote clients —
-   same 22-tool surface served by the same dispatcher in-process Rust.
+   same 24-tool surface served by the same dispatcher in-process Rust.
 
 3. **Polyglot in-process bindings.** Python · Node · Elixir · C all
    call the same `WikiGraph` API directly without IPC. Lets editor
