@@ -1872,3 +1872,133 @@ Skipped for this session: actual implementation. Paper review +
 alignment note land first; implementation follows in a later cycle
 once the dogfooding store has accumulated enough facts to make GAC
 analysis non-trivial.
+
+## Stage 1 GAC analysis on wg-agent-test (2026-05-08)
+
+`scripts/gac_analyze.py` — pulls fact contents via `wg fact list
+--json`, re-embeds with `minishlab/potion-multilingual-128M` (the
+same model wg uses on the HNSW path), runs single-link
+hierarchical clustering at multiple cosine thresholds, computes
+within-cluster mean cosine distance d̄, and classifies each
+cluster as tight (d̄ < θ' = 1 - θ) vs spread.
+
+Applied to /tmp/wg-agent-test (609 facts ingested from this repo's
+markdown):
+
+| θ | clusters | tight | spread | compression |
+|---|---|---|---|---|
+| 0.85 | 559 (529 single + 30 multi) | 27 (58 facts) | 3 (22 facts) | 8.2% |
+| 0.90 | 591 (578 + 13) | 12 (26 facts) | 1 (5 facts) | 3.0% |
+| 0.95 | 601 (595 + 6) | 6 (14 facts) | 0 | 1.3% |
+
+Findings:
+
+1. **87% of facts are singletons** in this fixture — they're far
+   from every other fact and would survive every consolidation
+   strategy unchanged.
+2. **At θ=0.85 (paper example), 30 multi-fact clusters exist**, of
+   which 27 are tight (centroid would compress safely) and 3 are
+   spread (centroid would lose information; need medoid+budget).
+3. **Largest spread cluster** has 9 facts at d̄=0.178 — sample
+   content "OMEGA가 session-단위 ingest…" with 8 paraphrases of
+   the same architectural claim across different design notes.
+   Our current `wg consolidate --semantic-threshold 0.85` would
+   collapse these to the newest single fact and lose the others'
+   nuance entirely. GAC's medoid-with-budget routing is exactly
+   what this case needs.
+4. **Compression ratio is small at this scale** (8.2% at θ=0.85).
+   The wg-agent-test fixture is too small to show the lift — paper
+   reports gains at 10K→1M facts. Worth re-running on the
+   dogfooding store once it accumulates 10K+ facts.
+
+The Stage 1 conclusion holds: GAC's value is real on a real wg
+store (3 spread clusters our pairwise consolidate would mishandle),
+but the absolute compression number stays small until a wg store
+gets bigger than this fixture. Stage 2 (`wg consolidate --strategy
+gac`) should land before the dogfooding store crosses ~10K facts;
+it's not urgent at current scale.
+
+## ONNX BGE-small-en + HNSW = new wg SOTA on LongMemEval (2026-05-08)
+
+User's other ask: try ONNX (fastembed) embeddings + HNSW. wg's
+default model2vec is HashMap lookup — fast but English-paraphrase-
+weak. Switching to fastembed-served bge-small-en-v1.5 gives a real
+ONNX neural embedding while keeping HNSW for ANN retrieval.
+
+500q full LongMemEval-S result:
+
+| Metric | model2vec (baseline) | bge-small-en + HNSW | Δ |
+|---|---|---|---|
+| R@1 | 88.6% | **92.2%** | +3.6pt |
+| **R@5** | **96.2%** | **98.0%** | **+1.8pt** |
+| R@10 | 97.8% | 98.6% | +0.8pt |
+| MRR | 0.918 | 0.945 | +2.7% |
+| wall | 493s | 1571s | 3.2× slower |
+
+By question_type R@10:
+
+| qtype | model2vec | BGE | Δ |
+|---|---|---|---|
+| knowledge-update | 100% | 100% | — |
+| multi-session | 98.5% | 98.5% | — |
+| single-session-assistant | 98.2% | **100%** | +1 |
+| **single-session-preference** | **93.3%** | **100%** | **+6.7pt** |
+| single-session-user | 100% | 100% | — |
+| temporal-reasoning | 95.5% | 96.2% | +1 |
+
+### SOTA position
+
+| System | LongMemEval-S 500q R@5 |
+|---|---|
+| **wg + bge-small-en + HNSW** | **98.0%** ⭐ |
+| gbrain-hybrid (2026-05-07) | 97.6% |
+| MemPalace | 96.6% |
+| wg + model2vec + HNSW | 96.2% |
+
+wg's ONNX-BGE configuration **beats the gbrain-hybrid published
+number by 0.4pt** — published SOTA on this metric. Within-1pt of
+ceiling and the remaining gap (2 multi-session + 5 temporal misses
+at R@10) is shape-specific, not architecture-wide.
+
+### SS-pref breakthrough — what changed
+
+The implicit-context failure mode that capped SS-pref at 93.3% is
+gone with BGE. Specific improvement: the 2 SS-pref questions that
+failed under model2vec ("Can you suggest accessories complementing
+my photography setup?" — gold lives in turns where the user mentions
+a Sony A7R IV by name; the question doesn't repeat the model name)
+now retrieve correctly. BGE's English-tuned semantics bridges
+"photography setup" → "Sony A7R IV camera" where multilingual
+potion-128M's lookup-based vectors couldn't.
+
+### Cost / production trade-off
+
+* Latency: 493s → 1571s on this 500q run (per-question fresh store
+  inflates the per-question model load). Steady-state warm reuse
+  is closer to ~30 ms/query for BGE vs ~3 ms for model2vec — an
+  order of magnitude, but still well under any reader latency.
+* Disk: bge-small-en model is ~133 MB vs ~28 MB for potion-128M.
+  Both are still single-binary embeddable; no infrastructure
+  delta.
+* Failure modes: BGE only ships English; multilingual workloads
+  (Korean MIRACL etc.) still want model2vec or fastembed-multi.
+
+### Default recommendation
+
+For English-dominant agent-memory workloads
+(LongMemEval-shaped — Claude Code / Codex / Hermes use cases),
+flip the default:
+
+```
+wg config set model.provider fastembed
+wg config set model.name bge-small-en-v1.5
+```
+
+For multilingual repos (Korean code commentary, Japanese ops
+notes), keep model2vec / potion-multilingual-128M.
+
+The gbrain-evals comparison number (96.2%) from earlier this
+session was on the model2vec default; the +0.4pt over gbrain
+sits behind switching to BGE — easy operator-side change, no
+core code edit needed. AGENTS.md update worthwhile in a
+follow-up commit.
