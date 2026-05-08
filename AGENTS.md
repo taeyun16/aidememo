@@ -132,6 +132,29 @@ wg config get/set/list
 wg config set store.durability eventual    # opt in
 wg config set store.durability immediate   # default (recommended)
 
+# Embedding model — when to switch off the model2vec default:
+#
+# Default is `model2vec` / `potion-multilingual-128M` (28 MB,
+# HashMap lookup, ~3 ms/query warm). Robust across languages,
+# adequate for most personal-knowledge stores.
+#
+# For English-dominant agent-memory workloads (Claude Code /
+# Codex / Hermes use cases against an English codebase / English
+# notes), switch to fastembed BGE — it lifted LongMemEval-S full
+# 500q R@5 from 96.2% to 98.0% (+1.8pt, beats published
+# gbrain-hybrid 97.6%) and recovered SS-pref from 93.3% to 100%
+# (implicit-context bridge that potion-multilingual misses):
+#
+wg config set model.provider fastembed
+wg config set model.name bge-small-en-v1.5    # 133 MB, ONNX
+#
+# Trade-off: ~30 ms/query warm vs ~3 ms for model2vec
+# (10× — still well under any reader latency, but matters if
+# the agent runs hundreds of queries per turn). Keep model2vec
+# for multilingual repos (Korean / Japanese / mixed-language).
+# Detail: .notes/agent-ux-design-decisions.md "ONNX BGE-small-en
+# + HNSW = new wg SOTA" section.
+
 # HuggingFace text-embeddings-inference (TEI):
 #   model.provider = "tei"         # native /embed + /info dimension auto-discover
 #   model.endpoint = "http://host:8080"

@@ -81,6 +81,10 @@ struct Args {
     top_k: usize,
     hybrid: bool,
     limit: Option<usize>,
+    /// fastembed model name (e.g. `bge-small-en-v1.5`). When set,
+    /// flips `model.provider = fastembed` for the per-question store
+    /// instead of the default model2vec lookup.
+    embed_model: Option<String>,
 }
 
 fn parse_args() -> Args {
@@ -92,6 +96,7 @@ fn parse_args() -> Args {
     let mut top_k = 5;
     let mut hybrid = false;
     let mut limit = None;
+    let mut embed_model: Option<String> = None;
     let mut i = 0;
     while i < argv.len() {
         match argv[i].as_str() {
@@ -111,6 +116,10 @@ fn parse_args() -> Args {
                 limit = argv[i + 1].parse().ok();
                 i += 2;
             }
+            "--embed-model" if i + 1 < argv.len() => {
+                embed_model = Some(argv[i + 1].clone());
+                i += 2;
+            }
             _ => i += 1,
         }
     }
@@ -120,17 +129,27 @@ fn parse_args() -> Args {
         top_k,
         hybrid,
         limit,
+        embed_model,
     }
 }
 
-fn build_store_for_question(q: &Question, hybrid: bool) -> Result<QuestionStore, String> {
+fn build_store_for_question(
+    q: &Question,
+    hybrid: bool,
+    embed_model: Option<&str>,
+) -> Result<QuestionStore, String> {
     let dir = tempfile::tempdir().map_err(|e| e.to_string())?;
     let path = dir.path().join("hotpot.redb");
     let mut config = Config::default();
     config.store.path = path.to_string_lossy().into_owned();
     if hybrid {
         config.search.semantic_index = "hybrid".into();
-        config.model.provider = "model2vec".into();
+        if let Some(name) = embed_model {
+            config.model.provider = "fastembed".into();
+            config.model.name = name.to_string();
+        } else {
+            config.model.provider = "model2vec".into();
+        }
     }
     let wiki = WikiGraph::open(&path, config).map_err(|e| e.to_string())?;
 
@@ -207,7 +226,7 @@ fn main() -> ExitCode {
     let mut mrr_sum = 0.0_f64;
 
     for (qid, q) in questions.iter().enumerate() {
-        let (_dir, wiki, id_to_meta) = match build_store_for_question(q, args.hybrid) {
+        let (_dir, wiki, id_to_meta) = match build_store_for_question(q, args.hybrid, args.embed_model.as_deref()) {
             Ok(v) => v,
             Err(e) => {
                 eprintln!("  ! ingest fail q={qid}: {e}");
