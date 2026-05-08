@@ -2002,3 +2002,70 @@ session was on the model2vec default; the +0.4pt over gbrain
 sits behind switching to BGE — easy operator-side change, no
 core code edit needed. AGENTS.md update worthwhile in a
 follow-up commit.
+
+## BGE on retrieval-saturated benches: transparent (multihop_rag) (2026-05-08)
+
+Cross-bench BGE validation continued. multihop_rag is the second
+benchmark; result: BGE lift is **transparent** when the bench is
+already retrieval-saturated.
+
+Setup correction: `benchmarks/src/bin/multihop_rag.rs` previously
+hard-set `config.search.semantic_index = "hybrid"`, which silently
+disabled the HNSW path (search.rs only short-circuits on the literal
+string `"hnsw"`). With that override in place, model2vec and BGE
+returned bit-identical numbers because both ran the BM25-prefilter
++ brute-force-cosine path. Removed the override; default
+`"hnsw"` now applies.
+
+Re-measured 2,556q with model2vec + HNSW default:
+
+```
+R@1   0.737  R@5   0.937  R@10  0.983  R@30  0.998   wall 50s
+By question_type R@10:
+  comparison_query  0.989
+  temporal_query    0.971
+  inference_query   0.984
+  null_query        0/301 (abstention)
+```
+
+These match the prior model2vec + (broken) "hybrid" numbers exactly,
+which confirms the diagnosis: HNSW vs BM25-prefilter is transparent
+on this bench. BGE (separately measured) also matched. So all four
+combinations — {model2vec, BGE} × {HNSW, prefilter} — produce the
+same numbers within rounding.
+
+### Why multihop is saturated and LongMemEval isn't
+
+* **multihop_rag**: shared 609-doc corpus, 2556 queries. R@10 0.98
+  on every config. Multi-hop questions either find their evidence
+  in BM25 keyword space (most do) or never (the queries that fail
+  fail in every configuration). No headroom for embedding quality.
+* **LongMemEval-S**: per-question 50-session haystack with high
+  per-question semantic ambiguity. SS-pref (the implicit-context
+  category) sat at 93.3% with model2vec — explicit headroom.
+  BGE's English semantics closed exactly that gap (→ 100%).
+
+### Refined recommendation
+
+The BGE-default switch is the right call for **retrieval-bound**
+agent-memory workloads (LongMemEval-shape: implicit-context
+preference questions, paraphrase recovery). It's a no-op on
+**retrieval-saturated** workloads (multihop-shape: dense keyword
+overlap with the question, BM25 already finds everything in top-5).
+
+This mirrors the reranker pattern from the earlier note: rerank +1
+on MIRACL/ko (retrieval-bound), 0 on LongMemEval R@10 (already
+saturated). Same axis decides; different model class but same
+sensitivity to whether retrieval has any gap left to close.
+
+AGENTS.md recipe (commit 1cf02c5) stands as written — the
+"English-dominant agent-memory workloads" qualifier is the
+operative carve-out. Multihop-RAG-shaped benches (news / docs
+RAG, MS MARCO, Wikipedia QA) won't see it; LongMemEval-shape
+will.
+
+HotpotQA BGE measurement is queued (background, ~75% complete at
+note-write time). The HotpotQA per-question 10-paragraph
+distractor pool is closer to LongMemEval's per-question shape
+than multihop's shared corpus, so the prior on lift sign there
+is "small positive" — final number lands separately.

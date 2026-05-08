@@ -169,7 +169,12 @@ fn build_store(
     let mut config = Config::default();
     config.store.path = path.to_string_lossy().into_owned();
     if hybrid {
-        config.search.semantic_index = "hybrid".into();
+        // Leave config.search.semantic_index at the wg-core default
+        // ("hnsw"). The previous "hybrid" override silently disabled
+        // the HNSW path, which made the bench identical for any
+        // embed-model — including BGE, which had given a +1.8pt R@5
+        // lift on LongMemEval but registered 0pt here. Default-on
+        // HNSW restores the apples-to-apples comparison.
         if let Some(name) = embed_model {
             config.model.provider = "fastembed".into();
             config.model.name = name.to_string();
