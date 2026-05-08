@@ -1761,3 +1761,114 @@ Three concrete next bets, in order:
 Skipped for now: sealed qrels at adapter boundaries (LongMemEval
 gold is dataset-sealed by construction), randomized query
 ordering (one-shot variance check is a future tidy-up).
+
+## "Geometry of Consolidation" (GAC) — paper review + wg alignment plan (2026-05-08)
+
+User pointed at https://github.com/niashwin/geometry-of-consolidation
+(Vangara & Gopinath, NeurIPS 2026 submission, MIT licensed). Third
+paper in a "geometric costs of meaning-organized memory" trilogy.
+
+### Paper in one screen
+
+Goal: when replacing n cluster members with m<n representatives,
+what condition guarantees retrieval still recovers the originals?
+
+Algorithm (GAC):
+
+```
+Inputs:  embeddings, cluster labels, retrieval half-angle θ
+Compute  d̄ (mean within-cluster cosine distance)
+Compute  θ' = 1 - θ
+Route per cluster:
+  if d̄ < θ':   use centroid (tight regime — identity is cheap)
+  else:        use residual-budgeted medoid (spread regime)
+L2-normalize the final reps.
+```
+
+Geometric inequality (identity-error bound):
+
+```
+ε_id ≥ 1 - c1 · m · (θ'/d̄)^(d_eff/2)
+```
+
+Where d_eff is a local participation-ratio dimension and c1 is an
+empirical constant they ship a calibration script for. Published
+example uses θ = 0.85; their experiments cover Wikipedia / MS MARCO
+/ ArXiv / NQ / HotpotQA / DRM at 10K→1M scale, Pareto-dominating
+8 baselines (centroid / medoid / importance-weighted /
+selective-prune / PQ / OPQ / LSH / HNSW-prune).
+
+### Where wg already aligns
+
+* **L2 normalization at HNSW insert + query**
+  (`crates/wg-core/src/vector_index.rs:88`,
+  `crates/wg-core/src/search.rs:485`). The "normalize before
+  inner-product = cosine" assumption GAC relies on is already in
+  place on the HNSW path. model2vec / fastembed-BGE both produce
+  embeddings we re-normalize before storage.
+* **Cosine-threshold consolidation** (`wg consolidate
+  --semantic-threshold 0.85`) is a degenerate case of GAC: it
+  treats every pairwise high-similarity link as a cluster of 2
+  and supersedes the older fact. Same θ ≈ 0.85 they cite.
+* **Cold-tier archive** (commits 1988f5c / 57fda89 / 1e5c54f) is
+  the lifecycle where compression actually moves bits — perfect
+  destination for "non-representative" members of a tight cluster.
+
+### Where wg differs
+
+* **wg consolidate is pairwise, not cluster-based.** GAC clusters
+  k≥3 facts and computes within-cluster mean distance to pick
+  routing strategy; we just supersede on first pairwise match.
+  Tight clusters are therefore over-pruned (we drop n-1 members)
+  and spread clusters are under-handled (we drop none).
+* **No d̄ / θ' / d_eff machinery.** The geometric inequality that
+  governs *whether* compression preserves identity isn't computed
+  anywhere in wg. We don't currently know which of our consolidate
+  decisions are safe under retrieval.
+* **No medoid fallback.** When a cluster is "spread" (d̄ ≥ θ'),
+  GAC uses a residual-budgeted medoid; wg always uses the newer
+  fact as winner regardless of cluster geometry.
+
+### Implementation plan — three tractable stages
+
+**Stage 1 (analysis-only, ~150 LOC, low risk):**
+* `scripts/gac_analyze.py` — pull fact embeddings from a wg store
+  via wg-python or `wg embed --json`, k-means / DBSCAN cluster,
+  compute d̄ and d_eff per cluster, classify tight vs spread.
+* Apply to /tmp/wg-agent-test (609 facts) and the LongMemEval
+  fixtures. Numbers expected: distribution of cluster sizes,
+  fraction tight vs spread at θ=0.85 / θ=0.9 / θ=0.95.
+* No code change to wg-core; pure measurement.
+
+**Stage 2 (consolidate cluster-aware, ~400 LOC):**
+* New `--strategy gac` flag on `wg consolidate`. Builds clusters
+  from HNSW neighbours, computes d̄ + θ', routes through centroid
+  or residual-budgeted medoid. Dry-run mode prints what would
+  collapse vs preserve.
+* Cold-tier hook: non-representative cluster members go to the
+  cold sibling instead of being superseded — same FactId
+  preservation we already have, with retrieval fallback when
+  someone explicitly opts into `--include-archive`.
+* Idempotent: re-running on a consolidated store is a no-op.
+
+**Stage 3 (HNSW-time consolidation, larger):**
+* During `wg vector-rebuild`, optionally apply GAC to keep the
+  HNSW index small at scale (10× facts → ~3× index nodes). This
+  is the path GAC was actually designed for; useful when wg is
+  the long-running agent memory described in the dogfooding plan
+  (commit cc2829a) and accumulates 100K+ facts over months.
+* Measurement target: index size + p50 search latency at 100K /
+  1M synthetic facts vs vanilla HNSW.
+
+### What this changes for the wg roadmap (today)
+
+Stage 1 is the right first investment — pure measurement, exposes
+which of our existing consolidate decisions are GAC-safe and which
+aren't, and gives a calibration of θ' for the wg-store-shape we
+actually run. Decision on Stage 2 / 3 should wait on Stage 1
+numbers.
+
+Skipped for this session: actual implementation. Paper review +
+alignment note land first; implementation follows in a later cycle
+once the dogfooding store has accumulated enough facts to make GAC
+analysis non-trivial.
