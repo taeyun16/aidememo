@@ -1885,13 +1885,21 @@ fn handle_consolidate(
         // ignores --semantic-threshold / --ttl entirely.
         if sub.gac {
             let theta = sub.gac_theta.unwrap_or(0.85);
-            let opts = wg_core::types::GacOpts { theta, dry_run: true };
-            let stats = wiki.consolidate_gac(opts)?;
+            let gac_opts = wg_core::types::GacOpts {
+                theta,
+                dry_run: sub.dry_run,
+                spread_residual_budget: sub.gac_spread_budget.unwrap_or(0),
+                use_cold_tier: sub.gac_cold_tier,
+            };
+            let stats = wiki.consolidate_gac(gac_opts.clone())?;
             let elapsed_ms = started.elapsed().as_millis();
             if sub.json {
                 let payload = serde_json::json!({
                     "strategy": "gac",
                     "theta": stats.theta,
+                    "dry_run": sub.dry_run,
+                    "use_cold_tier": gac_opts.use_cold_tier,
+                    "spread_residual_budget": gac_opts.spread_residual_budget,
                     "facts_processed": stats.facts_processed,
                     "n_clusters": stats.n_clusters,
                     "n_singletons": stats.n_singletons,
@@ -1902,6 +1910,9 @@ fn handle_consolidate(
                     "spread_facts": stats.spread_facts,
                     "max_cluster_size": stats.max_cluster_size,
                     "max_dbar": stats.max_dbar,
+                    "tight_collapsed": stats.tight_collapsed,
+                    "spread_archived": stats.spread_archived,
+                    "archived_to_cold": stats.archived_to_cold,
                     "elapsed_ms": elapsed_ms,
                 });
                 return serde_json::to_string_pretty(&payload).map_err(|e| WgError::Serialize {
@@ -1909,13 +1920,22 @@ fn handle_consolidate(
                     source: e,
                 });
             }
+            let mode = if sub.dry_run {
+                "dry-run".to_string()
+            } else if gac_opts.use_cold_tier {
+                "applied (cold-tier)".to_string()
+            } else {
+                "applied (supersede)".to_string()
+            };
             return Ok(format!(
-                "GAC analysis (θ={:.2}, θ'={:.2}) — {} facts, {} clusters \
+                "GAC {} (θ={:.2}, θ'={:.2}, budget={}) — {} facts, {} clusters \
                  ({} singletons + {} multi), {} tight ({} facts) / {} spread \
-                 ({} facts), max cluster size {}, max d̄={:.3}, in {} ms. \
-                 Stage 2a — analysis only, no store mutation.",
+                 ({} facts), max cluster size {}, max d̄={:.3}, \
+                 collapsed {} tight + {} spread, archived_to_cold {}, in {} ms.",
+                mode,
                 stats.theta,
                 1.0 - stats.theta,
+                gac_opts.spread_residual_budget,
                 stats.facts_processed,
                 stats.n_clusters,
                 stats.n_singletons,
@@ -1926,6 +1946,9 @@ fn handle_consolidate(
                 stats.spread_facts,
                 stats.max_cluster_size,
                 stats.max_dbar,
+                stats.tight_collapsed,
+                stats.spread_archived,
+                stats.archived_to_cold,
                 elapsed_ms,
             ));
         }

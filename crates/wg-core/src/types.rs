@@ -691,8 +691,7 @@ pub struct ConsolidateStats {
 }
 
 /// Options for `consolidate_gac` — cluster-aware consolidation
-/// per the GAC (Geometry-Aware Consolidation) paper. Stage 2a is
-/// analysis-only (dry_run = true).
+/// per the GAC (Geometry-Aware Consolidation) paper.
 #[derive(Debug, Clone)]
 pub struct GacOpts {
     /// Retrieval half-angle. θ' (cosine distance gate) = 1 - theta.
@@ -701,14 +700,32 @@ pub struct GacOpts {
     /// 0.85 is the paper example.
     pub theta: f32,
     /// Analysis only — emit cluster statistics but do not
-    /// supersede or archive any facts. Always-true in stage 2a;
-    /// stage 2b will let callers flip to false.
+    /// supersede or archive any facts.
     pub dry_run: bool,
+    /// Spread cluster residual budget: how many cluster members
+    /// to retain on top of the medoid. 0 = medoid only (most
+    /// aggressive); 1 = medoid + newest; higher keeps a fan of
+    /// the most-distant members per the paper's "spread regime"
+    /// guidance. Default 0 — medoid carries the cluster.
+    pub spread_residual_budget: usize,
+    /// When true, non-representative members (tight non-newest
+    /// + spread non-medoid-non-budget) move to the cold-tier
+    /// archive (`<store>.cold.redb`) instead of being marked
+    /// superseded. Cold preserves FactId so wg_fact_get still
+    /// resolves. When false, supersede semantics — same as
+    /// `consolidate_semantic`, just cluster-routed instead of
+    /// pairwise. Default false (supersede).
+    pub use_cold_tier: bool,
 }
 
 impl Default for GacOpts {
     fn default() -> Self {
-        Self { theta: 0.85, dry_run: true }
+        Self {
+            theta: 0.85,
+            dry_run: true,
+            spread_residual_budget: 0,
+            use_cold_tier: false,
+        }
     }
 }
 
@@ -739,6 +756,16 @@ pub struct GacStats {
     pub max_dbar: f32,
     /// θ used for this run (echoed for reporting).
     pub theta: f32,
+    /// Tight-cluster non-newest facts marked superseded (or
+    /// archived to cold) in this pass. 0 in dry-run.
+    pub tight_collapsed: usize,
+    /// Spread-cluster non-(medoid+budget) facts archived in this
+    /// pass. 0 in dry-run or when use_cold_tier=false (then they
+    /// land in the supersede count instead).
+    pub spread_archived: usize,
+    /// Total facts moved to cold-tier across both regimes.
+    /// Always 0 when use_cold_tier=false.
+    pub archived_to_cold: usize,
 }
 
 /// Result of a graph traversal.

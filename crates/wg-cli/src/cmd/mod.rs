@@ -107,6 +107,11 @@ pub struct ConsolidateSub {
     /// θ for GAC (retrieval half-angle). Defaults to 0.85, the
     /// paper's example value.
     pub gac_theta: Option<f32>,
+    /// Spread-cluster residual budget — how many cluster members
+    /// to keep on top of the medoid. 0 = medoid only.
+    pub gac_spread_budget: Option<usize>,
+    /// Move losers to cold-tier archive instead of superseding.
+    pub gac_cold_tier: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -1205,6 +1210,21 @@ fn consolidate_command() -> impl Parser<Command> {
         .help("θ for GAC (retrieval half-angle). Defaults to 0.85.")
         .argument::<f32>("FLOAT")
         .optional();
+    let gac_spread_budget = long("gac-spread-budget")
+        .help(
+            "How many spread-cluster members to keep on top of the medoid. \
+             0 = medoid only (most aggressive). 1+ keeps the most-distant \
+             members so cluster diversity isn't lost.",
+        )
+        .argument::<usize>("N")
+        .optional();
+    let gac_cold_tier = long("gac-cold-tier")
+        .help(
+            "Move non-representative cluster members to <store>.cold.redb \
+             instead of superseding. FactId is preserved so wg_fact_get \
+             still resolves. Off by default (supersede semantics).",
+        )
+        .switch();
 
     construct!(ConsolidateSub {
         semantic_threshold,
@@ -1213,6 +1233,8 @@ fn consolidate_command() -> impl Parser<Command> {
         json,
         gac,
         gac_theta,
+        gac_spread_budget,
+        gac_cold_tier,
     })
     .map(Command::Consolidate)
     .to_options()

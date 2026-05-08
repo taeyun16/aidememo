@@ -1061,6 +1061,20 @@ impl WikiGraph {
         let theta_prime = 1.0 - opts.theta;
         let mut max_dbar: f32 = 0.0;
         let mut max_cluster_size: usize = 0;
+
+        // Per-cluster routing decisions, deferred so dry-run shares
+        // the same code path that mutation uses. Each entry:
+        //   (representative_idx, [losers_to_supersede], [losers_to_archive])
+        // After classification we either drop the lists (dry-run) or
+        // dispatch supersede / archive_facts in two passes.
+        struct ClusterDecision {
+            representative: usize,
+            supersede_losers: Vec<usize>,
+            archive_losers: Vec<usize>,
+            tight: bool,
+        }
+        let mut decisions: Vec<ClusterDecision> = Vec::new();
+
         for members in clusters.values() {
             stats.n_clusters += 1;
             if members.len() < 2 {
@@ -1072,35 +1086,167 @@ impl WikiGraph {
                 max_cluster_size = members.len();
             }
 
-            // Within-cluster mean cosine distance.
+            // Within-cluster mean cosine distance + per-member
+            // mean distance to peers (used to pick the medoid).
+            let m = members.len();
             let mut sum_dist: f32 = 0.0;
             let mut pair_count: usize = 0;
-            for a in 0..members.len() {
-                for b in (a + 1)..members.len() {
+            let mut per_member_sum: Vec<f32> = vec![0.0; m];
+            for a in 0..m {
+                for b in (a + 1)..m {
                     let cos = cosine_f32(
                         &embeds[&facts[members[a]].id],
                         &embeds[&facts[members[b]].id],
                     );
-                    sum_dist += 1.0 - cos;
+                    let d = 1.0 - cos;
+                    sum_dist += d;
                     pair_count += 1;
+                    per_member_sum[a] += d;
+                    per_member_sum[b] += d;
                 }
             }
             let d_bar = if pair_count == 0 { 0.0 } else { sum_dist / pair_count as f32 };
             if d_bar > max_dbar {
                 max_dbar = d_bar;
             }
-            if d_bar < theta_prime {
+            let tight = d_bar < theta_prime;
+            if tight {
                 stats.tight_clusters += 1;
-                stats.tight_facts += members.len();
+                stats.tight_facts += m;
             } else {
                 stats.spread_clusters += 1;
-                stats.spread_facts += members.len();
+                stats.spread_facts += m;
             }
+
+            // Tight: representative = newest fact in the cluster
+            // (matches the paper's "centroid is cheap" claim while
+            // keeping the same newer-wins invariant the existing
+            // pairwise consolidate uses, so stage 2b reproduces
+            // existing behaviour for tight clusters).
+            //
+            // Spread: representative = medoid (member with the
+            // smallest mean cosine distance to peers). Residual
+            // budget keeps the next `spread_residual_budget` most
+            // distant members on top of the medoid; the rest get
+            // archived to cold.
+            let representative_local: usize;
+            let mut survivors: Vec<usize>;
+            if tight {
+                let newest_local = (0..m)
+                    .max_by_key(|&i| facts[members[i]].created_at)
+                    .unwrap_or(0);
+                representative_local = newest_local;
+                survivors = vec![newest_local];
+            } else {
+                let medoid_local = (0..m)
+                    .min_by(|&a, &b| {
+                        per_member_sum[a]
+                            .partial_cmp(&per_member_sum[b])
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    })
+                    .unwrap_or(0);
+                representative_local = medoid_local;
+                survivors = vec![medoid_local];
+                if opts.spread_residual_budget > 0 {
+                    // Pick the budget most-distant-from-medoid
+                    // members as residuals. They preserve cluster
+                    // diversity the medoid alone can't represent.
+                    let mut others: Vec<usize> =
+                        (0..m).filter(|&i| i != medoid_local).collect();
+                    others.sort_by(|&a, &b| {
+                        per_member_sum[b]
+                            .partial_cmp(&per_member_sum[a])
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    });
+                    for &idx in others.iter().take(opts.spread_residual_budget) {
+                        survivors.push(idx);
+                    }
+                }
+            }
+
+            // Build the loser lists: every member not in survivors
+            // is either superseded (use_cold_tier=false) or archived
+            // (use_cold_tier=true).
+            let mut supersede_losers = Vec::new();
+            let mut archive_losers = Vec::new();
+            for i in 0..m {
+                if survivors.contains(&i) {
+                    continue;
+                }
+                if opts.use_cold_tier {
+                    archive_losers.push(members[i]);
+                } else {
+                    supersede_losers.push(members[i]);
+                }
+            }
+            decisions.push(ClusterDecision {
+                representative: members[representative_local],
+                supersede_losers,
+                archive_losers,
+                tight,
+            });
         }
         stats.max_dbar = max_dbar;
         stats.max_cluster_size = max_cluster_size;
-        // dry_run honoured trivially — no mutation path exists yet.
-        let _ = opts.dry_run;
+
+        if !opts.dry_run {
+            // Pass 1: supersede losers. Older fact's `superseded_by`
+            // points at the cluster representative.
+            for d in &decisions {
+                let new_id = facts[d.representative].id;
+                for &loser_idx in &d.supersede_losers {
+                    let old_id = facts[loser_idx].id;
+                    if old_id == new_id {
+                        continue;
+                    }
+                    if let Ok(rec) = self.fact_get(&old_id) {
+                        if rec.superseded_at.is_some() {
+                            continue;
+                        }
+                        if self.fact_supersede(&old_id, &new_id).is_ok() {
+                            if d.tight {
+                                stats.tight_collapsed += 1;
+                            } else {
+                                stats.spread_archived += 1;
+                            }
+                        }
+                    }
+                }
+            }
+            // Pass 2: archive losers (only when use_cold_tier=true).
+            // Collect ids first so we can call archive_facts in a
+            // single batch — that path already takes care of
+            // BM25-mark-dirty + cold-side BM25 dirty.
+            if opts.use_cold_tier {
+                let mut to_archive: Vec<types::FactId> = Vec::new();
+                for d in &decisions {
+                    for &loser_idx in &d.archive_losers {
+                        to_archive.push(facts[loser_idx].id);
+                    }
+                }
+                if !to_archive.is_empty() {
+                    let moved = self.archive_facts(&to_archive)?;
+                    stats.archived_to_cold = moved;
+                    // tight_collapsed / spread_archived breakdown is
+                    // by routing decision, not by destination; the
+                    // archived bucket may include both. We approximate
+                    // by attributing per-cluster: walk decisions again.
+                    let mut tight_archived = 0usize;
+                    let mut spread_archived = 0usize;
+                    for d in &decisions {
+                        for _ in &d.archive_losers {
+                            if d.tight {
+                                tight_archived += 1;
+                            } else {
+                                spread_archived += 1;
+                            }
+                        }
+                    }
+                    stats.tight_collapsed += tight_archived;
+                    stats.spread_archived += spread_archived;
+                }
+            }
+        }
         Ok(stats)
     }
 
