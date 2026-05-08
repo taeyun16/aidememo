@@ -119,6 +119,14 @@ wg consolidate [--semantic-threshold 0.85] [--ttl TYPE=DAYS] [--dry-run] [--json
                                             periodic memory-lifecycle pass: pairwise cosine
                                             dedup (older fact superseded) + per-type TTL
                                             expiry. Idempotent. Mirrors OMEGA's compaction.
+wg consolidate --gac [--gac-theta 0.85] [--gac-spread-budget N] [--gac-cold-tier]
+                                            cluster-aware consolidation per the GAC
+                                            (Geometry-Aware Consolidation, NeurIPS 2026)
+                                            paper: tight clusters (d̄ < 1-θ) collapse to
+                                            newest fact; spread clusters keep medoid +
+                                            budget residuals. --gac-cold-tier moves losers
+                                            to <store>.cold.redb (preserves FactId) instead
+                                            of superseding. --dry-run for analysis-only.
 wg session new <topic>                      tracked session entity + shell-evaluable
                                             'export WG_SESSION_ID=…'. Auto-attaches to every
                                             subsequent fact_add while the env var is set.
@@ -136,24 +144,41 @@ wg config set store.durability immediate   # default (recommended)
 #
 # Default is `model2vec` / `potion-multilingual-128M` (28 MB,
 # HashMap lookup, ~3 ms/query warm). Robust across languages,
-# adequate for most personal-knowledge stores.
+# adequate for most workloads.
 #
-# For English-dominant agent-memory workloads (Claude Code /
-# Codex / Hermes use cases against an English codebase / English
-# notes), switch to fastembed BGE — it lifted LongMemEval-S full
-# 500q R@5 from 96.2% to 98.0% (+1.8pt, beats published
-# gbrain-hybrid 97.6%) and recovered SS-pref from 93.3% to 100%
-# (implicit-context bridge that potion-multilingual misses):
+# Switch to fastembed `bge-small-en-v1.5` when the workload is
+# **paraphrase-bridge dominant**: the user's question abstracts
+# away from the surface form of the answer ("What's my favorite
+# camera setup?" → answer in turns naming "Sony A7R IV" by
+# model number; the question never repeats the model name).
+# That's the LongMemEval / DMR / personal-memory shape — and
+# it's where BGE's English-tuned semantics close the gap that
+# multilingual potion's lookup-based vectors miss.
 #
 wg config set model.provider fastembed
 wg config set model.name bge-small-en-v1.5    # 133 MB, ONNX
 #
-# Trade-off: ~30 ms/query warm vs ~3 ms for model2vec
-# (10× — still well under any reader latency, but matters if
-# the agent runs hundreds of queries per turn). Keep model2vec
-# for multilingual repos (Korean / Japanese / mixed-language).
-# Detail: .notes/agent-ux-design-decisions.md "ONNX BGE-small-en
-# + HNSW = new wg SOTA" section.
+# Stay on the default when the workload is **surface-form-match
+# dominant**: code / docs / news RAG where the question shares
+# tokens with the answer (HotpotQA bridge, MultiHop-RAG).
+# BM25 already lands those at R@5 ≥ 95%; embedding semantics
+# are transparent and you save the latency.
+#
+# Measured (LongMemEval-S 500q R@5):
+#   model2vec + HNSW            96.2%
+#   bge-small-en + HNSW         98.0%   (+1.8pt; SS-pref 93.3 → 100)
+#                                       beats gbrain-hybrid 97.6%
+# Cross-bench validation:
+#   MultiHop-RAG 2,556q   model2vec 93.7% = BGE 93.7% (saturated)
+#   HotpotQA 7,405q       model2vec 95.8% = BGE 95.8% (saturated)
+#
+# Trade-off: ~30 ms/query warm vs ~3 ms for model2vec (10×, still
+# well under reader latency but accumulates if the agent loops
+# hundreds of queries per turn). Multilingual repos (Korean,
+# Japanese) keep model2vec — bge-small-en is English-only.
+#
+# Detail: .notes/agent-ux-design-decisions.md "HotpotQA BGE =
+# model2vec — cross-bench BGE validation finalized" section.
 
 # HuggingFace text-embeddings-inference (TEI):
 #   model.provider = "tei"         # native /embed + /info dimension auto-discover
