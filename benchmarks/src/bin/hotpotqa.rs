@@ -226,13 +226,14 @@ fn main() -> ExitCode {
     let mut mrr_sum = 0.0_f64;
 
     for (qid, q) in questions.iter().enumerate() {
-        let (_dir, wiki, id_to_meta) = match build_store_for_question(q, args.hybrid, args.embed_model.as_deref()) {
-            Ok(v) => v,
-            Err(e) => {
-                eprintln!("  ! ingest fail q={qid}: {e}");
-                continue;
-            }
-        };
+        let (_dir, wiki, id_to_meta) =
+            match build_store_for_question(q, args.hybrid, args.embed_model.as_deref()) {
+                Ok(v) => v,
+                Err(e) => {
+                    eprintln!("  ! ingest fail q={qid}: {e}");
+                    continue;
+                }
+            };
         let results = wiki.search(&q.question, opts.clone()).unwrap_or_else(|e| {
             eprintln!("  ! search fail q={qid}: {e}");
             Vec::new()

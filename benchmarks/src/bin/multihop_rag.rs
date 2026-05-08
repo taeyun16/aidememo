@@ -263,10 +263,11 @@ fn main() -> ExitCode {
     );
 
     let ingest_start = Instant::now();
-    let (_dir, wiki) = build_store(&corpus, args.hybrid, args.embed_model.as_deref()).unwrap_or_else(|e| {
-        eprintln!("ingest failed: {e}");
-        std::process::exit(1);
-    });
+    let (_dir, wiki) = build_store(&corpus, args.hybrid, args.embed_model.as_deref())
+        .unwrap_or_else(|e| {
+            eprintln!("ingest failed: {e}");
+            std::process::exit(1);
+        });
     println!(
         "ingest: {} docs, {:.2?}",
         corpus.len(),
