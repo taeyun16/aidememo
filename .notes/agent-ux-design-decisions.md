@@ -2069,3 +2069,73 @@ note-write time). The HotpotQA per-question 10-paragraph
 distractor pool is closer to LongMemEval's per-question shape
 than multihop's shared corpus, so the prior on lift sign there
 is "small positive" — final number lands separately.
+
+## HotpotQA BGE = model2vec (saturated) — cross-bench finalized (2026-05-08)
+
+Final piece of the BGE cross-bench validation. HotpotQA full
+7,405q with bge-small-en-v1.5 + HNSW:
+
+| Metric | model2vec | BGE | Δ |
+|---|---|---|---|
+| R@1 | 72.8% | 72.8% | 0 |
+| R@5 | 95.8% | 95.8% | 0 |
+| R@10 | 98.9% | 98.9% | 0 |
+| MRR | 0.827 | 0.827 | 0 |
+| Sup-fact R@5 | 65.7% | 65.7% | 0 |
+
+By type R@5: comparison 96.6%, bridge 95.5% — both unchanged.
+
+That hypothesis from the multihop note ("HotpotQA per-question
+shape is closer to LongMemEval; expect small positive lift") was
+wrong. HotpotQA is retrieval-saturated by the same mechanism as
+multihop: the question shares enough surface form with the
+supporting facts that BM25 alone surfaces them at R@5 ~96%. There's
+no headroom for embedding semantics to close.
+
+### Cross-bench summary
+
+| Bench | shape | R@5 model2vec | R@5 BGE | Δ |
+|---|---|---|---|---|
+| LongMemEval 500q | per-question chat history, implicit-context | 96.2% | **98.0%** | **+1.8pt** |
+| MultiHop-RAG 2,556q | shared news corpus, dense keyword overlap | 93.7% | 93.7% | 0 |
+| HotpotQA 7,405q | per-question 10-paragraph distractor pool | 95.8% | 95.8% | 0 |
+
+The BGE win on LongMemEval is real but **specifically the
+implicit-context category (SS-pref)**. The other 5 LongMemEval
+categories were already at R@10 ≥ 95% with model2vec; the SS-pref
+recovery from 93.3% → 100% is what the +1.8pt aggregate is buying.
+
+### What the AGENTS.md recipe should say (sharpened)
+
+The carve-out "English-dominant agent-memory workloads" is right
+in spirit but loose in detail. The mechanism that decides:
+
+* If the user's question paraphrases / abstracts away from the
+  surface form of the answer (SS-pref: "What's my favorite
+  setup?" → answer in turns mentioning "Sony A7R IV"), BGE's
+  English-tuned semantics bridge the gap. Lift on the order of
+  +5-10pt R@10 on the affected category, +1-2pt aggregate.
+* If the question shares surface form with the answer
+  (HotpotQA bridge: "What play did Shirley Temple star in?" →
+  answer is in a paragraph titled "Kiss and Tell" mentioning
+  Shirley Temple by name), BM25 already finds the answer.
+  BGE adds nothing.
+* If the corpus is shared and BM25 keyword matching is dense
+  (multihop news), same outcome — saturated.
+
+So the operational rule:
+* Personal-memory chat history (LongMemEval-shape, agent
+  remembering what the user said): switch to BGE.
+* Code / docs / news RAG (multihop / hotpot shape, surface-form
+  matching): keep model2vec, save the latency.
+
+Both LongMemEval and gbrain-evals' BrainBench are personal-memory
+shaped, which is why wg + BGE took 98.0% and beat the published
+gbrain-hybrid 97.6% — that's BGE's home-field advantage.
+
+### What to commit (operator-side)
+
+Tightened AGENTS.md recipe deferred to a follow-up — current
+text in commit 1cf02c5 captures the broad recommendation; the
+mechanism note above is the more accurate version that should
+replace the paragraph if/when we re-touch that section.
