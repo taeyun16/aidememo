@@ -2139,3 +2139,107 @@ Tightened AGENTS.md recipe deferred to a follow-up — current
 text in commit 1cf02c5 captures the broad recommendation; the
 mechanism note above is the more accurate version that should
 replace the paragraph if/when we re-touch that section.
+
+## GAC Stage 3 — vector-rebuild --current-only end-to-end (2026-05-09)
+
+Stage 3 ships `wg vector-rebuild --current-only`. Stage 2b's
+mutation pass leaves the HNSW sidecar untouched (superseded
+losers still indexed); the new flag is what actually shrinks
+the file. This note records the in-corpus measurement that
+confirms the design composes.
+
+### Setup
+
+Temp store ingested from `/Users/mixlink/dev/wg/.notes/*.md`
+(the wg design-notes directory itself — has natural redundancy
+from successive iterations of the same finding):
+
+* 25 markdown files, **326 facts** post-ingest.
+* Default model: model2vec / potion-multilingual-128M (256-dim).
+* Auto-rebuild on ingest produced a 443,125-byte HNSW sidecar.
+
+### GAC dry-run sweep
+
+| θ | clusters | tight | spread | facts collapsable |
+|---|---|---|---|---|
+| 0.85 | 294 (279 sing + 15 multi) | 12 (25f) | 3 (22f) | 32 (~9.8%) |
+| 0.90 | 317 (311 + 6) | 5 (10f) | 1 (5f) | 9 (~2.8%) |
+| 0.95 | 325 (324 + 1) | 1 (2f) | 0 | 1 (~0.3%) |
+
+θ=0.85 is the meaningful operating point on this corpus; 0.95 is
+already near the noise floor for design notes that share
+boilerplate. Picking 0.85 forward.
+
+### Path A — supersede + --current-only
+
+```
+wg consolidate --gac --gac-theta 0.85
+  → applied (supersede): collapsed 13 tight + 19 spread (32 total)
+wg vector-rebuild
+  → 326 facts (default keeps superseded — sidecar still 443,125 B)
+wg vector-rebuild --current-only
+  → 294 current facts (32 superseded skipped)
+  → sidecar 399,541 B
+```
+
+Sidecar shrinks **9.83%** (443,125 → 399,541 B), exactly
+proportional to the **9.82%** fact-count reduction (326 → 294).
+The supersede-only step is invisible to the index without the
+new flag — confirming why Stage 3 is required to close the loop.
+
+### Path B — cold-tier (already physically removed)
+
+```
+wg consolidate --gac --gac-theta 0.85 --gac-cold-tier
+  → applied (cold-tier): archived_to_cold 32 (32 facts moved)
+wg vector-rebuild
+  → 294 facts (cold-tier facts not in fact_list; default rebuild
+    naturally excludes them)
+  → sidecar 399,541 B
+wg vector-rebuild --current-only
+  → 294 current facts (0 superseded skipped — confirms cold-tier
+    moved facts physically out instead of marking them)
+  → sidecar 399,541 B (identical)
+```
+
+Both paths converge to the same compressed sidecar size. The
+operational difference: cold-tier preserves FactId for
+`wg_fact_get` and brings rows back into hot search via
+`include_archive:true`, while supersede keeps everything in
+the hot store and gives `as_of` historical retrieval.
+
+### Search quality
+
+Spot-check on `BGE 모델 영어 전용` (Korean query that should hit
+the BGE design-notes facts):
+
+| Mode | Top-3 results | Scores |
+|---|---|---|
+| Full HNSW (326 facts) | bench-longmemeval#향후-측정, bench-longmemeval#주의, bench-3way#decision-matrix | 0.008, 0.008, 0.006 |
+| Compressed HNSW (294, after Path A) | identical | identical |
+
+Top-3 unchanged. The 32 superseded facts were redundant
+representations of the same content — their representatives
+still surface at the same scores.
+
+### Operator takeaway
+
+For Stage 2b + Stage 3 to actually shrink the index:
+
+| What you ran | Need --current-only on rebuild? |
+|---|---|
+| `consolidate --gac` (default supersede) | **yes** |
+| `consolidate --semantic-threshold 0.85` (pairwise supersede) | **yes** |
+| `consolidate --gac --gac-cold-tier` | no (already physical) |
+| `consolidate --ttl note=30` (TTL supersede) | **yes** |
+
+Rule of thumb: any consolidation that supersedes (rather than
+moves to cold-tier) leaves the HNSW oversized until the
+operator runs `wg vector-rebuild --current-only`.
+
+Compression ratio on the wg design-notes corpus is modest
+(~10%). The gain is corpus-dependent — on agent-memory-shaped
+stores with high fact volume and lots of repeated user
+preferences / lessons, the GAC paper's reported ratios (often
+30-60% compression at θ=0.85) should appear. Re-measure when
+the dogfooding store is large enough.
