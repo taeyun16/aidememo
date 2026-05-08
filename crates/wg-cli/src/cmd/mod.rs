@@ -99,6 +99,14 @@ pub struct ConsolidateSub {
     pub ttl: Vec<String>,
     pub dry_run: bool,
     pub json: bool,
+    /// When set, run the GAC (Geometry-Aware Consolidation)
+    /// analysis pass instead of the pairwise + TTL pass. Stage 2a
+    /// is analysis-only — emits cluster / tight-vs-spread stats
+    /// without mutating the store.
+    pub gac: bool,
+    /// θ for GAC (retrieval half-angle). Defaults to 0.85, the
+    /// paper's example value.
+    pub gac_theta: Option<f32>,
 }
 
 #[derive(Debug, Clone)]
@@ -1186,12 +1194,25 @@ fn consolidate_command() -> impl Parser<Command> {
     let json = long("json")
         .help("Emit JSON stats instead of human-readable output")
         .switch();
+    let gac = long("gac")
+        .help(
+            "Run GAC (Geometry-Aware Consolidation) analysis instead of \
+             pairwise + TTL. Stage 2a: analysis-only — clusters, d̄, \
+             tight vs spread classification. No store mutation.",
+        )
+        .switch();
+    let gac_theta = long("gac-theta")
+        .help("θ for GAC (retrieval half-angle). Defaults to 0.85.")
+        .argument::<f32>("FLOAT")
+        .optional();
 
     construct!(ConsolidateSub {
         semantic_threshold,
         ttl,
         dry_run,
         json,
+        gac,
+        gac_theta,
     })
     .map(Command::Consolidate)
     .to_options()

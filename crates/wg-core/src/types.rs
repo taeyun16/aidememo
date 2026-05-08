@@ -690,6 +690,57 @@ pub struct ConsolidateStats {
     pub max_cosine: f32,
 }
 
+/// Options for `consolidate_gac` — cluster-aware consolidation
+/// per the GAC (Geometry-Aware Consolidation) paper. Stage 2a is
+/// analysis-only (dry_run = true).
+#[derive(Debug, Clone)]
+pub struct GacOpts {
+    /// Retrieval half-angle. θ' (cosine distance gate) = 1 - theta.
+    /// Tight clusters with d̄ < θ' compress safely to centroid /
+    /// newest-fact. Spread clusters need medoid+budget routing.
+    /// 0.85 is the paper example.
+    pub theta: f32,
+    /// Analysis only — emit cluster statistics but do not
+    /// supersede or archive any facts. Always-true in stage 2a;
+    /// stage 2b will let callers flip to false.
+    pub dry_run: bool,
+}
+
+impl Default for GacOpts {
+    fn default() -> Self {
+        Self { theta: 0.85, dry_run: true }
+    }
+}
+
+/// Statistics returned by `consolidate_gac`. Mirrors the analysis
+/// the Python `gac_analyze.py` script produces, but computed in
+/// Rust against the live wg store.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct GacStats {
+    /// Current facts examined.
+    pub facts_processed: usize,
+    /// Total clusters formed (singletons + multi).
+    pub n_clusters: usize,
+    /// Single-fact clusters (no neighbour above θ).
+    pub n_singletons: usize,
+    /// Multi-fact clusters (≥2 facts).
+    pub n_multi_clusters: usize,
+    /// Multi-fact clusters classified tight (d̄ < θ').
+    pub tight_clusters: usize,
+    /// Multi-fact clusters classified spread (d̄ ≥ θ').
+    pub spread_clusters: usize,
+    /// Sum of cluster sizes across tight clusters.
+    pub tight_facts: usize,
+    /// Sum of cluster sizes across spread clusters.
+    pub spread_facts: usize,
+    /// Largest cluster size.
+    pub max_cluster_size: usize,
+    /// Highest within-cluster mean cosine distance seen.
+    pub max_dbar: f32,
+    /// θ used for this run (echoed for reporting).
+    pub theta: f32,
+}
+
 /// Result of a graph traversal.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TraverseResult {

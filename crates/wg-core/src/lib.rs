@@ -979,6 +979,131 @@ impl WikiGraph {
         Ok(stats)
     }
 
+    /// GAC (Geometry-Aware Consolidation) analysis pass. Stage 2a:
+    /// dry-run only — embeds every current fact, single-link
+    /// clusters at cosine ≥ θ, computes within-cluster mean cosine
+    /// distance d̄, classifies each multi-fact cluster as tight
+    /// (d̄ < θ' = 1 - θ, safe to compress to centroid) or spread
+    /// (needs medoid+budget routing per the paper).
+    ///
+    /// Stage 2a returns `GacStats` only; no fact mutation. Stage 2b
+    /// will gate `tight` clusters' supersede + `spread` clusters'
+    /// cold-tier archive on the same opts.dry_run flag.
+    #[cfg(feature = "semantic")]
+    pub fn consolidate_gac(&self, opts: types::GacOpts) -> Result<types::GacStats> {
+        use std::collections::HashMap;
+        let mut stats = types::GacStats { theta: opts.theta, ..Default::default() };
+        if opts.theta <= 0.0 || opts.theta > 1.0 {
+            return Err(WgError::InvalidInput(format!(
+                "GacOpts.theta must be in (0, 1], got {}",
+                opts.theta
+            )));
+        }
+
+        let facts = self.fact_list(types::FactListOpts {
+            current_only: true,
+            limit: None,
+            ..Default::default()
+        })?;
+        stats.facts_processed = facts.len();
+        if facts.len() < 2 {
+            stats.n_clusters = facts.len();
+            stats.n_singletons = facts.len();
+            return Ok(stats);
+        }
+
+        let provider = self.embed_provider()?;
+        let mut embeds: HashMap<types::FactId, Vec<f32>> = HashMap::with_capacity(facts.len());
+        for f in &facts {
+            embeds.insert(f.id, provider.embed(&f.content)?);
+        }
+
+        // Single-link clustering via union-find. Two facts join the
+        // same cluster when their cosine similarity ≥ θ. n² in fact
+        // count — fine at the scale `consolidate` is expected to run
+        // (periodic batch, hundreds-to-low-thousands of facts).
+        let n = facts.len();
+        let mut parent: Vec<usize> = (0..n).collect();
+        fn find(parent: &mut [usize], x: usize) -> usize {
+            let mut r = x;
+            while parent[r] != r {
+                r = parent[r];
+            }
+            // path-compress
+            let mut cur = x;
+            while parent[cur] != r {
+                let nxt = parent[cur];
+                parent[cur] = r;
+                cur = nxt;
+            }
+            r
+        }
+        for i in 0..n {
+            for j in (i + 1)..n {
+                let cos = cosine_f32(&embeds[&facts[i].id], &embeds[&facts[j].id]);
+                if cos >= opts.theta {
+                    let ri = find(&mut parent, i);
+                    let rj = find(&mut parent, j);
+                    if ri != rj {
+                        parent[ri] = rj;
+                    }
+                }
+            }
+        }
+
+        // Group facts by their root.
+        let mut clusters: HashMap<usize, Vec<usize>> = HashMap::new();
+        for i in 0..n {
+            let r = find(&mut parent, i);
+            clusters.entry(r).or_default().push(i);
+        }
+
+        let theta_prime = 1.0 - opts.theta;
+        let mut max_dbar: f32 = 0.0;
+        let mut max_cluster_size: usize = 0;
+        for members in clusters.values() {
+            stats.n_clusters += 1;
+            if members.len() < 2 {
+                stats.n_singletons += 1;
+                continue;
+            }
+            stats.n_multi_clusters += 1;
+            if members.len() > max_cluster_size {
+                max_cluster_size = members.len();
+            }
+
+            // Within-cluster mean cosine distance.
+            let mut sum_dist: f32 = 0.0;
+            let mut pair_count: usize = 0;
+            for a in 0..members.len() {
+                for b in (a + 1)..members.len() {
+                    let cos = cosine_f32(
+                        &embeds[&facts[members[a]].id],
+                        &embeds[&facts[members[b]].id],
+                    );
+                    sum_dist += 1.0 - cos;
+                    pair_count += 1;
+                }
+            }
+            let d_bar = if pair_count == 0 { 0.0 } else { sum_dist / pair_count as f32 };
+            if d_bar > max_dbar {
+                max_dbar = d_bar;
+            }
+            if d_bar < theta_prime {
+                stats.tight_clusters += 1;
+                stats.tight_facts += members.len();
+            } else {
+                stats.spread_clusters += 1;
+                stats.spread_facts += members.len();
+            }
+        }
+        stats.max_dbar = max_dbar;
+        stats.max_cluster_size = max_cluster_size;
+        // dry_run honoured trivially — no mutation path exists yet.
+        let _ = opts.dry_run;
+        Ok(stats)
+    }
+
     /// Remove a relation.
     pub fn relation_remove(&self, source: &str, target: &str, rel_type: &str) -> Result<()> {
         self.store.write().relation_remove(source, target, rel_type)

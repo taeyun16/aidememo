@@ -1881,6 +1881,54 @@ fn handle_consolidate(
 ) -> Result<String, WgError> {
     with_wiki(path, config, |wiki| {
         let started = std::time::Instant::now();
+        // GAC strategy short-circuit. Stage 2a is analysis-only and
+        // ignores --semantic-threshold / --ttl entirely.
+        if sub.gac {
+            let theta = sub.gac_theta.unwrap_or(0.85);
+            let opts = wg_core::types::GacOpts { theta, dry_run: true };
+            let stats = wiki.consolidate_gac(opts)?;
+            let elapsed_ms = started.elapsed().as_millis();
+            if sub.json {
+                let payload = serde_json::json!({
+                    "strategy": "gac",
+                    "theta": stats.theta,
+                    "facts_processed": stats.facts_processed,
+                    "n_clusters": stats.n_clusters,
+                    "n_singletons": stats.n_singletons,
+                    "n_multi_clusters": stats.n_multi_clusters,
+                    "tight_clusters": stats.tight_clusters,
+                    "spread_clusters": stats.spread_clusters,
+                    "tight_facts": stats.tight_facts,
+                    "spread_facts": stats.spread_facts,
+                    "max_cluster_size": stats.max_cluster_size,
+                    "max_dbar": stats.max_dbar,
+                    "elapsed_ms": elapsed_ms,
+                });
+                return serde_json::to_string_pretty(&payload).map_err(|e| WgError::Serialize {
+                    context: "consolidate-gac".into(),
+                    source: e,
+                });
+            }
+            return Ok(format!(
+                "GAC analysis (θ={:.2}, θ'={:.2}) — {} facts, {} clusters \
+                 ({} singletons + {} multi), {} tight ({} facts) / {} spread \
+                 ({} facts), max cluster size {}, max d̄={:.3}, in {} ms. \
+                 Stage 2a — analysis only, no store mutation.",
+                stats.theta,
+                1.0 - stats.theta,
+                stats.facts_processed,
+                stats.n_clusters,
+                stats.n_singletons,
+                stats.n_multi_clusters,
+                stats.tight_clusters,
+                stats.tight_facts,
+                stats.spread_clusters,
+                stats.spread_facts,
+                stats.max_cluster_size,
+                stats.max_dbar,
+                elapsed_ms,
+            ));
+        }
         let mut opts = wg_core::ConsolidateOpts::default();
         if let Some(t) = sub.semantic_threshold {
             opts.semantic_threshold = t;
