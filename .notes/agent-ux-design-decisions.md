@@ -1658,3 +1658,106 @@ pieces we should adopt or copy in spirit:
 * **Randomized query ordering**: we run sequentially through
   the dataset which is fine for retrieval-only metrics but
   could affect reader-side variance — worth a one-shot test.
+
+## Tolerance-band cross-tab (gbrain methodology) — reader gap quantified (2026-05-08)
+
+Borrowed gbrain-evals's "report R@K alongside reader-correct@K"
+pattern to quantify the reader-bound vs retrieval-bound split per
+question_type. Helper: `scripts/analyze_retrievals.py` joins
+`bench --emit-retrievals` JSONL (carries first_evidence_rank) with
+`omega_style.py` judgements (carries correct bool) and prints:
+
+* recall R@K (does the gold land in top-K?)
+* reader-correct@K (of questions whose gold landed in top-K, what
+  fraction did the reader get right?)
+* per-rank-bucket reader correctness (rank=1, 2-3, 4-5, 6-10, miss)
+* per-question-type breakdown of all the above
+
+Applied to 240q baseline (dates default, MiniMax reader, run1):
+
+```
+Overall: 191/230 = 83.0% correct
+
+K      R@K (recall)     reader@K          gap
+R@1   201/230=87.4%  171/201=85.1%     +0.04
+R@3   219/230=95.2%  184/219=84.0%     +0.12
+R@5   223/230=97.0%  187/223=83.9%     +0.14
+R@10  228/230=99.1%  191/228=83.8%     +0.16
+R@30  228/230=99.1%  191/228=83.8%     +0.16
+```
+
+Per-rank-bucket reader correctness:
+* rank=1     171/201 = 85.1%
+* rank=2-3    13/18  = 72.2%   (drop — reader strongly prefers top-1)
+* rank=4-5     3/4   = 75.0%
+* rank=6-10    4/5   = 80.0%
+* miss/>30     0/2   = 0.0%
+
+Per-question-type (R@5 vs reader@5 vs overall):
+
+| qtype | n | R@5 | reader@5 | gap |
+|---|---|---|---|---|
+| knowledge-update | 40 | 100% | 95.0% | -5pt (clean) |
+| single-session-user | 40 | 100% | 95.0% | -5pt |
+| single-session-assistant | 40 | 100% | 92.5% | -7.5pt |
+| **temporal-reasoning** | **40** | **100%** | **80.0%** | **-20pt** |
+| **multi-session** | **40** | **97.5%** | **51.3%** | **-46pt** |
+| single-session-preference | 30 | 80% | 91.7% | retrieval-bound |
+
+### Interpretation
+
+This is the quantitative version of every reader-bound claim we've
+made all session:
+
+1. **multi-session is reader-bound by -46pt.** Retrieval surfaces
+   the gold in top-5 for 39/40 questions; the reader gets only
+   20 of them right. No retrieval-side intervention can recover
+   what's already in front of the reader. Stronger reader is the
+   only lever.
+
+2. **temporal-reasoning is reader-bound by -20pt.** Retrieval is
+   perfect (40/40 R@5); reader misses 8. Date arithmetic / event
+   ordering still trips MiniMax even with all evidence in view.
+
+3. **SS-pref is the only retrieval-bound category.** R@5 80%
+   means 6/30 gold preferences never reach the reader. Reader
+   itself does well (91.7% on what it sees). This matches the
+   "implicit context" failure mode — SS-pref answers live in
+   chunks that share little surface form with the question.
+
+4. **KU / SS-asst / SS-user are clean.** R@5 100%, reader@5 ~95%.
+   No headroom from architecture — those categories are at ceiling.
+
+### What this changes for the wg roadmap
+
+Three concrete next bets, in order:
+
+1. **Stronger reader on multi-session + temporal.** Quota-blocked
+   in this session, but the lift target is mechanically clear:
+   46pt + 20pt of reader gap is real upside if a Claude Opus 4.7
+   / GPT-5-class reader can use the already-perfect retrievals.
+
+2. **Retrieval lift on SS-pref only.** Implicit-context bridge
+   (HyDE on SS-pref questions, classifier-routed; sentence-level
+   chunking at ingest) is the only category where retrieval-side
+   work still has headroom.
+
+3. **Stop trying to lift KU / SS-asst / SS-user.** Anything we
+   measure at ±2pt in those three categories is judge noise; the
+   architecture is already paying full price for the data we have.
+
+### Methodology adopted from gbrain-evals
+
+* **Tolerance bands**: R@1/3/5/10/30 reported alongside reader-correct
+  per band. Borrowed directly.
+* **Per-rank-bucket conditioning**: report reader accuracy at
+  rank=1, rank=2-3, etc. Rare in published memory benches; very
+  informative — exposes that our reader strongly prefers rank=1
+  (85% vs 72% at rank=2-3).
+* **Judge-version pinning** was already in place
+  (MiniMax-M2.7-highspeed); now we'll cite it explicitly when
+  reporting numbers per gbrain's discipline.
+
+Skipped for now: sealed qrels at adapter boundaries (LongMemEval
+gold is dataset-sealed by construction), randomized query
+ordering (one-shot variance check is a future tidy-up).
