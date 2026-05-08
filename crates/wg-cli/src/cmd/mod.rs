@@ -343,6 +343,7 @@ pub struct StatsSub;
 #[derive(Debug, Clone)]
 pub struct VectorRebuildSub {
     pub json: bool,
+    pub current_only: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -1094,8 +1095,17 @@ fn vector_rebuild_command() -> impl Parser<Command> {
     let json = long("json")
         .help("Emit JSON instead of human-readable output")
         .switch();
+    let current_only = long("current-only")
+        .help(
+            "Skip facts with `superseded_at` set. Use after \
+             `wg consolidate --gac` (or any supersede pass) to \
+             shrink the HNSW to the representative set. Trade-off: \
+             `as_of` historical retrieval falls back to BM25-only \
+             for the dropped facts.",
+        )
+        .switch();
 
-    construct!(VectorRebuildSub { json })
+    construct!(VectorRebuildSub { json, current_only })
         .map(Command::VectorRebuild)
         .to_options()
         .command("vector-rebuild")

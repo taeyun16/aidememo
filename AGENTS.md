@@ -106,7 +106,11 @@ wg bench <golden.jsonl> [--k 5] [--limit N]
 wg skill check <path> [--json]            validate SKILL.md files
 wg ingest <root> [-i]                     ingest markdown
 wg watch <root> [--search Q]              live re-ingest + optional live search
-wg vector-rebuild [--json]                 rebuild HNSW from scratch (after model swap)
+wg vector-rebuild [--current-only] [--json]  rebuild HNSW from scratch (after model swap).
+                                            --current-only skips superseded facts — pair with
+                                            `wg consolidate --gac` to actually shrink the index
+                                            to the representative set (default keeps all facts
+                                            so `as_of` historical retrieval keeps working).
 wg auto-relate [--top-k 3] [--threshold 0.0] [--dry-run] [--json]
                                             mine `related` edges from semantic similarity
                                             (one-shot; idempotent; semantic feature only)
@@ -127,6 +131,9 @@ wg consolidate --gac [--gac-theta 0.85] [--gac-spread-budget N] [--gac-cold-tier
                                             budget residuals. --gac-cold-tier moves losers
                                             to <store>.cold.redb (preserves FactId) instead
                                             of superseding. --dry-run for analysis-only.
+                                            Pair with `wg vector-rebuild --current-only` to
+                                            shrink the HNSW index proportionally — supersede
+                                            alone leaves losers in the sidecar.
 wg session new <topic>                      tracked session entity + shell-evaluable
                                             'export WG_SESSION_ID=…'. Auto-attaches to every
                                             subsequent fact_add while the env var is set.

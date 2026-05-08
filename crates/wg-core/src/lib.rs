@@ -307,16 +307,49 @@ impl WikiGraph {
     /// more for HTTP-served transformers.
     #[cfg(feature = "semantic")]
     pub fn vector_index_rebuild(&self) -> Result<usize> {
+        self.vector_index_rebuild_with_opts(types::VectorRebuildOpts::default())
+            .map(|s| s.facts_indexed)
+    }
+
+    /// Same as `vector_index_rebuild`, but accepts options. Set
+    /// `opts.current_only = true` after `consolidate_gac` / supersede
+    /// passes to drop superseded facts from the rebuilt HNSW index —
+    /// the most direct way to keep the index size proportional to the
+    /// representative set instead of the raw fact count.
+    ///
+    /// Trade-off: when `current_only` is on, `as_of` historical
+    /// searches that need a superseded fact will fall back to the
+    /// BM25-only path (HNSW won't return it). Default off preserves
+    /// the existing time-travel surface.
+    #[cfg(feature = "semantic")]
+    pub fn vector_index_rebuild_with_opts(
+        &self,
+        opts: types::VectorRebuildOpts,
+    ) -> Result<types::VectorRebuildStats> {
         let provider = self.embed_provider()?;
-        let facts = self.fact_list(FactListOpts {
+        let all_facts = self.fact_list(FactListOpts {
             limit: None,
             ..Default::default()
         })?;
+        let total = all_facts.len();
+        let facts: Vec<_> = if opts.current_only {
+            all_facts
+                .into_iter()
+                .filter(|f| f.superseded_at.is_none())
+                .collect()
+        } else {
+            all_facts
+        };
+        let superseded_skipped = total - facts.len();
+
         if facts.is_empty() {
             *self.vector_index.write() = None;
             // Remove a stale sidecar if it exists; otherwise harmless.
             let _ = std::fs::remove_file(self.hnsw_sidecar_path());
-            return Ok(0);
+            return Ok(types::VectorRebuildStats {
+                facts_indexed: 0,
+                superseded_skipped,
+            });
         }
 
         // Pull cached vectors off the existing sidecar (if any) so we
@@ -364,7 +397,10 @@ impl WikiGraph {
         let idx = vector_index::HnswIndex::build(&provider.name(), provider.dimension(), entries);
         idx.save_to(&self.hnsw_sidecar_path())?;
         *self.vector_index.write() = Some(idx);
-        Ok(count)
+        Ok(types::VectorRebuildStats {
+            facts_indexed: count,
+            superseded_skipped,
+        })
     }
 
     /// Close the WikiGraph store.
@@ -992,7 +1028,10 @@ impl WikiGraph {
     #[cfg(feature = "semantic")]
     pub fn consolidate_gac(&self, opts: types::GacOpts) -> Result<types::GacStats> {
         use std::collections::HashMap;
-        let mut stats = types::GacStats { theta: opts.theta, ..Default::default() };
+        let mut stats = types::GacStats {
+            theta: opts.theta,
+            ..Default::default()
+        };
         if opts.theta <= 0.0 || opts.theta > 1.0 {
             return Err(WgError::InvalidInput(format!(
                 "GacOpts.theta must be in (0, 1], got {}",
@@ -1105,7 +1144,11 @@ impl WikiGraph {
                     per_member_sum[b] += d;
                 }
             }
-            let d_bar = if pair_count == 0 { 0.0 } else { sum_dist / pair_count as f32 };
+            let d_bar = if pair_count == 0 {
+                0.0
+            } else {
+                sum_dist / pair_count as f32
+            };
             if d_bar > max_dbar {
                 max_dbar = d_bar;
             }
@@ -1151,8 +1194,7 @@ impl WikiGraph {
                     // Pick the budget most-distant-from-medoid
                     // members as residuals. They preserve cluster
                     // diversity the medoid alone can't represent.
-                    let mut others: Vec<usize> =
-                        (0..m).filter(|&i| i != medoid_local).collect();
+                    let mut others: Vec<usize> = (0..m).filter(|&i| i != medoid_local).collect();
                     others.sort_by(|&a, &b| {
                         per_member_sum[b]
                             .partial_cmp(&per_member_sum[a])

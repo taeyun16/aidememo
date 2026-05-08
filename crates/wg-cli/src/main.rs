@@ -1790,12 +1790,16 @@ fn handle_vector_rebuild(
 ) -> Result<String, WgError> {
     with_wiki(path, config, |wiki| {
         let started = std::time::Instant::now();
-        let count = wiki.vector_index_rebuild()?;
+        let stats = wiki.vector_index_rebuild_with_opts(wg_core::types::VectorRebuildOpts {
+            current_only: sub.current_only,
+        })?;
         let elapsed_ms = started.elapsed().as_millis();
 
         if sub.json {
             let payload = serde_json::json!({
-                "facts_indexed": count,
+                "facts_indexed": stats.facts_indexed,
+                "superseded_skipped": stats.superseded_skipped,
+                "current_only": sub.current_only,
                 "elapsed_ms": elapsed_ms,
             });
             return serde_json::to_string_pretty(&payload).map_err(|e| WgError::Serialize {
@@ -1803,15 +1807,20 @@ fn handle_vector_rebuild(
                 source: e,
             });
         }
-        if count == 0 {
+        if stats.facts_indexed == 0 {
             Ok(format!(
                 "No facts to index — sidecar removed (took {} ms).",
                 elapsed_ms
             ))
+        } else if sub.current_only {
+            Ok(format!(
+                "Rebuilt HNSW index over {} current facts ({} superseded skipped) in {} ms.",
+                stats.facts_indexed, stats.superseded_skipped, elapsed_ms
+            ))
         } else {
             Ok(format!(
                 "Rebuilt HNSW index over {} facts in {} ms.",
-                count, elapsed_ms
+                stats.facts_indexed, elapsed_ms
             ))
         }
     })

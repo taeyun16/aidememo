@@ -768,6 +768,28 @@ pub struct GacStats {
     pub archived_to_cold: usize,
 }
 
+/// Options for `vector_index_rebuild_with_opts` — controls which
+/// facts make it into the HNSW sidecar.
+#[derive(Debug, Clone, Default)]
+pub struct VectorRebuildOpts {
+    /// When true, exclude facts with `superseded_at` set. Pairs
+    /// with `consolidate_gac` (or `consolidate_semantic`): after
+    /// non-representatives are superseded, rebuilding with
+    /// `current_only=true` shrinks the HNSW to ~|representatives|.
+    /// Off by default — preserves `as_of` historical retrieval.
+    pub current_only: bool,
+}
+
+/// Statistics from `vector_index_rebuild_with_opts`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct VectorRebuildStats {
+    /// Facts written into the new HNSW index.
+    pub facts_indexed: usize,
+    /// Facts skipped because `superseded_at` was set and
+    /// `current_only` was on. 0 otherwise.
+    pub superseded_skipped: usize,
+}
+
 /// Result of a graph traversal.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TraverseResult {
