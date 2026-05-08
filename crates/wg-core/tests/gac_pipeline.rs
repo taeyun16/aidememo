@@ -1,0 +1,159 @@
+//! Integration test: locks in the Stage 2b → Stage 3 composition.
+//!
+//! Synthetic store with controlled redundancy. Asserts that
+//! `consolidate_gac` (mutation path) supersedes the expected count
+//! of non-representatives, and that
+//! `vector_index_rebuild_with_opts(current_only=true)` produces an
+//! HNSW sidecar sized to the representative set instead of the full
+//! fact list.
+//!
+//! Marked `#[ignore]` because the default `model2vec` provider
+//! downloads `potion-multilingual-128M` from HuggingFace on first
+//! run. Run with:
+//!
+//! ```text
+//! cargo test -p wg-core --features semantic --test gac_pipeline -- --ignored
+//! ```
+
+#![cfg(feature = "semantic")]
+
+use tempfile::tempdir;
+use wg_core::types::{GacOpts, VectorRebuildOpts};
+use wg_core::{Config, FactInput, WikiGraph};
+
+fn add(wiki: &WikiGraph, content: &str) {
+    wiki.fact_add(FactInput {
+        content: content.into(),
+        ..Default::default()
+    })
+    .expect("fact_add");
+}
+
+fn seed_store(wiki: &WikiGraph) {
+    // Tight cluster — three near-paraphrases of the same Redis claim.
+    // Expected to land at d̄ < 1-θ for θ=0.85.
+    add(
+        wiki,
+        "Redis is an in-memory key-value store used as a cache",
+    );
+    add(wiki, "Redis is an in-memory key-value cache");
+    add(
+        wiki,
+        "Redis serves as an in-memory cache and key-value store",
+    );
+
+    // Distinct singletons — different topics, should not cluster
+    // with each other or with the Redis facts.
+    add(wiki, "Postgres uses MVCC for transaction isolation");
+    add(wiki, "Kubernetes schedules pods onto worker nodes");
+    add(
+        wiki,
+        "Rust's borrow checker enforces aliasing rules at compile time",
+    );
+    add(
+        wiki,
+        "GraphQL exposes a typed query interface over a single endpoint",
+    );
+    add(wiki, "Kafka partitions topics for horizontal scaling");
+}
+
+#[test]
+#[ignore = "downloads model2vec weights from HuggingFace — local only"]
+fn gac_pipeline_supersede_then_current_only_rebuild_shrinks_index() {
+    let dir = tempdir().unwrap();
+    let store_path = dir.path().join("test.redb");
+    let wiki = WikiGraph::open(&store_path, Config::default()).unwrap();
+
+    seed_store(&wiki);
+    let total = wiki.stats().unwrap().fact_count;
+    assert_eq!(total, 8, "seed produced unexpected fact count");
+
+    // Stage 1 — dry-run reports clusters but mutates nothing.
+    let dry = wiki
+        .consolidate_gac(GacOpts {
+            theta: 0.85,
+            dry_run: true,
+            spread_residual_budget: 0,
+            use_cold_tier: false,
+        })
+        .expect("consolidate_gac dry-run");
+    assert_eq!(dry.facts_processed, 8);
+    assert!(
+        dry.tight_clusters >= 1,
+        "expected at least one tight cluster from the Redis paraphrases, got {}",
+        dry.tight_clusters
+    );
+    assert_eq!(dry.tight_collapsed, 0, "dry-run must not mutate");
+    assert_eq!(dry.spread_archived, 0, "dry-run must not mutate");
+    assert_eq!(
+        wiki.stats().unwrap().fact_count,
+        8,
+        "dry-run must leave the store untouched"
+    );
+
+    // Stage 2b — apply with default (supersede). Non-representatives
+    // get superseded but stay in the store.
+    let applied = wiki
+        .consolidate_gac(GacOpts {
+            theta: 0.85,
+            dry_run: false,
+            spread_residual_budget: 0,
+            use_cold_tier: false,
+        })
+        .expect("consolidate_gac apply");
+    let expected_collapsed = applied.tight_collapsed + applied.spread_archived;
+    assert!(
+        expected_collapsed >= 2,
+        "expected at least 2 non-reps to be superseded (3-fact tight cluster), got {}",
+        expected_collapsed
+    );
+    assert_eq!(
+        applied.archived_to_cold, 0,
+        "supersede mode must not move facts to cold-tier"
+    );
+
+    // Total fact count unchanged — supersede flips a flag, doesn't delete.
+    let stats_after = wiki.stats().unwrap();
+    assert_eq!(
+        stats_after.fact_count, 8,
+        "supersede must preserve raw fact count"
+    );
+
+    // Stage 3 — default rebuild keeps every fact in HNSW (current
+    // contract preserves `as_of` historical retrieval).
+    let full = wiki
+        .vector_index_rebuild_with_opts(VectorRebuildOpts::default())
+        .expect("vector_index_rebuild full");
+    assert_eq!(full.facts_indexed, 8, "default rebuild indexes all facts");
+    assert_eq!(full.superseded_skipped, 0);
+
+    // Stage 3 — with current_only, the HNSW excludes superseded facts.
+    let current_only = wiki
+        .vector_index_rebuild_with_opts(VectorRebuildOpts { current_only: true })
+        .expect("vector_index_rebuild current_only");
+    assert_eq!(
+        current_only.superseded_skipped, expected_collapsed,
+        "current_only should skip exactly the facts consolidate just superseded"
+    );
+    assert_eq!(
+        current_only.facts_indexed,
+        8 - expected_collapsed,
+        "indexed count must equal representative set size"
+    );
+
+    // Re-running consolidate_gac is idempotent: representatives are
+    // already canonical, so a second pass collapses nothing.
+    let second = wiki
+        .consolidate_gac(GacOpts {
+            theta: 0.85,
+            dry_run: false,
+            spread_residual_budget: 0,
+            use_cold_tier: false,
+        })
+        .expect("consolidate_gac second pass");
+    assert_eq!(
+        second.tight_collapsed + second.spread_archived,
+        0,
+        "second consolidate pass must be a no-op"
+    );
+}

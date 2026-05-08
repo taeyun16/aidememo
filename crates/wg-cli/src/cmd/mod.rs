@@ -1211,9 +1211,13 @@ fn consolidate_command() -> impl Parser<Command> {
         .switch();
     let gac = long("gac")
         .help(
-            "Run GAC (Geometry-Aware Consolidation) analysis instead of \
-             pairwise + TTL. Stage 2a: analysis-only — clusters, d̄, \
-             tight vs spread classification. No store mutation.",
+            "Run GAC (Geometry-Aware Consolidation) cluster-aware \
+             consolidation instead of pairwise + TTL. Tight clusters \
+             (d̄ < 1-θ) collapse to the newest fact; spread clusters \
+             keep medoid + budget residuals. By default the non-\
+             representatives are superseded; pass --gac-cold-tier to \
+             archive them instead, or --dry-run for analysis only \
+             (clusters / d̄ / tight-vs-spread, no mutation).",
         )
         .switch();
     let gac_theta = long("gac-theta")
