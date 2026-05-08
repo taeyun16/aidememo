@@ -1567,3 +1567,94 @@ next pass would:
 
 Skipped this pass for time; ingest patch lands as-is, eval-
 infrastructure improvements deferred.
+
+## gbrain-evals comparison — wg ≈ MemPalace on LongMemEval R@5 (2026-05-08)
+
+User pointed at https://github.com/garrytan/gbrain-evals (Garry Tan,
+14 commits, 95 stars, MIT license, 2026-05-07 numbers). It's a
+3-axis benchmark for personal-knowledge agent stacks (retrieval /
+ingestion / personalization) with sealed qrels at adapter
+boundaries, judge-version pinning, and randomized query ordering
+to prevent gaming. Adapter API is minimal:
+
+```ts
+init(pages, config) → BrainState
+query(q, state) → RankedDoc[]
+```
+
+Published LongMemEval-S full (500q) R@5:
+
+| System            | R@5   |
+|---|---|
+| gbrain-hybrid     | 97.6% |
+| MemPalace         | 96.6% |
+| (BM25 / Contriever baselines) | lower |
+
+Ran wg through the same benchmark (500q full, hybrid retrieval,
+dates default, model2vec embedding, reproducibility-fixed bench):
+
+| Metric | wg | Δ vs MemPalace | Δ vs gbrain-hybrid |
+|---|---|---|---|
+| R@1  | 0.886 | n/a | n/a |
+| **R@5** | **0.962** | **-0.4pt** | **-1.4pt** |
+| R@10 | 0.978 | n/a | n/a |
+| MRR  | 0.918 | n/a | n/a |
+
+Wall: 492s for all 500q (per-question fresh wg store).
+
+By question_type R@10:
+
+| Type | R@10 | Hits |
+|---|---|---|
+| knowledge-update | 1.000 | 78/78 |
+| single-session-user | 1.000 | 70/70 |
+| multi-session | 0.985 | 131/133 |
+| single-session-assistant | 0.982 | 55/56 |
+| temporal-reasoning | 0.955 | 127/133 |
+| **single-session-preference** | **0.933** | **28/30** |
+
+### Reading
+
+* **wg sits in the same tier as MemPalace and gbrain-hybrid for
+  retrieval recall on personal-knowledge agent memory**. Within
+  1.4pt of the published top while shipping a 28 MB embedding,
+  no API key, no server, single redb file.
+* The remaining ~3.8pt to perfect R@5 mostly lives in SS-pref
+  (28/30 — the "implicit context" gap we hit elsewhere this
+  session) and temporal (127/133). Both fit the diagnoses we
+  already have: SS-pref needs stronger reader-side classifier,
+  temporal could benefit from stricter date-window filters.
+* Direct adapter integration into gbrain-evals is possible
+  (TS adapter wrapping `wg-napi` would be ~50 LOC) but the
+  bun/TS toolchain isn't yet wired up here — deferred. Reporting
+  the same metric they report is enough for now to pin the
+  position.
+
+### What we're NOT claiming
+
+* This is **retrieval recall only**. Full reader+judge accuracy
+  on this 500q would still be reader-bound at ~83% with our
+  MiniMax stack, as documented elsewhere in this notes file.
+  The R@5 number says wg's index brings the right docs into
+  reach; the reader still has to use them.
+* gbrain-hybrid uses additional ingestion / personalization
+  axes (proprietary world-v1 / amara-life-v1 datasets) we
+  can't replicate with public data. The R@5 axis is the only
+  apples-to-apples slice without a custom dataset pipeline.
+
+### Methodology bits worth borrowing
+
+Even without integrating directly, gbrain's harness has
+pieces we should adopt or copy in spirit:
+
+* **Judge-version pinning**: we already pin
+  `MiniMax-M2.7-highspeed` for our LLM-judge; tighten the
+  noise band per the LLM-judge variance we observed on the
+  multi-agent eval re-grade.
+* **Sealed qrels with tolerance bands**: our LongMemEval
+  scoring is gold-keyword + LLM-judge; adding `tolerance N=3/5/10`
+  per-question-type would make our R@K reporting comparable
+  to theirs without changing the wg side.
+* **Randomized query ordering**: we run sequentially through
+  the dataset which is fine for retrieval-only metrics but
+  could affect reader-side variance — worth a one-shot test.
