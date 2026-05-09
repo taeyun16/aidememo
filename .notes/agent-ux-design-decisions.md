@@ -2392,3 +2392,155 @@ labelled the high-value content.
 Operators who don't classify their content can't use this
 lever and should fall back to "θ=0.90 or skip GAC" per the
 table above.
+
+## gbrain-evals — functional comparison vs wg (2026-05-09)
+
+Earlier sections in this file pinned wg numerically against
+gbrain on LongMemEval R@5 (wg + BGE 98.0% vs gbrain-hybrid
+97.6%, both above MemPalace 96.6%). This section steps back
+from the score column and compares the two stacks
+**feature-by-feature**, since "we beat their score" is one
+data point and operators picking between them care about the
+full surface.
+
+### What gbrain-evals is, in scope terms
+
+gbrain-evals is a **benchmark harness**, not a memory system.
+It defines an adapter contract (`init(pages, config) →
+BrainState` + `query(q, state) → RankedDoc[]`) and runs
+multiple memory backends (gbrain-hybrid, MemPalace,
+contriever / BM25 baselines) against sealed qrels with
+tolerance bands and judge-version pinning. Their proprietary
+datasets (`world-v1`, `amara-life-v1`) test ingestion and
+personalisation axes the public benches don't cover.
+
+So the right comparison frame is:
+* **wg ↔ gbrain-evals harness**: methodology, tooling, what
+  axes they expose
+* **wg ↔ gbrain backends (gbrain-hybrid, MemPalace)**: what
+  retrieval / memory features each implements
+
+### Harness axis (wg ↔ gbrain-evals)
+
+| Axis | gbrain-evals | wg |
+|---|---|---|
+| Adapter contract | TS, `init` + `query` | — (no adapter; we run native benches) |
+| Sealed qrels | yes, per-bench | gold-keyword + LLM-judge per bench |
+| Tolerance bands (N=3/5/10) | first-class | adopted as cross-tab in commit 8e81069 |
+| Judge-version pinning | yes | yes (`MiniMax-M2.7-highspeed` for our bench) |
+| Randomised query ordering | yes | sequential (acceptable for retrieval-only) |
+| Reproducibility | mid (TS adapter, dataset auth) | high (single binary, no API key, all bench code in-tree) |
+| Public datasets | LongMemEval | LongMemEval, MultiHop-RAG, HotpotQA, MIRACL/ko |
+| Proprietary datasets | world-v1, amara-life-v1 | none — we only ship public benches |
+
+**Operator implication**: gbrain's harness is the right place
+to publish a *cross-system* leaderboard; wg's bench tree is
+the right place to do *within-system* hyperparameter sweeps
+(θ, BGE vs model2vec, GAC on/off — all the work in this
+notes file). Different jobs.
+
+### Backend axis (wg ↔ gbrain-hybrid / MemPalace)
+
+What each system actually *does* for retrieval, ingestion,
+and persistence. gbrain-hybrid + MemPalace are
+proprietary-tier — we infer features from their published
+materials and the gbrain-evals adapter shape.
+
+| Capability | gbrain-hybrid | MemPalace | wg |
+|---|---|---|---|
+| Hybrid retrieval (BM25 + semantic) | yes | yes | yes (RRF fusion, configurable weights) |
+| Cross-encoder rerank | likely (numbers suggest it) | likely | yes (TEI, opt-in) |
+| Time-aware retrieval | n/a | n/a | yes (`as_of` + per-fact `observed_at` + decay τ) |
+| Validity windows / supersede | unknown | unknown | yes (explicit `superseded_at`/`by`, time-travel queries) |
+| Graph traversal | no | no | yes (typed relations, `traverse`/`path`) |
+| Personalisation tier | proprietary | proprietary | typed: `preference`/`lesson`/`error` 2× boost, decay-exempt |
+| Ingest classification | embedded LLM | embedded LLM | self-extraction (calling agent classifies) + opt-in `wg_extract --llm` |
+| Compaction | unknown | unknown | semantic dedup + GAC (cluster-aware) + per-type TTL |
+| Cold-tier archive | unknown | unknown | yes (`<store>.cold.redb`, FactId preserved) |
+| Auto-relate | no | no | yes (`wg auto-relate` semantic edge mining) |
+| Persistence | hosted / proprietary | hosted | local redb (single file, git-backupable) |
+| Multi-agent shared store | unknown | unknown | yes (`wg mcp-serve` HTTP) |
+| API key required | yes (hosted backends) | yes | no (default offline) |
+| Skill bundle for agents | no | no | yes (Claude/Codex/Hermes/opencode/pi/cursor) |
+| Footprint | n/a (hosted) | n/a (hosted) | single binary + 28 MB embedding default |
+
+### Where wg is structurally ahead
+
+* **Validity model**: explicit `superseded_at`/`superseded_by`
+  plus `as_of` historical queries lets agents reason about
+  *when* a fact was true, not just whether it's current.
+  gbrain's adapter doesn't surface this — `query` returns
+  ranked docs with no temporal contract.
+* **Graph + memory in one store**: typed relations
+  (`uses`/`decided_by`/`related`/...) sit in the same store
+  as facts. gbrain backends are pure retrieval — graph
+  traversal would be an external join.
+* **GAC + cold-tier**: cluster-aware compaction with the
+  protected_types lever shipped this session (commit 49675da)
+  is, as far as we can tell, novel to wg — gbrain's
+  proprietary backends may compact internally but not in a
+  way operators can tune.
+* **Local-first**: a single redb file means CI snapshots,
+  git-tracked memory, offline reproducibility. Hosted
+  backends can't claim this.
+
+### Where gbrain is structurally ahead
+
+* **Cross-system leaderboard**: their harness is purpose-
+  built for it. Our bench tree is wg-internal hyperparameter
+  exploration; we'd need to write a TS adapter wrapping
+  `wg-napi` to publish a wg-vs-others number through the
+  gbrain-evals leaderboard format.
+* **Personalisation axis dataset**: `amara-life-v1` exposes a
+  multi-turn personalisation evaluation we have no analogue
+  for. Our personalisation work is mechanism-only (typed
+  weighting); we lack a dataset to score it against.
+* **Hosted operations story**: gbrain backends presumably
+  ship multi-tenancy, cloud sync, and team collaboration as
+  defaults. wg ships none of these — operators run their own
+  redb file.
+
+### Does `--gac-protect` work in real agentic use?
+
+Direct LongMemEval validation isn't possible — LME ingests
+every turn as `Note` (the legacy default). But the mechanism
+holds end-to-end, validated in two layers:
+
+1. **Unit test** (`crates/wg-core/tests/gac_pipeline.rs::
+   protected_types_pass_through_gac_unchanged`, this commit):
+   3 typed `Preference` paraphrases that would absolutely
+   form a tight cluster at θ=0.85 are excluded from
+   clustering; all 3 remain current. Unprotected `Note`
+   paraphrases still collapse. Confirms the filter is wired
+   correctly through Stage 2b mutation.
+2. **The earlier 120q LME measurement** identified the
+   failure mode: tight clustering loses near-paraphrase
+   recall. `--gac-protect` removes the clustering step for
+   the protected types, so the measured failure mode
+   structurally cannot occur on those types.
+
+The thing we'd want to bench but can't here is the
+**production** picture: a Claude Code session classifies
+~100 facts (mostly `note`, ~10-20 `preference` /
+`decision` / `lesson` / `error`); after weeks of use the
+store has 5K+ facts; consolidate-with-protect keeps the
+personalisation tier intact while compressing notes. That's
+the workload `--gac-protect` is built for, and the only
+honest validation requires a real long-running agent
+session. Until we have one, the operator pattern published
+in this section is the load-bearing artifact.
+
+### Bottom line
+
+* wg matches gbrain-hybrid on the retrieval axis (98.0% vs
+  97.6% R@5 LongMemEval-S 500q) and exposes more of its
+  internals (validity windows, GAC, graph traversal, local-
+  first).
+* gbrain wins on cross-system measurement infrastructure and
+  hosted-ops convenience.
+* The two stacks aren't direct competitors at the operator
+  level: gbrain is "send your data to a hosted memory
+  backend"; wg is "embed a single binary + redb file in
+  your agent's runtime, classify facts at the source".
+  Picking between them is a deployment-shape decision more
+  than a quality decision.

@@ -18,12 +18,21 @@
 #![cfg(feature = "semantic")]
 
 use tempfile::tempdir;
-use wg_core::types::{GacOpts, VectorRebuildOpts};
+use wg_core::types::{FactType, GacOpts, VectorRebuildOpts};
 use wg_core::{Config, FactInput, WikiGraph};
 
 fn add(wiki: &WikiGraph, content: &str) {
     wiki.fact_add(FactInput {
         content: content.into(),
+        ..Default::default()
+    })
+    .expect("fact_add");
+}
+
+fn add_typed(wiki: &WikiGraph, content: &str, ty: FactType) {
+    wiki.fact_add(FactInput {
+        content: content.into(),
+        fact_type: Some(ty),
         ..Default::default()
     })
     .expect("fact_add");
@@ -158,5 +167,93 @@ fn gac_pipeline_supersede_then_current_only_rebuild_shrinks_index() {
         second.tight_collapsed + second.spread_archived,
         0,
         "second consolidate pass must be a no-op"
+    );
+}
+
+#[test]
+#[ignore = "downloads model2vec weights from HuggingFace — local only"]
+fn protected_types_pass_through_gac_unchanged() {
+    // Mirror the production pattern: classified Preference facts +
+    // unclassified Notes mixed into one store. After consolidate
+    // with protected_types=[Preference, Lesson, Error], the
+    // personalisation tier should be untouched even when its
+    // members would otherwise form a tight cluster.
+    let dir = tempdir().unwrap();
+    let store_path = dir.path().join("test.redb");
+    let wiki = WikiGraph::open(&store_path, Config::default()).unwrap();
+
+    // 3 Preference paraphrases — would absolutely cluster tight at
+    // θ=0.85 if not protected.
+    add_typed(
+        &wiki,
+        "I prefer dark mode in my editor",
+        FactType::Preference,
+    );
+    add_typed(
+        &wiki,
+        "I like dark theme for my editor",
+        FactType::Preference,
+    );
+    add_typed(
+        &wiki,
+        "Dark theme is my preference for the editor",
+        FactType::Preference,
+    );
+
+    // 3 Note paraphrases — these SHOULD cluster + collapse.
+    add(&wiki, "Redis is an in-memory key-value cache");
+    add(&wiki, "Redis is an in-memory key-value store used as cache");
+    add(&wiki, "Redis serves as an in-memory cache and KV store");
+
+    // 2 Note singletons — distinct topics, no cluster.
+    add(&wiki, "Postgres uses MVCC for transaction isolation");
+    add(&wiki, "Kubernetes schedules pods onto worker nodes");
+
+    let stats = wiki
+        .consolidate_gac(GacOpts {
+            theta: 0.85,
+            dry_run: false,
+            spread_residual_budget: 0,
+            use_cold_tier: false,
+            protected_types: vec![FactType::Preference, FactType::Lesson, FactType::Error],
+        })
+        .expect("consolidate_gac with protect");
+
+    assert_eq!(
+        stats.protected_skipped, 3,
+        "all 3 Preference facts must be excluded from clustering"
+    );
+    assert_eq!(
+        stats.facts_processed, 5,
+        "remaining 5 Note facts go through clustering"
+    );
+    // The Note paraphrase cluster shape is embedding-model-
+    // dependent (model2vec at θ=0.85 sometimes lands one Redis
+    // restatement just below the threshold). The load-bearing
+    // assertion is "Preferences are protected" — we only sanity-
+    // check that *something* in the unprotected pool collapsed.
+    let collapsed = stats.tight_collapsed + stats.spread_archived;
+    assert!(
+        collapsed >= 1,
+        "at least one of the 3 unprotected Note paraphrases should \
+         collapse; got {} (cluster shape is model-dependent — bump \
+         to a stronger model if this regresses)",
+        collapsed
+    );
+
+    // Total fact_count is preserved (supersede flips a flag), but
+    // all 3 Preferences must remain CURRENT — that's the lever the
+    // operator is paying for.
+    let pref_facts: Vec<_> = wiki
+        .fact_list(wg_core::FactListOpts {
+            fact_type: Some(FactType::Preference),
+            current_only: true,
+            ..Default::default()
+        })
+        .expect("fact_list");
+    assert_eq!(
+        pref_facts.len(),
+        3,
+        "all 3 Preferences must survive as current, none superseded"
     );
 }
