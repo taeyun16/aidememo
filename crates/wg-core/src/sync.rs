@@ -35,14 +35,34 @@ use ulid::Ulid;
 pub const SYNC_SCHEMA: u32 = 2;
 
 /// Cursor pair — where a downstream agent left off on its last pull
-/// from a given upstream. Both fields are inclusive lower bounds:
-/// "give me everything *strictly after* this ULID".
+/// from a given upstream. Two dimensions per record kind:
+///
+/// * **ULID cursor** (`entity` / `fact`) — high-water for new
+///   inserts. ULID is time-sortable, so "anything strictly above
+///   this ULID is new".
+/// * **updated_at cursor** (`entity_updated_at` / `fact_updated_at`)
+///   — high-water for in-place mutations on already-pulled records.
+///   `supersede`, `pin`, `entity_describe`, etc. bump `updated_at`
+///   without changing the ULID, so we need a second cursor to
+///   notice them.
+///
+/// Both fields are inclusive lower bounds. Phase 2 stored only the
+/// ULID pair; the new updated_at fields use `#[serde(default)]` so
+/// existing `<store>.sync.json` cursor files keep loading.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SyncCursor {
     /// Last entity ULID the downstream successfully applied.
     pub entity: Option<EntityId>,
     /// Last fact ULID the downstream successfully applied.
     pub fact: Option<FactId>,
+    /// Highest `updated_at` (epoch ms) the downstream has seen for
+    /// any entity. Drives the "in-place updates" pass.
+    #[serde(default)]
+    pub entity_updated_at: Option<u64>,
+    /// Highest `updated_at` (epoch ms) the downstream has seen for
+    /// any fact. Drives the "in-place updates" pass.
+    #[serde(default)]
+    pub fact_updated_at: Option<u64>,
 }
 
 /// Options for `WikiGraph::sync_export`.
@@ -77,9 +97,18 @@ pub struct SyncImportStats {
 }
 
 impl WikiGraph {
-    /// Emit a JSONL delta of entities + facts (+ optional relations)
-    /// created strictly after the cursor. Caller writes the bytes to
-    /// any sink (HTTP body, file, etc).
+    /// Emit a JSONL delta in two passes:
+    ///   1. **Inserts** — entities / facts whose ULID is strictly
+    ///      above `since.entity` / `since.fact`.
+    ///   2. **Updates** — entities / facts whose ULID is *at or below*
+    ///      that cursor (i.e. already pulled before) but whose
+    ///      `updated_at` is strictly above `since.entity_updated_at` /
+    ///      `since.fact_updated_at`. Catches `supersede`, `pin`,
+    ///      `entity_describe`, and other in-place mutations.
+    ///
+    /// Both passes share the same `limit` budget and the same output
+    /// stream. The trailing `cursor` line carries all four high-water
+    /// values so the downstream knows where to resume.
     pub fn sync_export(&self, opts: SyncExportOpts, writer: &mut dyn Write) -> Result<usize> {
         // Header — schema + emit time. The clock helps the downstream
         // sanity-check skew.
@@ -98,16 +127,18 @@ impl WikiGraph {
         let mut emitted: usize = 0;
         let mut last_entity: Option<EntityId> = opts.since.entity;
         let mut last_fact: Option<FactId> = opts.since.fact;
+        let mut last_entity_updated_at: Option<u64> = opts.since.entity_updated_at;
+        let mut last_fact_updated_at: Option<u64> = opts.since.fact_updated_at;
 
-        // Entities — fetch all then filter by ULID > since.entity.
-        // entity_list returns EntitySummary; we need the full record.
         let store = self.store_handle();
+
+        // PASS A — entities: new ULIDs above the cursor.
         let entity_summaries = store.read().entity_list(ListOpts {
             limit: Some(usize::MAX),
             ..Default::default()
         })?;
         let mut new_entities: Vec<EntityRecord> = Vec::new();
-        for s in entity_summaries {
+        for s in &entity_summaries {
             if let Some(cut) = opts.since.entity {
                 if s.id.0 <= cut.0 {
                     continue;
@@ -118,35 +149,106 @@ impl WikiGraph {
             }
         }
         new_entities.sort_by_key(|e| e.id.0);
-        for e in new_entities {
+        for e in &new_entities {
             if emitted >= limit {
                 break;
             }
             let line = serde_json::json!({"kind": "entity", "data": e});
             writeln!(writer, "{}", line).map_err(io_serialize)?;
             last_entity = Some(e.id);
+            if e.updated_at > last_entity_updated_at.unwrap_or(0) {
+                last_entity_updated_at = Some(e.updated_at);
+            }
             emitted += 1;
         }
 
-        // Facts — fact_list already returns Vec<FactRecord>.
+        // PASS B — entity updates: already-known ULIDs whose
+        // updated_at moved past the watermark. Only kicks in when the
+        // downstream provided an entity_updated_at cursor (full first
+        // pull skips this naturally because cursor.entity = None means
+        // pass A already covers everything).
+        if emitted < limit && opts.since.entity.is_some() {
+            let mut updates: Vec<EntityRecord> = Vec::new();
+            for s in &entity_summaries {
+                if let Some(cut) = opts.since.entity {
+                    if s.id.0 > cut.0 {
+                        continue; // already in pass A
+                    }
+                }
+                if let Ok(rec) = store.read().entity_get_by_id(s.id) {
+                    if rec.updated_at > opts.since.entity_updated_at.unwrap_or(0) {
+                        updates.push(rec);
+                    }
+                }
+            }
+            updates.sort_by_key(|e| e.updated_at);
+            for e in &updates {
+                if emitted >= limit {
+                    break;
+                }
+                let line = serde_json::json!({"kind": "entity", "data": e});
+                writeln!(writer, "{}", line).map_err(io_serialize)?;
+                if e.updated_at > last_entity_updated_at.unwrap_or(0) {
+                    last_entity_updated_at = Some(e.updated_at);
+                }
+                emitted += 1;
+            }
+        }
+
+        // PASS A — facts: new ULIDs above the cursor.
         if emitted < limit {
-            let mut facts = store.read().fact_list(FactListOpts {
+            let all_facts = store.read().fact_list(FactListOpts {
                 limit: None,
                 ..Default::default()
             })?;
-            facts.retain(|f| match opts.since.fact {
-                Some(cut) => f.id.0 > cut.0,
-                None => true,
-            });
-            facts.sort_by_key(|f| f.id.0);
-            for f in facts {
+            let mut new_facts: Vec<FactRecord> = Vec::new();
+            for f in &all_facts {
+                if let Some(cut) = opts.since.fact {
+                    if f.id.0 <= cut.0 {
+                        continue;
+                    }
+                }
+                new_facts.push(f.clone());
+            }
+            new_facts.sort_by_key(|f| f.id.0);
+            for f in &new_facts {
                 if emitted >= limit {
                     break;
                 }
                 let line = serde_json::json!({"kind": "fact", "data": f});
                 writeln!(writer, "{}", line).map_err(io_serialize)?;
                 last_fact = Some(f.id);
+                if f.updated_at > last_fact_updated_at.unwrap_or(0) {
+                    last_fact_updated_at = Some(f.updated_at);
+                }
                 emitted += 1;
+            }
+
+            // PASS B — fact updates.
+            if emitted < limit && opts.since.fact.is_some() {
+                let mut updates: Vec<FactRecord> = Vec::new();
+                for f in &all_facts {
+                    if let Some(cut) = opts.since.fact {
+                        if f.id.0 > cut.0 {
+                            continue; // already in pass A
+                        }
+                    }
+                    if f.updated_at > opts.since.fact_updated_at.unwrap_or(0) {
+                        updates.push(f.clone());
+                    }
+                }
+                updates.sort_by_key(|f| f.updated_at);
+                for f in &updates {
+                    if emitted >= limit {
+                        break;
+                    }
+                    let line = serde_json::json!({"kind": "fact", "data": f});
+                    writeln!(writer, "{}", line).map_err(io_serialize)?;
+                    if f.updated_at > last_fact_updated_at.unwrap_or(0) {
+                        last_fact_updated_at = Some(f.updated_at);
+                    }
+                    emitted += 1;
+                }
             }
         }
 
@@ -186,11 +288,14 @@ impl WikiGraph {
             }
         }
 
-        // Trailing cursor — tells downstream where to resume.
+        // Trailing cursor — tells downstream where to resume. Carries
+        // both ULID watermarks and updated_at watermarks (Phase 2.5).
         let cursor_line = serde_json::json!({
             "kind": "cursor",
             "entity": last_entity.map(|e| e.0.to_string()),
             "fact": last_fact.map(|f| f.0.to_string()),
+            "entity_updated_at": last_entity_updated_at,
+            "fact_updated_at": last_fact_updated_at,
         });
         writeln!(writer, "{}", cursor_line).map_err(io_serialize)?;
 
@@ -265,6 +370,10 @@ impl WikiGraph {
                     };
                     stats.new_cursor.entity = parse_ulid("entity").map(EntityId);
                     stats.new_cursor.fact = parse_ulid("fact").map(FactId);
+                    stats.new_cursor.entity_updated_at =
+                        v.get("entity_updated_at").and_then(|x| x.as_u64());
+                    stats.new_cursor.fact_updated_at =
+                        v.get("fact_updated_at").and_then(|x| x.as_u64());
                 }
                 _ => stats.errors += 1,
             }
@@ -413,6 +522,129 @@ mod tests {
         assert!(
             !blob.contains(&f1.0.to_string()),
             "delta must NOT re-include f1"
+        );
+    }
+
+    /// Pull a fact, supersede it upstream, pull again. The downstream
+    /// must observe the supersede flag without the fact's ULID
+    /// changing — that's the whole point of Phase 2.5.
+    #[test]
+    fn supersede_propagates_through_pull() {
+        let (_dir_a, upstream) = open_temp();
+        let original = upstream
+            .fact_add(FactInput {
+                content: "old claim".into(),
+                ..Default::default()
+            })
+            .unwrap();
+
+        // First pull — downstream gets the original, no supersede.
+        let mut buf1 = Vec::new();
+        upstream
+            .sync_export(SyncExportOpts::default(), &mut buf1)
+            .unwrap();
+        let (_dir_b, downstream) = open_temp();
+        let stats1 = downstream
+            .sync_import(std::str::from_utf8(&buf1).unwrap())
+            .unwrap();
+        assert_eq!(stats1.facts_inserted, 1);
+        let downstream_before = downstream.fact_get(&original).unwrap();
+        assert!(downstream_before.superseded_at.is_none());
+
+        // Upstream supersedes via a new fact.
+        // Sleep a millisecond so updated_at strictly advances even on
+        // fast machines where two writes can land in the same ms.
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        let replacement = upstream
+            .fact_add(FactInput {
+                content: "new claim".into(),
+                ..Default::default()
+            })
+            .unwrap();
+        upstream.fact_supersede(&original, &replacement).unwrap();
+
+        // Second pull — incremental from cursor1. Must include the
+        // replacement (new ULID) AND the original's supersede update.
+        let mut buf2 = Vec::new();
+        upstream
+            .sync_export(
+                SyncExportOpts {
+                    since: stats1.new_cursor.clone(),
+                    ..Default::default()
+                },
+                &mut buf2,
+            )
+            .unwrap();
+        let stats2 = downstream
+            .sync_import(std::str::from_utf8(&buf2).unwrap())
+            .unwrap();
+        assert!(
+            stats2.facts_inserted >= 1,
+            "expected the replacement fact in the delta, got {} inserts",
+            stats2.facts_inserted
+        );
+
+        let downstream_after = downstream.fact_get(&original).unwrap();
+        assert!(
+            downstream_after.superseded_at.is_some(),
+            "supersede flag must propagate through the second pull \
+             (Phase 2.5 update pass)"
+        );
+        assert_eq!(downstream_after.superseded_by, Some(replacement));
+    }
+
+    /// `entity_describe` mutates `summary` and bumps `updated_at`.
+    /// Phase 2.5 must propagate it to the downstream on incremental
+    /// pull.
+    #[test]
+    fn entity_describe_propagates_through_pull() {
+        let (_dir_a, upstream) = open_temp();
+        let eid = upstream
+            .entity_add(EntityInput {
+                name: "Redis".into(),
+                ..Default::default()
+            })
+            .unwrap();
+
+        let mut buf1 = Vec::new();
+        upstream
+            .sync_export(SyncExportOpts::default(), &mut buf1)
+            .unwrap();
+        let (_dir_b, downstream) = open_temp();
+        let stats1 = downstream
+            .sync_import(std::str::from_utf8(&buf1).unwrap())
+            .unwrap();
+        assert_eq!(stats1.entities_inserted, 1);
+        assert!(downstream.entity_get_by_id(eid).unwrap().summary.is_none());
+
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        upstream
+            .entity_describe("Redis", "In-memory cache; cluster mode for HA")
+            .unwrap();
+
+        let mut buf2 = Vec::new();
+        upstream
+            .sync_export(
+                SyncExportOpts {
+                    since: stats1.new_cursor.clone(),
+                    ..Default::default()
+                },
+                &mut buf2,
+            )
+            .unwrap();
+        let stats2 = downstream
+            .sync_import(std::str::from_utf8(&buf2).unwrap())
+            .unwrap();
+        // The entity is in the cursor's known set, so it lands in the
+        // updates pass — entities_inserted counter goes up because
+        // upsert returns Ok(true) for the LWW overwrite path too.
+        assert!(stats2.entities_inserted + stats2.entities_skipped >= 1);
+
+        let after = downstream.entity_get_by_id(eid).unwrap();
+        assert_eq!(
+            after.summary.as_deref(),
+            Some("In-memory cache; cluster mode for HA"),
+            "summary update must reach the downstream"
         );
     }
 }

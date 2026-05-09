@@ -221,6 +221,12 @@ struct SyncSinceQuery {
     entity: Option<String>,
     /// Last fact ULID the puller already has.
     fact: Option<String>,
+    /// Phase 2.5 — high-water `updated_at` for entities, drives the
+    /// in-place updates pass (catches `entity_describe`, etc).
+    entity_updated_at: Option<u64>,
+    /// Phase 2.5 — high-water `updated_at` for facts (catches
+    /// `supersede`, `pin`, etc).
+    fact_updated_at: Option<u64>,
     /// Cap on records returned in this batch. Default 5000.
     limit: Option<usize>,
     /// Include relations in the export. Default true.
@@ -246,6 +252,8 @@ async fn handle_sync_since(
         since: wg_core::sync::SyncCursor {
             entity: parse_ulid(q.entity).map(wg_core::EntityId),
             fact: parse_ulid(q.fact).map(wg_core::FactId),
+            entity_updated_at: q.entity_updated_at,
+            fact_updated_at: q.fact_updated_at,
         },
         limit: q.limit.unwrap_or(5000),
         include_relations: q.relations.unwrap_or(true),

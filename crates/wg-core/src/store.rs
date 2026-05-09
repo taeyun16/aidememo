@@ -1784,15 +1784,42 @@ impl Store {
     pub fn entity_upsert_record(&mut self, record: EntityRecord) -> Result<bool> {
         let id = record.id;
 
-        // Fast skip-by-id check.
-        if self.entity_get_by_id(id).is_ok() {
-            return Ok(false);
+        // LWW by `updated_at`: if local copy exists and isn't older
+        // than the incoming, skip. Otherwise overwrite. This is the
+        // Phase 2.5 change from "skip if id exists" — needed so
+        // entity_describe / supersede / pin updates land on records
+        // the downstream already pulled.
+        if let Ok(local) = self.entity_get_by_id(id) {
+            if local.updated_at >= record.updated_at {
+                return Ok(false);
+            }
         }
 
         let write_txn = self.begin_write()?;
 
-        // Name-conflict skip — see contract above.
-        {
+        // Name-conflict guard — only relevant for FRESH inserts (no
+        // local copy yet). When updating an existing record, the name
+        // index already points at this same id so the lookup will hit
+        // ourselves and we proceed.
+        let is_update = {
+            let entities =
+                write_txn
+                    .open_table(ENTITIES_TABLE)
+                    .map_err(|e| WgError::StoreRead {
+                        table: "entities",
+                        key: id.to_string(),
+                        source: Box::new(e),
+                    })?;
+            entities
+                .get(id.as_bytes().as_slice())
+                .map_err(|e| WgError::StoreRead {
+                    table: "entities",
+                    key: id.to_string(),
+                    source: Box::new(e),
+                })?
+                .is_some()
+        };
+        if !is_update {
             let by_name =
                 write_txn
                     .open_table(ENTITY_BY_NAME_TABLE)
@@ -1862,14 +1889,17 @@ impl Store {
         Ok(true)
     }
 
-    /// Insert a `FactRecord` preserving its ULID. Returns `Ok(true)` on
-    /// fresh insert, `Ok(false)` if a fact with the same ULID already
-    /// exists locally. Skips the content-hash dedup path — the donor
-    /// owns that decision.
+    /// Insert a `FactRecord` preserving its ULID. Returns `Ok(true)`
+    /// when the local copy ends up reflecting the incoming record
+    /// (fresh insert OR LWW overwrite), `Ok(false)` when the local
+    /// copy was already at-or-after the incoming `updated_at`. Skips
+    /// the content-hash dedup path — the donor owns that decision.
     pub fn fact_upsert_record(&mut self, record: FactRecord) -> Result<bool> {
         let id = record.id;
-        if self.fact_get(&id).is_ok() {
-            return Ok(false);
+        if let Ok(local) = self.fact_get(&id) {
+            if local.updated_at >= record.updated_at {
+                return Ok(false);
+            }
         }
 
         let hash = sha256_hex(&record.content);

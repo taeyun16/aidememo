@@ -2220,13 +2220,21 @@ fn handle_sync_pull(
         .or_else(|| std::env::var("WG_MCP_AUTH_TOKEN").ok())
         .or_else(|| cmd::auth::load_token_for(&key));
 
-    // Build the request URL with current cursor params.
+    // Build the request URL with current cursor params. Both ULID and
+    // updated_at watermarks are included — the upstream uses both to
+    // run the inserts pass + Phase 2.5 updates pass.
     let mut endpoint = format!("{}/sync/since?limit={}", key, limit.unwrap_or(5000));
     if let Some(e) = &prev.entity {
         endpoint.push_str(&format!("&entity={}", e));
     }
     if let Some(f) = &prev.fact {
         endpoint.push_str(&format!("&fact={}", f));
+    }
+    if let Some(t) = prev.entity_updated_at {
+        endpoint.push_str(&format!("&entity_updated_at={}", t));
+    }
+    if let Some(t) = prev.fact_updated_at {
+        endpoint.push_str(&format!("&fact_updated_at={}", t));
     }
 
     tracing::debug!(target: "wg::sync", "GET {}", endpoint);
@@ -2256,12 +2264,34 @@ fn handle_sync_pull(
     let wiki = WikiGraph::open(store_path, config)?;
     let stats = wiki.sync_import(&body)?;
 
-    // Advance the cursor record only if the upstream emitted a new one.
-    let advanced = stats.new_cursor.entity.is_some() || stats.new_cursor.fact.is_some();
+    // Advance the cursor record only if the upstream emitted any
+    // new high-water value. Updated_at fields advance independently
+    // of ULID fields — record both so the next pull picks up
+    // mutations even when no new IDs appeared.
+    let advanced = stats.new_cursor.entity.is_some()
+        || stats.new_cursor.fact.is_some()
+        || stats.new_cursor.entity_updated_at.is_some()
+        || stats.new_cursor.fact_updated_at.is_some();
     if advanced {
+        // Carry forward whatever the prior cursor had — sync_export
+        // only re-emits the watermark when something actually moved,
+        // so we OR-merge against `prev` to avoid losing ground.
         let entry = StoredCursor {
-            entity: stats.new_cursor.entity.map(|e| e.0.to_string()),
-            fact: stats.new_cursor.fact.map(|f| f.0.to_string()),
+            entity: stats
+                .new_cursor
+                .entity
+                .map(|e| e.0.to_string())
+                .or_else(|| prev.entity.clone()),
+            fact: stats
+                .new_cursor
+                .fact
+                .map(|f| f.0.to_string())
+                .or_else(|| prev.fact.clone()),
+            entity_updated_at: stats
+                .new_cursor
+                .entity_updated_at
+                .or(prev.entity_updated_at),
+            fact_updated_at: stats.new_cursor.fact_updated_at.or(prev.fact_updated_at),
             last_pulled_at: wg_core::time::current_epoch_ms(),
         };
         cursor.remotes.insert(key.clone(), entry);
@@ -2286,6 +2316,13 @@ fn handle_sync_pull(
 struct StoredCursor {
     entity: Option<String>,
     fact: Option<String>,
+    /// Phase 2.5 — high-water `updated_at` watermarks. `#[serde(default)]`
+    /// so existing cursor files (Phase 2 era) keep loading without
+    /// resetting the ULID watermark.
+    #[serde(default)]
+    entity_updated_at: Option<u64>,
+    #[serde(default)]
+    fact_updated_at: Option<u64>,
     last_pulled_at: u64,
 }
 

@@ -661,9 +661,14 @@ upstream emits a trailing `cursor` line on every batch so the
 downstream knows where to resume.
 
 What's transferred: entities, facts, relations — all with original
-ULIDs preserved. What's NOT yet transferred: supersede-state changes
-on already-synced facts (LWW merge), pin/unpin updates, search
-feedback. Those land in Phase 2.5.
+ULIDs preserved. As of Phase 2.5, **in-place mutations** also
+propagate: `fact_supersede`, `fact_pin/unpin`, `entity_describe`,
+and any other write that bumps `updated_at`. The cursor file gains
+two `*_updated_at` watermarks alongside the ULID watermarks; pull
+runs a 2-pass export (new ULIDs + records whose `updated_at`
+moved) and the receiving `*_upsert_record` paths LWW by
+`updated_at`. Existing Phase 2 cursor files keep loading
+(`#[serde(default)]` on the new fields).
 
 What's intentionally not in this pipeline: push from agent → shared.
 For that, use the regular MCP tool calls against `mcp-serve` (every
