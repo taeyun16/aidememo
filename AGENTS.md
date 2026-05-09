@@ -675,6 +675,55 @@ For that, use the regular MCP tool calls against `mcp-serve` (every
 write happens at the canonical writer, no merge problem). Multi-
 master push with conflict resolution is Phase 3.
 
+### Sync operations (Phase 2.6)
+
+`wg sync pull` auto-paginates — a single invocation keeps issuing
+`/sync/since` requests with the advancing cursor until the upstream
+returns less than a full batch. So `wg sync pull <URL>` always
+catches up fully, no manual loop needed. Default per-batch limit
+is 5,000 records; tune with `--limit N`.
+
+| Flag | Effect |
+|---|---|
+| `--limit N` | Per-batch cap; total pull is unbounded (paginates until drained) |
+| `--watch SEC` | Long-running mode: drain, sleep N seconds, repeat. SIGINT exits cleanly |
+| `--json` | One JSON object per pull cycle (stable shape for scripts) |
+
+Two recipes:
+
+```bash
+# Cron / one-shot (e.g. `*/5 * * * * wg sync pull http://team-host:3000`)
+wg sync pull http://team-host:3000
+
+# Long-running daemon (systemd / supervisord)
+wg sync pull http://team-host:3000 --watch 60
+```
+
+`wg sync status` prints per-remote cursor + age:
+
+```bash
+wg sync status                          # all remotes in <store>.sync.json
+wg sync status http://team-host:3000    # one remote
+wg sync status --json                   # script-friendly
+```
+
+`wg sync status --json` shape (stable):
+
+```json
+{
+  "store": "...",
+  "cursor_file": "<store>.sync.json",
+  "remotes": [
+    {
+      "url": "http://team-host:3000",
+      "entity": "01ABC...", "fact": "01DEF...",
+      "entity_updated_at": 1778..., "fact_updated_at": 1778...,
+      "last_pulled_at": 1778..., "age_ms": 432
+    }
+  ]
+}
+```
+
 The original `wg sync <DIR>` markdown-ingest alias moved under
 `wg sync ingest <DIR>` to make room for `wg sync pull <URL>`.
 

@@ -365,13 +365,20 @@ pub enum SyncSub {
     Ingest { wiki_root: PathBuf },
     /// Pull a delta from a remote `wg mcp-serve` and apply it to the
     /// local store, advancing the per-remote cursor in
-    /// `<store>.sync.json`.
+    /// `<store>.sync.json`. URL must come last per bpaf positional
+    /// rules; the order of the optional flags above doesn't matter
+    /// for invocation, only for the macro.
     Pull {
-        url: String,
         token: Option<String>,
         token_file: Option<PathBuf>,
         limit: Option<usize>,
+        watch: Option<u64>,
+        json: bool,
+        url: String,
     },
+    /// Show per-remote cursor + last-pull metadata. Without URL,
+    /// lists every remote in `<store>.sync.json`.
+    Status { json: bool, url: Option<String> },
 }
 
 #[derive(Debug, Clone)]
@@ -1342,17 +1349,42 @@ fn sync_command() -> impl Parser<Command> {
         .help("Max records per pull batch (default 5000). Pull repeats internally until drained.")
         .argument::<usize>("N")
         .optional();
+    let watch = long("watch")
+        .help(
+            "Long-running mode — keep polling every N seconds. SIGINT \
+             exits cleanly. Useful as a systemd / supervisor unit. \
+             A common cadence is `--watch 60`.",
+        )
+        .argument::<u64>("SEC")
+        .optional();
+    let json = long("json")
+        .help("Emit one JSON object per pull cycle instead of human-readable text.")
+        .switch();
     let pull = construct!(SyncSub::Pull {
         token,
         token_file,
         limit,
-        url,
+        watch,
+        json,
+        url, // positional must be last per bpaf
     })
     .to_options()
     .command("pull")
-    .help("Pull a delta from a remote `wg mcp-serve` (Phase 2 pull-only sync)");
+    .help(
+        "Pull a delta from a remote `wg mcp-serve` (auto-paginated; --watch for periodic polling)",
+    );
 
-    construct!([ingest, pull])
+    // wg sync status [URL] [--json]
+    let url = positional::<String>("URL")
+        .help("Show only this remote (omit to list all remotes in the cursor file)")
+        .optional();
+    let json = long("json").switch();
+    let status = construct!(SyncSub::Status { json, url })
+        .to_options()
+        .command("status")
+        .help("Show per-remote sync cursor + last-pull metadata.");
+
+    construct!([ingest, pull, status])
         .map(Command::Sync)
         .to_options()
         .command("sync")

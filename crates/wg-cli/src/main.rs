@@ -88,7 +88,7 @@ fn main() {
         cmd::Command::Import(sub) => handle_import(&store_path, config, sub),
         cmd::Command::Stats(sub) => handle_stats(&store_path, config, sub, json),
         cmd::Command::Ingest(sub) => handle_ingest(&store_path, config, sub),
-        cmd::Command::Sync(sub) => handle_sync(&store_path, config, sub),
+        cmd::Command::Sync(sub) => handle_sync(&store_path, config, sub, json),
         cmd::Command::Config(sub) => handle_config(config, sub),
         cmd::Command::Model(sub) => handle_model(config, sub),
         cmd::Command::Feedback(sub) => cmd::feedback::run_feedback(&store_path, config, sub),
@@ -2174,7 +2174,12 @@ fn handle_ingest(path: &Path, config: Config, sub: cmd::IngestSub) -> Result<Str
     Ok(lines.join("\n"))
 }
 
-fn handle_sync(path: &Path, config: Config, sub: cmd::SyncSub) -> Result<String, WgError> {
+fn handle_sync(
+    path: &Path,
+    config: Config,
+    sub: cmd::SyncSub,
+    global_json: bool,
+) -> Result<String, WgError> {
     match sub {
         cmd::SyncSub::Ingest { wiki_root } => handle_ingest(
             path,
@@ -2189,7 +2194,19 @@ fn handle_sync(path: &Path, config: Config, sub: cmd::SyncSub) -> Result<String,
             token,
             token_file,
             limit,
-        } => handle_sync_pull(path, config, url, token, token_file, limit),
+            watch,
+            json,
+        } => handle_sync_pull(
+            path,
+            config,
+            url,
+            token,
+            token_file,
+            limit,
+            watch,
+            json || global_json,
+        ),
+        cmd::SyncSub::Status { url, json } => handle_sync_status(path, url, json || global_json),
     }
 }
 
@@ -2200,18 +2217,11 @@ fn handle_sync_pull(
     token: Option<String>,
     token_file: Option<PathBuf>,
     limit: Option<usize>,
+    watch: Option<u64>,
+    json: bool,
 ) -> Result<String, WgError> {
-    use std::io::Read;
-
-    // Cursor file lives next to the store.
-    let cursor_path = sync_cursor_path(store_path);
-    let mut cursor = load_sync_cursor(&cursor_path);
     let key = url.trim_end_matches('/').to_string();
-    let prev = cursor.remotes.get(&key).cloned().unwrap_or_default();
-
-    // Resolution order: --token > --token-file > WG_MCP_AUTH_TOKEN env >
-    // ~/.wg/auth.json (populated by `wg auth login`).
-    let token = token
+    let resolved_token = token
         .or_else(|| {
             token_file
                 .as_ref()
@@ -2219,63 +2229,108 @@ fn handle_sync_pull(
         })
         .or_else(|| std::env::var("WG_MCP_AUTH_TOKEN").ok())
         .or_else(|| cmd::auth::load_token_for(&key));
+    let batch_limit = limit.unwrap_or(5000);
 
-    // Build the request URL with current cursor params. Both ULID and
-    // updated_at watermarks are included — the upstream uses both to
-    // run the inserts pass + Phase 2.5 updates pass.
-    let mut endpoint = format!("{}/sync/since?limit={}", key, limit.unwrap_or(5000));
-    if let Some(e) = &prev.entity {
-        endpoint.push_str(&format!("&entity={}", e));
-    }
-    if let Some(f) = &prev.fact {
-        endpoint.push_str(&format!("&fact={}", f));
-    }
-    if let Some(t) = prev.entity_updated_at {
-        endpoint.push_str(&format!("&entity_updated_at={}", t));
-    }
-    if let Some(t) = prev.fact_updated_at {
-        endpoint.push_str(&format!("&fact_updated_at={}", t));
-    }
-
-    tracing::debug!(target: "wg::sync", "GET {}", endpoint);
-    let mut req = ureq::get(&endpoint);
-    if let Some(t) = token.as_deref() {
-        if !t.is_empty() {
-            req = req.set("Authorization", &format!("Bearer {}", t));
+    if let Some(interval_sec) = watch {
+        if interval_sec == 0 {
+            return Err(WgError::InvalidInput("--watch SEC must be positive".into()));
+        }
+        // Long-running mode. Each iteration runs one full drain
+        // (auto-pagination) then sleeps. SIGINT is delivered to the
+        // process by the runtime; the std::thread::sleep wakes via
+        // signal so the loop ends naturally on Ctrl-C.
+        loop {
+            match drain_pull(
+                store_path,
+                &config,
+                &key,
+                resolved_token.as_deref(),
+                batch_limit,
+            ) {
+                Ok(summary) => render_pull_summary(&summary, json),
+                Err(e) => {
+                    if json {
+                        let payload = serde_json::json!({"url": key, "error": e.to_string()});
+                        println!("{}", payload);
+                    } else {
+                        eprintln!("error pulling {key}: {e}");
+                    }
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_secs(interval_sec));
         }
     }
 
-    let resp = req
-        .call()
-        .map_err(|e| WgError::Internal(format!("sync pull HTTP failed: {e}")))?;
-    if resp.status() != 200 {
-        return Err(WgError::Internal(format!(
-            "sync pull returned HTTP {}: {}",
-            resp.status(),
-            resp.into_string().unwrap_or_default()
-        )));
-    }
+    let summary = drain_pull(
+        store_path,
+        &config,
+        &key,
+        resolved_token.as_deref(),
+        batch_limit,
+    )?;
+    Ok(render_pull_summary_string(&summary, json))
+}
 
-    let mut body = String::new();
-    resp.into_reader()
-        .read_to_string(&mut body)
-        .map_err(|e| WgError::Internal(format!("sync pull body read: {e}")))?;
+#[derive(Debug, Default, Clone, serde::Serialize)]
+struct PullSummary {
+    url: String,
+    iterations: usize,
+    entities_inserted: usize,
+    entities_skipped: usize,
+    facts_inserted: usize,
+    facts_skipped: usize,
+    relations_inserted: usize,
+    relations_skipped: usize,
+    errors: usize,
+    cursor_entity: Option<String>,
+    cursor_fact: Option<String>,
+    cursor_entity_updated_at: Option<u64>,
+    cursor_fact_updated_at: Option<u64>,
+    elapsed_ms: u128,
+}
 
-    let wiki = WikiGraph::open(store_path, config)?;
-    let stats = wiki.sync_import(&body)?;
+fn drain_pull(
+    store_path: &Path,
+    config: &Config,
+    key: &str,
+    token: Option<&str>,
+    batch_limit: usize,
+) -> Result<PullSummary, WgError> {
+    let started = std::time::Instant::now();
+    let cursor_path = sync_cursor_path(store_path);
+    let mut summary = PullSummary {
+        url: key.to_string(),
+        ..Default::default()
+    };
 
-    // Advance the cursor record only if the upstream emitted any
-    // new high-water value. Updated_at fields advance independently
-    // of ULID fields — record both so the next pull picks up
-    // mutations even when no new IDs appeared.
-    let advanced = stats.new_cursor.entity.is_some()
-        || stats.new_cursor.fact.is_some()
-        || stats.new_cursor.entity_updated_at.is_some()
-        || stats.new_cursor.fact_updated_at.is_some();
-    if advanced {
-        // Carry forward whatever the prior cursor had — sync_export
-        // only re-emits the watermark when something actually moved,
-        // so we OR-merge against `prev` to avoid losing ground.
+    // Cap iterations to protect against pathological loops where the
+    // upstream keeps returning records but the cursor doesn't advance
+    // (would indicate a server bug, not a normal condition).
+    let max_iter = 1024;
+    for _ in 0..max_iter {
+        // Re-load on every iteration so concurrent writers (rare but
+        // possible during local-tier writes) see the freshest cursor.
+        let cursor_file = load_sync_cursor(&cursor_path);
+        let prev = cursor_file.remotes.get(key).cloned().unwrap_or_default();
+
+        let body = pull_one_batch(key, token, &prev, batch_limit)?;
+        let wiki = WikiGraph::open(store_path, config.clone())?;
+        let stats = wiki.sync_import(&body)?;
+        drop(wiki); // release redb lock before saving cursor + next loop
+
+        let cycle_records = stats.entities_inserted
+            + stats.entities_skipped
+            + stats.facts_inserted
+            + stats.facts_skipped
+            + stats.relations_inserted
+            + stats.relations_skipped;
+
+        // Decide whether to advance the cursor. Either a new high-water
+        // value was emitted, or we should at least bump last_pulled_at.
+        let advanced = stats.new_cursor.entity.is_some()
+            || stats.new_cursor.fact.is_some()
+            || stats.new_cursor.entity_updated_at.is_some()
+            || stats.new_cursor.fact_updated_at.is_some();
         let entry = StoredCursor {
             entity: stats
                 .new_cursor
@@ -2294,22 +2349,175 @@ fn handle_sync_pull(
             fact_updated_at: stats.new_cursor.fact_updated_at.or(prev.fact_updated_at),
             last_pulled_at: wg_core::time::current_epoch_ms(),
         };
-        cursor.remotes.insert(key.clone(), entry);
-        save_sync_cursor(&cursor_path, &cursor)?;
+        let mut cursor_file_now = load_sync_cursor(&cursor_path);
+        cursor_file_now
+            .remotes
+            .insert(key.to_string(), entry.clone());
+        save_sync_cursor(&cursor_path, &cursor_file_now)?;
+
+        summary.iterations += 1;
+        summary.entities_inserted += stats.entities_inserted;
+        summary.entities_skipped += stats.entities_skipped;
+        summary.facts_inserted += stats.facts_inserted;
+        summary.facts_skipped += stats.facts_skipped;
+        summary.relations_inserted += stats.relations_inserted;
+        summary.relations_skipped += stats.relations_skipped;
+        summary.errors += stats.errors;
+        summary.cursor_entity = entry.entity;
+        summary.cursor_fact = entry.fact;
+        summary.cursor_entity_updated_at = entry.entity_updated_at;
+        summary.cursor_fact_updated_at = entry.fact_updated_at;
+
+        // Stop conditions:
+        //  - Upstream returned nothing (steady state — fully drained)
+        //  - Server didn't move any cursor AND emitted no records
+        //    (upstream has nothing newer than what we sent)
+        if cycle_records == 0 || (!advanced && cycle_records == 0) {
+            break;
+        }
+        // If the upstream returned strictly fewer records than the
+        // batch limit, the next request would only return zero — skip
+        // the extra round-trip.
+        if cycle_records < batch_limit {
+            break;
+        }
     }
 
-    Ok(format!(
-        "pulled from {}: +{} entities, +{} facts, +{} relations \
-         ({} skipped, {} errors); cursor → entity={:?} fact={:?}",
-        key,
-        stats.entities_inserted,
-        stats.facts_inserted,
-        stats.relations_inserted,
-        stats.entities_skipped + stats.facts_skipped + stats.relations_skipped,
-        stats.errors,
-        stats.new_cursor.entity.map(|e| e.0.to_string()),
-        stats.new_cursor.fact.map(|f| f.0.to_string()),
-    ))
+    summary.elapsed_ms = started.elapsed().as_millis();
+    Ok(summary)
+}
+
+fn pull_one_batch(
+    key: &str,
+    token: Option<&str>,
+    prev: &StoredCursor,
+    batch_limit: usize,
+) -> Result<String, WgError> {
+    use std::io::Read;
+    let mut endpoint = format!("{}/sync/since?limit={}", key, batch_limit);
+    if let Some(e) = &prev.entity {
+        endpoint.push_str(&format!("&entity={}", e));
+    }
+    if let Some(f) = &prev.fact {
+        endpoint.push_str(&format!("&fact={}", f));
+    }
+    if let Some(t) = prev.entity_updated_at {
+        endpoint.push_str(&format!("&entity_updated_at={}", t));
+    }
+    if let Some(t) = prev.fact_updated_at {
+        endpoint.push_str(&format!("&fact_updated_at={}", t));
+    }
+
+    tracing::debug!(target: "wg::sync", "GET {}", endpoint);
+    let mut req = ureq::get(&endpoint);
+    if let Some(t) = token {
+        if !t.is_empty() {
+            req = req.set("Authorization", &format!("Bearer {}", t));
+        }
+    }
+    let resp = req
+        .call()
+        .map_err(|e| WgError::Internal(format!("sync pull HTTP failed: {e}")))?;
+    if resp.status() != 200 {
+        return Err(WgError::Internal(format!(
+            "sync pull returned HTTP {}: {}",
+            resp.status(),
+            resp.into_string().unwrap_or_default()
+        )));
+    }
+    let mut body = String::new();
+    resp.into_reader()
+        .read_to_string(&mut body)
+        .map_err(|e| WgError::Internal(format!("sync pull body read: {e}")))?;
+    Ok(body)
+}
+
+fn render_pull_summary_string(s: &PullSummary, json: bool) -> String {
+    if json {
+        serde_json::to_string_pretty(s).unwrap_or_else(|_| "{}".to_string())
+    } else {
+        format!(
+            "pulled from {} in {} iter, {} ms: +{} entities, +{} facts, \
+             +{} relations ({} skipped, {} errors); cursor → entity={:?} fact={:?}",
+            s.url,
+            s.iterations,
+            s.elapsed_ms,
+            s.entities_inserted,
+            s.facts_inserted,
+            s.relations_inserted,
+            s.entities_skipped + s.facts_skipped + s.relations_skipped,
+            s.errors,
+            s.cursor_entity,
+            s.cursor_fact,
+        )
+    }
+}
+
+fn render_pull_summary(s: &PullSummary, json: bool) {
+    println!("{}", render_pull_summary_string(s, json));
+}
+
+fn handle_sync_status(
+    store_path: &Path,
+    url: Option<String>,
+    json: bool,
+) -> Result<String, WgError> {
+    let cursor_path = sync_cursor_path(store_path);
+    let cursor = load_sync_cursor(&cursor_path);
+    let now = wg_core::time::current_epoch_ms();
+
+    if json {
+        // Always emit a stable shape regardless of which subset.
+        let mut entries: Vec<serde_json::Value> = Vec::new();
+        let iter: Box<dyn Iterator<Item = (&String, &StoredCursor)>> = match &url {
+            Some(u) => {
+                let key = u.trim_end_matches('/').to_string();
+                Box::new(cursor.remotes.iter().filter(move |(k, _)| **k == key))
+            }
+            None => Box::new(cursor.remotes.iter()),
+        };
+        for (k, e) in iter {
+            entries.push(serde_json::json!({
+                "url": k,
+                "entity": e.entity,
+                "fact": e.fact,
+                "entity_updated_at": e.entity_updated_at,
+                "fact_updated_at": e.fact_updated_at,
+                "last_pulled_at": e.last_pulled_at,
+                "age_ms": now.saturating_sub(e.last_pulled_at),
+            }));
+        }
+        return Ok(serde_json::json!({
+            "store": store_path.display().to_string(),
+            "cursor_file": cursor_path.display().to_string(),
+            "remotes": entries,
+        })
+        .to_string());
+    }
+
+    if cursor.remotes.is_empty() {
+        return Ok(format!(
+            "no remotes recorded (cursor file: {})",
+            cursor_path.display()
+        ));
+    }
+    let mut out = format!("sync status — {}\n", cursor_path.display());
+    let filter = url.as_ref().map(|u| u.trim_end_matches('/').to_string());
+    for (k, e) in &cursor.remotes {
+        if let Some(f) = &filter {
+            if k != f {
+                continue;
+            }
+        }
+        let age_sec = now.saturating_sub(e.last_pulled_at) / 1000;
+        out.push_str(&format!(
+            "  {}\n    last_pulled_at: {} ({} sec ago)\n    \
+             cursor: entity={:?} fact={:?}\n    \
+             updated_at: entity={:?} fact={:?}\n",
+            k, e.last_pulled_at, age_sec, e.entity, e.fact, e.entity_updated_at, e.fact_updated_at
+        ));
+    }
+    Ok(out)
 }
 
 #[derive(Debug, Default, serde::Serialize, serde::Deserialize, Clone)]
