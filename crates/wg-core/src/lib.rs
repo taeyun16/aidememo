@@ -767,6 +767,15 @@ impl WikiGraph {
         self.store.read().fact_list(opts)
     }
 
+    /// Count facts with `superseded_at` set. Used by `wg doctor` to
+    /// detect a stale HNSW sidecar after `consolidate` (the sidecar
+    /// keeps superseded facts indexed unless rebuilt with
+    /// `vector-rebuild --current-only`).
+    pub fn fact_count_superseded(&self) -> Result<usize> {
+        let facts = self.store.read().fact_list(FactListOpts::default())?;
+        Ok(facts.iter().filter(|f| f.superseded_at.is_some()).count())
+    }
+
     // === Relation Operations ===
 
     /// Add a new relation.

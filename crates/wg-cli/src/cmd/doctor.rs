@@ -57,7 +57,8 @@ pub fn run_doctor(
     let wiki = WikiGraph::open(store_path, config)?;
     let issues = wiki.lint()?;
     let stats = wiki.stats()?;
-    let memory = memory.with_counts(stats.fact_count);
+    let superseded = wiki.fact_count_superseded()? as u64;
+    let memory = memory.with_counts(stats.fact_count, superseded);
     let agents = collect_agent_integration();
     let mut fixes = collect_fix_suggestions(&agents);
     fixes.extend(memory.advisories());
@@ -97,9 +98,14 @@ pub fn run_doctor(
 
     let mut out = String::new();
     out.push_str(&format!("📋 wg doctor — {}\n", store_path.display()));
+    let supers_suffix = if superseded > 0 {
+        format!(" ({} superseded)", superseded)
+    } else {
+        String::new()
+    };
     out.push_str(&format!(
-        "  entities: {}   facts: {}   relations: {}\n\n",
-        stats.entity_count, stats.fact_count, stats.relation_count
+        "  entities: {}   facts: {}{}   relations: {}\n\n",
+        stats.entity_count, stats.fact_count, supers_suffix, stats.relation_count
     ));
 
     out.push_str(&format_memory(&memory));
@@ -379,6 +385,11 @@ pub(crate) struct MemoryReport {
     /// sidecar is present, `Some(false)` when configured but missing,
     /// `None` when the user opted out of HNSW.
     pub hnsw_sidecar_present: Option<bool>,
+    /// Facts with `superseded_at` set. Filled in by `with_counts`.
+    /// Drives the "stale HNSW after consolidate" advisory: when this
+    /// is > 0 and the sidecar is present, the operator likely
+    /// forgot to re-run `wg vector-rebuild --current-only`.
+    pub superseded_facts: u64,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -408,7 +419,8 @@ impl MemoryReport {
     /// the model load row. `with_counts` then prepends the
     /// per-fact-scaled rows (bm25, embed cache, hnsw runtime) so the
     /// final order in the report is bm25 → embed → hnsw → model load.
-    fn with_counts(mut self, fact_count: u64) -> Self {
+    fn with_counts(mut self, fact_count: u64, superseded_count: u64) -> Self {
+        self.superseded_facts = superseded_count;
         let bm25 = MemoryEntry {
             name: "bm25 index".into(),
             bytes: fact_count * MEMORY_PER_FACT_BM25,
@@ -472,6 +484,18 @@ impl MemoryReport {
                 kind: "memory",
                 command: "wg vector-rebuild".to_string(),
                 reason: "search.semantic_index = hnsw but sidecar is missing".to_string(),
+            });
+        }
+        if self.hnsw_sidecar_present == Some(true) && self.superseded_facts > 0 {
+            out.push(FixSuggestion {
+                target: "wg",
+                kind: "memory",
+                command: "wg vector-rebuild --current-only".to_string(),
+                reason: format!(
+                    "{} superseded fact(s) still in the HNSW sidecar — \
+                     `consolidate` left them indexed",
+                    self.superseded_facts
+                ),
             });
         }
         out
@@ -544,6 +568,7 @@ fn collect_memory(store_path: &Path, config: &Config) -> MemoryReport {
         model_name: config.model.name.clone(),
         model_quantize: config.model.quantize,
         hnsw_sidecar_present,
+        superseded_facts: 0, // populated in `with_counts`
     }
 }
 
@@ -684,7 +709,7 @@ mod tests {
         let store_path: PathBuf = dir.path().join("wiki.redb");
         std::fs::write(&store_path, vec![0u8; 64]).unwrap();
         let cfg = config_with_model("minishlab/potion-multilingual-128M", false, "hnsw");
-        let mem = collect_memory(&store_path, &cfg).with_counts(0);
+        let mem = collect_memory(&store_path, &cfg).with_counts(0, 0);
         let advisories = mem.advisories();
         assert!(
             advisories
@@ -706,11 +731,64 @@ mod tests {
         let store_path = dir.path().join("wiki.redb");
         std::fs::write(&store_path, vec![0u8; 64]).unwrap();
         let cfg = config_with_model("minishlab/potion-base-8M", false, "bm25");
-        let mem = collect_memory(&store_path, &cfg).with_counts(0);
+        let mem = collect_memory(&store_path, &cfg).with_counts(0, 0);
         assert!(
             mem.advisories().is_empty(),
             "expected no advisories for an 8M model on bm25, got {:?}",
             mem.advisories()
+        );
+    }
+
+    #[test]
+    fn stale_hnsw_advisory_fires_when_superseded_facts_present() {
+        let dir = TempDir::new().unwrap();
+        let store_path = dir.path().join("wiki.redb");
+        std::fs::write(&store_path, vec![0u8; 64]).unwrap();
+        // Sidecar present + 7 superseded facts → advise --current-only.
+        std::fs::write(dir.path().join("wiki.hnsw.bin"), vec![0u8; 16]).unwrap();
+        let cfg = config_with_model("minishlab/potion-base-8M", false, "hnsw");
+        let mem = collect_memory(&store_path, &cfg).with_counts(100, 7);
+        let advisories = mem.advisories();
+        assert!(
+            advisories
+                .iter()
+                .any(|a| a.command == "wg vector-rebuild --current-only"
+                    && a.reason.contains("7 superseded")),
+            "expected stale-HNSW advisory, got {:?}",
+            advisories
+        );
+    }
+
+    #[test]
+    fn stale_hnsw_advisory_silent_without_superseded_facts() {
+        let dir = TempDir::new().unwrap();
+        let store_path = dir.path().join("wiki.redb");
+        std::fs::write(&store_path, vec![0u8; 64]).unwrap();
+        std::fs::write(dir.path().join("wiki.hnsw.bin"), vec![0u8; 16]).unwrap();
+        let cfg = config_with_model("minishlab/potion-base-8M", false, "hnsw");
+        let mem = collect_memory(&store_path, &cfg).with_counts(100, 0);
+        assert!(
+            !mem.advisories()
+                .iter()
+                .any(|a| a.command.contains("--current-only")),
+            "no superseded facts → must not advise --current-only rebuild"
+        );
+    }
+
+    #[test]
+    fn stale_hnsw_advisory_silent_without_sidecar() {
+        let dir = TempDir::new().unwrap();
+        let store_path = dir.path().join("wiki.redb");
+        std::fs::write(&store_path, vec![0u8; 64]).unwrap();
+        // No sidecar file present even though hnsw is configured.
+        let cfg = config_with_model("minishlab/potion-base-8M", false, "hnsw");
+        let mem = collect_memory(&store_path, &cfg).with_counts(100, 7);
+        assert!(
+            !mem.advisories()
+                .iter()
+                .any(|a| a.command.contains("--current-only")),
+            "stale advisory targets HNSW, but no sidecar exists — \
+             the missing-sidecar advisory should fire instead"
         );
     }
 
@@ -722,7 +800,7 @@ mod tests {
         // hnsw sidecar present so the runtime row contributes.
         std::fs::write(dir.path().join("wiki.hnsw.bin"), vec![0u8; 16]).unwrap();
         let cfg = config_with_model("minishlab/potion-base-8M", false, "hnsw");
-        let mem = collect_memory(&store_path, &cfg).with_counts(1_000);
+        let mem = collect_memory(&store_path, &cfg).with_counts(1_000, 0);
 
         // bm25 + embed + hnsw + model_load = sum
         let want_bm25 = 1_000 * MEMORY_PER_FACT_BM25;
