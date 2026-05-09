@@ -238,6 +238,10 @@ struct Args {
     gac: bool,
     /// θ for `--gac` (retrieval half-angle). Defaults to 0.85.
     gac_theta: f32,
+    /// Fact types to protect from GAC clustering. Parsed from
+    /// CSV via `--gac-protect preference,lesson,error`. Default
+    /// empty.
+    gac_protect_types: Vec<FactType>,
 }
 
 /// Parse "2023/02/01 (Wed) 10:20" → epoch ms. Returns None on any
@@ -296,6 +300,7 @@ fn parse_args() -> Args {
     let mut hyde_from: Option<PathBuf> = None;
     let mut gac = false;
     let mut gac_theta: f32 = 0.85;
+    let mut gac_protect_types: Vec<FactType> = Vec::new();
 
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
@@ -401,6 +406,15 @@ fn parse_args() -> Args {
                 gac_theta = argv[i + 1].parse().unwrap_or(0.85);
                 i += 2;
             }
+            "--gac-protect" if i + 1 < argv.len() => {
+                gac_protect_types = argv[i + 1]
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(FactType::parse)
+                    .collect();
+                i += 2;
+            }
             _ => i += 1,
         }
     }
@@ -430,6 +444,7 @@ fn parse_args() -> Args {
         hyde_from,
         gac,
         gac_theta,
+        gac_protect_types,
     }
 }
 
@@ -1166,6 +1181,7 @@ fn run(args: &Args) -> Result<(), String> {
                     dry_run: false,
                     spread_residual_budget: 0,
                     use_cold_tier: false,
+                    protected_types: args.gac_protect_types.clone(),
                 })
                 .map_err(|e| format!("consolidate_gac q{i}: {e}"))?;
             gac_total_facts += stats.facts_processed as u64;

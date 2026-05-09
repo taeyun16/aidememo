@@ -124,13 +124,19 @@ wg consolidate [--semantic-threshold 0.85] [--ttl TYPE=DAYS] [--dry-run] [--json
                                             dedup (older fact superseded) + per-type TTL
                                             expiry. Idempotent. Mirrors OMEGA's compaction.
 wg consolidate --gac [--gac-theta 0.85] [--gac-spread-budget N] [--gac-cold-tier]
+                     [--gac-protect TYPE,TYPE,...]
                                             cluster-aware consolidation per the GAC
                                             (Geometry-Aware Consolidation, NeurIPS 2026)
                                             paper: tight clusters (d̄ < 1-θ) collapse to
                                             newest fact; spread clusters keep medoid +
                                             budget residuals. --gac-cold-tier moves losers
                                             to <store>.cold.redb (preserves FactId) instead
-                                            of superseding. --dry-run for analysis-only.
+                                            of superseding. --gac-protect skips named fact
+                                            types entirely (use `preference,lesson,error`
+                                            on personalisation-tier stores — LongMemEval-S
+                                            120q showed even θ=0.95 GAC drops 1 SS-pref q
+                                            because near-paraphrases ARE the recall signal
+                                            for that category). --dry-run for analysis-only.
                                             Pair with `wg vector-rebuild --current-only` to
                                             shrink the HNSW index proportionally — supersede
                                             alone leaves losers in the sidecar.

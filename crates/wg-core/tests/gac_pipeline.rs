@@ -75,6 +75,7 @@ fn gac_pipeline_supersede_then_current_only_rebuild_shrinks_index() {
             dry_run: true,
             spread_residual_budget: 0,
             use_cold_tier: false,
+            protected_types: vec![],
         })
         .expect("consolidate_gac dry-run");
     assert_eq!(dry.facts_processed, 8);
@@ -99,6 +100,7 @@ fn gac_pipeline_supersede_then_current_only_rebuild_shrinks_index() {
             dry_run: false,
             spread_residual_budget: 0,
             use_cold_tier: false,
+            protected_types: vec![],
         })
         .expect("consolidate_gac apply");
     let expected_collapsed = applied.tight_collapsed + applied.spread_archived;
@@ -149,6 +151,7 @@ fn gac_pipeline_supersede_then_current_only_rebuild_shrinks_index() {
             dry_run: false,
             spread_residual_budget: 0,
             use_cold_tier: false,
+            protected_types: vec![],
         })
         .expect("consolidate_gac second pass");
     assert_eq!(

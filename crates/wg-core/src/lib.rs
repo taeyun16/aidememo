@@ -1048,11 +1048,21 @@ impl WikiGraph {
             )));
         }
 
-        let facts = self.fact_list(types::FactListOpts {
+        let all_current = self.fact_list(types::FactListOpts {
             current_only: true,
             limit: None,
             ..Default::default()
         })?;
+        let total_current = all_current.len();
+        let facts: Vec<_> = if opts.protected_types.is_empty() {
+            all_current
+        } else {
+            all_current
+                .into_iter()
+                .filter(|f| !opts.protected_types.contains(&f.fact_type))
+                .collect()
+        };
+        stats.protected_skipped = total_current - facts.len();
         stats.facts_processed = facts.len();
         if facts.len() < 2 {
             stats.n_clusters = facts.len();

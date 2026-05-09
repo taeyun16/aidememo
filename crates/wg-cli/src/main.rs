@@ -1894,11 +1894,23 @@ fn handle_consolidate(
         // ignores --semantic-threshold / --ttl entirely.
         if sub.gac {
             let theta = sub.gac_theta.unwrap_or(0.85);
+            let protected_types: Vec<wg_core::FactType> = sub
+                .gac_protect
+                .as_deref()
+                .map(|s| {
+                    s.split(',')
+                        .map(str::trim)
+                        .filter(|t| !t.is_empty())
+                        .map(wg_core::FactType::parse)
+                        .collect()
+                })
+                .unwrap_or_default();
             let gac_opts = wg_core::types::GacOpts {
                 theta,
                 dry_run: sub.dry_run,
                 spread_residual_budget: sub.gac_spread_budget.unwrap_or(0),
                 use_cold_tier: sub.gac_cold_tier,
+                protected_types,
             };
             let stats = wiki.consolidate_gac(gac_opts.clone())?;
             let elapsed_ms = started.elapsed().as_millis();
@@ -1922,6 +1934,7 @@ fn handle_consolidate(
                     "tight_collapsed": stats.tight_collapsed,
                     "spread_archived": stats.spread_archived,
                     "archived_to_cold": stats.archived_to_cold,
+                    "protected_skipped": stats.protected_skipped,
                     "elapsed_ms": elapsed_ms,
                 });
                 return serde_json::to_string_pretty(&payload).map_err(|e| WgError::Serialize {
@@ -1936,11 +1949,16 @@ fn handle_consolidate(
             } else {
                 "applied (supersede)".to_string()
             };
+            let protect_suffix = if stats.protected_skipped > 0 {
+                format!(", protected_skipped {}", stats.protected_skipped)
+            } else {
+                String::new()
+            };
             return Ok(format!(
                 "GAC {} (θ={:.2}, θ'={:.2}, budget={}) — {} facts, {} clusters \
                  ({} singletons + {} multi), {} tight ({} facts) / {} spread \
                  ({} facts), max cluster size {}, max d̄={:.3}, \
-                 collapsed {} tight + {} spread, archived_to_cold {}, in {} ms.",
+                 collapsed {} tight + {} spread, archived_to_cold {}{}, in {} ms.",
                 mode,
                 stats.theta,
                 1.0 - stats.theta,
@@ -1958,6 +1976,7 @@ fn handle_consolidate(
                 stats.tight_collapsed,
                 stats.spread_archived,
                 stats.archived_to_cold,
+                protect_suffix,
                 elapsed_ms,
             ));
         }

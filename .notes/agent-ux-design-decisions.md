@@ -2271,19 +2271,28 @@ curve.
 | Variant | R@1 | R@5 | R@10 | MRR | Compression | Wall |
 |---|---|---|---|---|---|---|
 | **Baseline** (no GAC) | 0.833 | **0.958** | **0.992** | 0.894 | — | 118s |
+| GAC θ=0.95 | 0.842 | 0.950 | 0.983 | 0.889 | 1.2% (703/59,301) | 196s |
 | GAC θ=0.90 | 0.842 | 0.950 | 0.983 | 0.893 | 4.8% (2,848/59,301) | 206s |
 | GAC θ=0.85 | 0.825 | 0.942 | 0.975 | 0.882 | 15.4% (9,116/59,301) | 236s |
 
 By question_type R@10 vs baseline (all baseline-100% except SS-pref):
 
-| Category | Baseline | θ=0.90 | θ=0.85 |
-|---|---|---|---|
-| knowledge-update | 1.000 | 1.000 | 1.000 |
-| multi-session | 1.000 | 1.000 | 1.000 |
-| single-session-assistant | 1.000 | 1.000 | 1.000 |
-| **single-session-preference** | **0.950** | **0.900** | **0.850** |
-| single-session-user | 1.000 | 1.000 | 1.000 |
-| temporal-reasoning | 1.000 | 1.000 | 1.000 |
+| Category | Baseline | θ=0.95 | θ=0.90 | θ=0.85 |
+|---|---|---|---|---|
+| knowledge-update | 1.000 | 1.000 | 1.000 | 1.000 |
+| multi-session | 1.000 | 1.000 | 1.000 | 1.000 |
+| single-session-assistant | 1.000 | 1.000 | 1.000 | 1.000 |
+| **single-session-preference** | **0.950** | **0.900** | **0.900** | **0.850** |
+| single-session-user | 1.000 | 1.000 | 1.000 | 1.000 |
+| temporal-reasoning | 1.000 | 1.000 | 1.000 | 1.000 |
+
+**θ=0.95 finding** — even at 1.2% compression (703 collapsed
+across 59,301 facts, ~6 per question), SS-pref still drops 1
+question. This nails down that the compression-vs-recall trade
+is **structural**, not θ-tunable: any tight-cluster collapse
+on near-paraphrase preference content carries non-zero recall
+risk. Tightening θ only reduces the rate of risky collapses,
+never to zero.
 
 ### Mechanism
 
@@ -2343,3 +2352,43 @@ surface-form-match-saturated retrieval (commit 07f95d7), GAC
 near-paraphrases are themselves the recall signal. Both
 findings reinforce that wg's pipeline knobs work *on the
 shape of the data*, not as universal levers.
+
+### Product fix shipped — `--gac-protect`
+
+The structural finding above ("any tight collapse on
+near-paraphrase preferences carries non-zero recall risk")
+isn't fixable by tuning θ. The right lever is to **not cluster
+those facts at all**. `wg consolidate --gac --gac-protect
+preference,lesson,error` does exactly that — the personalisation
+tier passes through GAC unchanged while the rest of the store
+still gets clustered.
+
+Production pattern for chat-history-style stores (where the
+agent classifies user-uttered preferences via the
+self-extraction pattern documented above):
+
+```bash
+wg consolidate --gac --gac-theta 0.85 \
+               --gac-protect preference,lesson,error \
+               --gac-cold-tier
+wg vector-rebuild --current-only
+```
+
+Why these three types: they're already the decay-exempt + 2×
+boosted personalisation tier (see Agent-UX cheatsheet in
+AGENTS.md). They're the types the LongMemEval SS-pref
+mechanism above is talking about; protecting them aligns the
+compaction policy with the existing weighting policy.
+
+Why the bench can't directly validate this: LongMemEval-S
+ingests every turn as `Note` (the legacy default), so no
+facts in the per-question stores carry `preference` /
+`lesson` / `error` tags. The protect rule has no effect on
+the bench. Validation is mechanism-based — the failure mode
+we measured is *exactly* what the protect rule eliminates,
+applied at the layer (fact_type) where the agent has already
+labelled the high-value content.
+
+Operators who don't classify their content can't use this
+lever and should fall back to "θ=0.90 or skip GAC" per the
+table above.

@@ -112,6 +112,9 @@ pub struct ConsolidateSub {
     pub gac_spread_budget: Option<usize>,
     /// Move losers to cold-tier archive instead of superseding.
     pub gac_cold_tier: bool,
+    /// Comma-separated fact types to skip clustering. Facts of these
+    /// types pass through GAC unchanged. Default empty.
+    pub gac_protect: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -1239,6 +1242,17 @@ fn consolidate_command() -> impl Parser<Command> {
              still resolves. Off by default (supersede semantics).",
         )
         .switch();
+    let gac_protect = long("gac-protect")
+        .help(
+            "Comma-separated fact types to skip GAC clustering (e.g. \
+             `preference,lesson,error` to protect the personalisation \
+             tier). Use on stores where near-paraphrases of these types \
+             are themselves the recall signal — collapsing them into a \
+             single representative loses the alternate phrasings BM25 \
+             needs to match arbitrary user wording.",
+        )
+        .argument::<String>("CSV")
+        .optional();
 
     construct!(ConsolidateSub {
         semantic_threshold,
@@ -1249,6 +1263,7 @@ fn consolidate_command() -> impl Parser<Command> {
         gac_theta,
         gac_spread_budget,
         gac_cold_tier,
+        gac_protect,
     })
     .map(Command::Consolidate)
     .to_options()

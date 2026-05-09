@@ -716,6 +716,18 @@ pub struct GacOpts {
     /// `consolidate_semantic`, just cluster-routed instead of
     /// pairwise. Default false (supersede).
     pub use_cold_tier: bool,
+    /// Fact types to skip clustering. Facts of these types are
+    /// excluded from cluster formation entirely — they pass through
+    /// unchanged. Default empty (cluster everything).
+    ///
+    /// Pair with the personalisation tier (`preference` / `lesson`
+    /// / `error`) to protect SS-pref-shape memory: per the
+    /// LongMemEval-S 120q measurement (2026-05-09), even θ=0.95
+    /// (1.2% compression) still drops 1 SS-pref question because
+    /// near-paraphrase preferences are themselves the recall
+    /// signal. Protecting personalisation types eliminates that
+    /// failure mode at the cost of skipping their compression.
+    pub protected_types: Vec<FactType>,
 }
 
 impl Default for GacOpts {
@@ -725,6 +737,7 @@ impl Default for GacOpts {
             dry_run: true,
             spread_residual_budget: 0,
             use_cold_tier: false,
+            protected_types: Vec::new(),
         }
     }
 }
@@ -766,6 +779,10 @@ pub struct GacStats {
     /// Total facts moved to cold-tier across both regimes.
     /// Always 0 when use_cold_tier=false.
     pub archived_to_cold: usize,
+    /// Facts excluded from clustering because their type was in
+    /// `opts.protected_types`. Surfaced so operators can sanity-
+    /// check that the protect rule actually matched something.
+    pub protected_skipped: usize,
 }
 
 /// Options for `vector_index_rebuild_with_opts` — controls which
