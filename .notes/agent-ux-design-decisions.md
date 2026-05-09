@@ -2243,3 +2243,103 @@ stores with high fact volume and lots of repeated user
 preferences / lessons, the GAC paper's reported ratios (often
 30-60% compression at θ=0.85) should appear. Re-measure when
 the dogfooding store is large enough.
+
+## GAC vs LongMemEval-S retrieval — recall trade-off (2026-05-09)
+
+The end-to-end .notes measurement (commit 7b58e65) showed that
+GAC + `vector-rebuild --current-only` shrinks the index
+proportionally without changing top-3 search results on a few
+spot-check queries. Pleasant but not load-bearing — three
+queries don't generalise. This note runs LongMemEval-S 120q
+balanced (20 per question_type) to get a real recall-vs-θ
+curve.
+
+### Setup
+
+- Balanced sample: 20q from each of 6 categories = 120 total
+- Hybrid (BM25 + model2vec/HNSW), `dates` defaults on (the
+  proven baseline since commit b6b9662 et al)
+- Per-question stores rebuilt from scratch (LongMemEval shape)
+- GAC pass between ingest and search:
+  `consolidate_gac { dry_run: false, use_cold_tier: false }`
+  → `vector_index_rebuild_with_opts { current_only: true }`
+- Reproducer: `--gac --gac-theta {θ}` flag added to the
+  longmemeval bench in this commit
+
+### Results
+
+| Variant | R@1 | R@5 | R@10 | MRR | Compression | Wall |
+|---|---|---|---|---|---|---|
+| **Baseline** (no GAC) | 0.833 | **0.958** | **0.992** | 0.894 | — | 118s |
+| GAC θ=0.90 | 0.842 | 0.950 | 0.983 | 0.893 | 4.8% (2,848/59,301) | 206s |
+| GAC θ=0.85 | 0.825 | 0.942 | 0.975 | 0.882 | 15.4% (9,116/59,301) | 236s |
+
+By question_type R@10 vs baseline (all baseline-100% except SS-pref):
+
+| Category | Baseline | θ=0.90 | θ=0.85 |
+|---|---|---|---|
+| knowledge-update | 1.000 | 1.000 | 1.000 |
+| multi-session | 1.000 | 1.000 | 1.000 |
+| single-session-assistant | 1.000 | 1.000 | 1.000 |
+| **single-session-preference** | **0.950** | **0.900** | **0.850** |
+| single-session-user | 1.000 | 1.000 | 1.000 |
+| temporal-reasoning | 1.000 | 1.000 | 1.000 |
+
+### Mechanism
+
+The recall hit lands almost entirely on **SS-pref** (the
+"what's my favorite X" category). Other categories — including
+the BGE-favoured implicit-context shapes — survive
+consolidation untouched.
+
+Why: SS-pref answers tend to be *near-paraphrases* repeated
+across sessions ("I prefer dark mode", "I like dark theme",
+"dark mode is my preference"). GAC at θ=0.85 collapses these
+into clusters where the **newest** fact wins. When the
+question's exact wording matches a *non-newest* fact in the
+collapsed cluster, BM25 can't retrieve the original — the
+representative paraphrase doesn't share its surface form.
+
+The other categories hold up because:
+- KU / multi-session: answers are factual / cross-session, not
+  surface-form-dependent
+- SS-asst / SS-user / temporal: single-evidence questions
+  where the unique answer fact is itself the cluster
+  representative
+
+### Operator guidance
+
+| Workload | Recommendation |
+|---|---|
+| Preference-heavy agent memory (SS-pref-shaped) | **θ ≥ 0.90 or skip GAC** |
+| KU / multi-session / docs RAG | **θ=0.85 fine** — no measurable hit |
+| Index size budget hard ceiling | θ=0.85 + accept ~1.6pt R@5 loss |
+| Latency budget hard ceiling | skip GAC — wall doubles with mid-pipeline compute |
+
+The **doctor advisory shipped in commit 0d3bc7d** doesn't
+distinguish these cases — it just says "you have superseded
+facts, run --current-only rebuild". Operators consolidating
+preference-heavy memory should be aware the trade-off is real,
+not a free win.
+
+### Open question
+
+Spread-cluster medoid routing might do better than tight
+"newest" routing for SS-pref clusters: the medoid is the
+geometrically central paraphrase, more likely to share
+keywords with arbitrary phrasings of the same preference.
+Worth a follow-up bench at θ=0.85 with `--gac-spread-budget 1`
+(keep medoid + 1 residual) — but spread classification at
+θ=0.85 only fires for clusters with d̄ ≥ 0.15, which most
+near-paraphrase preference clusters are below. So budget
+likely won't help these specific failures; the right knob is θ.
+
+### Cross-reference to existing benches
+
+This caveat sits alongside the multihop-RAG / HotpotQA
+saturation findings: just as BGE adds nothing on
+surface-form-match-saturated retrieval (commit 07f95d7), GAC
+*subtracts* from preference-style retrieval where multiple
+near-paraphrases are themselves the recall signal. Both
+findings reinforce that wg's pipeline knobs work *on the
+shape of the data*, not as universal levers.

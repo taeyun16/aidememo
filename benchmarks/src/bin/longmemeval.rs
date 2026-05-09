@@ -43,7 +43,7 @@ use std::time::Instant;
 
 use serde::Deserialize;
 use serde_json::Value;
-use wg_core::types::{FactInput, FactType};
+use wg_core::types::{FactInput, FactType, GacOpts, VectorRebuildOpts};
 use wg_core::{Config, EntityInput, EntityType, SearchOpts, WikiGraph};
 
 type TurnTypeMap = std::collections::HashMap<usize, String>;
@@ -229,6 +229,15 @@ struct Args {
     /// original question. Tests whether question→answer surface-form
     /// mismatch is a measurable retrieval bottleneck.
     hyde_from: Option<PathBuf>,
+    /// Apply GAC consolidation between ingest and search. Runs
+    /// `consolidate_gac { dry_run: false, use_cold_tier: false }`
+    /// then `vector_index_rebuild_with_opts { current_only: true }`.
+    /// Measures whether geometry-aware compression preserves
+    /// retrieval quality on LongMemEval (where representatives are
+    /// expected to carry the recall their cluster losers held).
+    gac: bool,
+    /// θ for `--gac` (retrieval half-angle). Defaults to 0.85.
+    gac_theta: f32,
 }
 
 /// Parse "2023/02/01 (Wed) 10:20" → epoch ms. Returns None on any
@@ -285,6 +294,8 @@ fn parse_args() -> Args {
     let mut hybrid_ingest = false;
     let mut classify_from: Option<PathBuf> = None;
     let mut hyde_from: Option<PathBuf> = None;
+    let mut gac = false;
+    let mut gac_theta: f32 = 0.85;
 
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
@@ -382,6 +393,14 @@ fn parse_args() -> Args {
                 hyde_from = Some(PathBuf::from(&argv[i + 1]));
                 i += 2;
             }
+            "--gac" => {
+                gac = true;
+                i += 1;
+            }
+            "--gac-theta" if i + 1 < argv.len() => {
+                gac_theta = argv[i + 1].parse().unwrap_or(0.85);
+                i += 2;
+            }
             _ => i += 1,
         }
     }
@@ -409,6 +428,8 @@ fn parse_args() -> Args {
         hybrid_ingest,
         classify_from,
         hyde_from,
+        gac,
+        gac_theta,
     }
 }
 
@@ -1098,6 +1119,8 @@ fn run(args: &Args) -> Result<(), String> {
         };
 
     let started = Instant::now();
+    let mut gac_total_collapsed: u64 = 0;
+    let mut gac_total_facts: u64 = 0;
     for (i, q) in questions.iter().take(n).enumerate() {
         // Always stamp observed_at from the LongMemEval session date.
         // Cost is zero when readers don't use it; without it, readers
@@ -1136,6 +1159,25 @@ fn run(args: &Args) -> Result<(), String> {
                 classify_for_question: classify_map.as_ref().and_then(|m| m.get(&q.question_id)),
             },
         )?;
+        if args.gac {
+            let stats = wiki
+                .consolidate_gac(GacOpts {
+                    theta: args.gac_theta,
+                    dry_run: false,
+                    spread_residual_budget: 0,
+                    use_cold_tier: false,
+                })
+                .map_err(|e| format!("consolidate_gac q{i}: {e}"))?;
+            gac_total_facts += stats.facts_processed as u64;
+            gac_total_collapsed += (stats.tight_collapsed + stats.spread_archived) as u64;
+            // Rebuild HNSW with current_only so the supersede pass is
+            // visible to the search loop. Pure BM25 path doesn't need
+            // this but the call is cheap when no sidecar exists.
+            if args.hybrid {
+                wiki.vector_index_rebuild_with_opts(VectorRebuildOpts { current_only: true })
+                    .map_err(|e| format!("vector_index_rebuild q{i}: {e}"))?;
+            }
+        }
         let knobs = EvalKnobs {
             hyde_query: hyde_map
                 .as_ref()
@@ -1196,6 +1238,17 @@ fn run(args: &Args) -> Result<(), String> {
     println!("R@10: {:.3}", hit_at_10 as f64 / denom);
     println!("MRR:  {:.3}", reciprocal_sum / denom);
     println!("wall: {:.2}s", wall.as_secs_f64());
+    if args.gac {
+        let pct = if gac_total_facts == 0 {
+            0.0
+        } else {
+            100.0 * gac_total_collapsed as f64 / gac_total_facts as f64
+        };
+        println!(
+            "gac:  θ={:.2}  collapsed {} / {} facts ({:.1}% across {} questions)",
+            args.gac_theta, gac_total_collapsed, gac_total_facts, pct, n
+        );
+    }
     println!();
     println!("By question_type:");
     for (qt, (total, hit)) in &by_type {
