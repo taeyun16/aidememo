@@ -66,6 +66,7 @@ pub struct McpSub {
     pub port: Option<u16>,
     pub bind: Option<String>,
     pub auth_token: Option<String>,
+    pub auth_token_file: Option<PathBuf>,
     pub wiki_root: Option<PathBuf>,
 }
 
@@ -89,11 +90,23 @@ pub fn mcp_serve_command() -> impl Parser<Command> {
     let auth_token = long("auth-token")
         .help(
             "Bearer token. When set, every request must include \
-             `Authorization: Bearer <TOKEN>`. Falls back to the \
-             WG_MCP_AUTH_TOKEN env var when the flag is absent. \
-             Required for any non-loopback bind.",
+             `Authorization: Bearer <TOKEN>`. Falls back to \
+             --auth-token-file, then WG_MCP_AUTH_TOKEN env. Required \
+             for any non-loopback bind. Avoid passing on the command \
+             line in production — use --auth-token-file or env var \
+             so the secret doesn't land in shell history / `ps aux`.",
         )
         .argument::<String>("TOKEN")
+        .optional();
+
+    let auth_token_file = long("auth-token-file")
+        .help(
+            "Path to a file holding the bearer token (single line, \
+             trimmed). Mode 0600 recommended. Use this instead of \
+             --auth-token in production so the token doesn't appear \
+             in shell history or `ps aux`.",
+        )
+        .argument::<PathBuf>("PATH")
         .optional();
 
     let wiki_root = positional::<PathBuf>("WIKI_ROOT")
@@ -104,6 +117,7 @@ pub fn mcp_serve_command() -> impl Parser<Command> {
         port,
         bind,
         auth_token,
+        auth_token_file,
         wiki_root,
     })
     .map(Command::McpServe)
@@ -116,6 +130,7 @@ pub fn run_mcp_serve(
     port: Option<u16>,
     bind: Option<String>,
     auth_token: Option<String>,
+    auth_token_file: Option<PathBuf>,
     wiki_root: Option<PathBuf>,
 ) -> Result<String, wg_core::WgError> {
     let config = Config::load().unwrap_or_default();
@@ -131,9 +146,18 @@ pub fn run_mcp_serve(
     let bind_addr = bind.unwrap_or_else(|| "127.0.0.1".to_string());
     let addr = format!("{}:{}", bind_addr, port);
 
-    // Auth token resolution: --auth-token flag wins, then env var,
-    // then None (no auth — only safe for loopback bind).
-    let token = auth_token.or_else(|| std::env::var("WG_MCP_AUTH_TOKEN").ok());
+    // Auth token resolution: --auth-token > --auth-token-file >
+    // WG_MCP_AUTH_TOKEN env > None (loopback only).
+    let token = auth_token
+        .or_else(|| {
+            auth_token_file
+                .as_ref()
+                .map(|p| read_token_file(p))
+                .transpose()
+                .ok()
+                .flatten()
+        })
+        .or_else(|| std::env::var("WG_MCP_AUTH_TOKEN").ok());
     let is_loopback = bind_addr == "127.0.0.1" || bind_addr == "::1" || bind_addr == "localhost";
     if !is_loopback && token.is_none() {
         return Err(wg_core::WgError::InvalidInput(format!(
@@ -243,6 +267,27 @@ async fn handle_sync_since(
         buf,
     )
         .into_response()
+}
+
+/// Read a bearer token from a file. Trims surrounding whitespace
+/// (operators commonly `echo $TOKEN > file` which appends a newline)
+/// and rejects empty contents so a misconfigured file doesn't get
+/// silently accepted as "no auth".
+pub(crate) fn read_token_file(path: &std::path::Path) -> Result<String, wg_core::WgError> {
+    let raw = std::fs::read_to_string(path).map_err(|e| {
+        wg_core::WgError::InvalidInput(format!(
+            "failed to read auth token file {}: {e}",
+            path.display()
+        ))
+    })?;
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err(wg_core::WgError::InvalidInput(format!(
+            "auth token file {} is empty after trimming whitespace",
+            path.display()
+        )));
+    }
+    Ok(trimmed.to_string())
 }
 
 async fn require_bearer(State(expected): State<AuthState>, req: Request, next: Next) -> Response {

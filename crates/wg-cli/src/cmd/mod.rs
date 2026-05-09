@@ -4,6 +4,7 @@ use bpaf::*;
 use std::path::PathBuf;
 
 pub mod adapt;
+pub mod auth;
 pub mod bench;
 pub mod completions;
 pub mod daemon;
@@ -89,6 +90,7 @@ pub enum Command {
     AutoRelate(AutoRelateSub),
     Overview(OverviewSub),
     Consolidate(ConsolidateSub),
+    Auth(auth::AuthSub),
 }
 
 #[derive(Debug, Clone)]
@@ -367,6 +369,7 @@ pub enum SyncSub {
     Pull {
         url: String,
         token: Option<String>,
+        token_file: Option<PathBuf>,
         limit: Option<usize>,
     },
 }
@@ -454,6 +457,8 @@ pub fn build_cli() -> OptionParser<Args> {
         overview_command(),
         consolidate_command(),
     ]);
+    let auth_cmd = auth::auth_command();
+    let command = construct!([command, auth_cmd]);
 
     construct!(Args {
         store_path,
@@ -1319,19 +1324,33 @@ fn sync_command() -> impl Parser<Command> {
         .help("Base URL of the upstream `wg mcp-serve` (e.g. http://team-host:3000)");
     let token = long("token")
         .help(
-            "Bearer token for the upstream. Falls back to WG_MCP_AUTH_TOKEN \
-             when omitted; pass empty string to force no header.",
+            "Bearer token for the upstream. Resolution order: --token > \
+             --token-file > WG_MCP_AUTH_TOKEN env > stored auth.json \
+             (from `wg auth login`). Pass empty string to force no header.",
         )
         .argument::<String>("TOKEN")
+        .optional();
+    let token_file = long("token-file")
+        .help(
+            "Path to a file holding the bearer token (single line, \
+             trimmed). Use this instead of --token to keep the secret \
+             out of shell history / `ps aux`.",
+        )
+        .argument::<PathBuf>("PATH")
         .optional();
     let limit = long("limit")
         .help("Max records per pull batch (default 5000). Pull repeats internally until drained.")
         .argument::<usize>("N")
         .optional();
-    let pull = construct!(SyncSub::Pull { token, limit, url })
-        .to_options()
-        .command("pull")
-        .help("Pull a delta from a remote `wg mcp-serve` (Phase 2 pull-only sync)");
+    let pull = construct!(SyncSub::Pull {
+        token,
+        token_file,
+        limit,
+        url,
+    })
+    .to_options()
+    .command("pull")
+    .help("Pull a delta from a remote `wg mcp-serve` (Phase 2 pull-only sync)");
 
     construct!([ingest, pull])
         .map(Command::Sync)

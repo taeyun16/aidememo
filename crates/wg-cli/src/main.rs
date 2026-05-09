@@ -3,7 +3,7 @@
 mod cmd;
 mod output;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::exit;
 use wg_core::{
     Config, EntityInput, EntitySort, EntityType, ExportScope, FactInput, FactListOpts, FactType,
@@ -99,7 +99,13 @@ fn main() {
             // Mirror the Mcp arm — honour --store / --project unless
             // the user passed a positional WIKI_ROOT.
             let path = sub.wiki_root.unwrap_or_else(|| store_path.clone());
-            cmd::mcp_serve::run_mcp_serve(sub.port, sub.bind, sub.auth_token, Some(path))
+            cmd::mcp_serve::run_mcp_serve(
+                sub.port,
+                sub.bind,
+                sub.auth_token,
+                sub.auth_token_file,
+                Some(path),
+            )
         }
         cmd::Command::Mcp(sub) => {
             // Honour the global --store / --project resolution if the
@@ -117,6 +123,7 @@ fn main() {
         cmd::Command::AutoRelate(sub) => handle_auto_relate(&store_path, config, sub),
         cmd::Command::Overview(sub) => handle_overview(&store_path, config, sub),
         cmd::Command::Consolidate(sub) => handle_consolidate(&store_path, config, sub),
+        cmd::Command::Auth(sub) => cmd::auth::run_auth(sub),
     };
 
     match result {
@@ -2177,9 +2184,12 @@ fn handle_sync(path: &Path, config: Config, sub: cmd::SyncSub) -> Result<String,
                 incremental: true,
             },
         ),
-        cmd::SyncSub::Pull { url, token, limit } => {
-            handle_sync_pull(path, config, url, token, limit)
-        }
+        cmd::SyncSub::Pull {
+            url,
+            token,
+            token_file,
+            limit,
+        } => handle_sync_pull(path, config, url, token, token_file, limit),
     }
 }
 
@@ -2188,6 +2198,7 @@ fn handle_sync_pull(
     config: Config,
     url: String,
     token: Option<String>,
+    token_file: Option<PathBuf>,
     limit: Option<usize>,
 ) -> Result<String, WgError> {
     use std::io::Read;
@@ -2198,7 +2209,16 @@ fn handle_sync_pull(
     let key = url.trim_end_matches('/').to_string();
     let prev = cursor.remotes.get(&key).cloned().unwrap_or_default();
 
-    let token = token.or_else(|| std::env::var("WG_MCP_AUTH_TOKEN").ok());
+    // Resolution order: --token > --token-file > WG_MCP_AUTH_TOKEN env >
+    // ~/.wg/auth.json (populated by `wg auth login`).
+    let token = token
+        .or_else(|| {
+            token_file
+                .as_ref()
+                .and_then(|p| cmd::mcp_serve::read_token_file(p).ok())
+        })
+        .or_else(|| std::env::var("WG_MCP_AUTH_TOKEN").ok())
+        .or_else(|| cmd::auth::load_token_for(&key));
 
     // Build the request URL with current cursor params.
     let mut endpoint = format!("{}/sync/since?limit={}", key, limit.unwrap_or(5000));

@@ -581,12 +581,14 @@ silently lose writes from the others.
 ### Hardened mcp-serve (Phase 1)
 
 `wg mcp-serve` defaults to `127.0.0.1` since the network-hardening
-pass landed (commit 8aa3f68). Two flags govern exposure:
+pass landed (commit 8aa3f68). Three flags govern exposure:
 
 | Flag | Default | Effect |
 |---|---|---|
 | `--bind ADDR` | `127.0.0.1` | Loopback only. Pass `0.0.0.0` to expose on the LAN |
-| `--auth-token TOKEN` (or `WG_MCP_AUTH_TOKEN` env) | unset | Requires `Authorization: Bearer <TOKEN>` on every request |
+| `--auth-token TOKEN` | unset | Bearer token literal — exposed in shell history / `ps aux`, only use for ad-hoc tests |
+| `--auth-token-file PATH` | unset | Read the token from a file (mode 0600 recommended). Production-friendly |
+| `WG_MCP_AUTH_TOKEN` env | unset | Final fallback when neither flag is set |
 
 Non-loopback bind without an auth token is **refused at startup** —
 the server won't expose an unauthenticated store on the network.
@@ -598,9 +600,40 @@ reverse proxy (caddy / nginx) in front if you need them.
 # Same-host: agents go through loopback, no token needed
 wg mcp-serve --port 3000
 
-# Multi-host team server: explicit network bind + token
-wg mcp-serve --port 3000 --bind 0.0.0.0 --auth-token "$WG_TEAM_TOKEN"
+# Multi-host team server: token in a file, never on the command line
+wg auth generate > /etc/wg/team-token   # one-time: emit 64-char hex
+chmod 600 /etc/wg/team-token
+wg mcp-serve --port 3000 --bind 0.0.0.0 --auth-token-file /etc/wg/team-token
 ```
+
+### Token UX — `wg auth` (commit will land alongside this section)
+
+Operators rarely want to type bearer tokens. `wg auth` ships four
+small commands so the secret never has to live in shell history:
+
+```bash
+wg auth generate                        # → 64-char hex (32 random bytes)
+wg auth login http://team-host:3000 \
+        --token-file /etc/wg/team-token  # store in ~/.wg/auth.json (0600)
+wg auth list                            # redacted preview of stored URLs
+wg auth logout http://team-host:3000    # forget one
+```
+
+After `wg auth login`, every `wg sync pull <URL>` reads the token
+transparently — no `--token` / env var on the call:
+
+```bash
+wg sync pull http://team-host:3000      # uses stored token
+```
+
+Token resolution chain in `wg sync pull` (highest precedence first):
+
+1. `--token TOKEN` (literal, exposed in `ps aux` — discouraged)
+2. `--token-file PATH` (read + trim)
+3. `WG_MCP_AUTH_TOKEN` env var
+4. Stored entry in `~/.wg/auth.json` (populated by `wg auth login`)
+5. None — request goes out without an `Authorization` header
+   (works only against loopback, no-auth servers)
 
 ### Pull-only delta sync (Phase 2)
 
