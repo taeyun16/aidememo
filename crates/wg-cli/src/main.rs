@@ -99,7 +99,7 @@ fn main() {
             // Mirror the Mcp arm — honour --store / --project unless
             // the user passed a positional WIKI_ROOT.
             let path = sub.wiki_root.unwrap_or_else(|| store_path.clone());
-            cmd::mcp_serve::run_mcp_serve(sub.port, Some(path))
+            cmd::mcp_serve::run_mcp_serve(sub.port, sub.bind, sub.auth_token, Some(path))
         }
         cmd::Command::Mcp(sub) => {
             // Honour the global --store / --project resolution if the

@@ -12,7 +12,9 @@ use std::sync::Arc;
 
 use axum::{
     Json, Router,
-    extract::State,
+    extract::{Request, State},
+    http::StatusCode,
+    middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{get, post},
 };
@@ -61,6 +63,8 @@ async fn handle_sse(State(_state): State<SharedState>) -> Response {
 #[derive(Debug, Clone)]
 pub struct McpSub {
     pub port: Option<u16>,
+    pub bind: Option<String>,
+    pub auth_token: Option<String>,
     pub wiki_root: Option<PathBuf>,
 }
 
@@ -71,19 +75,46 @@ pub fn mcp_serve_command() -> impl Parser<Command> {
         .argument::<u16>("PORT")
         .optional();
 
+    let bind = long("bind")
+        .help(
+            "Address to bind. Default 127.0.0.1 (loopback only — \
+             same-host agents). Pass 0.0.0.0 to expose to the \
+             network (multi-host); pair with --auth-token whenever \
+             you do.",
+        )
+        .argument::<String>("ADDR")
+        .optional();
+
+    let auth_token = long("auth-token")
+        .help(
+            "Bearer token. When set, every request must include \
+             `Authorization: Bearer <TOKEN>`. Falls back to the \
+             WG_MCP_AUTH_TOKEN env var when the flag is absent. \
+             Required for any non-loopback bind.",
+        )
+        .argument::<String>("TOKEN")
+        .optional();
+
     let wiki_root = positional::<PathBuf>("WIKI_ROOT")
         .help("Path to wiki root (uses store path if omitted)")
         .optional();
 
-    construct!(McpSub { port, wiki_root })
-        .map(Command::McpServe)
-        .to_options()
-        .command("mcp-serve")
-        .help("Start MCP server over HTTP + SSE (use `wg mcp` for stdio)")
+    construct!(McpSub {
+        port,
+        bind,
+        auth_token,
+        wiki_root,
+    })
+    .map(Command::McpServe)
+    .to_options()
+    .command("mcp-serve")
+    .help("Start MCP server over HTTP + SSE (use `wg mcp` for stdio)")
 }
 
 pub fn run_mcp_serve(
     port: Option<u16>,
+    bind: Option<String>,
+    auth_token: Option<String>,
     wiki_root: Option<PathBuf>,
 ) -> Result<String, wg_core::WgError> {
     let config = Config::load().unwrap_or_default();
@@ -93,6 +124,25 @@ pub fn run_mcp_serve(
     };
 
     let port: u16 = port.unwrap_or(3000);
+    // Default to loopback so a casual `wg mcp-serve` doesn't expose
+    // the store on every network interface. Operators who want
+    // multi-host explicitly pass `--bind 0.0.0.0`.
+    let bind_addr = bind.unwrap_or_else(|| "127.0.0.1".to_string());
+    let addr = format!("{}:{}", bind_addr, port);
+
+    // Auth token resolution: --auth-token flag wins, then env var,
+    // then None (no auth — only safe for loopback bind).
+    let token = auth_token.or_else(|| std::env::var("WG_MCP_AUTH_TOKEN").ok());
+    let is_loopback = bind_addr == "127.0.0.1" || bind_addr == "::1" || bind_addr == "localhost";
+    if !is_loopback && token.is_none() {
+        return Err(wg_core::WgError::InvalidInput(format!(
+            "non-loopback bind '{}' requires an auth token — pass \
+             --auth-token <SECRET> or set WG_MCP_AUTH_TOKEN. \
+             Refusing to expose an unauthenticated store on the network.",
+            bind_addr
+        )));
+    }
+
     let wiki = WikiGraph::open(store_path.as_ref(), config)?;
 
     let runtime = tokio::runtime::Runtime::new()
@@ -100,15 +150,28 @@ pub fn run_mcp_serve(
 
     runtime.block_on(async {
         let state: SharedState = Arc::new(RwLock::new(Some(wiki)));
+        let auth_state: AuthState = Arc::new(token.clone());
 
-        let app = Router::new()
+        let mut app = Router::new()
             .route("/mcp", post(handle_post))
             .route("/sse", get(handle_sse))
             .route("/health", get(|| async { "ok" }))
             .with_state(state);
 
-        let addr = format!("0.0.0.0:{}", port);
-        tracing::info!(%addr, "wg mcp-serve: listening (POST /mcp, GET /sse, GET /health)");
+        if token.is_some() {
+            app = app.layer(middleware::from_fn_with_state(auth_state, require_bearer));
+        }
+
+        let auth_label = if token.is_some() {
+            "auth=bearer"
+        } else {
+            "auth=none"
+        };
+        tracing::info!(
+            %addr,
+            "wg mcp-serve: listening ({}) (POST /mcp, GET /sse, GET /health)",
+            auth_label
+        );
 
         let listener = tokio::net::TcpListener::bind(&addr)
             .await
@@ -122,4 +185,28 @@ pub fn run_mcp_serve(
     })?;
 
     Ok("MCP server stopped".into())
+}
+
+type AuthState = Arc<Option<String>>;
+
+async fn require_bearer(State(expected): State<AuthState>, req: Request, next: Next) -> Response {
+    let Some(expected) = expected.as_ref() else {
+        return next.run(req).await;
+    };
+
+    let header = req
+        .headers()
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+
+    let presented = header.strip_prefix("Bearer ").unwrap_or("");
+    // Constant-time compare via subtle isn't worth a dep here; the
+    // tokens we accept are fixed-size, attacker-controlled inputs are
+    // small, and HTTPS termination should sit at a reverse proxy.
+    if !presented.is_empty() && presented == expected.as_str() {
+        next.run(req).await
+    } else {
+        (StatusCode::UNAUTHORIZED, "missing or invalid bearer token").into_response()
+    }
 }
