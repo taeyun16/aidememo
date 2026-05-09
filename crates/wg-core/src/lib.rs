@@ -20,6 +20,7 @@ pub mod rerank;
 pub mod s3;
 pub mod search;
 pub mod store;
+pub mod sync;
 pub mod time;
 pub mod types;
 #[cfg(feature = "semantic")]
@@ -204,6 +205,21 @@ impl WikiGraph {
     /// names + tags — so the next search rebuilds before scoring.
     fn bm25_mark_dirty(&self) {
         self.bm25_index.write().dirty = true;
+    }
+
+    /// `bm25_mark_dirty` for cross-module callers in the same crate
+    /// (currently `sync::sync_import`). Public-in-crate so the sync
+    /// path can flip the dirty bit after upserting facts via
+    /// `Store::fact_upsert_record`.
+    pub(crate) fn bm25_mark_dirty_pub(&self) {
+        self.bm25_mark_dirty();
+    }
+
+    /// Hand the inner store Arc to a same-crate caller. Today only
+    /// `sync::sync_export` / `sync::sync_import` reach in here;
+    /// nothing outside the crate gets a Store handle.
+    pub(crate) fn store_handle(&self) -> &Arc<RwLock<store::Store>> {
+        &self.store
     }
 
     /// Lazy-load (or return) the embedding provider. Cached for the

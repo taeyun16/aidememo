@@ -12,13 +12,14 @@ use std::sync::Arc;
 
 use axum::{
     Json, Router,
-    extract::{Request, State},
+    extract::{Query, Request, State},
     http::StatusCode,
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{get, post},
 };
 use bpaf::*;
+use serde::Deserialize;
 use tokio::sync::RwLock;
 
 use crate::cmd::mcp_tools::{JsonRpcRequest, JsonRpcResponse, dispatch};
@@ -155,6 +156,7 @@ pub fn run_mcp_serve(
         let mut app = Router::new()
             .route("/mcp", post(handle_post))
             .route("/sse", get(handle_sse))
+            .route("/sync/since", get(handle_sync_since))
             .route("/health", get(|| async { "ok" }))
             .with_state(state);
 
@@ -188,6 +190,60 @@ pub fn run_mcp_serve(
 }
 
 type AuthState = Arc<Option<String>>;
+
+#[derive(Debug, Deserialize)]
+struct SyncSinceQuery {
+    /// Last entity ULID the puller already has (inclusive lower bound).
+    entity: Option<String>,
+    /// Last fact ULID the puller already has.
+    fact: Option<String>,
+    /// Cap on records returned in this batch. Default 5000.
+    limit: Option<usize>,
+    /// Include relations in the export. Default true.
+    relations: Option<bool>,
+}
+
+async fn handle_sync_since(
+    State(state): State<SharedState>,
+    Query(q): Query<SyncSinceQuery>,
+) -> Response {
+    let guard = state.read().await;
+    let wiki = match guard.as_ref() {
+        Some(w) => w,
+        None => {
+            return (StatusCode::SERVICE_UNAVAILABLE, "wiki not initialized").into_response();
+        }
+    };
+
+    let parse_ulid = |raw: Option<String>| -> Option<ulid::Ulid> {
+        raw.as_deref().and_then(|s| ulid::Ulid::from_string(s).ok())
+    };
+    let opts = wg_core::sync::SyncExportOpts {
+        since: wg_core::sync::SyncCursor {
+            entity: parse_ulid(q.entity).map(wg_core::EntityId),
+            fact: parse_ulid(q.fact).map(wg_core::FactId),
+        },
+        limit: q.limit.unwrap_or(5000),
+        include_relations: q.relations.unwrap_or(true),
+    };
+
+    let mut buf: Vec<u8> = Vec::new();
+    if let Err(e) = wiki.sync_export(opts, &mut buf) {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("sync_export: {e}"),
+        )
+            .into_response();
+    }
+    // Plain text — JSONL isn't a registered MIME but `application/x-ndjson`
+    // is the convention; pin it so curl + the wg client both recognise it.
+    (
+        StatusCode::OK,
+        [("content-type", "application/x-ndjson")],
+        buf,
+    )
+        .into_response()
+}
 
 async fn require_bearer(State(expected): State<AuthState>, req: Request, next: Next) -> Response {
     let Some(expected) = expected.as_ref() else {

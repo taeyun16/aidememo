@@ -578,6 +578,68 @@ Don't try to give multiple agents their own stdio `wg mcp` against
 the same redb path — it will work for whichever started first, then
 silently lose writes from the others.
 
+### Hardened mcp-serve (Phase 1)
+
+`wg mcp-serve` defaults to `127.0.0.1` since the network-hardening
+pass landed (commit 8aa3f68). Two flags govern exposure:
+
+| Flag | Default | Effect |
+|---|---|---|
+| `--bind ADDR` | `127.0.0.1` | Loopback only. Pass `0.0.0.0` to expose on the LAN |
+| `--auth-token TOKEN` (or `WG_MCP_AUTH_TOKEN` env) | unset | Requires `Authorization: Bearer <TOKEN>` on every request |
+
+Non-loopback bind without an auth token is **refused at startup** —
+the server won't expose an unauthenticated store on the network.
+Loopback + no token is fine for single-host multi-agent. TLS / rate
+limiting / per-method auth are deliberately out of scope; put a
+reverse proxy (caddy / nginx) in front if you need them.
+
+```bash
+# Same-host: agents go through loopback, no token needed
+wg mcp-serve --port 3000
+
+# Multi-host team server: explicit network bind + token
+wg mcp-serve --port 3000 --bind 0.0.0.0 --auth-token "$WG_TEAM_TOKEN"
+```
+
+### Pull-only delta sync (Phase 2)
+
+For "local working set + team-canonical store" topologies (Hermes
+first-party shape), each agent runs its own local `wg` for fast
+offline reads and pulls deltas from the shared `mcp-serve`
+periodically. Writes still go through the shared store via mcp tool
+calls so there's a single writer (no conflict resolution needed
+yet — that's Phase 3).
+
+```bash
+# On each agent host (any machine that needs a local read cache)
+wg sync pull http://team-host:3000 --token "$WG_TEAM_TOKEN"
+# → "pulled from http://team-host:3000: +12 entities, +47 facts,
+#    +3 relations (0 skipped, 0 errors); cursor → entity=… fact=…"
+
+# Idempotent — re-running with no upstream changes is a no-op
+wg sync pull http://team-host:3000 --token "$WG_TEAM_TOKEN"
+# → "+0 entities, +0 facts, +0 relations"
+```
+
+Cursor state lives at `<store>.sync.json` next to the redb file,
+keyed by upstream URL. Pull is incremental from the cursor; the
+upstream emits a trailing `cursor` line on every batch so the
+downstream knows where to resume.
+
+What's transferred: entities, facts, relations — all with original
+ULIDs preserved. What's NOT yet transferred: supersede-state changes
+on already-synced facts (LWW merge), pin/unpin updates, search
+feedback. Those land in Phase 2.5.
+
+What's intentionally not in this pipeline: push from agent → shared.
+For that, use the regular MCP tool calls against `mcp-serve` (every
+write happens at the canonical writer, no merge problem). Multi-
+master push with conflict resolution is Phase 3.
+
+The original `wg sync <DIR>` markdown-ingest alias moved under
+`wg sync ingest <DIR>` to make room for `wg sync pull <URL>`.
+
 ## Bindings (all four full coverage)
 
 Each binding exposes ~22 methods including `current_only` filtering and

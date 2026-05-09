@@ -78,7 +78,8 @@ wg --project personal stats             # one-off override
 - `wg extract [--llm] [--apply] "<text>"` — heuristic / optional LLM fact extraction
 - `wg ingest <wiki_root> [-i]` — ingest markdown
 - `wg watch <wiki_root> [--search QUERY]` — re-ingest on file changes (live search optional)
-- `wg sync <wiki_root>` — alias for incremental ingest
+- `wg sync ingest <wiki_root>` — alias for incremental markdown ingest
+- `wg sync pull <url> [--token T]` — pull a delta from a remote `wg mcp-serve` (Phase 2)
 - `wg vector-rebuild [--json]` — rebuild the HNSW index (after a model swap)
 - `wg auto-relate [--top-k N] [--threshold F] [--dry-run] [--json]` — add `related` edges between entities whose facts cluster semantically (one-shot; idempotent)
 - `wg consolidate [--semantic-threshold F] [--ttl note=30] [--dry-run] [--json]` — semantic dedup + TTL expiry pass

@@ -356,8 +356,19 @@ pub struct IngestSub {
 }
 
 #[derive(Debug, Clone)]
-pub struct SyncSub {
-    pub wiki_root: PathBuf,
+pub enum SyncSub {
+    /// Incremental ingest from a local markdown directory. Original
+    /// `wg sync <DIR>` semantics, kept as the `ingest` subcommand so
+    /// existing scripts can be ported with one rename.
+    Ingest { wiki_root: PathBuf },
+    /// Pull a delta from a remote `wg mcp-serve` and apply it to the
+    /// local store, advancing the per-remote cursor in
+    /// `<store>.sync.json`.
+    Pull {
+        url: String,
+        token: Option<String>,
+        limit: Option<usize>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -1296,13 +1307,41 @@ fn ingest_command() -> impl Parser<Command> {
 }
 
 fn sync_command() -> impl Parser<Command> {
+    // wg sync ingest <DIR> — original `wg sync` behavior, now namespaced.
     let wiki_root = positional::<PathBuf>("WIKI_ROOT");
+    let ingest = construct!(SyncSub::Ingest { wiki_root })
+        .to_options()
+        .command("ingest")
+        .help("Incremental markdown ingest (original `wg sync <DIR>` behavior)");
 
-    construct!(SyncSub { wiki_root })
+    // wg sync pull <URL> [--token T] [--limit N] — Phase 2 pull-only delta.
+    let url = positional::<String>("URL")
+        .help("Base URL of the upstream `wg mcp-serve` (e.g. http://team-host:3000)");
+    let token = long("token")
+        .help(
+            "Bearer token for the upstream. Falls back to WG_MCP_AUTH_TOKEN \
+             when omitted; pass empty string to force no header.",
+        )
+        .argument::<String>("TOKEN")
+        .optional();
+    let limit = long("limit")
+        .help("Max records per pull batch (default 5000). Pull repeats internally until drained.")
+        .argument::<usize>("N")
+        .optional();
+    let pull = construct!(SyncSub::Pull { token, limit, url })
+        .to_options()
+        .command("pull")
+        .help("Pull a delta from a remote `wg mcp-serve` (Phase 2 pull-only sync)");
+
+    construct!([ingest, pull])
         .map(Command::Sync)
         .to_options()
         .command("sync")
-        .help("Sync wiki (incremental ingest)")
+        .help(
+            "Sync the local store. Subcommands: \
+             `ingest <DIR>` (incremental markdown), \
+             `pull <URL>` (pull delta from a remote wg mcp-serve).",
+        )
 }
 
 fn config_command() -> impl Parser<Command> {

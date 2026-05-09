@@ -2168,15 +2168,141 @@ fn handle_ingest(path: &Path, config: Config, sub: cmd::IngestSub) -> Result<Str
 }
 
 fn handle_sync(path: &Path, config: Config, sub: cmd::SyncSub) -> Result<String, WgError> {
-    // sync is an alias for ingest --incremental
-    handle_ingest(
-        path,
-        config,
-        cmd::IngestSub {
-            wiki_root: sub.wiki_root,
-            incremental: true,
-        },
-    )
+    match sub {
+        cmd::SyncSub::Ingest { wiki_root } => handle_ingest(
+            path,
+            config,
+            cmd::IngestSub {
+                wiki_root,
+                incremental: true,
+            },
+        ),
+        cmd::SyncSub::Pull { url, token, limit } => {
+            handle_sync_pull(path, config, url, token, limit)
+        }
+    }
+}
+
+fn handle_sync_pull(
+    store_path: &Path,
+    config: Config,
+    url: String,
+    token: Option<String>,
+    limit: Option<usize>,
+) -> Result<String, WgError> {
+    use std::io::Read;
+
+    // Cursor file lives next to the store.
+    let cursor_path = sync_cursor_path(store_path);
+    let mut cursor = load_sync_cursor(&cursor_path);
+    let key = url.trim_end_matches('/').to_string();
+    let prev = cursor.remotes.get(&key).cloned().unwrap_or_default();
+
+    let token = token.or_else(|| std::env::var("WG_MCP_AUTH_TOKEN").ok());
+
+    // Build the request URL with current cursor params.
+    let mut endpoint = format!("{}/sync/since?limit={}", key, limit.unwrap_or(5000));
+    if let Some(e) = &prev.entity {
+        endpoint.push_str(&format!("&entity={}", e));
+    }
+    if let Some(f) = &prev.fact {
+        endpoint.push_str(&format!("&fact={}", f));
+    }
+
+    tracing::debug!(target: "wg::sync", "GET {}", endpoint);
+    let mut req = ureq::get(&endpoint);
+    if let Some(t) = token.as_deref() {
+        if !t.is_empty() {
+            req = req.set("Authorization", &format!("Bearer {}", t));
+        }
+    }
+
+    let resp = req
+        .call()
+        .map_err(|e| WgError::Internal(format!("sync pull HTTP failed: {e}")))?;
+    if resp.status() != 200 {
+        return Err(WgError::Internal(format!(
+            "sync pull returned HTTP {}: {}",
+            resp.status(),
+            resp.into_string().unwrap_or_default()
+        )));
+    }
+
+    let mut body = String::new();
+    resp.into_reader()
+        .read_to_string(&mut body)
+        .map_err(|e| WgError::Internal(format!("sync pull body read: {e}")))?;
+
+    let wiki = WikiGraph::open(store_path, config)?;
+    let stats = wiki.sync_import(&body)?;
+
+    // Advance the cursor record only if the upstream emitted a new one.
+    let advanced = stats.new_cursor.entity.is_some() || stats.new_cursor.fact.is_some();
+    if advanced {
+        let entry = StoredCursor {
+            entity: stats.new_cursor.entity.map(|e| e.0.to_string()),
+            fact: stats.new_cursor.fact.map(|f| f.0.to_string()),
+            last_pulled_at: wg_core::time::current_epoch_ms(),
+        };
+        cursor.remotes.insert(key.clone(), entry);
+        save_sync_cursor(&cursor_path, &cursor)?;
+    }
+
+    Ok(format!(
+        "pulled from {}: +{} entities, +{} facts, +{} relations \
+         ({} skipped, {} errors); cursor → entity={:?} fact={:?}",
+        key,
+        stats.entities_inserted,
+        stats.facts_inserted,
+        stats.relations_inserted,
+        stats.entities_skipped + stats.facts_skipped + stats.relations_skipped,
+        stats.errors,
+        stats.new_cursor.entity.map(|e| e.0.to_string()),
+        stats.new_cursor.fact.map(|f| f.0.to_string()),
+    ))
+}
+
+#[derive(Debug, Default, serde::Serialize, serde::Deserialize, Clone)]
+struct StoredCursor {
+    entity: Option<String>,
+    fact: Option<String>,
+    last_pulled_at: u64,
+}
+
+#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
+struct SyncCursorFile {
+    /// Keyed by the upstream base URL, trimmed of trailing slash.
+    remotes: std::collections::HashMap<String, StoredCursor>,
+}
+
+fn sync_cursor_path(store_path: &Path) -> std::path::PathBuf {
+    let mut p = store_path.to_path_buf();
+    let stem = p
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "wiki".into());
+    p.set_file_name(format!("{}.sync.json", stem));
+    p
+}
+
+fn load_sync_cursor(path: &Path) -> SyncCursorFile {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+fn save_sync_cursor(path: &Path, cursor: &SyncCursorFile) -> Result<(), WgError> {
+    let tmp = path.with_extension("json.tmp");
+    let bytes = serde_json::to_vec_pretty(cursor).map_err(|e| WgError::Serialize {
+        context: "sync cursor".to_string(),
+        source: e,
+    })?;
+    std::fs::write(&tmp, bytes)
+        .map_err(|e| WgError::Internal(format!("write sync cursor: {e}")))?;
+    std::fs::rename(&tmp, path)
+        .map_err(|e| WgError::Internal(format!("rename sync cursor: {e}")))?;
+    Ok(())
 }
 
 fn handle_config(config: Config, sub: cmd::ConfigSub) -> Result<String, WgError> {

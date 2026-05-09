@@ -1754,6 +1754,276 @@ impl Store {
         format!("{}\0{}\0{}", source_id, rel_type.0, target_id).into_bytes()
     }
 
+    // === Sync helpers (Phase 2) ===
+    //
+    // ID-preserving idempotent inserters. Used by `WikiGraph::sync_import`
+    // when applying a delta from a remote wg. Differ from the ordinary
+    // `entity_add` / `fact_add_many` paths in three ways:
+    //   1. The donor's ULID is preserved (not re-allocated locally), so
+    //      pre-existing fact references continue to resolve.
+    //   2. Idempotent — if the ID already exists locally, return Ok(false)
+    //      and write nothing (Phase 2 sync uses "first writer wins" by ID,
+    //      no LWW merge yet).
+    //   3. Skip the dedup-by-content-hash path: the donor already made
+    //      that decision when ingesting; we trust it.
+    //
+    // Phase 2.5 will add: name-conflict resolution for entities (alias the
+    // local entity to the donor ULID rather than skipping), and LWW
+    // supersede merging for facts.
+
+    /// Insert an `EntityRecord` preserving its ULID. Returns `Ok(true)` on
+    /// fresh insert, `Ok(false)` if an entity with the same ULID already
+    /// exists locally (idempotent skip).
+    ///
+    /// Name conflict (same name, different ULID) currently *also* skips —
+    /// the donor's record drops on the floor and any facts referencing
+    /// the donor's entity_id will be orphaned in the local store. Phase
+    /// 2.5 will replace this with alias resolution. Acceptable for the
+    /// pull-only Phase 2 MVP because the upstream is the only writer
+    /// agents touch, so name collisions don't arise in normal use.
+    pub fn entity_upsert_record(&mut self, record: EntityRecord) -> Result<bool> {
+        let id = record.id;
+
+        // Fast skip-by-id check.
+        if self.entity_get_by_id(id).is_ok() {
+            return Ok(false);
+        }
+
+        let write_txn = self.begin_write()?;
+
+        // Name-conflict skip — see contract above.
+        {
+            let by_name =
+                write_txn
+                    .open_table(ENTITY_BY_NAME_TABLE)
+                    .map_err(|e| WgError::StoreRead {
+                        table: "entity_by_name",
+                        key: record.name_lower.clone(),
+                        source: Box::new(e),
+                    })?;
+            if by_name
+                .get(&record.name_lower as &str)
+                .map_err(|e| WgError::StoreRead {
+                    table: "entity_by_name",
+                    key: record.name_lower.clone(),
+                    source: Box::new(e),
+                })?
+                .is_some()
+            {
+                return Ok(false);
+            }
+        }
+
+        let record_bytes = serde_json::to_vec(&record).map_err(|e| WgError::Serialize {
+            context: format!("entity {:?}", id),
+            source: e,
+        })?;
+
+        {
+            let mut entities =
+                write_txn
+                    .open_table(ENTITIES_TABLE)
+                    .map_err(|e| WgError::StoreWrite {
+                        table: "entities",
+                        key: id.to_string(),
+                        source: Box::new(e),
+                    })?;
+            entities
+                .insert(id.as_bytes().as_slice(), record_bytes.as_slice())
+                .map_err(|e| WgError::StoreWrite {
+                    table: "entities",
+                    key: id.to_string(),
+                    source: Box::new(e),
+                })?;
+        }
+        {
+            let mut by_name =
+                write_txn
+                    .open_table(ENTITY_BY_NAME_TABLE)
+                    .map_err(|e| WgError::StoreWrite {
+                        table: "entity_by_name",
+                        key: record.name_lower.clone(),
+                        source: Box::new(e),
+                    })?;
+            by_name
+                .insert(&record.name_lower as &str, id.as_bytes().as_slice())
+                .map_err(|e| WgError::StoreWrite {
+                    table: "entity_by_name",
+                    key: record.name_lower.clone(),
+                    source: Box::new(e),
+                })?;
+        }
+
+        write_txn.commit().map_err(|e| WgError::StoreWrite {
+            table: "sync_upsert",
+            key: "commit".to_string(),
+            source: Box::new(e),
+        })?;
+        Ok(true)
+    }
+
+    /// Insert a `FactRecord` preserving its ULID. Returns `Ok(true)` on
+    /// fresh insert, `Ok(false)` if a fact with the same ULID already
+    /// exists locally. Skips the content-hash dedup path — the donor
+    /// owns that decision.
+    pub fn fact_upsert_record(&mut self, record: FactRecord) -> Result<bool> {
+        let id = record.id;
+        if self.fact_get(&id).is_ok() {
+            return Ok(false);
+        }
+
+        let hash = sha256_hex(&record.content);
+        let record_bytes = serde_json::to_vec(&record).map_err(|e| WgError::Serialize {
+            context: format!("fact {:?}", id),
+            source: e,
+        })?;
+
+        let write_txn = self.begin_write()?;
+        {
+            let mut facts = write_txn
+                .open_table(FACTS_TABLE)
+                .map_err(|e| WgError::StoreWrite {
+                    table: "facts",
+                    key: id.to_string(),
+                    source: Box::new(e),
+                })?;
+            facts
+                .insert(id.as_bytes().as_slice(), record_bytes.as_slice())
+                .map_err(|e| WgError::StoreWrite {
+                    table: "facts",
+                    key: id.to_string(),
+                    source: Box::new(e),
+                })?;
+        }
+        {
+            let mut content_hash_index =
+                write_txn
+                    .open_table(FACT_CONTENT_HASH_TABLE)
+                    .map_err(|e| WgError::StoreWrite {
+                        table: "fact_content_hash",
+                        key: hash.clone(),
+                        source: Box::new(e),
+                    })?;
+            // Last-writer-wins on the hash index: if the donor's content
+            // happens to match a local fact, the local fact_add path will
+            // pick the local id on subsequent dedup lookups. This is the
+            // desired behavior — local-origin ids stay canonical.
+            content_hash_index
+                .insert(hash.as_str(), id.as_bytes().as_slice())
+                .map_err(|e| WgError::StoreWrite {
+                    table: "fact_content_hash",
+                    key: hash.clone(),
+                    source: Box::new(e),
+                })?;
+        }
+        {
+            let mut fact_by_entity =
+                write_txn
+                    .open_table(FACT_BY_ENTITY_TABLE)
+                    .map_err(|e| WgError::StoreWrite {
+                        table: "fact_by_entity",
+                        key: id.to_string(),
+                        source: Box::new(e),
+                    })?;
+            for entity_id in &record.entity_ids {
+                let key = format!("{}\0{}", entity_id, id);
+                fact_by_entity
+                    .insert(&key as &str, id.as_bytes().as_slice())
+                    .map_err(|e| WgError::StoreWrite {
+                        table: "fact_by_entity",
+                        key,
+                        source: Box::new(e),
+                    })?;
+            }
+        }
+
+        write_txn.commit().map_err(|e| WgError::StoreWrite {
+            table: "sync_upsert",
+            key: "commit".to_string(),
+            source: Box::new(e),
+        })?;
+        Ok(true)
+    }
+
+    /// Insert a `RelationRecord`. Returns `Ok(true)` on fresh insert,
+    /// `Ok(false)` if the (source, type, target) tuple is already
+    /// present locally. Relations are key-shaped (no ULID), so
+    /// idempotency is by tuple, not by ID.
+    pub fn relation_upsert_record(&mut self, record: RelationRecord) -> Result<bool> {
+        let key = Self::relation_key(&record.source_id, &record.relation_type, &record.target_id);
+
+        // Skip-if-exists check via a read txn.
+        {
+            let read_txn = self
+                .db
+                .begin_read()
+                .map_err(|e| WgError::TransactionBegin {
+                    source: Box::new(e),
+                })?;
+            if let Ok(table) = read_txn.open_table(RELATIONS_TABLE) {
+                if table
+                    .get(key.as_slice())
+                    .map_err(|e| WgError::StoreRead {
+                        table: "relations",
+                        key: String::from_utf8_lossy(&key).to_string(),
+                        source: Box::new(e),
+                    })?
+                    .is_some()
+                {
+                    return Ok(false);
+                }
+            }
+        }
+
+        let record_bytes = serde_json::to_vec(&record).map_err(|e| WgError::Serialize {
+            context: "relation".to_string(),
+            source: e,
+        })?;
+        let rev_key =
+            Self::relation_key(&record.target_id, &record.relation_type, &record.source_id);
+        let write_txn = self.begin_write()?;
+        {
+            let mut relations =
+                write_txn
+                    .open_table(RELATIONS_TABLE)
+                    .map_err(|e| WgError::StoreWrite {
+                        table: "relations",
+                        key: String::from_utf8_lossy(&key).to_string(),
+                        source: Box::new(e),
+                    })?;
+            relations
+                .insert(key.as_slice(), record_bytes.as_slice())
+                .map_err(|e| WgError::StoreWrite {
+                    table: "relations",
+                    key: String::from_utf8_lossy(&key).to_string(),
+                    source: Box::new(e),
+                })?;
+        }
+        {
+            let mut relations_rev =
+                write_txn
+                    .open_table(RELATIONS_REV_TABLE)
+                    .map_err(|e| WgError::StoreWrite {
+                        table: "relations_rev",
+                        key: String::from_utf8_lossy(&rev_key).to_string(),
+                        source: Box::new(e),
+                    })?;
+            relations_rev
+                .insert(rev_key.as_slice(), record_bytes.as_slice())
+                .map_err(|e| WgError::StoreWrite {
+                    table: "relations_rev",
+                    key: String::from_utf8_lossy(&rev_key).to_string(),
+                    source: Box::new(e),
+                })?;
+        }
+        write_txn.commit().map_err(|e| WgError::StoreWrite {
+            table: "sync_upsert",
+            key: "commit".to_string(),
+            source: Box::new(e),
+        })?;
+        Ok(true)
+    }
+
     /// Add a new relation.
     pub fn relation_add(&mut self, input: RelationInput) -> Result<()> {
         let source_id = self.resolve_entity(&input.source)?;
