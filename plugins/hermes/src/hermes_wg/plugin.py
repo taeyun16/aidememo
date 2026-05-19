@@ -81,7 +81,12 @@ def register(ctx: Any) -> None:
 
     store_path = config.get("store_path") or os.environ.get("WG_STORE")
     try:
-        client = WgClient(store_path=store_path)
+        lock_retry_ms = int(config.get("lock_retry_ms", 5000))
+    except (TypeError, ValueError):
+        log.warning("invalid wg lock_retry_ms=%r; using 5000", config.get("lock_retry_ms"))
+        lock_retry_ms = 5000
+    try:
+        client = WgClient(store_path=store_path, lock_retry_ms=lock_retry_ms)
     except WgUnavailable as exc:
         log.error("wg plugin disabled: %s", exc)
         return

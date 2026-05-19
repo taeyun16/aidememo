@@ -63,8 +63,13 @@ class WgClient:
     or whatever ``wg config`` says).
     """
 
-    def __init__(self, store_path: str | os.PathLike | None = None) -> None:
+    def __init__(
+        self,
+        store_path: str | os.PathLike | None = None,
+        lock_retry_ms: int | None = None,
+    ) -> None:
         self.store_path = str(store_path) if store_path else None
+        self.lock_retry_ms = 5000 if lock_retry_ms is None else max(0, int(lock_retry_ms))
         self._py = self._try_load_pyo3()
         if self._py is None and not self._has_cli():
             raise WgUnavailable(
@@ -99,17 +104,28 @@ class WgClient:
     # Read API — used by tools, slash commands, hooks
     # ------------------------------------------------------------------
 
-    def query(self, topic: str, limit: int = 5, depth: int = 2, recent_limit: int = 5) -> dict:
-        if self._py is not None:
+    def query(
+        self,
+        topic: str,
+        limit: int = 5,
+        depth: int = 2,
+        recent_limit: int = 5,
+        source_id: str | None = None,
+    ) -> dict:
+        if self._py is not None and source_id is None:
             return self._py.query(topic, limit=limit, depth=depth, recent_limit=recent_limit)
-        return self._cli_json(
-            ["query", topic, "--limit", str(limit), "-d", str(depth), "--recent-limit", str(recent_limit)]
-        )
+        args = ["query", topic, "--limit", str(limit), "-d", str(depth), "--recent-limit", str(recent_limit)]
+        if source_id:
+            args += ["--source-id", source_id]
+        return self._cli_json(args)
 
-    def search(self, query: str, limit: int = 10) -> list[dict]:
-        if self._py is not None:
+    def search(self, query: str, limit: int = 10, source_id: str | None = None) -> list[dict]:
+        if self._py is not None and source_id is None:
             return self._py.search(query, limit=limit)
-        return self._cli_json(["search", query, "--limit", str(limit)])
+        args = ["search", query, "--limit", str(limit)]
+        if source_id:
+            args += ["--source-id", source_id]
+        return self._cli_json(args)
 
     def recent(self, last: str = "7d", limit: int = 10) -> list[dict]:
         # CLI: `wg recent --last 7d --limit N`. The PyO3 binding takes
@@ -152,8 +168,9 @@ class WgClient:
         fact_type: str = "note",
         tags: list[str] | None = None,
         confidence: float | None = None,
+        source_id: str | None = None,
     ) -> str:
-        if self._py is not None:
+        if self._py is not None and source_id is None:
             entity_ids = [self._py.resolve_entity(e) for e in (entities or [])]
             kwargs: dict = {
                 "entity_ids": entity_ids,
@@ -174,6 +191,8 @@ class WgClient:
             args += ["--tags", ",".join(tags)]
         if confidence is not None:
             args += ["--confidence", f"{confidence:.3f}"]
+        if source_id:
+            args += ["--source-id", source_id]
         # Prefer the structured `--json` output (`{"id": "<ULID>",
         # "auto_created_entities": [...]}`) over scraping the human
         # message; falls back to ULID-grep on older wg binaries that
@@ -201,7 +220,7 @@ class WgClient:
         correctness — operators who care about the speedup should
         install the ``wg_python`` wheel.
         """
-        if self._py is not None:
+        if self._py is not None and all(not item.get("source_id") for item in items):
             py_items = []
             for item in items:
                 names = item.get("entities") or []
@@ -222,6 +241,7 @@ class WgClient:
                 fact_type=item.get("fact_type", "note"),
                 tags=item.get("tags"),
                 confidence=item.get("confidence"),
+                source_id=item.get("source_id"),
             )
             for item in items
         ]
@@ -247,13 +267,26 @@ class WgClient:
         if self.store_path:
             cmd += ["--store", self.store_path]
         cmd += args
-        completed = subprocess.run(cmd, capture_output=True, text=True, check=False)
-        if completed.returncode != 0:
-            raise WgUnavailable(
-                f"`{' '.join(cmd)}` exited {completed.returncode}: "
-                f"{completed.stderr.strip() or '<no stderr>'}"
-            )
-        return completed.stdout
+        deadline = time.monotonic() + (self.lock_retry_ms / 1000.0)
+        attempts = 0
+        last = None
+        while True:
+            attempts += 1
+            completed = subprocess.run(cmd, capture_output=True, text=True, check=False)
+            if completed.returncode == 0:
+                return completed.stdout
+            last = completed
+            stderr = completed.stderr.strip()
+            if not _is_lock_error(stderr) or self.lock_retry_ms == 0 or time.monotonic() >= deadline:
+                break
+            time.sleep(0.1)
+
+        assert last is not None
+        retry_note = f" after {attempts} attempt(s)" if attempts > 1 else ""
+        raise WgUnavailable(
+            f"`{' '.join(cmd)}` exited {last.returncode}{retry_note}: "
+            f"{last.stderr.strip() or '<no stderr>'}"
+        )
 
     def _cli_json(self, args: list[str]) -> Any:
         out = self._cli(["--json", *args])
@@ -292,6 +325,11 @@ _WINDOW_UNITS = {
     "w": 7 * 24 * 60 * 60 * 1_000,
     "y": 365 * 24 * 60 * 60 * 1_000,
 }
+
+
+def _is_lock_error(stderr: str) -> bool:
+    lowered = stderr.lower()
+    return "cannot acquire lock" in lowered or "database already open" in lowered
 
 
 def parse_window_ms(window: str) -> int:

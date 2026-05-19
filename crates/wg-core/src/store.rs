@@ -1108,6 +1108,9 @@ impl Store {
             if let Some(source) = input.source {
                 record.source = Some(source);
             }
+            if let Some(source_id) = input.source_id {
+                record.source_id = Some(source_id);
+            }
             if let Some(confidence) = input.source_confidence {
                 record.source_confidence = confidence;
             }
@@ -1574,6 +1577,12 @@ impl Store {
                 }
             }
 
+            if let Some(ref source_id) = opts.source_id {
+                if record.source_id.as_deref() != Some(source_id.as_str()) {
+                    continue;
+                }
+            }
+
             // Time filter: prefer observed_at (real-world time) over created_at (DB insertion).
             if opts.since.is_some() || opts.until.is_some() {
                 let ts = record.observed_at.unwrap_or(record.created_at);
@@ -1636,6 +1645,7 @@ impl Store {
                 fact_type: None,
                 tags: None,
                 source: None,
+                source_id: None,
                 observed_at: None,
                 superseded_at: None,
                 superseded_by: None,
@@ -2477,6 +2487,7 @@ mod tests {
                 entity_ids: Some(vec![store.resolve_entity("Redis").unwrap()]),
                 tags: Some(vec!["ha".to_string()]),
                 source: Some("entities/redis.md#ha".to_string()),
+                source_id: None,
                 source_confidence: Some(0.8),
                 observed_at: None,
             })
@@ -2500,6 +2511,7 @@ mod tests {
                     fact_type: None,
                     tags: None,
                     source: None,
+                    source_id: None,
                     observed_at: None,
                     superseded_at: None,
                     superseded_by: None,
@@ -2515,6 +2527,92 @@ mod tests {
         store.fact_delete(&fact_id).unwrap();
         let result = store.fact_get(&fact_id);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn fact_list_filters_by_source_id() {
+        let mut store = create_test_store();
+        let entity_id = store
+            .entity_add(EntityInput {
+                name: "Redis".to_string(),
+                entity_type: Some(EntityType::Technology),
+                ..Default::default()
+            })
+            .unwrap();
+
+        for (content, source_id) in [
+            ("Redis alpha source fact", "alpha"),
+            ("Redis beta source fact", "beta"),
+            ("Redis alpha second fact", "alpha"),
+        ] {
+            store
+                .fact_add(FactInput {
+                    content: content.to_string(),
+                    fact_type: Some(FactType::Note),
+                    entity_ids: Some(vec![entity_id]),
+                    source_id: Some(source_id.to_string()),
+                    ..Default::default()
+                })
+                .unwrap();
+        }
+
+        let alpha = store
+            .fact_list(FactListOpts {
+                source_id: Some("alpha".to_string()),
+                ..Default::default()
+            })
+            .unwrap();
+        let beta = store
+            .fact_list(FactListOpts {
+                source_id: Some("beta".to_string()),
+                ..Default::default()
+            })
+            .unwrap();
+        let missing = store
+            .fact_list(FactListOpts {
+                source_id: Some("missing".to_string()),
+                ..Default::default()
+            })
+            .unwrap();
+
+        assert_eq!(alpha.len(), 2);
+        assert!(
+            alpha
+                .iter()
+                .all(|f| f.source_id.as_deref() == Some("alpha"))
+        );
+        assert_eq!(beta.len(), 1);
+        assert!(beta.iter().all(|f| f.source_id.as_deref() == Some("beta")));
+        assert!(missing.is_empty());
+    }
+
+    #[cfg(feature = "semantic-adapt")]
+    #[test]
+    fn adapt_train_status_roundtrips_persisted_adapter() {
+        let mut store = create_test_store();
+        let fact_id = FactId(ulid::Ulid::new());
+        store
+            .search_feedback_add(&SearchFeedback {
+                session_id: "session-1".to_string(),
+                fact_id,
+                helpful: true,
+                timestamp: 1,
+            })
+            .unwrap();
+
+        let train = store.adapt_train().unwrap();
+        assert_eq!(train.feedback_used, 1);
+        assert_eq!(train.helpful_count, 1);
+        assert_eq!(train.generation, 1);
+
+        let status = store.adapt_status().unwrap();
+        assert_eq!(status.feedback_count, 1);
+        assert!(status.has_adapter);
+        assert_eq!(status.generation, 1);
+        assert!(status.ready);
+
+        let loaded = store.load_adapter().unwrap();
+        assert!(!loaded.is_empty());
     }
 
     #[test]
@@ -2797,6 +2895,7 @@ mod tests {
             entity_ids: Some(vec![redis_id]),
             tags: None,
             source: None,
+            source_id: None,
             source_confidence: Some(0.5),
             observed_at,
         };
@@ -3018,8 +3117,8 @@ impl Store {
     /// the search engine can pull it on the hot path without a second
     /// `Store` plumbing.
     pub fn load_adapter(&self) -> Result<crate::adapt::DomainAdapter> {
-        match self.meta_get::<Vec<u8>>("adapter_state")? {
-            Some(bytes) => crate::adapt::DomainAdapter::from_bytes(&bytes),
+        match self.meta_get::<crate::adapt::DomainAdapter>("adapter_state")? {
+            Some(adapter) => Ok(adapter),
             None => Ok(crate::adapt::DomainAdapter::new()),
         }
     }

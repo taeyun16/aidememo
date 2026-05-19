@@ -442,6 +442,7 @@ mod tests {
             fact_type: FactType::Note,
             entity_names: vec![],
             source: None,
+            source_id: None,
             score,
             rank,
             created_at: 0,

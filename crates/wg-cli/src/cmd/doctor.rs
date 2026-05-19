@@ -54,14 +54,16 @@ pub fn run_doctor(
     global_json: bool,
 ) -> Result<String, WgError> {
     let memory = collect_memory(store_path, &config);
-    let wiki = WikiGraph::open(store_path, config)?;
+    let wiki = WikiGraph::open(store_path, config.clone())?;
     let issues = wiki.lint()?;
     let stats = wiki.stats()?;
     let superseded = wiki.fact_count_superseded()? as u64;
     let memory = memory.with_counts(stats.fact_count, superseded);
+    let adaptation = collect_adaptation(&wiki, &config);
     let agents = collect_agent_integration();
     let mut fixes = collect_fix_suggestions(&agents);
     fixes.extend(memory.advisories());
+    fixes.extend(adaptation.advisories());
 
     // `--fix --shell` short-circuits to a pipe-friendly view: just
     // the bare commands, one per line, nothing else. Designed for
@@ -86,6 +88,7 @@ pub fn run_doctor(
             "issues": issues,
             "agents": agents,
             "memory": memory,
+            "adaptation": adaptation,
             // Always emitted in JSON: tooling that consumes this
             // shouldn't have to re-derive the suggestion list.
             "fixes": fixes,
@@ -109,6 +112,7 @@ pub fn run_doctor(
     ));
 
     out.push_str(&format_memory(&memory));
+    out.push_str(&format_adaptation(&adaptation));
     out.push_str(&format_agent_integration(&agents));
 
     if sub.fix {
@@ -360,6 +364,67 @@ fn format_fix_suggestions(fixes: &[FixSuggestion]) -> String {
     }
     out.push_str("  (none of these run automatically — copy what you want)\n\n");
     out
+}
+
+// ---------------------------------------------------------------------------
+// Feedback + adaptation
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, serde::Serialize)]
+pub(crate) struct AdaptationReport {
+    pub use_adapter: bool,
+    pub feedback_count: usize,
+    pub has_adapter: bool,
+    pub generation: u32,
+    pub ready: bool,
+    pub error: Option<String>,
+}
+
+fn collect_adaptation(wiki: &WikiGraph, config: &Config) -> AdaptationReport {
+    match wiki.adapt_status() {
+        Ok(status) => AdaptationReport {
+            use_adapter: config.search.use_adapter,
+            feedback_count: status.feedback_count,
+            has_adapter: status.has_adapter,
+            generation: status.generation,
+            ready: status.ready,
+            error: None,
+        },
+        Err(e) => AdaptationReport {
+            use_adapter: config.search.use_adapter,
+            feedback_count: 0,
+            has_adapter: false,
+            generation: 0,
+            ready: false,
+            error: Some(e.to_string()),
+        },
+    }
+}
+
+impl AdaptationReport {
+    fn advisories(&self) -> Vec<FixSuggestion> {
+        let mut out = Vec::new();
+        if self.error.is_none() && self.feedback_count > 0 && !self.has_adapter {
+            out.push(FixSuggestion {
+                target: "wg",
+                kind: "adapt",
+                command: "wg adapt train".to_string(),
+                reason: format!(
+                    "{} feedback item(s) recorded but no trained domain adapter exists",
+                    self.feedback_count
+                ),
+            });
+        }
+        if self.error.is_none() && self.has_adapter && !self.use_adapter {
+            out.push(FixSuggestion {
+                target: "wg",
+                kind: "adapt",
+                command: "wg config set search.use_adapter true".to_string(),
+                reason: "domain adapter exists but search.use_adapter is disabled".to_string(),
+            });
+        }
+        out
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -638,6 +703,26 @@ fn format_memory(memory: &MemoryReport) -> String {
     out
 }
 
+fn format_adaptation(adaptation: &AdaptationReport) -> String {
+    let mut out = String::from("Feedback adaptation:\n");
+    if let Some(error) = &adaptation.error {
+        out.push_str(&format!("  unavailable: {error}\n\n"));
+        return out;
+    }
+    let status = if adaptation.ready {
+        "ready"
+    } else if adaptation.has_adapter {
+        "trained"
+    } else {
+        "not trained"
+    };
+    out.push_str(&format!(
+        "  feedback: {}   adapter: {}   generation: {}   search.use_adapter: {}\n\n",
+        adaptation.feedback_count, status, adaptation.generation, adaptation.use_adapter
+    ));
+    out
+}
+
 fn format_agent_integration(agents: &[AgentStatus]) -> String {
     let mut out = String::from("Agent integration:\n");
     for a in agents {
@@ -736,6 +821,46 @@ mod tests {
             mem.advisories().is_empty(),
             "expected no advisories for an 8M model on bm25, got {:?}",
             mem.advisories()
+        );
+    }
+
+    #[test]
+    fn adaptation_advises_train_when_feedback_exists_without_adapter() {
+        let report = AdaptationReport {
+            use_adapter: true,
+            feedback_count: 3,
+            has_adapter: false,
+            generation: 0,
+            ready: false,
+            error: None,
+        };
+        let advisories = report.advisories();
+        assert!(
+            advisories
+                .iter()
+                .any(|a| a.command == "wg adapt train" && a.reason.contains("3 feedback")),
+            "expected adapt train advisory, got {:?}",
+            advisories
+        );
+    }
+
+    #[test]
+    fn adaptation_advises_enable_when_adapter_is_disabled() {
+        let report = AdaptationReport {
+            use_adapter: false,
+            feedback_count: 3,
+            has_adapter: true,
+            generation: 1,
+            ready: true,
+            error: None,
+        };
+        let advisories = report.advisories();
+        assert!(
+            advisories
+                .iter()
+                .any(|a| a.command == "wg config set search.use_adapter true"),
+            "expected search.use_adapter advisory, got {:?}",
+            advisories
         );
     }
 

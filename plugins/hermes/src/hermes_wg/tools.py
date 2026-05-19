@@ -56,6 +56,7 @@ def _make_handlers(client: WgClient) -> list[tuple[str, dict, Callable[..., Any]
                 limit=int(args.get("limit") or 5),
                 depth=int(args.get("depth") or 2),
                 recent_limit=int(args.get("recent_limit") or 5),
+                source_id=args.get("source_id"),
             )
         )
 
@@ -64,6 +65,7 @@ def _make_handlers(client: WgClient) -> list[tuple[str, dict, Callable[..., Any]
             client.search(
                 str(args.get("query") or ""),
                 limit=int(args.get("limit") or 10),
+                source_id=args.get("source_id"),
             )
         )
 
@@ -100,6 +102,7 @@ def _make_handlers(client: WgClient) -> list[tuple[str, dict, Callable[..., Any]
                     entities=entities,
                     fact_type=str(args.get("fact_type") or "note"),
                     tags=tags,
+                    source_id=args.get("source_id"),
                 )
             }
         )
@@ -123,6 +126,7 @@ def _make_handlers(client: WgClient) -> list[tuple[str, dict, Callable[..., Any]
                         "limit": {"type": "integer", "description": "Top-N search hits (default 5)."},
                         "depth": {"type": "integer", "description": "Graph traversal depth (default 2)."},
                         "recent_limit": {"type": "integer", "description": "How many recent facts to include (default 5)."},
+                        "source_id": {"type": "string", "description": "Optional source namespace / tenant / upstream id filter."},
                     },
                     "required": ["topic"],
                 },
@@ -141,6 +145,7 @@ def _make_handlers(client: WgClient) -> list[tuple[str, dict, Callable[..., Any]
                     "properties": {
                         "query": {"type": "string", "description": "Free-text query (BM25 + semantic vectors)."},
                         "limit": {"type": "integer", "description": "Default 10."},
+                        "source_id": {"type": "string", "description": "Optional source namespace / tenant / upstream id filter."},
                     },
                     "required": ["query"],
                 },
@@ -212,6 +217,7 @@ def _make_handlers(client: WgClient) -> list[tuple[str, dict, Callable[..., Any]
                         "entities": {"type": "array", "items": {"type": "string"}, "description": "Entity names this fact links to."},
                         "fact_type": {"type": "string", "description": "decision | pattern | convention | claim | note | question. Default note."},
                         "tags": {"type": "array", "items": {"type": "string"}},
+                        "source_id": {"type": "string", "description": "Optional source namespace / tenant / upstream id. Use with wg_query/wg_search source_id filters to isolate shared-store reads."},
                     },
                     "required": ["content"],
                 },

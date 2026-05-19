@@ -25,12 +25,14 @@ MSRV remains `1.85`).
 
 ```bash
 wg init ./my-wiki                       # create a store + ingest markdown
+wg init --agent codex ./my-wiki          # init + register wg with an agent
 wg query "Redis"                        # one-shot context (search + entity + traverse + recent)
 wg search "high availability" -l 5 --hybrid
 wg recent -n 10                         # what changed in the last 7 days
 wg overview                             # first-impression snapshot of an unfamiliar wiki
 wg doctor                               # health check (orphans, broken refs, …)
 wg fact add "Decided to use Redis Cluster" --type decision --entities Redis
+wg search "cache policy" --source-id team-a
 wg edit fact <ID> --append "Updated 2026-04-26"
 wg fact supersede <OLD_ID> <NEW_ID>     # validity-window: mark superseded
 wg fact archive --older-than 30d --type note
@@ -50,8 +52,8 @@ wg --project personal stats             # one-off override
 ## CLI commands
 
 ### Read & search
-- `wg search <query> [-l N] [--hybrid] [--include-archive] [--via URL]` — BM25 by default; `--hybrid` adds semantic retrieval
-- `wg query <topic> [--mode naive|local|hybrid|global]` — unified context (search + traverse + recent)
+- `wg search <query> [-l N] [--hybrid] [--source-id ID] [--include-archive] [--via URL]` — BM25 by default; `--hybrid` adds semantic retrieval
+- `wg query <topic> [--mode naive|local|hybrid|global] [--source-id ID]` — unified context (search + traverse + recent)
 - `wg recent [-n N] [--type T] [--last 30d]` — recent activity
 - `wg overview [-n N] [--recent-days D]` — first-impression snapshot
 - `wg traverse <entity> [-d N]` — graph traversal
@@ -61,7 +63,7 @@ wg --project personal stats             # one-off override
 - `wg entity show <name>` — compiled view: summary + recent facts
 
 ### Write
-- `wg fact add <content> --entities A,B [--type decision]` (auto-creates missing entities)
+- `wg fact add <content> --entities A,B [--type decision] [--source-id ID]` (auto-creates missing entities)
 - `wg fact supersede <OLD_ID> <NEW_ID>` — set validity window
 - `wg fact archive --ids <ID,…>` / `--older-than 30d` — move cold facts into `<store>.cold.redb`
 - `wg edit fact <ID> --append/--prepend/--find+--replace/--content`
@@ -71,7 +73,7 @@ wg --project personal stats             # one-off override
 - `wg session new <topic>` / `current` / `list` — tracked session helpers
 
 ### Maintenance
-- `wg doctor [--json]` — health check (now also reports memory + disk footprint)
+- `wg doctor [--json]` — health check with memory, disk, agent setup, and feedback-adapter status
 - `wg lint [--json]` — raw lint issues
 - `wg bench <golden.jsonl> [--k 5]` — measure P@K, R@K, p50/p95 latency against a golden set
 - `wg skill check <path>` — validate Claude Code SKILL.md frontmatter + tool refs
@@ -85,7 +87,7 @@ wg --project personal stats             # one-off override
 - `wg consolidate [--semantic-threshold F] [--ttl note=30] [--dry-run] [--json]` — semantic dedup + TTL expiry pass
 - `wg export [--scope all|entities|relations|facts]` / `wg import`
 - `wg config get/set/list`
-- `wg pending` — manage dry-run extraction / auto-record review queue
+- `wg pending list|stats|approve|reject|review` — manage dry-run extraction / auto-record review queue
   - `wg config set store.durability eventual` — drop per-commit fsync (~13× faster writes; survives process crash, not power loss)
   - `wg config set store.lock_retry_ms 5000` — auto-retry briefly when another `wg` process is holding the redb lock (multi-agent setups). Default `0` keeps the fast-fail behaviour.
 
@@ -95,7 +97,7 @@ wg --project personal stats             # one-off override
 
 ### Servers
 - `wg mcp` — stdio JSON-RPC MCP server (Claude Code, Codex)
-- `wg mcp-serve --port 3000` — HTTP + SSE for browser/remote clients
+- `wg mcp-serve --port 3000` — HTTP + SSE for browser/remote clients; `GET /health` and `GET /admin/status` expose request counts, auth mode, store path, and sync cursor status
 - `wg daemon start|status|stop` — manage a warm local background `mcp-serve`
 - `wg mcp-install --target claude|codex|cursor|…` — write agent config for you
 
@@ -164,6 +166,7 @@ file.
 - **Validity windows** — `superseded_at` + `current_only` filter (Graphiti-style)
 - **Custom entity types** — `service`, `rfc`, `incident` etc. without recompiling
 - **Multi-project** — switch stores via `wg project use` or `--project`
+- **Source scoping** — optional `source_id` on facts lets shared stores isolate reads with `--source-id`
 - **Auto-create entities** — `wg fact add --entities A,B` creates missing entities
 - **Mermaid / DOT graphs** — `wg graph --format mermaid`
 - **MCP server** — stdio (preferred) and HTTP/SSE transports, 24-tool surface

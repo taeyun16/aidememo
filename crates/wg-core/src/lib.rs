@@ -621,6 +621,7 @@ impl WikiGraph {
                 fact_type: Some(new_fact.fact_type),
                 entity_id: Some(*entity_id),
                 min_confidence: None,
+                source_id: None,
                 limit: None,
                 offset: 0,
                 since: None,
@@ -760,6 +761,7 @@ impl WikiGraph {
                 fact_type: None,
                 tags: None,
                 source: None,
+                source_id: None,
                 observed_at: None,
                 superseded_at: Some(now),
                 superseded_by: Some(*new_id),
@@ -1026,6 +1028,7 @@ impl WikiGraph {
                                 fact_type: None,
                                 tags: None,
                                 source: None,
+                                source_id: None,
                                 observed_at: None,
                                 superseded_at: Some(now_ms),
                                 superseded_by: None,
@@ -1479,6 +1482,7 @@ impl WikiGraph {
         // Capture the include_archive flag before opts moves into the
         // engine — we need it back for the cold-tier merge step.
         let include_archive = opts.include_archive;
+        let archive_opts = opts.clone();
         let opts = if self.config.rerank.provider.trim().is_empty() {
             opts
         } else {
@@ -1552,12 +1556,10 @@ impl WikiGraph {
         // remaining slots up to user_limit. Reuse the captured flag
         // (opts itself moved into the engine above).
         if include_archive && !self.is_cold {
-            let cold_opts = SearchOpts {
-                limit: Some(user_limit),
-                bm25_only: false,
-                include_archive: false,
-                ..SearchOpts::default()
-            };
+            let mut cold_opts = archive_opts;
+            cold_opts.limit = Some(user_limit);
+            cold_opts.bm25_only = false;
+            cold_opts.include_archive = false;
             self.merge_archive_results(query, &mut results, cold_opts, user_limit, true)?;
         }
 
@@ -1614,6 +1616,7 @@ impl WikiGraph {
                     since: opts.since,
                     current_only: opts.current_only,
                     bm25_only: opts.bm25_only,
+                    source_id: opts.source_id.clone(),
                     ..Default::default()
                 },
             )?
@@ -1657,6 +1660,7 @@ impl WikiGraph {
                 limit: Some(recent_limit),
                 since: recent_since,
                 current_only: opts.current_only,
+                source_id: opts.source_id.clone(),
                 ..Default::default()
             })?;
             (traverse.entities, recent)
@@ -1926,6 +1930,7 @@ mod query_tests {
             entity_ids: Some(vec![redis_id]),
             tags: None,
             source: None,
+            source_id: None,
             source_confidence: None,
             observed_at: None,
         })

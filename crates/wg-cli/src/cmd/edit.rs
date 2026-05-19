@@ -169,6 +169,7 @@ pub fn run_edit(
                     fact_type: None,
                     tags: None,
                     source: None,
+                    source_id: None,
                     observed_at: None,
                     superseded_at: None,
                     superseded_by: None,

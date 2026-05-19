@@ -255,6 +255,55 @@ fn mcp_install_codex_force_overwrites() {
 }
 
 #[test]
+fn init_agent_codex_initializes_store_and_mcp_config() {
+    let home = tempfile::tempdir().unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let wiki = root.path().join("wiki");
+    std::fs::create_dir_all(&wiki).unwrap();
+    std::fs::write(wiki.join("redis.md"), "# Redis\n\nRedis note.\n").unwrap();
+    let store = root.path().join("wiki.redb");
+
+    let out = run_with_home(
+        home.path(),
+        &[
+            "--store",
+            store.to_str().unwrap(),
+            "--json",
+            "init",
+            "--agent",
+            "codex",
+            "--no-ingest",
+            wiki.to_str().unwrap(),
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(report["agent"], "codex");
+    assert_eq!(report["no_ingest"], true);
+    let steps = report["steps"].as_array().unwrap();
+    assert!(
+        steps
+            .iter()
+            .any(|s| { s["name"] == "agent_skill_install" && s["status"] == "skipped" })
+    );
+    assert!(
+        steps
+            .iter()
+            .any(|s| { s["name"] == "agent_mcp_install" && s["status"] == "ok" })
+    );
+
+    let cfg_path = home.path().join(".codex/config.toml");
+    let parsed: toml::Value = std::fs::read_to_string(&cfg_path).unwrap().parse().unwrap();
+    assert_eq!(parsed["mcp_servers"]["wg"]["command"].as_str(), Some("wg"));
+    assert!(store.exists(), "init should create the redb store");
+}
+
+#[test]
 fn mcp_install_cursor_writes_fresh_config() {
     let home = tempfile::tempdir().unwrap();
     let out = run_with_home(home.path(), &["mcp-install", "--target", "cursor"]);

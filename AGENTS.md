@@ -65,16 +65,25 @@ rather not configure tracing.
 
 ## CLI surface (post-Tier-3)
 
+### Setup / init
+```
+wg init <wiki-root> [--no-ingest]                  create store + ingest markdown
+wg init --agent codex <wiki-root>                  init + register wg MCP for an agent
+wg init --agent claude --agent-force <wiki-root>   overwrite existing agent MCP config
+```
+
 ### Read / search
 ```
-wg search <query> [-l N] [--current] [--hybrid] [--include-archive] [--via URL]
+wg search <query> [-l N] [--current] [--hybrid] [--source-id ID] [--include-archive] [--via URL]
                                                    BM25 by default (no model load — fast path).
                                                    --hybrid = also run semantic re-rank (loads
                                                    model). --include-archive = also search the
                                                    cold-tier `<store>.cold.redb` and merge any
                                                    matches in. --via = dispatch via running
                                                    `wg mcp-serve` daemon (warm model, ~5-50 ms)
-wg query <topic> [-l N] [-d N] [--recent-limit N] [-m naive|local|hybrid|global]
+                                                   --source-id scopes retrieval to one source /
+                                                   tenant / upstream namespace.
+wg query <topic> [-l N] [-d N] [--recent-limit N] [-m naive|local|hybrid|global] [--source-id ID]
                                                    unified search+traverse+recent
 wg recent [-n N] [--type T] [--last 30d]          last 7d facts (default)
 wg traverse <entity> [-d N]                        forward graph walk
@@ -87,7 +96,9 @@ wg stats                                           counts + size
 
 ### Write
 ```
-wg fact add <content> --entities A,B [--type T]     auto-creates missing entities
+wg fact add <content> --entities A,B [--type T] [--source-id ID]
+                                                   auto-creates missing entities; optional
+                                                   source_id scopes shared-store retrieval.
 wg fact supersede <OLD_ID> <NEW_ID>                 validity-window invalidate
 wg fact archive --ids <ID,…>                        move to <store>.cold.redb (preserves FactId)
 wg fact archive --older-than 30d [--type note]      bulk move by age (+ optional type filter)
@@ -99,7 +110,8 @@ wg relation add <src> <tgt> <rel_type>
 
 ### Maintenance
 ```
-wg doctor [--json]                       friendly health check (wraps lint)
+wg doctor [--json]                       friendly health check (lint + memory +
+                                          agent setup + feedback-adapter status)
 wg lint [--json]                          raw lint issues
 wg bench <golden.jsonl> [--k 5] [--limit N]
                                           P@K / R@K / latency benchmark
@@ -228,7 +240,7 @@ wg --store PATH ...                       absolute path override
 ### Servers
 ```
 wg mcp                                    stdio JSON-RPC (preferred)
-wg mcp-serve --port 3000                  HTTP + SSE
+wg mcp-serve --port 3000                  HTTP + SSE; /health + /admin/status
 ```
 
 ### Daemon (background mcp-serve, opportunistic discovery)
@@ -416,6 +428,12 @@ wg config set extract.provider openai            # uses OPENAI_API_KEY
 wg config set extract.model gpt-4o-mini          # default
 wg extract --llm 'long chat transcript here…'    # CLI
 # MCP: wg_extract { llm: true, text: "…" }
+
+# Non-interactive review queue for hooks / auto-capture:
+wg pending list --json
+wg pending stats --json
+wg pending approve --indices 1,3-5 --json
+wg pending reject --all --json
 ```
 
 **Auto-context hooks (Claude Code)** — see `wg-skill/hooks/README.md` for installation:
@@ -599,6 +617,8 @@ reverse proxy (caddy / nginx) in front if you need them.
 ```bash
 # Same-host: agents go through loopback, no token needed
 wg mcp-serve --port 3000
+curl http://127.0.0.1:3000/admin/status   # request counts, auth mode,
+                                           # store path, sync cursor status
 
 # Multi-host team server: token in a file, never on the command line
 wg auth generate > /etc/wg/team-token   # one-time: emit 64-char hex

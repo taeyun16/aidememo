@@ -8,7 +8,10 @@
 //!   wg mcp-serve --port 3000
 
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+};
 
 use axum::{
     Json, Router,
@@ -19,19 +22,129 @@ use axum::{
     routing::{get, post},
 };
 use bpaf::*;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
 use crate::cmd::mcp_tools::{JsonRpcRequest, JsonRpcResponse, dispatch};
 use crate::{Config, WikiGraph, cmd::Command};
 
-type SharedState = Arc<RwLock<Option<WikiGraph>>>;
+#[derive(Clone)]
+struct AppState {
+    wiki: Arc<RwLock<Option<WikiGraph>>>,
+    status: Arc<ServerStatus>,
+}
 
-async fn handle_post(
-    State(state): State<SharedState>,
-    Json(req): Json<JsonRpcRequest>,
-) -> Response {
-    let guard = state.read().await;
+struct ServerStatus {
+    started_at_ms: u64,
+    store_path: PathBuf,
+    bind_addr: String,
+    port: u16,
+    auth_mode: &'static str,
+    counters: RequestCounters,
+}
+
+#[derive(Default)]
+struct RequestCounters {
+    total: AtomicU64,
+    mcp: AtomicU64,
+    sse: AtomicU64,
+    sync_since: AtomicU64,
+    health: AtomicU64,
+    admin_status: AtomicU64,
+}
+
+#[derive(Debug, Serialize)]
+struct RouteCounts {
+    mcp: u64,
+    sse: u64,
+    sync_since: u64,
+    health: u64,
+    admin_status: u64,
+}
+
+#[derive(Debug, Serialize)]
+struct AdminStatusReport {
+    status: &'static str,
+    store_path: String,
+    bind_addr: String,
+    port: u16,
+    auth_mode: &'static str,
+    started_at_ms: u64,
+    uptime_ms: u64,
+    request_count: u64,
+    routes: RouteCounts,
+    sync: SyncStatusReport,
+}
+
+#[derive(Debug, Serialize)]
+struct SyncStatusReport {
+    cursor_file: String,
+    exists: bool,
+    remotes_count: usize,
+    remotes: Vec<SyncRemoteReport>,
+}
+
+#[derive(Debug, Serialize)]
+struct SyncRemoteReport {
+    url: String,
+    entity: Option<String>,
+    fact: Option<String>,
+    entity_updated_at: Option<u64>,
+    fact_updated_at: Option<u64>,
+    last_pulled_at: u64,
+    age_ms: u64,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct StoredCursor {
+    entity: Option<String>,
+    fact: Option<String>,
+    #[serde(default)]
+    entity_updated_at: Option<u64>,
+    #[serde(default)]
+    fact_updated_at: Option<u64>,
+    last_pulled_at: u64,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct SyncCursorFile {
+    remotes: std::collections::HashMap<String, StoredCursor>,
+}
+
+impl ServerStatus {
+    fn record_mcp(&self) {
+        self.record(&self.counters.mcp);
+    }
+
+    fn record_sse(&self) {
+        self.record(&self.counters.sse);
+    }
+
+    fn record_sync_since(&self) {
+        self.record(&self.counters.sync_since);
+    }
+
+    fn record_health(&self) {
+        self.record(&self.counters.health);
+    }
+
+    fn record_admin_status(&self) {
+        self.record(&self.counters.admin_status);
+    }
+
+    fn record(&self, route: &AtomicU64) {
+        self.counters.total.fetch_add(1, Ordering::Relaxed);
+        route.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn snapshot(&self) -> AdminStatusReport {
+        status_report(self)
+    }
+}
+
+async fn handle_post(State(state): State<AppState>, Json(req): Json<JsonRpcRequest>) -> Response {
+    state.status.record_mcp();
+    let guard = state.wiki.read().await;
     let wiki = match guard.as_ref() {
         Some(w) => w,
         None => {
@@ -46,9 +159,11 @@ async fn handle_post(
     }
 }
 
-async fn handle_sse(State(_state): State<SharedState>) -> Response {
+async fn handle_sse(State(state): State<AppState>) -> Response {
     use axum::response::sse::{Event, Sse};
     use std::convert::Infallible;
+
+    state.status.record_sse();
 
     async fn event_stream()
     -> impl tokio_stream::Stream<Item = Result<Event, Infallible>> + Send + 'static {
@@ -59,6 +174,16 @@ async fn handle_sse(State(_state): State<SharedState>) -> Response {
 
     let stream = event_stream().await;
     Sse::new(stream).into_response()
+}
+
+async fn handle_health(State(state): State<AppState>) -> Response {
+    state.status.record_health();
+    Json(state.status.snapshot()).into_response()
+}
+
+async fn handle_admin_status(State(state): State<AppState>) -> Response {
+    state.status.record_admin_status();
+    Json(state.status.snapshot()).into_response()
 }
 
 #[derive(Debug, Clone)]
@@ -174,14 +299,25 @@ pub fn run_mcp_serve(
         .map_err(|e| wg_core::WgError::Internal(format!("failed to create runtime: {}", e)))?;
 
     runtime.block_on(async {
-        let state: SharedState = Arc::new(RwLock::new(Some(wiki)));
+        let state = AppState {
+            wiki: Arc::new(RwLock::new(Some(wiki))),
+            status: Arc::new(ServerStatus {
+                started_at_ms: wg_core::time::current_epoch_ms(),
+                store_path: store_path.clone(),
+                bind_addr: bind_addr.clone(),
+                port,
+                auth_mode: if token.is_some() { "bearer" } else { "none" },
+                counters: RequestCounters::default(),
+            }),
+        };
         let auth_state: AuthState = Arc::new(token.clone());
 
         let mut app = Router::new()
             .route("/mcp", post(handle_post))
             .route("/sse", get(handle_sse))
             .route("/sync/since", get(handle_sync_since))
-            .route("/health", get(|| async { "ok" }))
+            .route("/health", get(handle_health))
+            .route("/admin/status", get(handle_admin_status))
             .with_state(state);
 
         if token.is_some() {
@@ -195,7 +331,7 @@ pub fn run_mcp_serve(
         };
         tracing::info!(
             %addr,
-            "wg mcp-serve: listening ({}) (POST /mcp, GET /sse, GET /health)",
+            "wg mcp-serve: listening ({}) (POST /mcp, GET /sse, GET /health, GET /admin/status)",
             auth_label
         );
 
@@ -234,10 +370,11 @@ struct SyncSinceQuery {
 }
 
 async fn handle_sync_since(
-    State(state): State<SharedState>,
+    State(state): State<AppState>,
     Query(q): Query<SyncSinceQuery>,
 ) -> Response {
-    let guard = state.read().await;
+    state.status.record_sync_since();
+    let guard = state.wiki.read().await;
     let wiki = match guard.as_ref() {
         Some(w) => w,
         None => {
@@ -275,6 +412,71 @@ async fn handle_sync_since(
         buf,
     )
         .into_response()
+}
+
+fn status_report(status: &ServerStatus) -> AdminStatusReport {
+    let now = wg_core::time::current_epoch_ms();
+    AdminStatusReport {
+        status: "ok",
+        store_path: status.store_path.display().to_string(),
+        bind_addr: status.bind_addr.clone(),
+        port: status.port,
+        auth_mode: status.auth_mode,
+        started_at_ms: status.started_at_ms,
+        uptime_ms: now.saturating_sub(status.started_at_ms),
+        request_count: status.counters.total.load(Ordering::Relaxed),
+        routes: RouteCounts {
+            mcp: status.counters.mcp.load(Ordering::Relaxed),
+            sse: status.counters.sse.load(Ordering::Relaxed),
+            sync_since: status.counters.sync_since.load(Ordering::Relaxed),
+            health: status.counters.health.load(Ordering::Relaxed),
+            admin_status: status.counters.admin_status.load(Ordering::Relaxed),
+        },
+        sync: sync_status_report(&status.store_path, now),
+    }
+}
+
+fn sync_status_report(store_path: &std::path::Path, now_ms: u64) -> SyncStatusReport {
+    let cursor_path = sync_cursor_path(store_path);
+    let exists = cursor_path.exists();
+    let cursor = load_sync_cursor(&cursor_path);
+    let mut remotes: Vec<SyncRemoteReport> = cursor
+        .remotes
+        .into_iter()
+        .map(|(url, cursor)| SyncRemoteReport {
+            url,
+            entity: cursor.entity,
+            fact: cursor.fact,
+            entity_updated_at: cursor.entity_updated_at,
+            fact_updated_at: cursor.fact_updated_at,
+            last_pulled_at: cursor.last_pulled_at,
+            age_ms: now_ms.saturating_sub(cursor.last_pulled_at),
+        })
+        .collect();
+    remotes.sort_by(|a, b| a.url.cmp(&b.url));
+    SyncStatusReport {
+        cursor_file: cursor_path.display().to_string(),
+        exists,
+        remotes_count: remotes.len(),
+        remotes,
+    }
+}
+
+fn sync_cursor_path(store_path: &std::path::Path) -> std::path::PathBuf {
+    let mut p = store_path.to_path_buf();
+    let stem = p
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "wiki".into());
+    p.set_file_name(format!("{stem}.sync.json"));
+    p
+}
+
+fn load_sync_cursor(path: &std::path::Path) -> SyncCursorFile {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
 }
 
 /// Read a bearer token from a file. Trims surrounding whitespace
@@ -317,5 +519,64 @@ async fn require_bearer(State(expected): State<AuthState>, req: Request, next: N
         next.run(req).await
     } else {
         (StatusCode::UNAUTHORIZED, "missing or invalid bearer token").into_response()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sync_status_report_loads_cursor_file_without_secrets() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = dir.path().join("team.redb");
+        let cursor = dir.path().join("team.sync.json");
+        std::fs::write(
+            &cursor,
+            r#"{
+              "remotes": {
+                "http://team-host:3000": {
+                  "entity": "01H00000000000000000000000",
+                  "fact": "01H00000000000000000000001",
+                  "entity_updated_at": 1000,
+                  "fact_updated_at": 2000,
+                  "last_pulled_at": 3000
+                }
+              }
+            }"#,
+        )
+        .unwrap();
+
+        let report = sync_status_report(&store, 4500);
+
+        assert_eq!(report.cursor_file, cursor.display().to_string());
+        assert!(report.exists);
+        assert_eq!(report.remotes_count, 1);
+        assert_eq!(report.remotes[0].url, "http://team-host:3000");
+        assert_eq!(report.remotes[0].age_ms, 1500);
+    }
+
+    #[test]
+    fn status_report_counts_routes_and_reports_auth_mode() {
+        let dir = tempfile::tempdir().unwrap();
+        let status = ServerStatus {
+            started_at_ms: wg_core::time::current_epoch_ms(),
+            store_path: dir.path().join("wiki.redb"),
+            bind_addr: "127.0.0.1".to_string(),
+            port: 3000,
+            auth_mode: "bearer",
+            counters: RequestCounters::default(),
+        };
+
+        status.record_health();
+        status.record_mcp();
+        status.record_mcp();
+        let report = status.snapshot();
+
+        assert_eq!(report.status, "ok");
+        assert_eq!(report.auth_mode, "bearer");
+        assert_eq!(report.request_count, 3);
+        assert_eq!(report.routes.health, 1);
+        assert_eq!(report.routes.mcp, 2);
     }
 }

@@ -201,6 +201,7 @@ impl<'a> Importer<'a> {
                             entity_ids: Some(record.entity_ids),
                             tags: Some(record.tags),
                             source: record.source,
+                            source_id: record.source_id,
                             source_confidence: Some(record.source_confidence),
                             observed_at: record.observed_at,
                         };

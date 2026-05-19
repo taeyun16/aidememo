@@ -220,6 +220,7 @@ pub fn ingest_wiki(
                         entity_ids: Some(vec![entity_id]),
                         tags: None,
                         source,
+                        source_id: None,
                         source_confidence: Some(0.5), // auto-extracted
                         observed_at: parsed.observed_at,
                     };

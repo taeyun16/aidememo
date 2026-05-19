@@ -32,7 +32,26 @@ use wg_core::{Config, FactInput, WgError, WikiGraph};
 
 #[derive(Debug, Clone)]
 pub enum PendingSub {
-    Review { from: Option<PathBuf> },
+    Review {
+        from: Option<PathBuf>,
+    },
+    List {
+        from: Option<PathBuf>,
+        limit: Option<usize>,
+    },
+    Approve {
+        from: Option<PathBuf>,
+        all: bool,
+        indices: Option<String>,
+    },
+    Reject {
+        from: Option<PathBuf>,
+        all: bool,
+        indices: Option<String>,
+    },
+    Stats {
+        from: Option<PathBuf>,
+    },
 }
 
 pub fn pending_command() -> impl Parser<Command> {
@@ -50,7 +69,76 @@ pub fn pending_command() -> impl Parser<Command> {
         .command("review")
         .help("Open an interactive TUI to commit / discard pending detections");
 
-    construct!([review])
+    let from = long("from")
+        .help(
+            "Path to the JSONL pending log. Defaults to \
+             $HERMES_STATE_DIR/wg-pending.jsonl, then \
+             ~/.hermes/state/wg-pending.jsonl.",
+        )
+        .argument::<PathBuf>("PATH")
+        .optional();
+    let limit = long("limit")
+        .short('l')
+        .help("Maximum entries to print")
+        .argument::<usize>("N")
+        .optional();
+    let list = construct!(PendingSub::List { from, limit })
+        .to_options()
+        .command("list")
+        .help("List pending detections with stable 1-based indices");
+
+    let from = long("from")
+        .help(
+            "Path to the JSONL pending log. Defaults to \
+             $HERMES_STATE_DIR/wg-pending.jsonl, then \
+             ~/.hermes/state/wg-pending.jsonl.",
+        )
+        .argument::<PathBuf>("PATH")
+        .optional();
+    let all = long("all").help("Approve every pending entry").switch();
+    let indices = long("indices")
+        .short('i')
+        .help("Comma-separated 1-based indices/ranges to approve, e.g. 1,3-5")
+        .argument::<String>("LIST")
+        .optional();
+    let approve = construct!(PendingSub::Approve { from, all, indices })
+        .to_options()
+        .command("approve")
+        .help("Commit selected pending detections without opening the TUI");
+
+    let from = long("from")
+        .help(
+            "Path to the JSONL pending log. Defaults to \
+             $HERMES_STATE_DIR/wg-pending.jsonl, then \
+             ~/.hermes/state/wg-pending.jsonl.",
+        )
+        .argument::<PathBuf>("PATH")
+        .optional();
+    let all = long("all").help("Reject every pending entry").switch();
+    let indices = long("indices")
+        .short('i')
+        .help("Comma-separated 1-based indices/ranges to reject, e.g. 1,3-5")
+        .argument::<String>("LIST")
+        .optional();
+    let reject = construct!(PendingSub::Reject { from, all, indices })
+        .to_options()
+        .command("reject")
+        .help("Discard selected pending detections without opening the TUI");
+
+    let from = long("from")
+        .help(
+            "Path to the JSONL pending log. Defaults to \
+             $HERMES_STATE_DIR/wg-pending.jsonl, then \
+             ~/.hermes/state/wg-pending.jsonl.",
+        )
+        .argument::<PathBuf>("PATH")
+        .optional();
+    let stats = construct!(PendingSub::Stats { from })
+        .to_options()
+        .command("stats")
+        .help("Summarize pending detections by type and confidence");
+
+    construct!([review, list, approve, reject, stats])
         .map(Command::Pending)
         .to_options()
         .command("pending")
@@ -143,10 +231,12 @@ pub fn write_jsonl(path: &Path, entries: &[PendingEntry]) -> Result<(), WgError>
 
 /// Outcome of a `wg pending review` run, returned to the user once
 /// the TUI exits so they can see what changed.
-#[derive(Debug, Default, PartialEq)]
+#[derive(Debug, Default, PartialEq, Serialize)]
 pub struct ReviewSummary {
+    pub attempted: usize,
     pub committed: usize,
     pub discarded: usize,
+    pub failed: usize,
     pub remaining: usize,
 }
 
@@ -165,10 +255,12 @@ pub fn apply_review(
 
     for (idx, entry) in entries.iter().enumerate() {
         if commit.contains(&idx) {
+            summary.attempted += 1;
             match commit_entry(wiki, entry) {
                 Ok(_) => summary.committed += 1,
                 Err(_) => {
                     // Failed commit — keep so the user can retry.
+                    summary.failed += 1;
                     kept.push(entry.clone());
                 }
             }
@@ -193,6 +285,7 @@ fn commit_entry(wiki: &WikiGraph, entry: &PendingEntry) -> Result<(), WgError> {
             "wg-pending-review".to_string(),
         ]),
         source: None,
+        source_id: None,
         source_confidence: Some(entry.confidence),
         observed_at: Some(entry.ts_ms),
     })?;
@@ -299,11 +392,259 @@ impl AppState {
 }
 
 // ---------------------------------------------------------------------------
-// Runner — the only piece that needs a TTY
+// Runner
 // ---------------------------------------------------------------------------
 
-pub fn run_pending_review(sub: PendingSub) -> Result<String, WgError> {
-    let PendingSub::Review { from } = sub;
+#[derive(Debug, Serialize)]
+struct IndexedPendingEntry {
+    index: usize,
+    ts_ms: u64,
+    content: String,
+    fact_type: String,
+    confidence: f32,
+    source_line: String,
+}
+
+#[derive(Debug, Serialize)]
+struct PendingListReport {
+    log_path: String,
+    count: usize,
+    shown: usize,
+    entries: Vec<IndexedPendingEntry>,
+}
+
+#[derive(Debug, Serialize)]
+struct PendingApplyReport {
+    log_path: String,
+    selected: usize,
+    summary: ReviewSummary,
+}
+
+#[derive(Debug, Serialize)]
+struct PendingStatsReport {
+    log_path: String,
+    total: usize,
+    by_type: std::collections::BTreeMap<String, usize>,
+    confidence_min: Option<f32>,
+    confidence_max: Option<f32>,
+    confidence_avg: Option<f32>,
+    confidence_buckets: std::collections::BTreeMap<String, usize>,
+}
+
+pub fn run_pending(
+    sub: PendingSub,
+    store_path: &Path,
+    config: Config,
+    json: bool,
+) -> Result<String, WgError> {
+    match sub {
+        PendingSub::Review { from } => run_pending_review(from, store_path, config, json),
+        PendingSub::List { from, limit } => run_pending_list(from, limit, json),
+        PendingSub::Approve { from, all, indices } => {
+            run_pending_apply(from, all, indices, true, store_path, config, json)
+        }
+        PendingSub::Reject { from, all, indices } => {
+            run_pending_apply(from, all, indices, false, store_path, config, json)
+        }
+        PendingSub::Stats { from } => run_pending_stats(from, json),
+    }
+}
+
+fn run_pending_list(
+    from: Option<PathBuf>,
+    limit: Option<usize>,
+    json: bool,
+) -> Result<String, WgError> {
+    let log_path = from.unwrap_or_else(default_log_path);
+    let entries = read_jsonl(&log_path)?;
+    let shown = limit.unwrap_or(entries.len()).min(entries.len());
+
+    let indexed: Vec<IndexedPendingEntry> = entries
+        .iter()
+        .take(shown)
+        .enumerate()
+        .map(|(idx, e)| IndexedPendingEntry {
+            index: idx + 1,
+            ts_ms: e.ts_ms,
+            content: e.content.clone(),
+            fact_type: e.fact_type.clone(),
+            confidence: e.confidence,
+            source_line: e.source_line.clone(),
+        })
+        .collect();
+
+    let report = PendingListReport {
+        log_path: log_path.display().to_string(),
+        count: entries.len(),
+        shown,
+        entries: indexed,
+    };
+    if json {
+        return serde_json::to_string_pretty(&report).map_err(|e| WgError::Serialize {
+            context: "pending list".to_string(),
+            source: e,
+        });
+    }
+
+    if entries.is_empty() {
+        return Ok(format!(
+            "No pending detections in {}.\n",
+            log_path.display()
+        ));
+    }
+
+    let mut out = format!(
+        "Pending detections in {}: {} total, showing {}\n",
+        log_path.display(),
+        entries.len(),
+        shown
+    );
+    for e in &report.entries {
+        out.push_str(&format!(
+            "{:>4}. [{:<10} {:.2}] {}\n",
+            e.index, e.fact_type, e.confidence, e.content
+        ));
+    }
+    Ok(out)
+}
+
+fn run_pending_stats(from: Option<PathBuf>, json: bool) -> Result<String, WgError> {
+    let log_path = from.unwrap_or_else(default_log_path);
+    let entries = read_jsonl(&log_path)?;
+    let mut by_type = std::collections::BTreeMap::new();
+    let mut buckets = std::collections::BTreeMap::from([
+        ("0.0-0.5".to_string(), 0usize),
+        ("0.5-0.7".to_string(), 0usize),
+        ("0.7-0.9".to_string(), 0usize),
+        ("0.9-1.0".to_string(), 0usize),
+    ]);
+    let mut min: Option<f32> = None;
+    let mut max: Option<f32> = None;
+    let mut sum = 0.0_f32;
+
+    for entry in &entries {
+        *by_type.entry(entry.fact_type.clone()).or_insert(0) += 1;
+        min = Some(min.map_or(entry.confidence, |v| v.min(entry.confidence)));
+        max = Some(max.map_or(entry.confidence, |v| v.max(entry.confidence)));
+        sum += entry.confidence;
+        let bucket = if entry.confidence < 0.5 {
+            "0.0-0.5"
+        } else if entry.confidence < 0.7 {
+            "0.5-0.7"
+        } else if entry.confidence < 0.9 {
+            "0.7-0.9"
+        } else {
+            "0.9-1.0"
+        };
+        if let Some(n) = buckets.get_mut(bucket) {
+            *n += 1;
+        }
+    }
+
+    let report = PendingStatsReport {
+        log_path: log_path.display().to_string(),
+        total: entries.len(),
+        by_type,
+        confidence_min: min,
+        confidence_max: max,
+        confidence_avg: if entries.is_empty() {
+            None
+        } else {
+            Some(sum / entries.len() as f32)
+        },
+        confidence_buckets: buckets,
+    };
+
+    if json {
+        return serde_json::to_string_pretty(&report).map_err(|e| WgError::Serialize {
+            context: "pending stats".to_string(),
+            source: e,
+        });
+    }
+
+    let mut out = format!(
+        "Pending stats for {}: {} total\n",
+        log_path.display(),
+        report.total
+    );
+    if let Some(avg) = report.confidence_avg {
+        out.push_str(&format!(
+            "confidence: min {:.2}, avg {:.2}, max {:.2}\n",
+            report.confidence_min.unwrap_or(0.0),
+            avg,
+            report.confidence_max.unwrap_or(0.0)
+        ));
+    }
+    out.push_str("by type:\n");
+    for (kind, count) in &report.by_type {
+        out.push_str(&format!("  {kind}: {count}\n"));
+    }
+    out.push_str("confidence buckets:\n");
+    for (bucket, count) in &report.confidence_buckets {
+        out.push_str(&format!("  {bucket}: {count}\n"));
+    }
+    Ok(out)
+}
+
+fn run_pending_apply(
+    from: Option<PathBuf>,
+    all: bool,
+    indices: Option<String>,
+    approve: bool,
+    store_path: &Path,
+    config: Config,
+    json: bool,
+) -> Result<String, WgError> {
+    let log_path = from.unwrap_or_else(default_log_path);
+    let entries = read_jsonl(&log_path)?;
+    let selected = select_indices(entries.len(), all, indices.as_deref())?;
+
+    if selected.is_empty() {
+        return Ok(format!(
+            "No matching pending detections in {}.\n",
+            log_path.display()
+        ));
+    }
+
+    let wiki = WikiGraph::open(store_path, config)?;
+    let (commit, discard) = if approve {
+        (selected.clone(), HashSet::new())
+    } else {
+        (HashSet::new(), selected.clone())
+    };
+    let (kept, summary) = apply_review(&entries, &commit, &discard, &wiki);
+    write_jsonl(&log_path, &kept)?;
+
+    let report = PendingApplyReport {
+        log_path: log_path.display().to_string(),
+        selected: selected.len(),
+        summary,
+    };
+
+    if json {
+        return serde_json::to_string_pretty(&report).map_err(|e| WgError::Serialize {
+            context: "pending apply".to_string(),
+            source: e,
+        });
+    }
+
+    Ok(format!(
+        "Selected {}. Committed {} fact(s), discarded {}, failed {}, kept {}.\nLog: {}\n",
+        report.selected,
+        report.summary.committed,
+        report.summary.discarded,
+        report.summary.failed,
+        report.summary.remaining,
+        log_path.display()
+    ))
+}
+
+fn run_pending_review(
+    from: Option<PathBuf>,
+    store_path: &Path,
+    config: Config,
+    json: bool,
+) -> Result<String, WgError> {
     let log_path = from.unwrap_or_else(default_log_path);
     let entries = read_jsonl(&log_path)?;
 
@@ -333,9 +674,7 @@ pub fn run_pending_review(sub: PendingSub) -> Result<String, WgError> {
         ));
     }
 
-    let config = Config::load().unwrap_or_default();
-    let store_path = PathBuf::from(&config.store.path);
-    let wiki = WikiGraph::open(&store_path, config)?;
+    let wiki = WikiGraph::open(store_path, config)?;
 
     let (kept, summary) = apply_review(
         &final_state.entries,
@@ -345,13 +684,77 @@ pub fn run_pending_review(sub: PendingSub) -> Result<String, WgError> {
     );
     write_jsonl(&log_path, &kept)?;
 
+    if json {
+        let report = PendingApplyReport {
+            log_path: log_path.display().to_string(),
+            selected: final_state.commit.len() + final_state.discard.len(),
+            summary,
+        };
+        return serde_json::to_string_pretty(&report).map_err(|e| WgError::Serialize {
+            context: "pending review".to_string(),
+            source: e,
+        });
+    }
+
     Ok(format!(
-        "Committed {} fact(s), discarded {}, kept {}.\nLog: {}\n",
+        "Committed {} fact(s), discarded {}, failed {}, kept {}.\nLog: {}\n",
         summary.committed,
         summary.discarded,
+        summary.failed,
         summary.remaining,
         log_path.display()
     ))
+}
+
+fn select_indices(len: usize, all: bool, indices: Option<&str>) -> Result<HashSet<usize>, WgError> {
+    if all && indices.is_some() {
+        return Err(WgError::InvalidInput(
+            "pass either --all or --indices, not both".to_string(),
+        ));
+    }
+    if all {
+        return Ok((0..len).collect());
+    }
+    let Some(raw) = indices else {
+        return Err(WgError::InvalidInput(
+            "pass --all or --indices LIST".to_string(),
+        ));
+    };
+
+    let mut out = HashSet::new();
+    for part in raw.split(',') {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        if let Some((start, end)) = part.split_once('-') {
+            let start = parse_one_based_index(start.trim(), len)?;
+            let end = parse_one_based_index(end.trim(), len)?;
+            if start > end {
+                return Err(WgError::InvalidInput(format!(
+                    "invalid descending range: {part}"
+                )));
+            }
+            for idx in start..=end {
+                out.insert(idx);
+            }
+        } else {
+            out.insert(parse_one_based_index(part, len)?);
+        }
+    }
+    Ok(out)
+}
+
+fn parse_one_based_index(raw: &str, len: usize) -> Result<usize, WgError> {
+    let n = raw
+        .parse::<usize>()
+        .map_err(|e| WgError::InvalidInput(format!("invalid pending index {raw:?}: {e}")))?;
+    if n == 0 || n > len {
+        return Err(WgError::InvalidInput(format!(
+            "pending index {n} out of range 1..={len}"
+        )));
+    }
+    Ok(n - 1)
 }
 
 // The actual rendering / input loop is isolated so unit tests of the
@@ -488,6 +891,72 @@ this is not json
         assert_eq!(summary.remaining, 1);
         assert_eq!(kept.len(), 1);
         assert_eq!(kept[0].content, "leave me");
+    }
+
+    #[test]
+    fn select_indices_supports_ranges_and_dedup() {
+        let selected = select_indices(5, false, Some("1,3-5,4")).unwrap();
+        assert_eq!(selected.len(), 4);
+        assert!(selected.contains(&0));
+        assert!(selected.contains(&2));
+        assert!(selected.contains(&3));
+        assert!(selected.contains(&4));
+    }
+
+    #[test]
+    fn select_indices_all_selects_everything() {
+        let selected = select_indices(3, true, None).unwrap();
+        assert_eq!(selected, [0, 1, 2].into_iter().collect());
+    }
+
+    #[test]
+    fn select_indices_rejects_bad_shapes() {
+        assert!(select_indices(3, false, None).is_err());
+        assert!(select_indices(3, true, Some("1")).is_err());
+        assert!(select_indices(3, false, Some("0")).is_err());
+        assert!(select_indices(3, false, Some("4")).is_err());
+        assert!(select_indices(3, false, Some("3-1")).is_err());
+    }
+
+    #[test]
+    fn pending_list_json_reports_count_and_shown() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("wg-pending.jsonl");
+        write_jsonl(
+            &path,
+            &[
+                entry("Use HNSW", "decision", 0.95),
+                entry("Always lint", "convention", 0.85),
+            ],
+        )
+        .unwrap();
+        let raw = run_pending_list(Some(path), Some(1), true).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(v["count"], 2);
+        assert_eq!(v["shown"], 1);
+        assert_eq!(v["entries"][0]["index"], 1);
+    }
+
+    #[test]
+    fn pending_stats_json_reports_type_and_confidence_distribution() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("wg-pending.jsonl");
+        write_jsonl(
+            &path,
+            &[
+                entry("Use HNSW", "decision", 0.95),
+                entry("Always lint", "convention", 0.85),
+                entry("Noise", "note", 0.20),
+            ],
+        )
+        .unwrap();
+        let raw = run_pending_stats(Some(path), true).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(v["total"], 3);
+        assert_eq!(v["by_type"]["decision"], 1);
+        assert_eq!(v["confidence_buckets"]["0.0-0.5"], 1);
+        assert_eq!(v["confidence_buckets"]["0.7-0.9"], 1);
+        assert_eq!(v["confidence_buckets"]["0.9-1.0"], 1);
     }
 
     #[test]

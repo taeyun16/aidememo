@@ -74,6 +74,7 @@ pub fn run_recent(
         fact_type: crate::parse_fact_type(sub.fact_type),
         entity_id: None,
         min_confidence: None,
+        source_id: None,
         limit: Some(sub.limit.unwrap_or(20)),
         offset: 0,
         since,

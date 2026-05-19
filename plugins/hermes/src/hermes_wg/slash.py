@@ -23,9 +23,10 @@ def _wg_handler(client: WgClient):
     def handle(raw_args: str) -> str:
         topic = raw_args.strip()
         if not topic:
-            return "Usage: /wg <topic>  — gathers search + traverse + recent for the topic."
+            return "Usage: /wg <topic> [--source-id ID]  — gathers search + traverse + recent for the topic."
+        topic, source_id = _parse_topic_args(raw_args)
         try:
-            ctx = client.query(topic, limit=5, depth=2, recent_limit=5)
+            ctx = client.query(topic, limit=5, depth=2, recent_limit=5, source_id=source_id)
         except CLIENT_ERRORS as exc:
             return f"wg_query failed: {exc}"
         return to_pretty_json(ctx)
@@ -37,13 +38,17 @@ def _wg_add_handler(client: WgClient):
     def handle(raw_args: str) -> str:
         if not raw_args.strip():
             return (
-                "Usage: /wg-add <content> [--entities A,B] [--type decision|note|...]\n"
+                "Usage: /wg-add <content> [--entities A,B] [--type decision|note|...] [--source-id ID]\n"
                 "Example: /wg-add \"HNSW is the default index\" --entities wg --type decision"
             )
-        content, entities, fact_type, tags = _parse_add_args(raw_args)
+        content, entities, fact_type, tags, source_id = _parse_add_args(raw_args)
         try:
             fid = client.fact_add(
-                content, entities=entities, fact_type=fact_type, tags=tags
+                content,
+                entities=entities,
+                fact_type=fact_type,
+                tags=tags,
+                source_id=source_id,
             )
         except CLIENT_ERRORS as exc:
             return f"wg_fact_add failed: {exc}"
@@ -72,7 +77,26 @@ def _wg_recent_handler(client: WgClient):
     return handle
 
 
-def _parse_add_args(raw: str) -> tuple[str, list[str] | None, str, list[str]]:
+def _parse_topic_args(raw: str) -> tuple[str, str | None]:
+    try:
+        tokens = shlex.split(raw)
+    except ValueError:
+        tokens = raw.split()
+    topic_parts: list[str] = []
+    source_id: str | None = None
+    i = 0
+    while i < len(tokens):
+        t = tokens[i]
+        if t == "--source-id" and i + 1 < len(tokens):
+            source_id = tokens[i + 1]
+            i += 2
+            continue
+        topic_parts.append(t)
+        i += 1
+    return " ".join(topic_parts).strip(), source_id
+
+
+def _parse_add_args(raw: str) -> tuple[str, list[str] | None, str, list[str], str | None]:
     """Pull ``--entities``, ``--type``, ``--tag`` flags out of the raw
     arg string and return ``(content, entities, fact_type, tags)``.
     Anything not consumed by a flag is treated as the fact content.
@@ -86,6 +110,7 @@ def _parse_add_args(raw: str) -> tuple[str, list[str] | None, str, list[str]]:
     entities: list[str] | None = None
     fact_type = "note"
     tags: list[str] = []
+    source_id: str | None = None
     i = 0
     while i < len(tokens):
         t = tokens[i]
@@ -101,10 +126,14 @@ def _parse_add_args(raw: str) -> tuple[str, list[str] | None, str, list[str]]:
             tags.append(tokens[i + 1])
             i += 2
             continue
+        if t == "--source-id" and i + 1 < len(tokens):
+            source_id = tokens[i + 1]
+            i += 2
+            continue
         content_parts.append(t)
         i += 1
     content = " ".join(content_parts).strip()
-    return content, entities, fact_type, tags
+    return content, entities, fact_type, tags, source_id
 
 
 def _format_pending_list(entries: list[pending.PendingEntry]) -> str:
@@ -192,13 +221,13 @@ def register_all(ctx: Any, client: WgClient) -> None:
         name="wg",
         handler=_wg_handler(client),
         description="One-shot wg context fetch (search + graph + recent).",
-        args_hint="<topic>",
+        args_hint="<topic> [--source-id ID]",
     )
     ctx.register_command(
         name="wg-add",
         handler=_wg_add_handler(client),
         description="Append a fact to the wg knowledge graph.",
-        args_hint="<content> [--entities A,B] [--type decision]",
+        args_hint="<content> [--entities A,B] [--type decision] [--source-id ID]",
     )
     ctx.register_command(
         name="wg-recent",

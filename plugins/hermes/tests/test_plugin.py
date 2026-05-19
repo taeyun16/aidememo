@@ -99,6 +99,13 @@ def test_registers_all_seven_tools(fake_ctx: FakeCtx) -> None:
     }
 
 
+def test_source_id_is_exposed_on_relevant_tool_schemas(fake_ctx: FakeCtx) -> None:
+    schemas = {t["name"]: t["schema"]["parameters"]["properties"] for t in fake_ctx.tools}
+    assert "source_id" in schemas["wg_query"]
+    assert "source_id" in schemas["wg_search"]
+    assert "source_id" in schemas["wg_fact_add"]
+
+
 def test_registers_four_slash_commands(fake_ctx: FakeCtx) -> None:
     names = {c["name"] for c in fake_ctx.commands}
     assert names == {"wg", "wg-add", "wg-recent", "wg-pending"}

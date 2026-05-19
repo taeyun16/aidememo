@@ -66,6 +66,10 @@ impl<'a> SearchEngine<'a> {
                     continue;
                 }
 
+                if !matches_source_id(&fact, opts.source_id.as_ref()) {
+                    continue;
+                }
+
                 if !matches_time_window(&fact, opts.since, opts.until) {
                     continue;
                 }
@@ -138,6 +142,13 @@ fn matches_entity_filter(fact: &FactRecord, entity_filter: Option<&Vec<EntityId>
     }
 }
 
+fn matches_source_id(fact: &FactRecord, source_id: Option<&String>) -> bool {
+    match source_id {
+        Some(source_id) => fact.source_id.as_deref() == Some(source_id.as_str()),
+        None => true,
+    }
+}
+
 /// Check whether a fact's timestamp falls within `[since, until]` (inclusive).
 /// Prefers `observed_at` (real-world time) over `created_at` (DB insertion).
 fn matches_time_window(fact: &FactRecord, since: Option<u64>, until: Option<u64>) -> bool {
@@ -196,6 +207,7 @@ fn build_search_result(
         fact_type: fact.fact_type,
         entity_names,
         source: fact.source,
+        source_id: fact.source_id,
         score,
         rank,
         created_at: fact.created_at,
@@ -225,6 +237,7 @@ fn build_search_result(
         fact_type: fact.fact_type,
         entity_names,
         source: fact.source,
+        source_id: fact.source_id,
         score,
         rank,
         created_at: fact.created_at,
@@ -561,6 +574,7 @@ mod semantic {
                 until: opts.until,
                 current_only: opts.current_only,
                 as_of: opts.as_of,
+                source_id: opts.source_id.clone(),
                 ..Default::default()
             })?,
         };
@@ -570,6 +584,7 @@ mod semantic {
         facts.retain(|fact| {
             fact.source_confidence >= min_confidence
                 && matches_entity_filter(fact, opts.entity_filter.as_ref())
+                && matches_source_id(fact, opts.source_id.as_ref())
                 && (opts.since.is_none() && opts.until.is_none()
                     || matches_time_window(fact, opts.since, opts.until))
                 && matches_as_of(fact, opts.as_of)
@@ -1036,6 +1051,7 @@ mod tests {
                 entity_ids: Some(vec![redis_id]),
                 tags: Some(vec!["ha".to_string()]),
                 source: Some("entities/redis.md".to_string()),
+                source_id: None,
                 source_confidence: Some(0.8),
                 observed_at: None,
             })
@@ -1048,6 +1064,7 @@ mod tests {
                 entity_ids: Some(vec![redis_id]),
                 tags: Some(vec!["scaling".to_string()]),
                 source: Some("entities/redis.md".to_string()),
+                source_id: None,
                 source_confidence: Some(0.7),
                 observed_at: None,
             })
@@ -1066,6 +1083,69 @@ mod tests {
             .search("nonexistent query xyz", SearchOpts::default())
             .unwrap();
         assert!(results.len() <= config.search.default_limit);
+    }
+
+    #[test]
+    fn bm25_search_filters_by_source_id() {
+        let (mut store, _dir) = create_test_store();
+        let redis_id = store
+            .entity_add(EntityInput {
+                name: "Redis".to_string(),
+                entity_type: Some(EntityType::Technology),
+                ..Default::default()
+            })
+            .unwrap();
+
+        for (content, source_id) in [
+            ("Redis alpha tenant cache policy", "alpha"),
+            ("Redis beta tenant cache policy", "beta"),
+            ("Redis alpha tenant eviction policy", "alpha"),
+        ] {
+            store
+                .fact_add(FactInput {
+                    content: content.to_string(),
+                    fact_type: Some(FactType::Note),
+                    entity_ids: Some(vec![redis_id]),
+                    source_id: Some(source_id.to_string()),
+                    source_confidence: Some(1.0),
+                    ..Default::default()
+                })
+                .unwrap();
+        }
+
+        let config = Config::default();
+        let bm25_state = RwLock::new(Bm25IndexState::new());
+        let engine = SearchEngine::new(&store, &config, &bm25_state);
+
+        let alpha = engine
+            .search(
+                "Redis tenant policy",
+                SearchOpts {
+                    source_id: Some("alpha".to_string()),
+                    limit: Some(10),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let beta = engine
+            .search(
+                "Redis tenant policy",
+                SearchOpts {
+                    source_id: Some("beta".to_string()),
+                    limit: Some(10),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+
+        assert_eq!(alpha.len(), 2);
+        assert!(
+            alpha
+                .iter()
+                .all(|r| r.source_id.as_deref() == Some("alpha"))
+        );
+        assert_eq!(beta.len(), 1);
+        assert!(beta.iter().all(|r| r.source_id.as_deref() == Some("beta")));
     }
 
     // semantic::hybrid_search initialises the embedding provider

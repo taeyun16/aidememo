@@ -8,8 +8,8 @@ lifecycle hooks.
 
 | Surface | What it does |
 |---|---|
-| **7 tools** | `wg_query`, `wg_search`, `wg_recent`, `wg_entity_list`, `wg_traverse`, `wg_fact_add`, `wg_lint` — same surface as the wg MCP server, but called in-process (no JSON-RPC overhead). |
-| **4 slash commands** | `/wg <topic>` (one-shot context), `/wg-add <content>` (record a fact), `/wg-recent` (last 7 days), `/wg-pending` (review/commit dry-run captures). |
+| **7 tools** | `wg_query`, `wg_search`, `wg_recent`, `wg_entity_list`, `wg_traverse`, `wg_fact_add`, `wg_lint` — same surface as the wg MCP server, but called in-process (no JSON-RPC overhead). `wg_query`, `wg_search`, and `wg_fact_add` accept `source_id` for shared-store scoping. |
+| **4 slash commands** | `/wg <topic>` (one-shot context), `/wg-add <content>` (record a fact), `/wg-recent` (last 7 days), `/wg-pending` (review/commit dry-run captures). `/wg` and `/wg-add` accept `--source-id ID`. |
 | **`on_session_start` hook** | Auto-injects recent facts into the conversation so the model has wg context before the user types. |
 | **`on_session_end` hook** | Scans the transcript for decision-style phrasings and auto-records them as wg facts. |
 | **`hermes wg ...` CLI** | `hermes wg query` / `search` / `recent` / `add` / `stats` / `lint`. |
@@ -35,6 +35,7 @@ plugins:
     auto_record: true               # session_end fact auto-recorder
     dry_run: false                  # if true, log detections to wg-pending.jsonl instead of writing
     confidence_floor: 0.85          # higher = stricter (fewer false positives)
+    lock_retry_ms: 5000             # smooth over short redb lock contention, no daemon required
     default_entities: []            # entities to attach to auto-recorded facts
     pending_log: ~/.hermes/state/wg-pending.jsonl  # dry-run audit log
 ```
@@ -73,6 +74,7 @@ floor, modest 7-day window, auto-record on).
 | `auto_record` | `true` | Toggle the `on_session_end` recorder. |
 | `dry_run` | `false` | When `true`, detections are appended to `pending_log` instead of being written to wg. Useful for auditing precision before trusting writes. |
 | `confidence_floor` | `0.85` | 0.7–1.0; lower = more captures (and more noise). |
+| `lock_retry_ms` | `5000` | CLI fallback retries short redb lock collisions for this long. Keeps two local Hermes agents smooth without requiring a daemon. Set `0` for fail-fast debugging. |
 | `default_entities` | `[]` | Entities to attach to auto-recorded facts. |
 | `pending_log` | `~/.hermes/state/wg-pending.jsonl` | Override the dry-run audit log path. |
 
@@ -84,6 +86,8 @@ few sessions, then audit and selectively commit captures.
 **From chat (Hermes session):**
 
 ```text
+/wg redis --source-id team-a       → query only team-a facts in a shared store
+/wg-add "Redis cache policy is LRU" --entities Redis --source-id team-a
 /wg-pending                     → list every detection (numbered)
 /wg-pending commit 3            → commit only entry #3
 /wg-pending commit all          → commit all and clear the log

@@ -426,6 +426,10 @@ pub struct FactRecord {
     pub tags: Vec<String>,
     /// Source page path (e.g., "entities/redis.md#ha").
     pub source: Option<String>,
+    /// Optional source namespace / tenant / upstream id. Use this to
+    /// scope retrieval when several apps or users share one store.
+    #[serde(default)]
+    pub source_id: Option<String>,
     /// Source confidence (0-1): manual=1.0, auto-extract=0.5, LLM=0.3.
     pub source_confidence: f32,
     /// Relevance score (0-1): updated via feedback.
@@ -474,6 +478,7 @@ impl FactRecord {
             entity_ids,
             tags: Vec::new(),
             source: None,
+            source_id: None,
             source_confidence: 0.5,
             relevance_score: 0.5,
             created_at: now,
@@ -501,6 +506,9 @@ impl FactRecord {
         }
         if let Some(source) = input.source {
             self.source = Some(source);
+        }
+        if let Some(source_id) = input.source_id {
+            self.source_id = Some(source_id);
         }
         if let Some(observed_at) = input.observed_at {
             self.observed_at = Some(observed_at);
@@ -538,6 +546,8 @@ pub struct FactInput {
     #[serde(default)]
     pub source: Option<String>,
     #[serde(default)]
+    pub source_id: Option<String>,
+    #[serde(default)]
     pub source_confidence: Option<f32>,
     /// When the fact was actually observed/decided (epoch ms).
     /// Distinct from creation time. Optional.
@@ -552,6 +562,8 @@ pub struct FactUpdate {
     pub fact_type: Option<FactType>,
     pub tags: Option<Vec<String>>,
     pub source: Option<String>,
+    #[serde(default)]
+    pub source_id: Option<String>,
     #[serde(default)]
     pub observed_at: Option<u64>,
     /// If set, marks the fact as superseded at this epoch ms. Use `Some(0)` to
@@ -834,6 +846,8 @@ pub struct SearchResult {
     pub fact_type: FactType,
     pub entity_names: Vec<String>,
     pub source: Option<String>,
+    #[serde(default)]
+    pub source_id: Option<String>,
     pub score: f32,
     pub rank: usize,
     /// When the fact was inserted into the store (epoch ms).
@@ -853,6 +867,7 @@ pub struct SearchResult {
 pub struct SearchOpts {
     pub limit: Option<usize>,
     pub min_confidence: Option<f32>,
+    pub source_id: Option<String>,
     pub entity_filter: Option<Vec<EntityId>>,
     pub bm25_weight: f32,
     pub semantic_weight: f32,
@@ -894,6 +909,7 @@ pub struct FactListOpts {
     pub fact_type: Option<FactType>,
     pub entity_id: Option<EntityId>,
     pub min_confidence: Option<f32>,
+    pub source_id: Option<String>,
     pub limit: Option<usize>,
     pub offset: usize,
     /// Lower-bound timestamp (inclusive, epoch ms). Compares against
@@ -983,6 +999,8 @@ pub struct QueryOpts {
     /// `SearchOpts::bm25_only` — flows down into the hybrid_search
     /// step. `false` (default) preserves the previous behaviour.
     pub bm25_only: bool,
+    /// Optional source namespace / tenant / upstream id filter.
+    pub source_id: Option<String>,
 }
 
 impl Default for QueryOpts {
@@ -995,6 +1013,7 @@ impl Default for QueryOpts {
             current_only: false,
             mode: QueryMode::default(),
             bm25_only: false,
+            source_id: None,
         }
     }
 }

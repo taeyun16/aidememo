@@ -220,6 +220,7 @@ pub enum FactSub {
         entities: Option<Vec<String>>,
         tags: Option<Vec<String>>,
         source: Option<String>,
+        source_id: Option<String>,
         confidence: Option<f32>,
         observed_at: Option<String>,
         content: String,
@@ -231,6 +232,7 @@ pub enum FactSub {
         fact_type: Option<String>,
         entity: Option<String>,
         min_confidence: Option<f32>,
+        source_id: Option<String>,
         since: Option<String>,
         until: Option<String>,
         last: Option<String>,
@@ -304,6 +306,7 @@ pub struct SearchSub {
     pub traverse_from: Option<String>,
     pub traverse_depth: Option<u32>,
     pub min_confidence: Option<f32>,
+    pub source_id: Option<String>,
     pub since: Option<String>,
     pub until: Option<String>,
     pub last: Option<String>,
@@ -328,6 +331,7 @@ pub struct QuerySub {
     pub recent_limit: Option<usize>,
     pub last: Option<String>,
     pub mode: Option<String>,
+    pub source_id: Option<String>,
     pub topic: String,
 }
 
@@ -739,6 +743,10 @@ fn fact_command() -> impl Parser<Command> {
         .help("Source page path")
         .argument::<String>("SOURCE")
         .optional();
+    let source_id = long("source-id")
+        .help("Optional source namespace / tenant / upstream id")
+        .argument::<String>("SOURCE_ID")
+        .optional();
     let confidence = long("confidence")
         .short('c')
         .help("Source confidence (0.0-1.0)")
@@ -753,6 +761,7 @@ fn fact_command() -> impl Parser<Command> {
         entities,
         tags,
         source,
+        source_id,
         confidence,
         observed_at,
         content,
@@ -780,6 +789,10 @@ fn fact_command() -> impl Parser<Command> {
     let min_confidence = long("min-confidence")
         .help("Minimum source confidence")
         .argument::<f32>("CONFIDENCE")
+        .optional();
+    let source_id = long("source-id")
+        .help("Filter by source namespace / tenant / upstream id")
+        .argument::<String>("SOURCE_ID")
         .optional();
     let since = long("since")
         .help("Lower-bound date (YYYY-MM-DD or RFC3339). Compares observed_at if present, else created_at.")
@@ -813,6 +826,7 @@ fn fact_command() -> impl Parser<Command> {
         fact_type,
         entity,
         min_confidence,
+        source_id,
         since,
         until,
         last,
@@ -949,6 +963,10 @@ fn search_command() -> impl Parser<Command> {
         .help("Minimum source confidence")
         .argument::<f32>("CONFIDENCE")
         .optional();
+    let source_id = long("source-id")
+        .help("Filter by source namespace / tenant / upstream id")
+        .argument::<String>("SOURCE_ID")
+        .optional();
     let since = long("since")
         .help("Lower-bound date (YYYY-MM-DD or RFC3339). Compares observed_at if present, else created_at.")
         .argument::<String>("DATE")
@@ -1015,6 +1033,7 @@ fn search_command() -> impl Parser<Command> {
         traverse_from,
         traverse_depth,
         min_confidence,
+        source_id,
         since,
         until,
         last,
@@ -1064,6 +1083,10 @@ fn query_command() -> impl Parser<Command> {
         .help("Retrieval strategy: naive | local | hybrid (default) | global")
         .argument::<String>("MODE")
         .optional();
+    let source_id = long("source-id")
+        .help("Filter search/recent facts by source namespace / tenant / upstream id")
+        .argument::<String>("SOURCE_ID")
+        .optional();
     let topic = positional::<String>("TOPIC");
 
     construct!(QuerySub {
@@ -1072,6 +1095,7 @@ fn query_command() -> impl Parser<Command> {
         recent_limit,
         last,
         mode,
+        source_id,
         topic
     })
     .map(Command::Query)

@@ -221,6 +221,10 @@ fn tool_search(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String>
         .get("include_archive")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
+    let source_id = args
+        .get("source_id")
+        .and_then(|v| v.as_str())
+        .map(String::from);
 
     let results = wiki
         .hybrid_search(
@@ -234,6 +238,7 @@ fn tool_search(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String>
                 as_of,
                 entity_filter,
                 min_confidence,
+                source_id,
                 session_id: Some(session_id.clone()),
                 include_archive,
                 ..Default::default()
@@ -315,6 +320,7 @@ fn tool_search(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String>
                 "score": r.score,
                 "rank": r.rank,
                 "source": r.source,
+                "source_id": r.source_id,
             })
         })
         .collect();
@@ -474,6 +480,7 @@ fn tool_session_start(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, 
             fact_type: None,
             entity_id: None,
             min_confidence: None,
+            source_id: None,
             limit: Some(recent_limit),
             offset: 0,
             since,
@@ -570,6 +577,7 @@ fn collect_personalisation(wiki: &WikiGraph, per_type_limit: usize) -> Vec<Value
                 fact_type: Some(ftype),
                 entity_id: None,
                 min_confidence: None,
+                source_id: None,
                 limit: Some(per_type_limit),
                 offset: 0,
                 since: None,
@@ -659,6 +667,7 @@ fn tool_extract(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String
             entity_ids,
             tags: None,
             source: None,
+            source_id: None,
             source_confidence: Some(cand.confidence),
             observed_at: None,
         };
@@ -713,10 +722,15 @@ fn tool_fact_list(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, Stri
         Some(name) => Some(wiki.resolve_entity(name).map_err(|e| e.to_string())?),
         None => None,
     };
+    let source_id = args
+        .get("source_id")
+        .and_then(|v| v.as_str())
+        .map(String::from);
     let opts = wg_core::FactListOpts {
         fact_type: None,
         entity_id,
         min_confidence: None,
+        source_id,
         limit: Some(limit),
         offset,
         since: None,
@@ -816,6 +830,9 @@ fn slim_fact_record(f: &wg_core::FactRecord, wiki: &WikiGraph) -> Value {
     }
     if let Some(s) = &f.source {
         obj.insert("source".into(), Value::String(s.clone()));
+    }
+    if let Some(source_id) = &f.source_id {
+        obj.insert("source_id".into(), Value::String(source_id.clone()));
     }
     if let Some(by) = &f.superseded_by {
         obj.insert("superseded_by".into(), Value::String(by.to_string()));
@@ -1127,6 +1144,7 @@ fn tool_recent(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String>
         fact_type: None,
         entity_id: None,
         min_confidence: None,
+        source_id: None,
         limit: Some(limit),
         offset: 0,
         since,
@@ -1503,6 +1521,10 @@ fn tool_query(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String> 
             .get("bm25_only")
             .and_then(|v| v.as_bool())
             .unwrap_or(false),
+        source_id: args
+            .get("source_id")
+            .and_then(|v| v.as_str())
+            .map(String::from),
     };
     // Agent UX: format / max_chars budget. Default "full" preserves the
     // existing contract; "compact" truncates each snippet's content to
@@ -1829,6 +1851,7 @@ fn collect_session_blocks(
             fact_type: None,
             entity_id: Some(eid),
             min_confidence: None,
+            source_id: None,
             limit: Some(200),
             offset: 0,
             since: None,
@@ -2057,6 +2080,7 @@ fn tool_context(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String
             fact_type: None,
             entity_id: None,
             min_confidence: None,
+            source_id: None,
             limit: Some(recent_limit),
             offset: 0,
             since,
@@ -2079,6 +2103,7 @@ fn tool_context(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String
             current_only: true,
             mode: wg_core::QueryMode::default(),
             bm25_only: false,
+            source_id: None,
         };
         let qres = wiki.query(t, q_opts).map_err(|e| e.to_string())?;
 
@@ -2104,6 +2129,7 @@ fn tool_context(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String
                         fact_type: Some(ftype),
                         entity_id: Some(eid),
                         min_confidence: None,
+                        source_id: None,
                         limit: Some(5),
                         offset: 0,
                         since: None,
@@ -2463,6 +2489,10 @@ fn tool_fact_add(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, Strin
     let auto_created = resolved.created;
     let alternatives = resolved.alternatives;
     let fact_type = parse_fact_type_arg(args.get("fact_type"))?;
+    let source_id = args
+        .get("source_id")
+        .and_then(|v| v.as_str())
+        .map(String::from);
 
     // Pre-add similarity check (non-blocking). BM25-only so we don't
     // pay the embedding-model load on every add — the goal is just to
@@ -2510,6 +2540,7 @@ fn tool_fact_add(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, Strin
         },
         tags: if tags.is_empty() { None } else { Some(tags) },
         source: None,
+        source_id: source_id.clone(),
         source_confidence: None,
         observed_at: None,
     };
@@ -2533,6 +2564,7 @@ fn tool_fact_add(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, Strin
         "content": record.content,
         "entity_names": entity_names_resolved,
         "created_at": record.created_at,
+        "source_id": record.source_id,
         "auto_created_entities": auto_created,
         "entity_name_alternatives": alternatives_payload(&alternatives),
         "existing_similar": existing_similar,
@@ -2616,12 +2648,17 @@ fn tool_fact_add_many(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, 
             .filter(|v| !v.is_empty());
         let fact_type = parse_fact_type_arg(obj.get("fact_type"))
             .map_err(|e| format!("items[{i}].fact_type: {e}"))?;
+        let source_id = obj
+            .get("source_id")
+            .and_then(|v| v.as_str())
+            .map(String::from);
         inputs.push(wg_core::types::FactInput {
             content,
             fact_type,
             entity_ids,
             tags,
             source: None,
+            source_id,
             source_confidence: None,
             observed_at: None,
         });
@@ -2861,6 +2898,10 @@ pub fn list_tools() -> Vec<Tool> {
                         "type": "string",
                         "description": "Restrict to facts attached to this entity (name or alias)."
                     },
+                    "source_id": {
+                        "type": "string",
+                        "description": "Restrict to facts from this source namespace / tenant / upstream id."
+                    },
                     "min_confidence": {
                         "type": "number",
                         "description": "Filter facts with source_confidence below this threshold."
@@ -2967,6 +3008,7 @@ pub fn list_tools() -> Vec<Tool> {
                 "type": "object",
                 "properties": {
                     "entity": {"type": "string", "description": "Filter by entity name/alias"},
+                    "source_id": {"type": "string", "description": "Filter by source namespace / tenant / upstream id"},
                     "limit":  {"type": "number", "default": 20},
                     "offset": {"type": "number", "default": 0, "description": "Skip the first N facts. Combined with `limit`, paginate through the full result. Response includes `next_offset` (null when the page is the last)."},
                     "current_only": {"type": "boolean", "default": true, "description": "Exclude superseded facts. Pass false to include historical timeline."}
@@ -3105,6 +3147,7 @@ pub fn list_tools() -> Vec<Tool> {
                     "recent_limit": {"type": "number", "default": 10, "description": "Max recent facts"},
                     "mode": {"type": "string", "enum": ["naive", "local", "hybrid", "global"], "default": "hybrid"},
                     "current_only": {"type": "boolean", "default": true, "description": "Exclude superseded facts. Pass false for historical / timeline queries."},
+                    "source_id": {"type": "string", "description": "Restrict search and recent facts to this source namespace / tenant / upstream id."},
                     "format": {"type": "string", "enum": ["full", "compact", "text"], "default": "full", "description": "full = JSON with all metadata. compact = JSON with truncated snippet content (drops bytes ~10%). text = markdown bullet summary, drops JSON envelope (~5× smaller, drops timestamps & entity metadata, keeps last-6 ULID suffix for follow-up wg_fact_get). Use text for agent prompt injection."},
                     "level": {"type": "string", "enum": ["fact", "entity", "session"], "default": "fact", "description": "Granularity of returned hits. fact = flat snippet list (best for pinpoint lookups: SS-user, abstention). entity = grouped per primary entity, mirroring the bench's session-level pattern that lifted multi-session +20pt and temporal +20pt. session = roll up per tracked-session entity (\"session:\" prefix; auto-created by `wg session new`) and emit each session's FULL fact list as one chronological block — restores dialog coherence for cross-turn questions (KU/temporal/SS-pref +10-20pt in our 60q MiniMax measurement). Storage cost: 0 (computed on read via fact_list per unique session entity). Currently only honoured by format=text — format=full / compact stay snippet-flat for stable JSON schema."},
                     "preview_chars": {"type": "number", "default": 200, "description": "Per-snippet content preview length when format=compact. Agent can drill in via wg_fact_get for any rank."},
@@ -3162,6 +3205,7 @@ pub fn list_tools() -> Vec<Tool> {
                     "content": {"type": "string"},
                     "entities": {"type": "array", "items": {"type": "string"}, "description": "Entity names or aliases. Unknown names are auto-created."},
                     "tags": {"type": "array", "items": {"type": "string"}},
+                    "source_id": {"type": "string", "description": "Optional source namespace / tenant / upstream id. Use with wg_search/wg_query source_id filters to isolate shared-store reads."},
                     "fact_type": {
                         "type": "string",
                         "enum": ["decision", "pattern", "convention", "claim", "note", "question", "preference", "lesson", "error", "unknown"],
@@ -3191,6 +3235,7 @@ pub fn list_tools() -> Vec<Tool> {
                                 "content": {"type": "string"},
                                 "entities": {"type": "array", "items": {"type": "string"}},
                                 "tags": {"type": "array", "items": {"type": "string"}},
+                                "source_id": {"type": "string", "description": "Optional source namespace / tenant / upstream id"},
                                 "fact_type": {
                                     "type": "string",
                                     "enum": ["decision", "pattern", "convention", "claim", "note", "question", "preference", "lesson", "error", "unknown"]
@@ -3556,6 +3601,57 @@ mod tests {
         assert!(names.contains(&"wg_fact_supersede".to_string()));
         assert!(names.contains(&"wg_fact_edit".to_string()));
         assert!(names.contains(&"wg_fact_add_many".to_string()));
+    }
+
+    #[test]
+    fn source_id_roundtrips_through_mcp_add_list_and_search() {
+        let (_dir, wiki) = open_temp_wiki();
+
+        for (content, source_id) in [
+            ("Redis alpha source cache policy", "alpha"),
+            ("Redis beta source cache policy", "beta"),
+            ("Redis alpha source eviction policy", "alpha"),
+        ] {
+            tool_fact_add(
+                &json!({
+                    "content": content,
+                    "entities": ["Redis"],
+                    "source_id": source_id,
+                    "dedup_check": false
+                }),
+                &wiki,
+            )
+            .unwrap();
+        }
+
+        let list = tool_fact_list(&json!({"source_id": "alpha", "limit": 10}), &wiki).unwrap();
+        let list_text = list
+            .content
+            .first()
+            .and_then(|b| b.text.as_deref())
+            .unwrap_or("");
+        let list_payload: Value = serde_json::from_str(list_text).expect("list response is JSON");
+        let facts = list_payload["facts"].as_array().expect("facts array");
+        assert_eq!(facts.len(), 2);
+        assert!(
+            facts
+                .iter()
+                .all(|f| f["source_id"].as_str() == Some("alpha"))
+        );
+
+        let search =
+            tool_search(&json!({"query": "Redis source policy", "source_id": "beta", "limit": 10, "bm25_only": true}), &wiki)
+                .unwrap();
+        let search_text = search
+            .content
+            .first()
+            .and_then(|b| b.text.as_deref())
+            .unwrap_or("");
+        let search_payload: Value =
+            serde_json::from_str(search_text).expect("search response is JSON");
+        let results = search_payload["results"].as_array().expect("results array");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0]["source_id"].as_str(), Some("beta"));
     }
 
     #[test]

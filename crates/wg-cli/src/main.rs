@@ -93,7 +93,15 @@ fn main() {
         cmd::Command::Model(sub) => handle_model(config, sub),
         cmd::Command::Feedback(sub) => cmd::feedback::run_feedback(&store_path, config, sub),
         cmd::Command::Adapt(sub) => cmd::adapt::run_adapt(&store_path, config, sub),
-        cmd::Command::Init(sub) => cmd::init::run_init(sub.wiki_root, sub.no_ingest),
+        cmd::Command::Init(sub) => cmd::init::run_init(
+            sub.wiki_root,
+            sub.no_ingest,
+            sub.agent,
+            sub.agent_force,
+            &store_path,
+            config,
+            json,
+        ),
         cmd::Command::Watch(sub) => cmd::watch::run_watch(sub.wiki_root, sub.interval, sub.search),
         cmd::Command::McpServe(sub) => {
             // Mirror the Mcp arm — honour --store / --project unless
@@ -115,7 +123,7 @@ fn main() {
         }
         cmd::Command::McpInstall(sub) => cmd::mcp_install::run_mcp_install(sub, json),
         cmd::Command::Completions(sub) => cmd::completions::run_completions(sub),
-        cmd::Command::Pending(sub) => cmd::pending::run_pending_review(sub),
+        cmd::Command::Pending(sub) => cmd::pending::run_pending(sub, &store_path, config, json),
         cmd::Command::VectorRebuild(sub) => handle_vector_rebuild(&store_path, config, sub),
         cmd::Command::Daemon(sub) => cmd::daemon::run_daemon(sub, store_path.clone()),
         cmd::Command::Extract(sub) => handle_extract(&store_path, config, sub, json),
@@ -369,6 +377,7 @@ fn handle_fact(
             entities,
             tags,
             source,
+            source_id,
             confidence,
             observed_at,
         } => {
@@ -388,6 +397,7 @@ fn handle_fact(
                     &content,
                     entities.as_ref(),
                     tags.as_ref(),
+                    source_id.as_deref(),
                     json,
                 );
             }
@@ -494,6 +504,7 @@ fn handle_fact(
                     entity_ids,
                     tags: parse_tags(tags),
                     source,
+                    source_id,
                     source_confidence: confidence,
                     observed_at: observed_at_ms,
                 })?;
@@ -595,6 +606,7 @@ fn handle_fact(
             fact_type,
             entity,
             min_confidence,
+            source_id,
             since,
             until,
             last,
@@ -624,6 +636,9 @@ fn handle_fact(
                     if let Some(e) = entity.as_ref() {
                         args["entity"] = serde_json::json!(e);
                     }
+                    if let Some(source_id) = source_id.as_ref() {
+                        args["source_id"] = serde_json::json!(source_id);
+                    }
                     let body = serde_json::json!({
                         "jsonrpc": "2.0", "id": 1,
                         "method": "tools/call",
@@ -638,6 +653,7 @@ fn handle_fact(
                     fact_type: parse_fact_type(fact_type),
                     entity_id,
                     min_confidence,
+                    source_id,
                     limit,
                     offset: 0,
                     since: since_ms,
@@ -883,6 +899,7 @@ fn handle_extract(
                 },
                 tags: None,
                 source: None,
+                source_id: None,
                 source_confidence: Some(cand.confidence),
                 observed_at: None,
             })?;
@@ -935,6 +952,7 @@ fn handle_session(
                 fact_type: None,
                 entity_id: None,
                 min_confidence: None,
+                source_id: None,
                 limit: Some(recent_limit),
                 offset: 0,
                 since,
@@ -1046,6 +1064,7 @@ fn handle_session(
                     fact_type: None,
                     entity_id: Some(entity.id),
                     min_confidence: None,
+                    source_id: None,
                     limit: None,
                     offset: 0,
                     since: None,
@@ -1286,6 +1305,7 @@ fn handle_search(
         let opts = SearchOpts {
             limit: sub.limit.or(Some(default_limit)),
             min_confidence: sub.min_confidence,
+            source_id: sub.source_id.clone(),
             entity_filter: None,
             bm25_weight,
             semantic_weight,
@@ -1344,18 +1364,43 @@ fn run_search_via_daemon(
 ) -> Result<String, WgError> {
     let url = format!("{}/mcp", base_url.trim_end_matches('/'));
     let limit = sub.limit.unwrap_or(default_limit);
+    let mut arguments = serde_json::json!({
+        "query": sub.query,
+        "limit": limit,
+        // CLI default = BM25; --hybrid flips it on. Daemon
+        // honours the same opt-in semantics.
+        "bm25_only": !sub.hybrid,
+        // Match the local CLI search path. MCP defaults to current-only
+        // for agent "what is true now?" calls, but `wg search` has
+        // historically searched all facts unless the caller says otherwise.
+        "current_only": false,
+        "include_archive": sub.include_archive,
+    });
+    if let Some(since) = &sub.since {
+        arguments["since"] = serde_json::Value::String(since.clone());
+    }
+    if let Some(until) = &sub.until {
+        arguments["until"] = serde_json::Value::String(until.clone());
+    }
+    if let Some(as_of) = &sub.as_of {
+        arguments["as_of"] = serde_json::Value::String(as_of.clone());
+    }
+    if let Some(min_confidence) = sub.min_confidence {
+        arguments["min_confidence"] = serde_json::Value::Number(
+            serde_json::Number::from_f64(min_confidence as f64).ok_or_else(|| {
+                WgError::InvalidInput(format!("invalid min-confidence: {min_confidence}"))
+            })?,
+        );
+    }
+    if let Some(source_id) = &sub.source_id {
+        arguments["source_id"] = serde_json::Value::String(source_id.clone());
+    }
     let body = serde_json::json!({
         "jsonrpc": "2.0", "id": 1,
         "method": "tools/call",
         "params": {
             "name": "wg_search",
-            "arguments": {
-                "query": sub.query,
-                "limit": limit,
-                // CLI default = BM25; --hybrid flips it on. Daemon
-                // honours the same opt-in semantics.
-                "bm25_only": !sub.hybrid,
-            }
+            "arguments": arguments
         }
     });
     let resp: serde_json::Value = ureq::post(&url)
@@ -1419,6 +1464,7 @@ fn run_search_all_projects(
         let opts = SearchOpts {
             limit,
             min_confidence: sub.min_confidence,
+            source_id: sub.source_id.clone(),
             entity_filter: None,
             bm25_weight,
             semantic_weight,
@@ -1519,6 +1565,7 @@ fn handle_query(
             current_only: false,
             mode,
             bm25_only: false,
+            source_id: sub.source_id.clone(),
         };
         let result = wiki.query(&sub.topic, opts)?;
         if json {
@@ -1539,18 +1586,22 @@ fn handle_query(
 fn run_query_via_daemon(base_url: &str, sub: &cmd::QuerySub) -> Result<String, WgError> {
     let url = format!("{}/mcp", base_url.trim_end_matches('/'));
     let mode = sub.mode.clone().unwrap_or_else(|| "hybrid".to_string());
+    let mut arguments = serde_json::json!({
+        "topic": sub.topic,
+        "limit": sub.limit.unwrap_or(10),
+        "depth": sub.depth.unwrap_or(2),
+        "recent_limit": sub.recent_limit.unwrap_or(10),
+        "mode": mode,
+    });
+    if let Some(source_id) = &sub.source_id {
+        arguments["source_id"] = serde_json::Value::String(source_id.clone());
+    }
     let body = serde_json::json!({
         "jsonrpc": "2.0", "id": 1,
         "method": "tools/call",
         "params": {
             "name": "wg_query",
-            "arguments": {
-                "topic": sub.topic,
-                "limit": sub.limit.unwrap_or(10),
-                "depth": sub.depth.unwrap_or(2),
-                "recent_limit": sub.recent_limit.unwrap_or(10),
-                "mode": mode,
-            }
+            "arguments": arguments
         }
     });
     daemon_tool_call(&url, body, "wg_query")
@@ -1566,6 +1617,7 @@ fn run_fact_add_via_daemon(
     content: &str,
     entities: Option<&Vec<String>>,
     tags: Option<&Vec<String>>,
+    source_id: Option<&str>,
     json: bool,
 ) -> Result<String, WgError> {
     let url = format!("{}/mcp", base_url.trim_end_matches('/'));
@@ -1592,6 +1644,9 @@ fn run_fact_add_via_daemon(
     }
     if !tag_list.is_empty() {
         args["tags"] = serde_json::json!(tag_list);
+    }
+    if let Some(source_id) = source_id {
+        args["source_id"] = serde_json::json!(source_id);
     }
     let body = serde_json::json!({
         "jsonrpc": "2.0", "id": 1,
