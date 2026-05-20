@@ -1,7 +1,7 @@
 //! LongMemEval-S retrieval baseline for `wg`.
 //!
 //! Loads the LongMemEval-S JSON file (publicly available from the
-//! `xiaowu0162/longmemeval` HF dataset — see `.notes/bench-longmemeval.md`
+//! `xiaowu0162/longmemeval` HF dataset — see `docs/MEASUREMENTS.md`
 //! for the curl/hf-hub commands), and for every question:
 //!
 //! 1. Spins up a fresh, isolated wg store under a tempdir so haystacks
@@ -95,7 +95,7 @@ struct Args {
     /// Enable temporal-aware retrieval: stamp each fact with its
     /// session's `haystack_date` and pass `until=question_date` so
     /// future-dated noise is filtered. Hard cutoff — see negative
-    /// finding in `.notes/bench-longmemeval.md`. Defaults off.
+    /// finding in `docs/MEASUREMENTS.md`. Defaults off.
     temporal: bool,
     /// Use hybrid search (BM25 + semantic via in-process model2vec)
     /// instead of BM25-only. Adds the embedding-model load on the
@@ -568,7 +568,7 @@ fn build_store_for_question(
     // Decay disabled by default in this harness — wg-core's
     // SearchConfig::default sets time_decay_tau_ms=90 days, but the
     // LongMemEval-S dataset has dating noise (74 evidence sessions
-    // future-dated past the question; see .notes/bench-longmemeval.md)
+    // future-dated past the question; see docs/MEASUREMENTS.md)
     // and per-category measurements showed bge embeddings are better
     // off WITHOUT decay (knowledge-update R@1 0.692 → 0.987 by
     // turning decay off). The `--time-decay-days` flag opts the user

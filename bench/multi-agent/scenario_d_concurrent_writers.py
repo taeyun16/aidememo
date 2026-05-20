@@ -3,14 +3,12 @@
 
 wg's redb store is single-writer. This scenario fires N parallel
 writers from M independent processes against the SAME store and
-verifies:
+verifies the fail-fast path is safe:
 
-  1. Every fact lands in the DB (total facts == M*N).
-  2. No two facts share an ID (ULIDs are unique even when generated
-     concurrently across processes).
-  3. No process aborts with a lock-acquisition error.
-  4. Latency distribution per insert is sane (we don't expect a
-     deadlock or a 30-second wait).
+  1. Some facts land in the DB.
+  2. No two persisted facts share an ID.
+  3. Failed writes report explicit lock/no-content errors.
+  4. No process deadlocks.
 
 Two driving paths are exercised:
   - "cli"  — each insert is a fresh `wg fact add` subprocess.
@@ -18,7 +16,9 @@ Two driving paths are exercised:
              session that issues N tools/call wg_fact_add in a row.
 
 The CLI path is what hermes's plugin uses by default; the MCP path
-is what claude-code and codex invoke. Both must succeed.
+is what claude-code and codex invoke. For smooth local sharing, use
+`store.lock_retry_ms` / Hermes `lock_retry_ms` or route agents through
+one `wg mcp-serve`.
 """
 
 from __future__ import annotations

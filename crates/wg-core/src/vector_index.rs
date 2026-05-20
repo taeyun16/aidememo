@@ -8,7 +8,7 @@
 //! semantic re-ranking had no chance to recover them. Brute-force
 //! cosine over the whole corpus matched the recall ceiling but
 //! paid 2× latency. HNSW closes both gaps. See
-//! `.notes/bench-hnsw.md` for the prototype data.
+//! `docs/MEASUREMENTS.md` for the prototype data.
 //!
 //! Design notes:
 //!

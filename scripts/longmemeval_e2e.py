@@ -152,7 +152,7 @@ def _reader_messages(
     distilled summary. Hybrid-retrieval setups fail otherwise: the
     reader anchors on the distilled summary and ignores the
     verbatim turn that holds the actual answer (measured -16.7pt
-    with gpt-4.1 augment, see .notes/compare-omega.md)."""
+    with gpt-4.1 augment, see docs/MEASUREMENTS.md)."""
     blocks = []
     for r in retrievals:
         sid = r.get("session_id") or "unknown"

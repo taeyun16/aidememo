@@ -131,4 +131,4 @@ echo '{"prompt":"We decided to migrate Postgres replicas to read-only mode after
 - Claude Code 훅 공식 문서: `claude --help` 또는 settings.json schema.
 - OMEGA의 비슷한 메커니즘: `omega_welcome` (SessionStart 등가),
   hook-based auto-capture (PostToolUse / UserPromptSubmit / Stop) —
-  see [`.notes/omega-pipeline-analysis.md`](../../.notes/omega-pipeline-analysis.md).
+  see [`docs/MEASUREMENTS.md`](../../docs/MEASUREMENTS.md).

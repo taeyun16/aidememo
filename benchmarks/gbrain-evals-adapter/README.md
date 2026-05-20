@@ -43,7 +43,7 @@ Record these fields in the scorecard:
 LongMemEval runs should also record `R@10` and `MRR` when that runner emits
 them. BrainBench `multi-adapter.ts` currently emits P@5/R@5.
 
-Current internal comparison target from `.notes/agent-ux-design-decisions.md`:
+Current internal comparison target from `docs/MEASUREMENTS.md`:
 
 | System | LongMemEval-S 500q R@5 |
 |---|---:|

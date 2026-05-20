@@ -60,7 +60,7 @@ codegen-units = 16
 
 # Local fork of tokenizers 0.20.4 with one upstream-bound fix:
 #  - models/unigram/model.rs: HashMap::new() → with_capacity(n)
-# Vendored under vendor/tokenizers; the upstream PR is queued separately
-# (see .notes/tokenizers-pr.patch).
+# Vendored under vendor/tokenizers; the upstream PR is tracked outside
+# the public measurement docs.
 [patch.crates-io]
 tokenizers = { path = "vendor/tokenizers" }

@@ -1,6 +1,6 @@
 {
   "store_path": "/tmp/wg-agent-test/wiki.redb",
-  "store_description": "wg repo (.md files: AGENTS.md, CLAUDE.md, .notes/*, wg-skill/*) ingested 2026-05-06 with WG_NOW_MS=1735689600000. ~52 markdown files → 68 entities / 30 facts / 41 relations. All facts have created_at = 2025-01-01 (1y ago).",
+  "store_description": "wg repo (.md files: AGENTS.md, CLAUDE.md, docs/*, wg-skill/*) ingested 2026-05-06 with WG_NOW_MS=1735689600000. Historical note files have since been consolidated into docs/MEASUREMENTS.md; refresh this fixture before treating counts as current.",
   "scoring": "Each scenario is graded by (1) keyword overlap on the model's hypothesis text, (2) whether the expected wg tool was called at least once. LLM-judge layer optional.",
   "scenarios": [
     {
@@ -33,7 +33,7 @@
       "prompt": "Use wg to look up: are both 'self-extraction' (LLM classify-from) and 'agentic-loop' interventions reported as net negative on LongMemEval at the MiniMax reader class? If yes, give the approximate point delta for each.",
       "gold_keywords": ["self-extraction", "-6", "agentic", "noise", "0pt"],
       "expected_tool": "wg_query|wg_search",
-      "notes": "Both findings live in .notes/agent-ux-design-decisions.md."
+      "notes": "Both findings live in docs/MEASUREMENTS.md."
     },
     {
       "id": "s05-cross-doc",
@@ -81,7 +81,7 @@
       "prompt": "Using wg_aggregate or wg_entity_list, find the entity with the most facts attached in this wiki, and report its name and fact count.",
       "gold_keywords": ["PLAN", "5"],
       "expected_tool": "wg_entity_list|wg_aggregate",
-      "notes": "Top: PLAN (5 facts). agent-ux-design-decisions and POSITIONING tied at 4."
+      "notes": "Historical fixture: top entity was PLAN (5 facts), with design notes and POSITIONING tied at 4."
     },
     {
       "id": "s11-graph-traversal",

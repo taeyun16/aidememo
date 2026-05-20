@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Aggregate every E2E judgement file under a directory tree into a
 single comparison table — overall accuracy + per-category — for the
-README / .notes write-up.
+README / docs write-up.
 
 Walks /tmp/wg_e2e_500_*/judgements_*.jsonl by default; each judgement
 filename encodes the reader + judge model so the output table can label

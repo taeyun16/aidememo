@@ -11,9 +11,11 @@ land, with no IDs collisions and no lock errors (the server's redb
 handle is single-process, so contention is internal serialization).
 
 Compared to D:
-  - D (stdio, default lock_retry_ms=0):  CLI 7/100, MCP 25/100
-  - D (stdio, lock_retry_ms=5000):       CLI 100/100, MCP 100/100
-  - E (mcp-serve, no retry needed):      M*N/M*N, lower wall
+  - D (stdio, default lock_retry_ms=0):  only the process that wins
+    the redb lock writes successfully; others fail explicitly.
+  - D (stdio, lock_retry_ms=5000):       short collisions can smooth
+    out for ordinary local sharing.
+  - E (mcp-serve, no retry needed):      M*N/M*N, lower wall.
 
 E is what the docs (AGENTS.md "Multi-agent shared store") recommend
 for actual multi-agent setups.

@@ -8,7 +8,7 @@
 //! deterministic answers instead of asking the reader to do arithmetic
 //! across snippets.
 //!
-//! The architectural motivation lives in `.notes/agent-ux-design-decisions.md`
+//! The architectural motivation lives in `docs/MEASUREMENTS.md`
 //! — multi-session counting and temporal arithmetic are the two
 //! categories where reader-side reasoning hits a ceiling regardless of
 //! prompt iteration. Pre-extracting the values is the structural fix.

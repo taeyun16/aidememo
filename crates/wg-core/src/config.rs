@@ -326,7 +326,7 @@ fn default_semantic_index() -> String {
     // HNSW gives the bigger recall on multilingual / paraphrase
     // workloads (+12% R@10 on Korean MIRACL) and ties on English
     // synthetic data. The build cost at ingest time is sub-4s
-    // even at 5500 facts (see .notes/bench-hnsw-integrated.md and
+    // even at 5500 facts (see docs/MEASUREMENTS.md and
     // the hnsw_timing benchmark). Operators on tiny wikis or
     // latency-bound English-only deployments can flip back to
     // "bm25" with `wg config set search.semantic_index bm25`.
@@ -403,7 +403,7 @@ pub struct RerankConfig {
     /// Cross-encoders cost roughly 10 ms per pair on Metal-accelerated
     /// TEI, ~50 ms per pair under Docker amd64 emulation, so the
     /// per-search rerank tax is `top_k × per-pair-cost` — see
-    /// `.notes/bench-tei-overhead.md` for the measured curve.
+    /// `docs/MEASUREMENTS.md` for the measured curve.
     /// Default 8 is a compromise: it adds ~80 ms p50 on a native
     /// Apple Silicon host while still polishing the head of the
     /// list. Bump to 16/32 for recall-heavy work where the latency
@@ -1073,7 +1073,7 @@ mod tests {
         let cfg = Config::default();
         assert_eq!(cfg.rerank.provider, "");
         // Default top_k=8 was picked from the TEI-overhead bench
-        // (.notes/bench-tei-overhead.md) so the rerank tax stays
+        // (docs/MEASUREMENTS.md) so the rerank tax stays
         // around 80 ms p50 on native Metal.
         assert_eq!(cfg.rerank.top_k, 8);
         assert_eq!(cfg.get("rerank.provider"), Some(String::new()));

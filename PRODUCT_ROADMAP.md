@@ -2,8 +2,8 @@
 
 This roadmap tracks product gaps against agent-memory peers (GBrain,
 Graphiti/Zep, Mem0, Hindsight, Letta) and ties each item to a measurable
-acceptance metric. Keep algorithm work in `.notes/`; keep user-facing product
-work here.
+acceptance metric. Keep durable measurement write-ups in `docs/MEASUREMENTS.md`
+or benchmark-specific `RESULTS.md` files; keep user-facing product work here.
 
 ## Measurement Rules
 

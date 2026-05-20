@@ -27,7 +27,7 @@ pub(crate) const FACT_BY_ENTITY_TABLE: TableDefinition<&str, &[u8]> =
 /// when two facts have byte-identical `content`, the second insert
 /// returns the first one's id instead of creating a new record.
 /// Modeled after OMEGA's SHA-256 dedup pass — see
-/// `.notes/omega-pipeline-analysis.md`.
+/// `docs/MEASUREMENTS.md`.
 pub(crate) const FACT_CONTENT_HASH_TABLE: TableDefinition<&str, &[u8]> =
     TableDefinition::new("fact_content_hash");
 pub(crate) const SEARCH_SESSIONS_TABLE: TableDefinition<&str, &[u8]> =

@@ -59,7 +59,7 @@ chrono = "0.4"
 # permissive-licensed and small; all together add ~150 KB to the core
 # binary. Used by extract::structured to pull typed slots
 # (currency / duration / event_date) out of raw fact text without
-# calling an LLM. See .notes/agent-ux-design-decisions.md for context.
+# calling an LLM. See docs/MEASUREMENTS.md for context.
 regex = "1.10"
 interim = { version = "0.2", features = ["chrono_0_4"] }  # English NL dates with anchor
 fundu = "2.0"              # Duration normalization "1.5 weeks" → seconds
@@ -84,7 +84,7 @@ ureq = { version = "2.12", features = ["json"], optional = true }
 
 # SHA-256 for exact-content dedup at fact_add. Tiny crate, already
 # in the workspace tree (transitive). Modeled after OMEGA's write-
-# time dedup pass — see .notes/omega-pipeline-analysis.md.
+# time dedup pass — see docs/MEASUREMENTS.md.
 sha2 = "0.10"
 
 # Portable SIMD for dot/cosine/L2 with auto-dispatch (AVX2/NEON/AVX-512).
@@ -97,7 +97,7 @@ simsimd = { version = "6", optional = true }
 # when search.semantic_index = "hnsw" — replaces the BM25 prefilter
 # top-50 with O(log N) graph traversal. Earned its keep on
 # MIRACL/ko: +2.5pp R@10 vs BM25-prefilter, lower latency on
-# corpora >= ~5k facts. See .notes/bench-hnsw.md.
+# corpora >= ~5k facts. See docs/MEASUREMENTS.md.
 instant-distance = { version = "0.6", features = ["with-serde"], optional = true }
 
 # Compact binary serialization for the HNSW sidecar (model.hnsw.bin).

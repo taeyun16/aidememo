@@ -72,7 +72,7 @@ that slice carries the smallest footprint.
 
 **Pick Graphiti if** you need community / cluster detection, LLM-grade entity extraction at insert time, and the +3.6pt E2E margin justifies the per-insert LLM cost + Neo4j footprint.
 
-**Pick wg if** you want the same temporal model without committing to a graph database — and especially if you ingest at scale (the insert-token gap is the single biggest cost lever; see [`.notes/compare-graphiti.md`](.notes/compare-graphiti.md) for the head-to-head + measurement methodology).
+**Pick wg if** you want the same temporal model without committing to a graph database — and especially if you ingest at scale (the insert-token gap is the single biggest cost lever; see [`docs/MEASUREMENTS.md`](docs/MEASUREMENTS.md) for the measurement ledger).
 
 ### vs **OMEGA** (current LongMemEval SOTA among local-first systems)
 
@@ -91,7 +91,7 @@ that slice carries the smallest footprint.
 
 **Pick OMEGA if** you want the highest LongMemEval score, are happy with Python+SQLite, and accept paying for hook-based LLM-aided ingestion at every conversation turn.
 
-**Pick wg if** you want the same retrieval base (bge ONNX in-process) without Python, with 4 native bindings, multi-store native, zero insert-token cost by default, and the ability to slot any reader (gpt-4.1 / gpt-4o / MiniMax / Ollama). Trail OMEGA by ~21pt today; the gap is mostly reader (gpt-4.1) + hook-depth + temporal-prompting tricks. See [`.notes/compare-omega.md`](.notes/compare-omega.md) for the per-category breakdown + ROI ordering of the gap-closing work.
+**Pick wg if** you want the same retrieval base (bge ONNX in-process) without Python, with 4 native bindings, multi-store native, zero insert-token cost by default, and the ability to slot any reader (gpt-4.1 / gpt-4o / MiniMax / Ollama). Trail OMEGA by ~21pt today; the gap is mostly reader (gpt-4.1) + hook-depth + temporal-prompting tricks. See [`docs/MEASUREMENTS.md`](docs/MEASUREMENTS.md) for the current benchmark ledger.
 
 ### vs **beads** (the closest neighbour)
 
@@ -102,7 +102,7 @@ that slice carries the smallest footprint.
 | Storage | Embedded Dolt (MySQL-compat) | redb (single-file) |
 | Multi-writer merge | Yes — git-style cell merge | No — single-writer (use `wg mcp-serve` for shared) |
 | Free-text search | SQL `LIKE` | BM25 + semantic + rerank |
-| Bulk write throughput | ~5 s for 1k issues | **~339×** faster on 10k (see [`.notes/bench-beads-results.md`](./.notes/bench-beads-results.md)) |
+| Bulk write throughput | ~5 s for 1k issues | **~339×** faster on 10k (see [`bench/beads-vs-wg/results`](bench/beads-vs-wg/results)) |
 | Cold start to first query | ~50 ms (Dolt boot) | ~5 ms (redb open) |
 
 **Pick beads if** you want a multi-agent dependency-aware issue tracker with git-style merge.
@@ -135,7 +135,7 @@ that slice carries the smallest footprint.
    provides only through a UI.
 
 7. **Single-machine performance.** ~339× faster bulk write than beads
-   on 10k inserts ([source](.notes/bench-beads-results.md)). Daemon
+   on 10k inserts ([source](bench/beads-vs-wg/results)). Daemon
    hot-path search ~9 ms BM25 / ~45 ms HNSW.
 
 ## Where wg lags (be honest)
@@ -148,11 +148,11 @@ that slice carries the smallest footprint.
 | Multi-writer merge | beads has git-style cell merge; wg is single-writer. | Use `wg mcp-serve` to share one daemon; full distributed merge isn't in scope. |
 | Community / cluster detection | Graphiti groups related entities into communities. | Not implemented; out of scope for v0.x. |
 | LongMemEval retrieval ceiling | Mem0 / Zep / Mastra don't publish R@K — only LLM-graded E2E. | **wg ships R@10 = 0.992, R@1 = 0.940, MRR = 0.958** with `bge-small-en-v1.5` + `bge-reranker-base` (both via `fastembed` ONNX, in-process), two-stage retrieval K=20→10. 470/500 questions land the gold evidence at the FIRST retrieved slot. The cross-encoder reranker is wired the same way OMEGA wires it (in-process, no service). |
-| LongMemEval E2E (LLM-graded) | mem0 / Zep / Mastra publish gpt-4o + gpt-4o-judge numbers. | **wg @ bge + reranker wide K=20→10 measured 2026-05-01: 74.0% (MiniMax-M2.7-highspeed), 67.6% (gpt-4o), 66.0% (gpt-5.4-mini), 65.6% (gpt-4o-mini)** with gpt-4o judge — beats Mem0 (49%) by **+25.0pt** and edges past Zep/Graphiti (71.2%) by **+2.8pt** with a reasoning reader. Below Mastra (84%) and OMEGA (95.4%, gpt-4.1). MiniMax wins multi-session +9.7pt and temporal +9.1pt vs gpt-4o. Worst remaining category: temporal-reasoning (48.9%) — partly capped by LongMemEval-S timestamp noise, not retrieval (R@10 there is 0.977). See [`.notes/compare-graphiti.md`](.notes/compare-graphiti.md) for the wg vs Graphiti head-to-head + token-trade-off matrix. |
+| LongMemEval E2E (LLM-graded) | mem0 / Zep / Mastra publish gpt-4o + gpt-4o-judge numbers. | **wg @ bge + reranker wide K=20→10 measured 2026-05-01: 74.0% (MiniMax-M2.7-highspeed), 67.6% (gpt-4o), 66.0% (gpt-5.4-mini), 65.6% (gpt-4o-mini)** with gpt-4o judge — beats Mem0 (49%) by **+25.0pt** and edges past Zep/Graphiti (71.2%) by **+2.8pt** with a reasoning reader. Below Mastra (84%) and OMEGA (95.4%, gpt-4.1). MiniMax wins multi-session +9.7pt and temporal +9.1pt vs gpt-4o. Worst remaining category: temporal-reasoning (48.9%) — partly capped by LongMemEval-S timestamp noise, not retrieval (R@10 there is 0.977). See [`docs/MEASUREMENTS.md`](docs/MEASUREMENTS.md) for the current benchmark ledger. |
 | Cross-encoder rerank in default | OMEGA pipeline — type-weighted + cross-encoder + graph BFS. | wg now has cross-encoder rerank wired both ways: TEI (server) and `fastembed` (in-process). Two-stage retrieval (wider candidate pool → rerank → trim) shipped in commit `debf40b`. |
 | Type-aware ranking | OMEGA boosts decisions / lessons 2× and exempts preferences from decay. | wg has `search.fact_type_weights` (commit `fd5dcbe`) and `search.decay_exempt_types` (commit `24bd7bd`) — both default-on with the OMEGA-style boost shape. |
 | Entity centrality | Zep / Graphiti boost facts on central nodes. | wg ships `search.entity_centrality_weight` (commit `0d67e47`); default off but turning it on adds `1 + w * log10(1 + max_fact_count)` to the rrf weight. |
-| Per-user / multi-tenant | Cloud peers partition by `user_id`. | Workaround: separate stores via `wg --project`. Native multi-tenant is a future feature. |
+| Per-user / multi-tenant | Cloud peers partition by `user_id`. | `source_id` scopes facts and searches inside one shared store; separate stores via `wg --project` still work for hard isolation. |
 
 ## When `wg` is the right call
 
@@ -174,9 +174,9 @@ that slice carries the smallest footprint.
 
 ## See also
 
-- [`.notes/compare-beads.md`](.notes/compare-beads.md) — beads-specific deep dive
-- [`.notes/bench-longmemeval.md`](.notes/bench-longmemeval.md) — retrieval-only LongMemEval-S baseline
-- [`.notes/project-completeness.md`](.notes/project-completeness.md) — internal completeness scorecard
+- [`docs/MEASUREMENTS.md`](docs/MEASUREMENTS.md) — benchmark and agent-UX measurement ledger
+- [`PRODUCT_ROADMAP.md`](PRODUCT_ROADMAP.md) — product gap roadmap with acceptance metrics
+- [`bench/multi-agent/README.md`](bench/multi-agent/README.md) — multi-agent scenario benchmarks
 - [`AGENTS.md`](./AGENTS.md) — full agent guide (CLI + MCP surface)
 
 ## Sources cited

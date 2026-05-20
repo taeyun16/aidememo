@@ -202,7 +202,7 @@ pub fn ingest_wiki(
                 // typed fact when possible (Decision / Convention /
                 // Pattern / Note / Question / Claim); free-form headings
                 // (the common case in real-world repos like AGENTS.md,
-                // .notes/, README.md) demote to Note so they're still
+                // docs/, README.md) demote to Note so they're still
                 // searchable. Skipping Unknown was the wg-agent-test
                 // bottleneck — 52 .md files were producing only 30
                 // facts because most headings don't carry an

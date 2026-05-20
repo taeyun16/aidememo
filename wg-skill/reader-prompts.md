@@ -202,5 +202,5 @@ extract 등이 진짜 ROI.
 ## 참고
 
 - [OMEGA dev.to "How I Built"](https://dev.to/singularityjason/how-i-built-a-memory-system-that-scores-954-on-longmemeval-1-on-the-leaderboard-2md3) — 4 prompting tricks 원본
-- [`.notes/compare-omega.md`](../.notes/compare-omega.md) — wg vs OMEGA 격차 분해
-- [`.notes/bench-longmemeval.md`](../.notes/bench-longmemeval.md) — wg 측정 결과 + LongMemEval-S 데이터셋 noise 분석
+- [`docs/MEASUREMENTS.md`](../docs/MEASUREMENTS.md) — wg vs OMEGA 격차 분해
+- [`docs/MEASUREMENTS.md`](../docs/MEASUREMENTS.md) — wg 측정 결과 + LongMemEval-S 데이터셋 noise 분석

@@ -48,7 +48,7 @@ title: Wiki-Graph 전체 API 참조
 ├── benchmarks/                 ← wg-benchmarks 크레이트 (golden 평가)
 ├── bench/                       ← 시나리오 스크립트 (beads-vs-wg, multi-agent)
 ├── wg-skill/                   ← 배포용 SKILL.md + REFERENCE.md (이 파일)
-└── .notes/                     ← 벤치 결과 + 설계 노트
+└── docs/                     ← 벤치 결과 + 설계 노트
 ```
 
 ## 핵심 기술 스택

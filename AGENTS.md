@@ -202,8 +202,7 @@ wg config set model.name bge-small-en-v1.5    # 133 MB, ONNX
 # hundreds of queries per turn). Multilingual repos (Korean,
 # Japanese) keep model2vec — bge-small-en is English-only.
 #
-# Detail: .notes/agent-ux-design-decisions.md "HotpotQA BGE =
-# model2vec — cross-bench BGE validation finalized" section.
+# Detail: docs/MEASUREMENTS.md, "Model And Rerank Trade-offs".
 
 # HuggingFace text-embeddings-inference (TEI):
 #   model.provider = "tei"         # native /embed + /info dimension auto-discover
@@ -226,8 +225,7 @@ wg config set model.name bge-small-en-v1.5    # 133 MB, ONNX
 #   * Latency budget: cross-encoder is ~85× slower than HNSW alone
 #     (Apple Metal: 9 ms → 765 ms p50 at top_k=8). Most agent hot
 #     paths can't afford it. Reserve for offline batch / high-stakes
-#     low-volume queries. Detail in `.notes/bench-rerank-miracl-ko.md`
-#     and the LME finding in `.notes/agent-ux-design-decisions.md`.
+#     low-volume queries. Detail in `docs/MEASUREMENTS.md`.
 ```
 
 ### Multi-project

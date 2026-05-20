@@ -8,7 +8,7 @@ agents installed on this machine: Claude Code, Codex, and Hermes.
 | `scenario_a_mcp_smoke.py` | Each client's MCP config can spawn `wg mcp`, handshake, list tools, call `wg_query`. | 0 |
 | `scenario_b_consistency.py` | Three clients write/read against one store, agree on the data they see. | 0 |
 | `scenario_c_natural_prompt.py` | Each agent receives the same natural-language prompt; verifies it actually called wg and quoted the seeded fact contents. | ~50–100k tokens (claude+codex+hermes) |
-| `scenario_d_concurrent_writers.py` | Multi-process write contention; surfaces redb's per-process file lock. | 0 |
+| `scenario_d_concurrent_writers.py` | Multi-process write contention; verifies lock failures are explicit and non-destructive. | 0 |
 | `scenario_e_http_shared.py` | One `wg mcp-serve` + 4 HTTP clients × 25 inserts; the recommended shared-write pattern. | 0 |
 
 ## Running locally
@@ -22,6 +22,9 @@ python3 bench/multi-agent/scenario_a_mcp_smoke.py
 python3 bench/multi-agent/scenario_b_consistency.py
 python3 bench/multi-agent/scenario_d_concurrent_writers.py
 python3 bench/multi-agent/scenario_e_http_shared.py
+
+# compact local UX regression
+scripts/bench-agent-ux.sh
 
 # token-burning scenario (one-shot demo / opt-in regression)
 python3 bench/multi-agent/scenario_c_natural_prompt.py

@@ -2,7 +2,7 @@
 """GAC (Geometry-Aware Consolidation) analysis on a wg store.
 
 Stage 1 of the GAC adoption plan from
-.notes/agent-ux-design-decisions.md. Pure measurement — no wg
+docs/MEASUREMENTS.md. Pure measurement — no wg
 state mutation. Pulls fact contents out of a wg store via
 `wg fact list --json`, re-embeds with the same model wg uses
 (model2vec / potion-multilingual-128M, L2-normalized to match

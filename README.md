@@ -1,264 +1,239 @@
-# WikiGraph (`wg`)
+<div align="center">
+  <h1 align="center">wg</h1>
+  <p><strong>Local-first temporal memory for coding agents.</strong></p>
+  <p>
+    One Rust binary. One redb store. CLI, MCP, and native bindings for agents that need memory with facts, graph traversal, and history.
+  </p>
+  <p>
+    <a href="https://github.com/taeyun16/wg/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/taeyun16/wg/ci.yml?branch=main&label=ci&style=flat-square"></a>
+    <a href="./Cargo.toml"><img alt="Rust 1.85+" src="https://img.shields.io/badge/rust-1.85%2B-f46623?logo=rust&style=flat-square"></a>
+    <a href="./Cargo.toml"><img alt="License: MIT OR Apache-2.0" src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-0f766e?style=flat-square"></a>
+    <a href="#install"><img alt="Install with Cargo" src="https://img.shields.io/badge/install-cargo%20install-2563eb?style=flat-square"></a>
+  </p>
+  <p>
+    <a href="./AGENTS.md"><img alt="MCP stdio + HTTP" src="https://img.shields.io/badge/MCP-stdio%20%2B%20HTTP-7c3aed?style=flat-square"></a>
+    <a href="#architecture"><img alt="Bindings: Python Node Elixir C" src="https://img.shields.io/badge/bindings-Python%20%7C%20Node%20%7C%20Elixir%20%7C%20C-0891b2?style=flat-square"></a>
+    <a href="#why-wg"><img alt="Local-first" src="https://img.shields.io/badge/local--first-one%20binary%20%2B%20one%20store-16a34a?style=flat-square"></a>
+    <a href="./docs/MEASUREMENTS.md"><img alt="Measured agent UX and retrieval" src="https://img.shields.io/badge/measured-agent%20UX%20%2B%20retrieval-ca8a04?style=flat-square"></a>
+    <a href="./COMPARE.md"><img alt="Compare with mem0 Graphiti Letta" src="https://img.shields.io/badge/compare-mem0%20%7C%20Graphiti%20%7C%20Letta-475569?style=flat-square"></a>
+  </p>
+</div>
 
-Local knowledge-graph wiki for LLM agents. Single Rust binary, redb-backed,
-BM25 + optional semantic retrieval, native bindings for Python / Node / Elixir /
-C, and a built-in MCP server (stdio + HTTP).
+---
+
+`wg` is a memory layer for Claude Code, Codex, Cursor, Hermes, and other
+coding agents. It stores project knowledge as typed facts connected to
+entities and relations, keeps temporal history with validity windows, and
+exposes the same store through a CLI, MCP server, and in-process bindings.
+
+It is deliberately not a hosted memory SaaS, a full agent runtime, or a
+vector database you have to operate. The default path is local and serverless;
+a warm daemon is available when multiple agents need a faster shared endpoint.
+
+```mermaid
+flowchart LR
+    Agent["Claude / Codex / Hermes"] --> MCP["wg mcp / wg mcp-serve"]
+    Human["CLI user"] --> CLI["wg query / search / fact add"]
+    Plugin["Python / Node / Elixir / C"] --> API["WikiGraph API"]
+    MCP --> Core["wg-core"]
+    CLI --> Core
+    API --> Core
+    Core --> Store[("redb + BM25 + HNSW")]
+```
+
+## Why wg
+
+| Need | What wg gives you |
+|---|---|
+| Local agent memory | Single binary + single embedded store. No Postgres, Qdrant, Neo4j, or hosted vendor. |
+| More than vector recall | Typed facts, entities, relations, graph traversal, temporal validity, aggregation. |
+| Agent-native access | Built-in MCP over stdio and HTTP, plus a compact CLI for humans. |
+| Shared team/project memory | Optional `source_id` scoping, multi-project stores, and a daemon path for shared writes. |
+| Tool-builder embedding | Python, Node, Elixir, and C bindings call the same Rust core in process. |
 
 ## Install
 
 ```bash
-# One-line installer (builds via cargo)
+# One-line installer
 curl -fsSL https://raw.githubusercontent.com/taeyun16/wg/main/scripts/install.sh | bash
 
 # Or directly with cargo
 cargo install --git https://github.com/taeyun16/wg wg-cli
 
-# Or from a local checkout
+# Or from a checkout
 cargo install --path crates/wg-cli
 ```
 
-The binary is named `wg`. Add `~/.cargo/bin` to your `PATH` if it isn't already.
-For CI parity, the project is currently validated on Rust `1.95.0` (workspace
-MSRV remains `1.85`).
+The binary is `wg`. Add `~/.cargo/bin` to your `PATH` if needed. CI currently
+validates with Rust `1.95.0`; the workspace MSRV is `1.85`.
 
-## Quick start
+## 60-Second Quickstart
 
 ```bash
-wg init ./my-wiki                       # create a store + ingest markdown
-wg init --agent codex ./my-wiki          # init + register wg with an agent
-wg query "Redis"                        # one-shot context (search + entity + traverse + recent)
-wg search "high availability" -l 5 --hybrid
-wg recent -n 10                         # what changed in the last 7 days
-wg overview                             # first-impression snapshot of an unfamiliar wiki
-wg doctor                               # health check (orphans, broken refs, …)
-wg fact add "Decided to use Redis Cluster" --type decision --entities Redis
-wg search "cache policy" --source-id team-a
-wg edit fact <ID> --append "Updated 2026-04-26"
-wg fact supersede <OLD_ID> <NEW_ID>     # validity-window: mark superseded
-wg fact archive --older-than 30d --type note
+wg init ./my-wiki
+wg fact add "Decided to use Redis Cluster for cache HA" \
+  --type decision \
+  --entities Redis,Cache
+
+wg query "Redis cache"
+wg recent -n 10
 wg graph --from Redis --depth 2 --format mermaid
-wg daemon start                         # warm shared mcp-serve for local agents
 ```
 
-The default store lives at `~/.wg/wiki.redb` (override with `--store` or
-`--project`). Multi-project mode:
+Register it with an agent:
 
 ```bash
-wg project create work --path ~/work-wiki.redb
-wg project use work
-wg --project personal stats             # one-off override
-```
+wg init --agent codex ./my-wiki
 
-## CLI commands
-
-### Read & search
-- `wg search <query> [-l N] [--hybrid] [--source-id ID] [--include-archive] [--via URL]` — BM25 by default; `--hybrid` adds semantic retrieval
-- `wg query <topic> [--mode naive|local|hybrid|global] [--source-id ID]` — unified context (search + traverse + recent)
-- `wg recent [-n N] [--type T] [--last 30d]` — recent activity
-- `wg overview [-n N] [--recent-days D]` — first-impression snapshot
-- `wg traverse <entity> [-d N]` — graph traversal
-- `wg path <from> <to>` — find a path between entities
-- `wg graph [--from E] [--format mermaid|dot]` — visualize subgraph
-- `wg entity get|list|show` / `wg fact get|list` / `wg stats`
-- `wg entity show <name>` — compiled view: summary + recent facts
-
-### Write
-- `wg fact add <content> --entities A,B [--type decision] [--source-id ID]` (auto-creates missing entities)
-- `wg fact supersede <OLD_ID> <NEW_ID>` — set validity window
-- `wg fact archive --ids <ID,…>` / `--older-than 30d` — move cold facts into `<store>.cold.redb`
-- `wg edit fact <ID> --append/--prepend/--find+--replace/--content`
-- `wg entity add <name> [--type service]` (custom types accepted)
-- `wg entity describe <name> "..."` (or `--from-stdin` / `--clear`) — set compiled-truth summary
-- `wg relation add <source> <target> <rel_type>`
-- `wg session new <topic>` / `current` / `list` — tracked session helpers
-
-### Maintenance
-- `wg doctor [--json]` — health check with memory, disk, agent setup, and feedback-adapter status
-- `wg lint [--json]` — raw lint issues
-- `wg bench <golden.jsonl> [--k 5]` — measure P@K, R@K, p50/p95 latency against a golden set
-- `wg skill check <path>` — validate Claude Code SKILL.md frontmatter + tool refs
-- `wg extract [--llm] [--apply] "<text>"` — heuristic / optional LLM fact extraction
-- `wg ingest <wiki_root> [-i]` — ingest markdown
-- `wg watch <wiki_root> [--search QUERY]` — re-ingest on file changes (live search optional)
-- `wg sync ingest <wiki_root>` — alias for incremental markdown ingest
-- `wg sync pull <url> [--token T]` — pull a delta from a remote `wg mcp-serve` (Phase 2)
-- `wg vector-rebuild [--json]` — rebuild the HNSW index (after a model swap)
-- `wg auto-relate [--top-k N] [--threshold F] [--dry-run] [--json]` — add `related` edges between entities whose facts cluster semantically (one-shot; idempotent)
-- `wg consolidate [--semantic-threshold F] [--ttl note=30] [--dry-run] [--json]` — semantic dedup + TTL expiry pass
-- `wg export [--scope all|entities|relations|facts]` / `wg import`
-- `wg config get/set/list`
-- `wg pending list|stats|approve|reject|review` — manage dry-run extraction / auto-record review queue
-  - `wg config set store.durability eventual` — drop per-commit fsync (~13× faster writes; survives process crash, not power loss)
-  - `wg config set store.lock_retry_ms 5000` — auto-retry briefly when another `wg` process is holding the redb lock (multi-agent setups). Default `0` keeps the fast-fail behaviour.
-
-### Multi-project
-- `wg project list/show/create/use/remove`
-- Global `--project NAME` / `--store PATH` flags
-
-### Servers
-- `wg mcp` — stdio JSON-RPC MCP server (Claude Code, Codex)
-- `wg mcp-serve --port 3000` — HTTP + SSE for browser/remote clients; `GET /health` and `GET /admin/status` expose request counts, auth mode, store path, and sync cursor status
-- `wg daemon start|status|stop` — manage a warm local background `mcp-serve`
-- `wg mcp-install --target claude|codex|cursor|…` — write agent config for you
-
-## Use as an MCP server
-
-Local agents (Claude Code, Codex CLI, …) can spawn `wg` as a stdio MCP
-server. **24 tools** exposed:
-
-- Core turn-entry: `wg_context`, `wg_query`, `wg_search`, `wg_aggregate`
-- Read/orient: `wg_recent`, `wg_overview`, `wg_traverse`, `wg_path`, `wg_entity_get`, `wg_entity_list`, `wg_fact_get`, `wg_fact_list`, `wg_doctor`, `wg_session_start`, `wg_pinned_context`
-- Write/ops: `wg_fact_add`, `wg_fact_add_many`, `wg_fact_edit`, `wg_fact_supersede`, `wg_fact_archive`, `wg_fact_pin`, `wg_entity_describe`, `wg_extract`, `wg_feedback`
-
-```bash
 # Claude Code
 claude mcp add wg -- wg mcp
 
-# Codex CLI — append to ~/.codex/config.toml
+# Codex CLI: ~/.codex/config.toml
 [mcp_servers.wg]
 command = "wg"
 args = ["mcp"]
 ```
 
-See [`AGENTS.md`](AGENTS.md) and
-[`wg-skill/setup-claude-code.md`](wg-skill/setup-claude-code.md)
-for full integration details.
+## Common Workflows
 
-## How does `wg` compare?
+### Search and recall
 
-[`COMPARE.md`](COMPARE.md) has the head-to-head against mem0, Letta,
-Graphiti / Zep, and beads — what `wg` wins, where it lags, and when
-to reach for something else.
+```bash
+wg search "cache policy" -l 5
+wg search "cache policy" --hybrid
+wg query "Redis" --mode hybrid
+wg overview
+```
 
-[`POSITIONING.md`](POSITIONING.md) is the shorter product-story version:
-who `wg` is for, what category it actually belongs in, and what claims
-it should and should not lead with.
+### Write durable memory
+
+```bash
+wg fact add "Use LRU for Redis edge caches" \
+  --type convention \
+  --entities Redis,Cache
+
+wg fact supersede <OLD_ID> <NEW_ID>
+wg edit fact <ID> --append "Confirmed in load test"
+```
+
+### Keep agent memories isolated in one store
+
+```bash
+wg fact add "Agent A prefers bm25 first" --entities Retrieval --source-id agent-a
+wg fact add "Agent B is testing rerank" --entities Retrieval --source-id agent-b
+
+wg search "retrieval preference" --source-id agent-a
+```
+
+Hermes uses the same `source_id` field through its plugin tools and slash
+commands. Its CLI fallback retries short redb lock collisions for 5 seconds by
+default, so two local Hermes agents can share a store without asking the user
+to start a server.
+
+### Share a warm store when concurrency matters
+
+```bash
+wg daemon start
+wg daemon status
+
+# Or run the HTTP MCP server explicitly
+wg mcp-serve --port 3000
+curl http://127.0.0.1:3000/health
+curl http://127.0.0.1:3000/admin/status
+```
+
+Daemon mode is an optimization, not required onboarding. It keeps the model and
+store warm and avoids per-command open costs.
+
+## Measured Claims
+
+| Measurement | Result |
+|---|---:|
+| LongMemEval-S retrieval, bge + two-stage rerank | R@10 `0.992`, MRR `0.958` |
+| LongMemEval-S E2E, bge + rerank + MiniMax reader | `74.0%` |
+| gbrain-evals BrainBench, wg BM25 | P@5 `17.4%`, R@5 `64.1%` |
+| gbrain-evals BrainBench, wg BM25 via daemon | same score, `5.7x` faster |
+| Hermes two-process serverless shared store, retry `5000` | 20/20 writes persisted, 0 lock errors |
+| HTTP shared `mcp-serve`, 2 clients x 10 writes | p50 `18.4ms`, p95 `41.8ms`, 20/20 persisted |
+
+See [`docs/MEASUREMENTS.md`](docs/MEASUREMENTS.md) for methodology, commands,
+and caveats. The short version: `wg` should lead with operational simplicity
+and temporal memory semantics, not a SOTA benchmark claim.
+
+## Feature Map
+
+| Area | Features |
+|---|---|
+| Retrieval | BM25, semantic HNSW, hybrid RRF, optional TEI / fastembed rerank |
+| Graph | entities, facts, relations, traversal, shortest path, Mermaid / DOT export |
+| Time | `supersede`, `current_only`, `as_of`, archive / cold tier |
+| Agent tools | 24 MCP tools including `wg_context`, `wg_query`, `wg_aggregate`, `wg_fact_add_many` |
+| Capture | `wg_extract`, pending review queue, `wg pending list/stats/approve/reject` |
+| Ops | `doctor`, `overview`, `bench`, `vector-rebuild`, `consolidate`, `auto-relate` |
+| Sharing | `source_id`, multi-project stores, stdio MCP, HTTP/SSE MCP, daemon discovery |
+| Bindings | Python, Node, Elixir, C |
+
+## CLI Reference
+
+| Category | Commands |
+|---|---|
+| Setup | `wg init`, `wg init --agent codex`, `wg project create/use/list` |
+| Read | `wg search`, `wg query`, `wg recent`, `wg overview`, `wg traverse`, `wg path`, `wg graph` |
+| Write | `wg fact add`, `wg fact supersede`, `wg fact archive`, `wg edit fact`, `wg entity describe`, `wg relation add` |
+| Maintenance | `wg doctor`, `wg lint`, `wg bench`, `wg pending`, `wg ingest`, `wg watch`, `wg vector-rebuild`, `wg consolidate` |
+| Server | `wg mcp`, `wg mcp-serve`, `wg daemon start/status/stop`, `wg mcp-install` |
+| Config | `wg config get/set/list`, `wg auth generate/login/list/logout` |
+
+Useful knobs:
+
+```bash
+wg config set store.durability eventual    # faster writes, less power-loss safety
+wg config set store.lock_retry_ms 5000     # smooth short redb lock contention
+wg config set model.provider fastembed
+wg config set model.name bge-small-en-v1.5
+```
 
 ## Architecture
 
 | Crate | Purpose |
 |---|---|
-| `wg-core` | Embedded redb store, ingest, search, traverse, lint |
-| `wg-cli` | The `wg` binary (CLI + stdio/HTTP MCP) |
-| `wg-python` | Python bindings (PyO3 + maturin) |
-| `wg-napi` | Node.js bindings (napi-rs) |
-| `wg-nif` | Elixir/Erlang bindings (rustler) |
-| `wg-ffi` | C-ABI bindings (cdylib + staticlib + header) |
+| `wg-core` | redb store, ingest, BM25, semantic search, graph, lint, lifecycle |
+| `wg-cli` | `wg` binary: CLI, stdio MCP, HTTP/SSE MCP |
+| `wg-python` | PyO3 bindings |
+| `wg-napi` | Node.js bindings |
+| `wg-nif` | Elixir/Erlang bindings |
+| `wg-ffi` | C ABI bindings |
+| `benchmarks` | Rust benchmark binaries and reproducible fixtures |
 
-All four bindings expose the full API: `current_only` filtering,
-`fact_supersede` for validity-window workflows, and `fact_add_many`
-for amortized-fsync bulk inserts. The Python constructor accepts
-config kwargs (`model`, `semantic_index`, `durability`) so callers
-can override any default without round-tripping through a config
-file.
+## Compare
 
-## Features
+| Alternative | Pick it when | Pick wg when |
+|---|---|---|
+| Mem0 | You want managed memory and automatic cloud extraction. | You want local-first explicit facts and no default vendor dependency. |
+| Letta | You want a full stateful agent runtime. | You already have an agent and need a pluggable memory layer. |
+| Graphiti / Zep | You need a server-centric temporal graph with Neo4j and community detection. | You want similar temporal semantics in a single local binary. |
+| beads | You need a dependency-aware issue tracker with merge. | You need hybrid retrieval over facts and graph context. |
+| OMEGA-style systems | You optimize for top LongMemEval scores with heavier prompt/hook machinery. | You optimize for portability, deployment simplicity, and explicit memory control. |
 
-- **Hybrid search** — BM25 + Model2Vec semantic vectors, RRF fusion
-- **4 query modes** — naive (search-only) / local (entity-centric) / hybrid (default) / global (broad)
-- **Typed-relation extraction** — zero-LLM regex patterns for `works_at`, `depends_on`, `supersedes`, … (37 phrases)
-- **Compiled-truth + timeline** — each entity has a manual `summary` ("what we currently believe") plus the fact list ("evidence trail")
-- **`wg skill check`** — validate Claude Code SKILL.md frontmatter, tool references, body length
-- **`wg bench`** — JSONL golden-set runner with P@K / R@K / latency reports
-- **Knowledge graph** — entities, facts, relations with named traversal
-- **Markdown ingest** — frontmatter, `[[wikilinks]]`, heading sections, dates
-- **`wg query`** — one-call context: search + entity + traverse + recent
-- **Validity windows** — `superseded_at` + `current_only` filter (Graphiti-style)
-- **Custom entity types** — `service`, `rfc`, `incident` etc. without recompiling
-- **Multi-project** — switch stores via `wg project use` or `--project`
-- **Source scoping** — optional `source_id` on facts lets shared stores isolate reads with `--source-id`
-- **Auto-create entities** — `wg fact add --entities A,B` creates missing entities
-- **Mermaid / DOT graphs** — `wg graph --format mermaid`
-- **MCP server** — stdio (preferred) and HTTP/SSE transports, 24-tool surface
-- **Native bindings** — embed wg directly in Python / Node / Elixir / C
-- **Adaptive ranking** — record search feedback, retrain ranker offline
-- **TEI integration** — opt into HuggingFace text-embeddings-inference for embeddings (`model.provider = "tei"`) and/or cross-encoder reranking (`rerank.provider = "tei"`); reranker failure falls back to RRF
+Full comparison: [`COMPARE.md`](COMPARE.md). Product positioning:
+[`POSITIONING.md`](POSITIONING.md). Current roadmap:
+[`PRODUCT_ROADMAP.md`](PRODUCT_ROADMAP.md).
 
-## Performance
+## Repository Guide
 
-Reference numbers from `benchmarks/src/bin/performance.rs` on a 10 000-fact
-synthetic wiki, p95 latency, default config (HNSW + immediate durability):
-
-| Operation | p95 |
-|---|---|
-| `traverse_d3` | ~0.01 ms |
-| `search_bm25` (pure BM25) | ~0.5 ms |
-| `search_hybrid` (HNSW path) | ~3.4 ms |
-| `lint` (full health check) | ~34 ms |
-| `fact_add_many` (per fact) | ~0.07 ms |
-| `fact_add` (single) | ~5 ms (OS fsync floor; use `fact_add_many` or `store.durability = eventual` to amortize/skip) |
-| `startup` (open + first traverse) | ~12 ms |
-
-Profile yourself:
-
-```bash
-cargo run --release --bin performance      # full matrix → benchmarks/results/performance.json
-WG_LINT_PROFILE=1 wg lint                  # per-phase lint timings
-WG_SEARCH_PROFILE=1 wg search "…"          # per-phase hybrid_search timings
+```text
+crates/       Rust workspace crates
+plugins/      Agent integrations, including Hermes
+wg-skill/     Agent-facing skill and setup docs
+bench/        Scenario benchmarks and multi-agent checks
+benchmarks/   Rust benchmark crate and gbrain adapter
+scripts/      Install, CI, Hermes, and analysis scripts
+docs/         Durable measurement and design documentation
 ```
 
-### LongMemEval-S retrieval baseline
-
-500 questions from the published [LongMemEval-S cleaned](https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned)
-dataset, BM25 via `wg_search`, ~350 ms/question end-to-end
-(per-question store build + 50-200 turn ingest + one search):
-
-| | R@1 | R@5 | **R@10** | MRR |
-|---|---|---|---|---|
-| wg (BM25-only, M-series) | 0.866 | 0.952 | **0.974** | 0.902 |
-| wg + time-decay soft-bias (τ=90d) | 0.858 | 0.958 | **0.978** | 0.898 |
-| wg + decay + bge-small-en-v1.5 | 0.808 | 0.952 | 0.984 | 0.868 |
-| wg + bge-small-en-v1.5 (no decay) | 0.914 | 0.976 | 0.986 | 0.941 |
-| wg + bge + bge-reranker-base (narrow K=10) | 0.938 | 0.984 | 0.986 | 0.957 |
-| **wg + bge + reranker (two-stage K=20→10)** ★ | **0.940** | **0.984** | **0.992** | **0.958** |
-
-End-to-end with an LLM reader (`scripts/longmemeval_e2e.py`, judge =
-`gpt-4o` to match the published-baseline calibration):
-
-| Stack | Reader | Overall |
-|---|---|---|
-| Mem0 (published) | gpt-4o | 49.0% |
-| wg @ model2vec + decay τ=90 | gpt-4o-mini | 60.0% |
-| wg @ model2vec + decay τ=90 | gpt-4o | 60.4% |
-| wg @ model2vec + decay τ=90 | gpt-5.4-mini | 62.6% |
-| wg @ bge + reranker wide K=20→10 | gpt-4o-mini | 65.6% |
-| wg @ bge + reranker wide K=20→10 | gpt-5.4-mini | 66.0% |
-| wg @ bge + reranker wide K=20→10 | gpt-4o | 67.6% |
-| **wg @ bge + reranker wide K=20→10** | **gpt-4.1** | **72.6%** |
-| **wg @ bge + reranker wide K=20→10** ★ | **MiniMax-M2.7-highspeed** | **74.0%** |
-| Zep / Graphiti 2026 (published) | gpt-4o | 71.2% |
-| Supermemory (published) | — | 85.4% |
-| Mastra (published) | gpt-4o | 84.2% |
-| Mastra (published) | gpt-5-mini | 94.9% |
-| OMEGA (published, local) | gpt-4.1 | 95.4% |
-
-`wg + MiniMax-M2.7-highspeed` lands at **74.0%** — beating Mem0
-(49%) by **+25.0pt** and edging past Zep/Graphiti (71.2%) by
-**+2.8pt** while keeping the entire stack local: a single Rust
-binary + ONNX bge embedder + cross-encoder reranker, no Python
-services, no vector DB, no graph store, the only network call is
-the reader LLM itself (and that can be any OpenAI-compatible
-endpoint — MiniMax / OpenAI / Kimi / Ollama / vLLM). Below Mastra
-(84.2%) and SOTA local systems (OMEGA 95.4% with 25 lifecycle
-tools) — see [`.notes/compare-graphiti.md`](.notes/compare-graphiti.md)
-for the wg vs Graphiti head-to-head, [`.notes/omega-pipeline-analysis.md`](.notes/omega-pipeline-analysis.md)
-for the OMEGA gap analysis, and [`COMPARE.md`](COMPARE.md) for the
-broader architecture comparison. Of wg's remaining errors,
-**99% had the right context in the top-10 retrievals**; the failures
-are reader-side reasoning (multi-session synthesis, temporal
-comparison) — and the worst category (`temporal-reasoning` 39.8%) is
-bottlenecked by LongMemEval-S's known timestamp noise rather than wg
-retrieval (R@10 there is 0.977). Full per-category breakdown,
-judge-calibration analysis, and methodology in
-[`.notes/bench-longmemeval.md`](.notes/bench-longmemeval.md).
-
-The R@10 = 99.2% number says the answer-evidence session lands in the
-top-10 retrieval set 496 / 500 times — i.e., the LLM has the right
-context at hand for nearly every question. End-to-end answer
-correctness is left to the LLM the agent uses; this is the slice wg
-controls. See [`.notes/bench-longmemeval.md`](.notes/bench-longmemeval.md)
-for per-`question_type` breakdown and the reproduction recipe.
+For agent-specific instructions, read [`AGENTS.md`](AGENTS.md). For local
+script organization, read [`scripts/README.md`](scripts/README.md).
 
 ## License
 
-MIT OR Apache-2.0.
+See repository license metadata.
