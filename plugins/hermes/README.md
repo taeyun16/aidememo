@@ -8,10 +8,10 @@ lifecycle hooks.
 
 | Surface | What it does |
 |---|---|
-| **7 tools** | `wg_query`, `wg_search`, `wg_recent`, `wg_entity_list`, `wg_traverse`, `wg_fact_add`, `wg_lint` — same surface as the wg MCP server, but called in-process (no JSON-RPC overhead). `wg_query`, `wg_search`, and `wg_fact_add` accept `source_id` for shared-store scoping. |
-| **4 slash commands** | `/wg <topic>` (one-shot context), `/wg-add <content>` (record a fact), `/wg-recent` (last 7 days), `/wg-pending` (review/commit dry-run captures). `/wg` and `/wg-add` accept `--source-id ID`. |
-| **`on_session_start` hook** | Auto-injects recent facts into the conversation so the model has wg context before the user types. |
-| **`on_session_end` hook** | Scans the transcript for decision-style phrasings and auto-records them as wg facts. |
+| **8 tools** | `wg_workflow_start`, `wg_query`, `wg_search`, `wg_recent`, `wg_entity_list`, `wg_traverse`, `wg_fact_add`, `wg_lint` — same surface as the wg MCP server, but called in-process (no JSON-RPC overhead). `wg_workflow_start`, `wg_query`, `wg_search`, and `wg_fact_add` accept `source_id` for shared-store scoping. |
+| **5 slash commands** | `/wg-start <title>` (issue/ticket workflow context), `/wg <topic>` (one-shot context), `/wg-add <content>` (record a fact), `/wg-recent` (last 7 days), `/wg-pending` (review/commit dry-run captures). `/wg-start`, `/wg`, and `/wg-add` accept `--source-id ID`. |
+| **`pre_llm_call` hook** | Auto-injects recent facts into the first turn so the model has wg context before it answers. |
+| **`post_llm_call` hook** | Scans each turn for decision-style phrasings and auto-records them as wg facts. |
 | **`hermes wg ...` CLI** | `hermes wg query` / `search` / `recent` / `add` / `stats` / `lint`. |
 | **Bundled skill** | The agentskills.io-conformant `SKILL.md` registers automatically. |
 
@@ -86,6 +86,7 @@ few sessions, then audit and selectively commit captures.
 **From chat (Hermes session):**
 
 ```text
+/wg-start "Fix Redis timeout in worker" --body "Worker jobs time out" --source github:org/repo#123
 /wg redis --source-id team-a       → query only team-a facts in a shared store
 /wg-add "Redis cache policy is LRU" --entities Redis --source-id team-a
 /wg-pending                     → list every detection (numbered)

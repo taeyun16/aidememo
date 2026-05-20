@@ -157,6 +157,41 @@ class WgClient:
             return self._py.stats()
         return self._cli_json(["stats"])
 
+    def workflow_start(
+        self,
+        title: str,
+        body: str | None = None,
+        source: str | None = None,
+        source_id: str | None = None,
+        limit: int = 8,
+        depth: int = 2,
+        recent_limit: int = 5,
+    ) -> dict:
+        """Start a workflow-triggered coding task.
+
+        This intentionally uses the CLI path even when the PyO3 binding
+        is available: `wg workflow start` composes session creation,
+        ticket capture, and context-pack retrieval in the CLI/MCP layer.
+        """
+        args = [
+            "workflow",
+            "start",
+            title,
+            "--limit",
+            str(limit),
+            "--depth",
+            str(depth),
+            "--recent-limit",
+            str(recent_limit),
+        ]
+        if body:
+            args += ["--body", body]
+        if source:
+            args += ["--source", source]
+        if source_id:
+            args += ["--source-id", source_id]
+        return self._cli_json(args)
+
     # ------------------------------------------------------------------
     # Write API
     # ------------------------------------------------------------------

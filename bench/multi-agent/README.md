@@ -1,6 +1,6 @@
 # multi-agent e2e
 
-Scenarios A–E exercise the integration between `wg` and the three
+Scenarios A–F exercise the integration between `wg` and the three
 agents installed on this machine: Claude Code, Codex, and Hermes.
 
 | script | what it does | model cost |
@@ -10,6 +10,7 @@ agents installed on this machine: Claude Code, Codex, and Hermes.
 | `scenario_c_natural_prompt.py` | Each agent receives the same natural-language prompt; verifies it actually called wg and quoted the seeded fact contents. | ~50–100k tokens (claude+codex+hermes) |
 | `scenario_d_concurrent_writers.py` | Multi-process write contention; verifies lock failures are explicit and non-destructive. | 0 |
 | `scenario_e_http_shared.py` | One `wg mcp-serve` + 4 HTTP clients × 25 inserts; the recommended shared-write pattern. | 0 |
+| `scenario_f_workflow_triggers.py` | Starts multiple unrelated sparse tickets through CLI, MCP, and Hermes plugin paths; verifies unique sessions, ticket facts, topical priors, and `source_id` isolation. | 0 |
 
 ## Running locally
 
@@ -22,6 +23,7 @@ python3 bench/multi-agent/scenario_a_mcp_smoke.py
 python3 bench/multi-agent/scenario_b_consistency.py
 python3 bench/multi-agent/scenario_d_concurrent_writers.py
 python3 bench/multi-agent/scenario_e_http_shared.py
+python3 bench/multi-agent/scenario_f_workflow_triggers.py
 
 # compact local UX regression
 scripts/bench-agent-ux.sh

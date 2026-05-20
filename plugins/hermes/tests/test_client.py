@@ -190,6 +190,32 @@ def test_source_id_is_forwarded_to_cli_filters(monkeypatch: pytest.MonkeyPatch) 
     assert calls[2][-2:] == ["--source-id", "team-a"]
 
 
+def test_workflow_start_dispatches_to_cli(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("hermes_wg.client.WgClient._has_cli", staticmethod(lambda: True))
+    monkeypatch.setattr("hermes_wg.client.WgClient._try_load_pyo3", lambda self: None)
+    client = WgClient()
+
+    payload = json.dumps({
+        "session_id": "session-01KQ6RT4RXQFF14MBYTB40M4N3",
+        "ticket_fact_id": "01KQ6RT4RXQFF14MBYTB40M4N4",
+    })
+    completed = type("P", (), {"returncode": 0, "stdout": payload, "stderr": ""})()
+    with patch("subprocess.run", return_value=completed) as run:
+        out = client.workflow_start(
+            "Fix Redis timeout",
+            body="Worker jobs timeout",
+            source="github:org/repo#123",
+            source_id="team-a",
+        )
+
+    assert out["session_id"].startswith("session-")
+    cmd = run.call_args.args[0]
+    assert cmd[:3] == ["wg", "--json", "workflow"]
+    assert "start" in cmd
+    assert "Fix Redis timeout" in cmd
+    assert cmd[-2:] == ["--source-id", "team-a"]
+
+
 def test_fact_add_falls_back_to_human_output(monkeypatch: pytest.MonkeyPatch) -> None:
     """Older wg binaries silently dropped the global `--json` flag for
     `fact add`, returning the human prose. The legacy path should

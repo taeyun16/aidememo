@@ -130,6 +130,20 @@ commands. Its CLI fallback retries short redb lock collisions for 5 seconds by
 default, so two local Hermes agents can share a store without asking the user
 to start a server.
 
+### Start from a sparse issue or ticket
+
+```bash
+wg workflow start "Fix Redis timeout in worker" \
+  --body-file issue.md \
+  --source github:org/repo#123 \
+  --json
+```
+
+This creates a tracked session, records the incoming ticket as a `question`
+fact, and returns a context pack with relevant decisions, lessons, errors, and
+search hits so an automation-triggered agent can start with project memory
+instead of only the issue body.
+
 ### Share a warm store when concurrency matters
 
 ```bash
@@ -167,7 +181,7 @@ and temporal memory semantics, not a SOTA benchmark claim.
 | Retrieval | BM25, semantic HNSW, hybrid RRF, optional TEI / fastembed rerank |
 | Graph | entities, facts, relations, traversal, shortest path, Mermaid / DOT export |
 | Time | `supersede`, `current_only`, `as_of`, archive / cold tier |
-| Agent tools | 24 MCP tools including `wg_context`, `wg_query`, `wg_aggregate`, `wg_fact_add_many` |
+| Agent tools | 25 MCP tools including `wg_workflow_start`, `wg_context`, `wg_query`, `wg_aggregate`, `wg_fact_add_many` |
 | Capture | `wg_extract`, pending review queue, `wg pending list/stats/approve/reject` |
 | Ops | `doctor`, `overview`, `bench`, `vector-rebuild`, `consolidate`, `auto-relate` |
 | Sharing | `source_id`, multi-project stores, stdio MCP, HTTP/SSE MCP, daemon discovery |
@@ -180,7 +194,7 @@ and temporal memory semantics, not a SOTA benchmark claim.
 | Setup | `wg init`, `wg init --agent codex`, `wg project create/use/list` |
 | Read | `wg search`, `wg query`, `wg recent`, `wg overview`, `wg traverse`, `wg path`, `wg graph` |
 | Write | `wg fact add`, `wg fact supersede`, `wg fact archive`, `wg edit fact`, `wg entity describe`, `wg relation add` |
-| Maintenance | `wg doctor`, `wg lint`, `wg bench`, `wg pending`, `wg ingest`, `wg watch`, `wg vector-rebuild`, `wg consolidate` |
+| Maintenance | `wg doctor`, `wg lint`, `wg bench`, `wg pending`, `wg workflow`, `wg ingest`, `wg watch`, `wg vector-rebuild`, `wg consolidate` |
 | Server | `wg mcp`, `wg mcp-serve`, `wg daemon start/status/stop`, `wg mcp-install` |
 | Config | `wg config get/set/list`, `wg auth generate/login/list/logout` |
 

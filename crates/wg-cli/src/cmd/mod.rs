@@ -87,6 +87,7 @@ pub enum Command {
     Daemon(daemon::DaemonSub),
     Extract(ExtractSub),
     Session(SessionSub),
+    Workflow(WorkflowSub),
     AutoRelate(AutoRelateSub),
     Overview(OverviewSub),
     Consolidate(ConsolidateSub),
@@ -142,6 +143,22 @@ pub struct ExtractSub {
     pub llm: bool,
     pub from_stdin: bool,
     pub text: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub enum WorkflowSub {
+    Start {
+        body: Option<String>,
+        body_file: Option<PathBuf>,
+        from_stdin: bool,
+        source: Option<String>,
+        source_id: Option<String>,
+        limit: Option<usize>,
+        depth: Option<u32>,
+        recent_limit: Option<usize>,
+        max_chars: Option<usize>,
+        title: String,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -464,6 +481,7 @@ pub fn build_cli() -> OptionParser<Args> {
         daemon_cmd,
         extract_command(),
         session_command(),
+        workflow_command(),
         auto_relate_command(),
         overview_command(),
         consolidate_command(),
@@ -584,6 +602,68 @@ fn session_command() -> impl Parser<Command> {
         .to_options()
         .command("session")
         .help("Agent session helpers: warmup envelope + tracked sessions")
+}
+
+fn workflow_command() -> impl Parser<Command> {
+    let body = long("body")
+        .help("Ticket / issue body text")
+        .argument::<String>("TEXT")
+        .optional();
+    let body_file = long("body-file")
+        .help("Read ticket / issue body from a file")
+        .argument::<PathBuf>("PATH")
+        .optional();
+    let from_stdin = long("from-stdin")
+        .help("Read ticket / issue body from stdin")
+        .switch();
+    let source = long("source")
+        .help("Upstream workflow source, e.g. github:org/repo#123 or linear:ENG-42")
+        .argument::<String>("SOURCE")
+        .optional();
+    let source_id = long("source-id")
+        .help("Optional source namespace / tenant / agent id for shared-store scoping")
+        .argument::<String>("SOURCE_ID")
+        .optional();
+    let limit = long("limit")
+        .short('l')
+        .help("Max topic search hits in the context pack")
+        .argument::<usize>("N")
+        .optional();
+    let depth = long("depth")
+        .short('d')
+        .help("Graph traversal depth for the context pack")
+        .argument::<u32>("N")
+        .optional();
+    let recent_limit = long("recent-limit")
+        .help("Max recent facts in the context pack")
+        .argument::<usize>("N")
+        .optional();
+    let max_chars = long("max-chars")
+        .help("Hard cap for human text output")
+        .argument::<usize>("N")
+        .optional();
+    let title = positional::<String>("TITLE");
+    let start = construct!(WorkflowSub::Start {
+        body,
+        body_file,
+        from_stdin,
+        source,
+        source_id,
+        limit,
+        depth,
+        recent_limit,
+        max_chars,
+        title,
+    })
+    .to_options()
+    .command("start")
+    .help("Start a ticket/issue-driven workflow and emit an agent context pack");
+
+    construct!([start])
+        .map(Command::Workflow)
+        .to_options()
+        .command("workflow")
+        .help("Workflow-trigger helpers for issue/PR/automation driven agents")
 }
 
 fn entity_command() -> impl Parser<Command> {

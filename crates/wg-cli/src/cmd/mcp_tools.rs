@@ -541,7 +541,7 @@ fn tool_session_start(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, 
     // (decay-exempt by default). These are the OMEGA-equivalent of
     // 'profile' + 'lessons' surfaced unconditionally at session start
     // so the agent doesn't have to remember to look them up.
-    let personalisation = collect_personalisation(wiki, 50);
+    let personalisation = collect_personalisation(wiki, 50, None);
 
     let stats = wiki.stats().map_err(|e| e.to_string())?;
     let payload = json!({
@@ -565,7 +565,18 @@ fn tool_session_start(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, 
 /// a slim JSON array. These are the durable, agent-relevant signals
 /// that should always be in the model's context window — surfaced
 /// unconditionally at session start.
-fn collect_personalisation(wiki: &WikiGraph, per_type_limit: usize) -> Vec<Value> {
+fn source_id_matches(f: &wg_core::FactRecord, source_id: Option<&str>) -> bool {
+    match source_id {
+        Some(source_id) => f.source_id.as_deref() == Some(source_id),
+        None => true,
+    }
+}
+
+fn collect_personalisation(
+    wiki: &WikiGraph,
+    per_type_limit: usize,
+    source_id: Option<&str>,
+) -> Vec<Value> {
     let mut out: Vec<Value> = Vec::new();
     for ftype in [
         wg_core::FactType::Preference,
@@ -577,7 +588,7 @@ fn collect_personalisation(wiki: &WikiGraph, per_type_limit: usize) -> Vec<Value
                 fact_type: Some(ftype),
                 entity_id: None,
                 min_confidence: None,
-                source_id: None,
+                source_id: source_id.map(str::to_string),
                 limit: Some(per_type_limit),
                 offset: 0,
                 since: None,
@@ -2060,15 +2071,25 @@ fn tool_context(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String
         .and_then(|v| v.as_u64())
         .unwrap_or(7);
     let depth = args.get("depth").and_then(|v| v.as_u64()).unwrap_or(2) as u32;
+    let source_id = args
+        .get("source_id")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty());
 
     // ── Tier 1: always-on context ─────────────────────────────────
     let pinned: Vec<Value> = wiki
-        .pinned_facts(pinned_limit)
+        .pinned_facts(if source_id.is_some() {
+            pinned_limit.saturating_mul(4).max(pinned_limit)
+        } else {
+            pinned_limit
+        })
         .map_err(|e| e.to_string())?
         .iter()
+        .filter(|f| source_id_matches(f, source_id))
+        .take(pinned_limit)
         .map(|f| slim_fact_record(f, wiki))
         .collect();
-    let personalisation = collect_personalisation(wiki, 50);
+    let personalisation = collect_personalisation(wiki, 50, source_id);
 
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -2080,7 +2101,7 @@ fn tool_context(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String
             fact_type: None,
             entity_id: None,
             min_confidence: None,
-            source_id: None,
+            source_id: source_id.map(str::to_string),
             limit: Some(recent_limit),
             offset: 0,
             since,
@@ -2103,7 +2124,7 @@ fn tool_context(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String
             current_only: true,
             mode: wg_core::QueryMode::default(),
             bm25_only: false,
-            source_id: None,
+            source_id: source_id.map(str::to_string),
         };
         let qres = wiki.query(t, q_opts).map_err(|e| e.to_string())?;
 
@@ -2129,7 +2150,7 @@ fn tool_context(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String
                         fact_type: Some(ftype),
                         entity_id: Some(eid),
                         min_confidence: None,
-                        source_id: None,
+                        source_id: source_id.map(str::to_string),
                         limit: Some(5),
                         offset: 0,
                         since: None,
@@ -2195,6 +2216,129 @@ fn tool_context(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String
     let text = serde_json::to_string(&Value::Object(payload)).map_err(|e| e.to_string())?;
     Ok(ToolCallResult {
         content: vec![ContentBlock::text(text)],
+        is_error: None,
+    })
+}
+
+fn tool_workflow_start(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String> {
+    let title = args
+        .get("title")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .ok_or("title required")?;
+    let body = args
+        .get("body")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let source = args
+        .get("source")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty());
+    let source_id = args
+        .get("source_id")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty());
+    let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(8) as usize;
+    let depth = args.get("depth").and_then(|v| v.as_u64()).unwrap_or(2) as u32;
+    let recent_limit = args
+        .get("recent_limit")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(5) as usize;
+
+    let session_name = format!("session-{}", wg_core::ulid::Ulid::new());
+    let session_entity_id = wiki
+        .entity_add(wg_core::EntityInput {
+            name: session_name.clone(),
+            entity_type: Some(wg_core::EntityType::parse("session")),
+            source_page: Some(source.unwrap_or(title).to_string()),
+            ..Default::default()
+        })
+        .map_err(|e| e.to_string())?;
+
+    let mut ticket_content = format!("Workflow ticket: {title}");
+    if let Some(body) = body {
+        ticket_content.push_str("\n\n");
+        ticket_content.push_str(body);
+    }
+    let ticket_fact_id = wiki
+        .add_fact(wg_core::FactInput {
+            content: ticket_content,
+            fact_type: Some(wg_core::FactType::Question),
+            entity_ids: Some(vec![session_entity_id]),
+            tags: Some(vec!["workflow-start".into(), "ticket".into()]),
+            source: source.map(str::to_string),
+            source_id: source_id.map(str::to_string),
+            source_confidence: Some(1.0),
+            observed_at: None,
+        })
+        .map_err(|e| e.to_string())?;
+
+    let query_text = if let Some(body) = body {
+        format!("{title}\n\n{body}")
+    } else {
+        title.to_string()
+    };
+    let context = wiki
+        .query(
+            &query_text,
+            wg_core::QueryOpts {
+                search_limit: limit,
+                depth,
+                recent_limit,
+                since: None,
+                current_only: true,
+                mode: wg_core::QueryMode::Hybrid,
+                bm25_only: false,
+                source_id: source_id.map(str::to_string),
+            },
+        )
+        .map_err(|e| e.to_string())?;
+
+    let typed_hits = wiki
+        .hybrid_search(
+            &query_text,
+            wg_core::SearchOpts {
+                limit: Some(30),
+                current_only: true,
+                source_id: source_id.map(str::to_string),
+                ..Default::default()
+            },
+        )
+        .unwrap_or_default();
+    let prior_lessons: Vec<_> = typed_hits
+        .iter()
+        .filter(|hit| hit.fact_type == wg_core::FactType::Lesson)
+        .take(5)
+        .cloned()
+        .collect();
+    let prior_errors: Vec<_> = typed_hits
+        .iter()
+        .filter(|hit| hit.fact_type == wg_core::FactType::Error)
+        .take(5)
+        .cloned()
+        .collect();
+    let relevant_decisions: Vec<_> = typed_hits
+        .iter()
+        .filter(|hit| hit.fact_type == wg_core::FactType::Decision)
+        .take(5)
+        .cloned()
+        .collect();
+
+    let payload = json!({
+        "session_id": session_name,
+        "export": format!("export WG_SESSION_ID={session_name}"),
+        "title": title,
+        "source": source,
+        "source_id": source_id,
+        "ticket_fact_id": ticket_fact_id.to_string(),
+        "context": context,
+        "prior_lessons": prior_lessons,
+        "prior_errors": prior_errors,
+        "relevant_decisions": relevant_decisions,
+    });
+    Ok(ToolCallResult {
+        content: vec![ContentBlock::text(payload.to_string())],
         is_error: None,
     })
 }
@@ -3128,10 +3272,29 @@ pub fn list_tools() -> Vec<Tool> {
                     "recent_limit": {"type": "number", "default": 10},
                     "recent_days": {"type": "number", "default": 7},
                     "depth": {"type": "number", "default": 2, "description": "Traverse depth if topic resolves to an entity"},
+                    "source_id": {"type": "string", "description": "Restrict pinned, personalisation, recent, and topic context to this source namespace / tenant / upstream id."},
                     "format": {"type": "string", "enum": ["full", "text"], "default": "full", "description": "full = JSON envelope (4 sections, full metadata). text = sectioned markdown summary (~3-4× smaller, drops timestamps + entity metadata, keeps last-6 ULID for follow-up wg_fact_get). Use text for opening-turn prompt injection, full for downstream parsing."},
                     "preview_chars": {"type": "number", "default": 160, "description": "Per-fact content cap when format=text."},
                     "max_chars": {"type": "number", "description": "Hard cap on text output. When set, trims sections back-to-front (topic > recent > personalisation > pinned). Only honoured for format=text."}
                 }
+            }),
+        },
+        Tool {
+            name: "wg_workflow_start".into(),
+            description: "Start an issue/PR/ticket-driven coding workflow. Creates a tracked session entity, stores the incoming ticket as a question fact, and returns a context pack with relevant search hits, decisions, lessons, and errors. Use this when an automation trigger has only a short title/body and the agent needs project memory before acting."
+                .into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "Issue / PR / ticket title or short workflow trigger text."},
+                    "body": {"type": "string", "description": "Optional issue / PR / ticket body."},
+                    "source": {"type": "string", "description": "Optional upstream source id, e.g. github:org/repo#123 or linear:ENG-42."},
+                    "source_id": {"type": "string", "description": "Optional source namespace / tenant / agent id for shared-store scoping."},
+                    "limit": {"type": "number", "default": 8, "description": "Max context search hits."},
+                    "depth": {"type": "number", "default": 2, "description": "Graph traversal depth for the topic query."},
+                    "recent_limit": {"type": "number", "default": 5, "description": "Recent facts attached to the resolved entity."}
+                },
+                "required": ["title"]
             }),
         },
         Tool {
@@ -3392,6 +3555,7 @@ fn call_tool(name: &str, args: &Value, wiki: &WikiGraph) -> Result<ToolCallResul
         "wg_recent" => tool_recent(args, wiki),
         "wg_query" => tool_query(args, wiki),
         "wg_context" => tool_context(args, wiki),
+        "wg_workflow_start" => tool_workflow_start(args, wiki),
         "wg_entity_describe" => tool_entity_describe(args, wiki),
         "wg_fact_add" => tool_fact_add(args, wiki),
         "wg_fact_add_many" => tool_fact_add_many(args, wiki),
@@ -3652,6 +3816,124 @@ mod tests {
         let results = search_payload["results"].as_array().expect("results array");
         assert_eq!(results.len(), 1);
         assert_eq!(results[0]["source_id"].as_str(), Some("beta"));
+    }
+
+    #[test]
+    fn context_respects_source_id_scope() {
+        let (_dir, wiki) = open_temp_wiki();
+
+        for (content, source_id, fact_type) in [
+            (
+                "Alpha Redis convention prefers LRU cache policy",
+                "alpha",
+                "convention",
+            ),
+            (
+                "Alpha Redis lesson: DNS caused worker timeout",
+                "alpha",
+                "lesson",
+            ),
+            (
+                "Beta Redis convention prefers LFU cache policy",
+                "beta",
+                "convention",
+            ),
+            (
+                "Beta Redis lesson: pool size caused worker timeout",
+                "beta",
+                "lesson",
+            ),
+        ] {
+            tool_fact_add(
+                &json!({
+                    "content": content,
+                    "entities": ["Redis"],
+                    "source_id": source_id,
+                    "fact_type": fact_type,
+                    "dedup_check": false
+                }),
+                &wiki,
+            )
+            .unwrap();
+        }
+
+        let result = tool_context(
+            &json!({
+                "topic": "Redis worker timeout cache policy",
+                "source_id": "alpha",
+                "limit": 10
+            }),
+            &wiki,
+        )
+        .unwrap();
+        let payload: Value =
+            serde_json::from_str(result.content[0].text.as_deref().unwrap()).unwrap();
+        let serialized = serde_json::to_string(&payload).unwrap();
+
+        assert!(serialized.contains("Alpha Redis convention"));
+        assert!(serialized.contains("Alpha Redis lesson"));
+        assert!(!serialized.contains("Beta Redis convention"));
+        assert!(!serialized.contains("Beta Redis lesson"));
+    }
+
+    #[test]
+    fn workflow_start_creates_session_ticket_and_scoped_context() {
+        let (_dir, wiki) = open_temp_wiki();
+
+        for (content, source_id, fact_type) in [
+            (
+                "Alpha decision: worker Redis timeout fixes go through the job wrapper",
+                "alpha",
+                "decision",
+            ),
+            (
+                "Alpha lesson: Redis timeout was DNS, not pool size",
+                "alpha",
+                "lesson",
+            ),
+            (
+                "Beta lesson: Redis timeout was caused by TLS handshake stalls",
+                "beta",
+                "lesson",
+            ),
+        ] {
+            tool_fact_add(
+                &json!({
+                    "content": content,
+                    "entities": ["Redis", "Worker"],
+                    "source_id": source_id,
+                    "fact_type": fact_type,
+                    "dedup_check": false
+                }),
+                &wiki,
+            )
+            .unwrap();
+        }
+
+        let result = tool_workflow_start(
+            &json!({
+                "title": "Fix Redis timeout in worker",
+                "body": "Worker jobs are timing out against Redis",
+                "source": "github:org/repo#123",
+                "source_id": "alpha"
+            }),
+            &wiki,
+        )
+        .unwrap();
+        let payload: Value =
+            serde_json::from_str(result.content[0].text.as_deref().unwrap()).unwrap();
+
+        assert!(
+            payload["session_id"]
+                .as_str()
+                .unwrap()
+                .starts_with("session-")
+        );
+        assert!(payload["ticket_fact_id"].as_str().is_some());
+        let serialized = serde_json::to_string(&payload).unwrap();
+        assert!(serialized.contains("job wrapper"));
+        assert!(serialized.contains("DNS"));
+        assert!(!serialized.contains("TLS handshake"));
     }
 
     #[test]

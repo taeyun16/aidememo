@@ -114,7 +114,7 @@ ok "enabled"
 
 # ----------------------------------------------------------------------
 # 3. PluginManager actually loads the module + register() registers
-#    every advertised surface (7 tools, 2 hooks, 4 commands).
+#    every advertised surface (8 tools, 2 hooks, 5 commands).
 # ----------------------------------------------------------------------
 
 log "loading plugin via Hermes's PluginManager"
@@ -143,14 +143,14 @@ if not wg["enabled"]:
     raise SystemExit("FAIL: plugin reports enabled=False")
 if wg["error"]:
     raise SystemExit(f"FAIL: plugin reported load error: {wg['error']}")
-if wg["tools"] != 7:
-    raise SystemExit(f"FAIL: expected 7 tools, got {wg['tools']}")
+if wg["tools"] != 8:
+    raise SystemExit(f"FAIL: expected 8 tools, got {wg['tools']}")
 if wg["hooks"] != 2:
     raise SystemExit(f"FAIL: expected 2 hooks, got {wg['hooks']}")
-if wg["commands"] != 4:
-    raise SystemExit(f"FAIL: expected 4 commands, got {wg['commands']}")
+if wg["commands"] != 5:
+    raise SystemExit(f"FAIL: expected 5 commands, got {wg['commands']}")
 PY
-ok "register(ctx) ran cleanly — 7 tools / 2 hooks / 4 commands"
+ok "register(ctx) ran cleanly — 8 tools / 2 hooks / 5 commands"
 
 # ----------------------------------------------------------------------
 # 4. End-to-end through the TUI slash worker — proves slash commands
@@ -167,7 +167,7 @@ ok "register(ctx) ran cleanly — 7 tools / 2 hooks / 4 commands"
 if [[ ! -d "$HERMES_AGENT_ROOT/tui_gateway" ]]; then
     log "tui_gateway module missing — skipping TUI slash worker phase"
 else
-    log "driving tui_gateway.slash_worker for /wg-pending /wg-recent /wg-add"
+    log "driving tui_gateway.slash_worker for /wg-pending /wg-recent /wg-add /wg-start"
     # Pre-seed two facts so /wg-recent has something to show.
     "$WG_BIN" --store "$WG_STORE" fact add "HNSW is the default semantic index" \
         --entities wg,hnsw --type decision > /dev/null
@@ -177,11 +177,12 @@ else
     slash_log="$TEST_HOME/slash_output.jsonl"
     (
         cd "$HERMES_AGENT_ROOT"
-        printf '%s\n%s\n%s\n%s\n' \
+        printf '%s\n%s\n%s\n%s\n%s\n' \
             '{"id":1,"command":"/wg-pending"}' \
             '{"id":2,"command":"/wg-recent 7d"}' \
             '{"id":3,"command":"/wg-add \"HNSW ships as default index\" --type decision --entities wg"}' \
             '{"id":4,"command":"/wg-recent 7d"}' \
+            '{"id":5,"command":"/wg-start \"Fix Redis timeout in worker\" --body \"Worker jobs timeout against Redis\" --source github:org/repo#123"}' \
             | timeout 60 "$HERMES_VENV_PY" -m tui_gateway.slash_worker \
                 --session-key wg-e2e-slash 2>/dev/null > "$slash_log"
     )
@@ -202,7 +203,7 @@ def must(cond, msg):
     if not cond:
         raise SystemExit(f"FAIL: {msg}")
 
-must(set(by_id) == {1, 2, 3, 4}, f"missing slash responses: got ids {sorted(by_id)}")
+must(set(by_id) == {1, 2, 3, 4, 5}, f"missing slash responses: got ids {sorted(by_id)}")
 must(all(o["ok"] for o in by_id.values()), "at least one slash returned ok=False")
 
 # /wg-pending on a fresh log → no detections message
@@ -220,8 +221,11 @@ must("Recorded 0" in add_msg and "type=decision" in add_msg, f"/wg-add unexpecte
 recent_after = by_id[4]["output"]
 must(recent_after.count("\n  - [") == 3, f"/wg-recent after add should show 3 facts, got: {recent_after!r}")
 must("HNSW ships as default index" in recent_after, "newly added fact missing from /wg-recent")
+
+start_msg = by_id[5]["output"]
+must("session_id" in start_msg and "ticket_fact_id" in start_msg, f"/wg-start unexpected: {start_msg!r}")
 PY
-    ok "/wg, /wg-add, /wg-recent, /wg-pending all dispatched through the TUI gateway"
+    ok "/wg, /wg-start, /wg-add, /wg-recent, /wg-pending all dispatched through the TUI gateway"
 fi
 
 # ----------------------------------------------------------------------
@@ -232,6 +236,6 @@ ok "all checks passed"
 echo
 echo "  LLM-required follow-ups (run with your own provider configured):"
 echo "    Tool invocation by the model:"
-echo "      hermes chat -q 'Use wg_query for HNSW' -Q"
+echo "      hermes chat -q 'Issue #123: Fix Redis timeout in worker. Use the project memory workflow before planning.' -Q"
 echo "    Auto-context preamble at session start:"
 echo "      hermes chat --tui   # check the system message before your turn"

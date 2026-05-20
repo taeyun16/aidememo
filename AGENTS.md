@@ -156,6 +156,9 @@ wg session new <topic>                      tracked session entity + shell-evalu
                                             'export WG_SESSION_ID=…'. Auto-attaches to every
                                             subsequent fact_add while the env var is set.
 wg session current / list                   current/recent tracked sessions.
+wg workflow start <TITLE> [--body-file issue.md] [--source github:org/repo#123]
+                                            sparse issue/ticket entry point: create session,
+                                            store trigger, return project context pack.
 wg export [--scope all|...] / wg import
 wg config get/set/list
 
@@ -291,7 +294,7 @@ crates/wg-cli/src/
   output.rs          Format::{Table, Json} renderers + format_query_result
   cmd/mod.rs         bpaf top-level + per-command parsers (--project / --json)
   cmd/{init,watch,model,feedback,adapt,doctor,recent,edit,graph,project}.rs
-  cmd/mcp_tools.rs   shared MCP JSON-RPC types + 24-tool dispatch
+  cmd/mcp_tools.rs   shared MCP JSON-RPC types + 25-tool dispatch
   cmd/mcp_stdio.rs   `wg mcp` (stdio)
   cmd/mcp_serve.rs   `wg mcp-serve` (HTTP + SSE)
 ```
@@ -348,6 +351,7 @@ should lead with the core 4; the rest are there when needed.
 
 | Tool | When |
 |---|---|
+| **`wg_workflow_start`** | **🟢 Ticket/issue/PR automation entry point** — create tracked session + store trigger text + return decisions/lessons/errors/search context. |
 | **`wg_context`** | **🟢 Top-of-turn entry point** — pinned + personalisation + recent + (with topic) search/traverse/lessons. One round-trip. |
 | **`wg_query`** | Topic dive after wg_context. `format:"text"` for compact prompt injection; `max_chars:N` for hard caps; `level:"entity"`/`"session"` to group by entity / by tracked session. |
 | **`wg_aggregate`** | Deterministic counting / sum / timeline across facts. Pulls agent out of in-head arithmetic for "how much / how many / between when" questions. ops: `count`/`enumerate`/`by_entity`/`sum_currency`/`sum_duration`/`count_distinct_dates`/`timeline`. |

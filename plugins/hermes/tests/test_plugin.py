@@ -63,6 +63,11 @@ def fake_ctx(monkeypatch: pytest.MonkeyPatch) -> FakeCtx:
     stub.fact_add.return_value = "01HZ-FAKE-FACT-ID"
     stub.search.return_value = []
     stub.query.return_value = {"topic": "test", "entity": None, "search": [], "related": [], "recent_facts": []}
+    stub.workflow_start.return_value = {
+        "session_id": "session-01HZ-FAKE",
+        "ticket_fact_id": "01HZ-FAKE-TICKET",
+        "context": {"search": []},
+    }
 
     def fake_init(self, *_a, **_kw):
         # Bypass `wg-python` import + CLI presence checks.
@@ -74,6 +79,7 @@ def fake_ctx(monkeypatch: pytest.MonkeyPatch) -> FakeCtx:
     monkeypatch.setattr(WgClient, "recent", lambda self, **kw: stub.recent(**kw))
     monkeypatch.setattr(WgClient, "search", lambda self, *a, **kw: stub.search(*a, **kw))
     monkeypatch.setattr(WgClient, "query", lambda self, *a, **kw: stub.query(*a, **kw))
+    monkeypatch.setattr(WgClient, "workflow_start", lambda self, *a, **kw: stub.workflow_start(*a, **kw))
     monkeypatch.setattr(WgClient, "fact_add", lambda self, *a, **kw: stub.fact_add(*a, **kw))
     monkeypatch.setattr(WgClient, "lint", lambda self: [])
     monkeypatch.setattr(WgClient, "stats", lambda self: {"facts": 0, "entities": 0})
@@ -86,9 +92,10 @@ def fake_ctx(monkeypatch: pytest.MonkeyPatch) -> FakeCtx:
     return ctx
 
 
-def test_registers_all_seven_tools(fake_ctx: FakeCtx) -> None:
+def test_registers_all_eight_tools(fake_ctx: FakeCtx) -> None:
     names = {t["name"] for t in fake_ctx.tools}
     assert names == {
+        "wg_workflow_start",
         "wg_query",
         "wg_search",
         "wg_recent",
@@ -101,14 +108,15 @@ def test_registers_all_seven_tools(fake_ctx: FakeCtx) -> None:
 
 def test_source_id_is_exposed_on_relevant_tool_schemas(fake_ctx: FakeCtx) -> None:
     schemas = {t["name"]: t["schema"]["parameters"]["properties"] for t in fake_ctx.tools}
+    assert "source_id" in schemas["wg_workflow_start"]
     assert "source_id" in schemas["wg_query"]
     assert "source_id" in schemas["wg_search"]
     assert "source_id" in schemas["wg_fact_add"]
 
 
-def test_registers_four_slash_commands(fake_ctx: FakeCtx) -> None:
+def test_registers_five_slash_commands(fake_ctx: FakeCtx) -> None:
     names = {c["name"] for c in fake_ctx.commands}
-    assert names == {"wg", "wg-add", "wg-recent", "wg-pending"}
+    assert names == {"wg", "wg-start", "wg-add", "wg-recent", "wg-pending"}
 
 
 def test_registers_llm_call_hooks(fake_ctx: FakeCtx) -> None:
@@ -157,6 +165,13 @@ def test_slash_wg_handler_returns_pretty_json(fake_ctx: FakeCtx) -> None:
     handler = next(c for c in fake_ctx.commands if c["name"] == "wg")["handler"]
     out = handler("Redis")
     assert "topic" in out  # rendered JSON includes the topic key
+
+
+def test_slash_wg_start_returns_context_pack(fake_ctx: FakeCtx) -> None:
+    handler = next(c for c in fake_ctx.commands if c["name"] == "wg-start")["handler"]
+    out = handler('"Fix Redis timeout" --body "Worker timeout" --source github:org/repo#123 --source-id team-a')
+    assert "session_id" in out
+    assert "ticket_fact_id" in out
 
 
 def test_slash_wg_add_records_fact(fake_ctx: FakeCtx) -> None:

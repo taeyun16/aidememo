@@ -4,10 +4,11 @@ Hermes calls :func:`register` once per plugin enable. We:
 
 1. Build a :class:`WgClient` (wg-python in-process if available, CLI
    subprocess fallback otherwise).
-2. Register 7 tools (the same surface the wg MCP server exposes).
-3. Register 3 slash commands (``/wg``, ``/wg-add``, ``/wg-recent``).
-4. Register 2 lifecycle hooks (``on_session_start`` auto-context,
-   ``on_session_end`` auto-fact-record).
+2. Register 8 tools (the same surface the wg MCP server exposes).
+3. Register 5 slash commands (``/wg``, ``/wg-start``, ``/wg-add``,
+   ``/wg-recent``, ``/wg-pending``).
+4. Register 2 lifecycle hooks (``pre_llm_call`` auto-context,
+   ``post_llm_call`` auto-fact-record).
 5. Register the ``hermes wg`` CLI subtree.
 6. Register the bundled wg skill so the agent gets free-form
    instructions on top of the structured tools.

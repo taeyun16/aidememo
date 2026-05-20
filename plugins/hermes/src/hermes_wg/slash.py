@@ -1,6 +1,7 @@
 """Slash commands exposed to chat sessions.
 
 ``/wg <topic>`` — one-shot context fetch (search + traverse + recent).
+``/wg-start <title>`` — start an issue/ticket workflow and return context.
 ``/wg-add <content>`` — append a quick fact (defaults to type=note).
 ``/wg-recent`` — last 7 days of facts.
 ``/wg-pending`` — review or commit the dry-run pending log.
@@ -54,6 +55,28 @@ def _wg_add_handler(client: WgClient):
             return f"wg_fact_add failed: {exc}"
         link = ", ".join(entities) if entities else "(no entities)"
         return f"Recorded {fid}  — type={fact_type}, entities={link}"
+
+    return handle
+
+
+def _wg_start_handler(client: WgClient):
+    def handle(raw_args: str) -> str:
+        title, body, source, source_id = _parse_start_args(raw_args)
+        if not title:
+            return (
+                "Usage: /wg-start <title> [--body TEXT] [--source github:org/repo#123] [--source-id ID]\n"
+                "Example: /wg-start \"Fix Redis timeout in worker\" --source github:org/repo#123"
+            )
+        try:
+            pack = client.workflow_start(
+                title,
+                body=body,
+                source=source,
+                source_id=source_id,
+            )
+        except CLIENT_ERRORS as exc:
+            return f"wg_workflow_start failed: {exc}"
+        return to_pretty_json(pack)
 
     return handle
 
@@ -134,6 +157,35 @@ def _parse_add_args(raw: str) -> tuple[str, list[str] | None, str, list[str], st
         i += 1
     content = " ".join(content_parts).strip()
     return content, entities, fact_type, tags, source_id
+
+
+def _parse_start_args(raw: str) -> tuple[str, str | None, str | None, str | None]:
+    try:
+        tokens = shlex.split(raw)
+    except ValueError:
+        tokens = raw.split()
+    title_parts: list[str] = []
+    body: str | None = None
+    source: str | None = None
+    source_id: str | None = None
+    i = 0
+    while i < len(tokens):
+        t = tokens[i]
+        if t == "--body" and i + 1 < len(tokens):
+            body = tokens[i + 1]
+            i += 2
+            continue
+        if t == "--source" and i + 1 < len(tokens):
+            source = tokens[i + 1]
+            i += 2
+            continue
+        if t == "--source-id" and i + 1 < len(tokens):
+            source_id = tokens[i + 1]
+            i += 2
+            continue
+        title_parts.append(t)
+        i += 1
+    return " ".join(title_parts).strip(), body, source, source_id
 
 
 def _format_pending_list(entries: list[pending.PendingEntry]) -> str:
@@ -222,6 +274,12 @@ def register_all(ctx: Any, client: WgClient) -> None:
         handler=_wg_handler(client),
         description="One-shot wg context fetch (search + graph + recent).",
         args_hint="<topic> [--source-id ID]",
+    )
+    ctx.register_command(
+        name="wg-start",
+        handler=_wg_start_handler(client),
+        description="Start an issue/ticket workflow and return wg project context.",
+        args_hint="<title> [--body TEXT] [--source URL] [--source-id ID]",
     )
     ctx.register_command(
         name="wg-add",

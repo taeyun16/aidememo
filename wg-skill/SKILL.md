@@ -99,6 +99,7 @@ out. They return structured JSON.
 
 | Tool | Use for |
 |---|---|
+| **`wg_workflow_start`** ⭐ | **Issue/PR/ticket automation entry point** — tracked session + ticket fact + context pack with relevant decisions, lessons, errors, and hits |
 | **`wg_context`** ⭐ | **Top-of-turn entry point** — pinned + personalisation + recent + (with topic) search/traverse/lessons. Replaces session_start → query → search chain |
 | `wg_query` | Topic-only retrieval (search + entity + traverse + recent). Lighter than wg_context — use for follow-up topic dives |
 | `wg_overview` | First-impression snapshot of an unfamiliar wiki — call once at session start |
@@ -121,15 +122,16 @@ out. They return structured JSON.
 
 ### Recommended agent flow
 
-1. **Top of turn** → `wg_context(topic?: <user's intent or relevant entity>)` — one call, gets you pinned facts, user preferences, lessons, errors, recent activity, and (if topic resolves) deep retrieval + topic-specific lessons.
-2. **Need more on a sub-topic** → `wg_query(topic)` for entity + neighbors, or `wg_search(query)` for pure search.
-3. **About to record something** → pick the right `fact_type`:
+1. **Workflow trigger / sparse ticket** → `wg_workflow_start(title, body?, source?)` — creates a tracked session, records the incoming ticket, and returns the project-memory context pack.
+2. **Top of turn** → `wg_context(topic?: <user's intent or relevant entity>)` — one call, gets you pinned facts, user preferences, lessons, errors, recent activity, and (if topic resolves) deep retrieval + topic-specific lessons.
+3. **Need more on a sub-topic** → `wg_query(topic)` for entity + neighbors, or `wg_search(query)` for pure search.
+4. **About to record something** → pick the right `fact_type`:
    - User shares a personal preference → `preference`
    - You discovered a non-obvious "X works because Y" → `lesson`
    - You hit a known recurring failure → `error`
    - User decides on technology / approach → `decision`
    - Project convention → `convention`
-4. **Long task** → `eval "$(wg session new '<topic>')"` once; every `wg fact add` thereafter auto-attaches the session entity. Pull the thread later with `wg fact list --entity $WG_SESSION_ID`.
+5. **Long task** → `eval "$(wg session new '<topic>')"` once; every `wg fact add` thereafter auto-attaches the session entity. Pull the thread later with `wg fact list --entity $WG_SESSION_ID`.
 
 `wg_search` / `wg_query` / `wg_fact_list` default `current_only=true` — the
 result set is "what we know now". Pass `current_only:false` for historical

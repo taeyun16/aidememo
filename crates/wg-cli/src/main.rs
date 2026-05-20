@@ -128,6 +128,7 @@ fn main() {
         cmd::Command::Daemon(sub) => cmd::daemon::run_daemon(sub, store_path.clone()),
         cmd::Command::Extract(sub) => handle_extract(&store_path, config, sub, json),
         cmd::Command::Session(sub) => handle_session(&store_path, config, sub, json),
+        cmd::Command::Workflow(sub) => handle_workflow(&store_path, config, sub, json),
         cmd::Command::AutoRelate(sub) => handle_auto_relate(&store_path, config, sub),
         cmd::Command::Overview(sub) => handle_overview(&store_path, config, sub),
         cmd::Command::Consolidate(sub) => handle_consolidate(&store_path, config, sub),
@@ -1117,6 +1118,237 @@ fn handle_session(
             Ok(out)
         }),
     }
+}
+
+fn handle_workflow(
+    store_path: &Path,
+    config: Config,
+    sub: cmd::WorkflowSub,
+    json: bool,
+) -> Result<String, WgError> {
+    match sub {
+        cmd::WorkflowSub::Start {
+            body,
+            body_file,
+            from_stdin,
+            source,
+            source_id,
+            limit,
+            depth,
+            recent_limit,
+            max_chars,
+            title,
+        } => {
+            let body = read_workflow_body(body, body_file, from_stdin)?;
+            with_wiki(store_path, config, |wiki| {
+                let pack = workflow_start_pack(
+                    &wiki,
+                    &title,
+                    body.as_deref(),
+                    source.as_deref(),
+                    source_id.as_deref(),
+                    limit.unwrap_or(8),
+                    depth.unwrap_or(2),
+                    recent_limit.unwrap_or(5),
+                )?;
+                if json {
+                    return serde_json::to_string_pretty(&pack).map_err(|e| WgError::Serialize {
+                        context: "workflow start (json)".into(),
+                        source: e,
+                    });
+                }
+                Ok(render_workflow_start_text(&pack, max_chars.unwrap_or(6000)))
+            })
+        }
+    }
+}
+
+fn read_workflow_body(
+    body: Option<String>,
+    body_file: Option<PathBuf>,
+    from_stdin: bool,
+) -> Result<Option<String>, WgError> {
+    let sources =
+        usize::from(body.is_some()) + usize::from(body_file.is_some()) + usize::from(from_stdin);
+    if sources > 1 {
+        return Err(WgError::InvalidInput(
+            "pass only one of --body, --body-file, or --from-stdin".into(),
+        ));
+    }
+    if let Some(body) = body {
+        return Ok(Some(body));
+    }
+    if let Some(path) = body_file {
+        let text = std::fs::read_to_string(&path)
+            .map_err(|e| WgError::Internal(format!("read {}: {e}", path.display())))?;
+        return Ok(Some(text));
+    }
+    if from_stdin {
+        use std::io::Read;
+        let mut buf = String::new();
+        std::io::stdin()
+            .read_to_string(&mut buf)
+            .map_err(|e| WgError::Internal(format!("stdin read: {e}")))?;
+        return Ok(Some(buf));
+    }
+    Ok(None)
+}
+
+fn workflow_start_pack(
+    wiki: &WikiGraph,
+    title: &str,
+    body: Option<&str>,
+    source: Option<&str>,
+    source_id: Option<&str>,
+    limit: usize,
+    depth: u32,
+    recent_limit: usize,
+) -> Result<serde_json::Value, WgError> {
+    let session_name = format!("session-{}", wg_core::ulid::Ulid::new());
+    let session_entity_id = wiki.entity_add(EntityInput {
+        name: session_name.clone(),
+        entity_type: Some(EntityType::parse("session")),
+        source_page: Some(source.unwrap_or(title).to_string()),
+        ..Default::default()
+    })?;
+
+    let body = body.map(str::trim).filter(|s| !s.is_empty());
+    let mut ticket_content = format!("Workflow ticket: {title}");
+    if let Some(body) = body {
+        ticket_content.push_str("\n\n");
+        ticket_content.push_str(body);
+    }
+
+    let ticket_fact_id = wiki.add_fact(FactInput {
+        content: ticket_content.clone(),
+        fact_type: Some(FactType::Question),
+        entity_ids: Some(vec![session_entity_id]),
+        tags: Some(vec!["workflow-start".into(), "ticket".into()]),
+        source: source.map(str::to_string),
+        source_id: source_id.map(str::to_string),
+        source_confidence: Some(1.0),
+        observed_at: None,
+    })?;
+
+    let query_text = if let Some(body) = body {
+        format!("{title}\n\n{body}")
+    } else {
+        title.to_string()
+    };
+    let context = wiki.query(
+        &query_text,
+        QueryOpts {
+            search_limit: limit,
+            depth,
+            recent_limit,
+            since: None,
+            current_only: true,
+            mode: wg_core::QueryMode::Hybrid,
+            bm25_only: false,
+            source_id: source_id.map(str::to_string),
+        },
+    )?;
+
+    let typed_hits = wiki
+        .hybrid_search(
+            &query_text,
+            SearchOpts {
+                limit: Some(30),
+                current_only: true,
+                source_id: source_id.map(str::to_string),
+                ..Default::default()
+            },
+        )
+        .unwrap_or_default();
+    let prior_lessons: Vec<_> = typed_hits
+        .iter()
+        .filter(|hit| hit.fact_type == FactType::Lesson)
+        .take(5)
+        .cloned()
+        .collect();
+    let prior_errors: Vec<_> = typed_hits
+        .iter()
+        .filter(|hit| hit.fact_type == FactType::Error)
+        .take(5)
+        .cloned()
+        .collect();
+    let relevant_decisions: Vec<_> = typed_hits
+        .iter()
+        .filter(|hit| hit.fact_type == FactType::Decision)
+        .take(5)
+        .cloned()
+        .collect();
+
+    Ok(serde_json::json!({
+        "session_id": session_name,
+        "export": format!("export WG_SESSION_ID={session_name}"),
+        "title": title,
+        "source": source,
+        "source_id": source_id,
+        "ticket_fact_id": ticket_fact_id.to_string(),
+        "context": context,
+        "prior_lessons": prior_lessons,
+        "prior_errors": prior_errors,
+        "relevant_decisions": relevant_decisions,
+    }))
+}
+
+fn render_workflow_start_text(pack: &serde_json::Value, max_chars: usize) -> String {
+    fn push_hits(out: &mut String, title: &str, hits: &[serde_json::Value]) {
+        out.push_str(&format!("\n## {title} ({})\n", hits.len()));
+        for hit in hits.iter().take(5) {
+            let id = hit
+                .get("fact_id")
+                .or_else(|| hit.get("id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let content = hit.get("content").and_then(|v| v.as_str()).unwrap_or("");
+            out.push_str(&format!("- [{}] {}\n", id, content));
+        }
+    }
+
+    let session_id = pack
+        .get("session_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let export = pack.get("export").and_then(|v| v.as_str()).unwrap_or("");
+    let title = pack.get("title").and_then(|v| v.as_str()).unwrap_or("");
+    let mut out = String::new();
+    out.push_str(&format!("# workflow start · {title}\n\n"));
+    out.push_str(&format!("session: `{session_id}`\n"));
+    out.push_str(&format!("eval: `{export}`\n"));
+    if let Some(source) = pack.get("source").and_then(|v| v.as_str()) {
+        out.push_str(&format!("source: `{source}`\n"));
+    }
+    if let Some(source_id) = pack.get("source_id").and_then(|v| v.as_str()) {
+        out.push_str(&format!("source_id: `{source_id}`\n"));
+    }
+    if let Some(ticket_fact_id) = pack.get("ticket_fact_id").and_then(|v| v.as_str()) {
+        out.push_str(&format!("ticket_fact: `{ticket_fact_id}`\n"));
+    }
+
+    if let Some(arr) = pack
+        .get("context")
+        .and_then(|v| v.get("search"))
+        .and_then(|v| v.as_array())
+    {
+        push_hits(&mut out, "context hits", arr);
+    }
+    if let Some(arr) = pack.get("relevant_decisions").and_then(|v| v.as_array()) {
+        push_hits(&mut out, "relevant decisions", arr);
+    }
+    if let Some(arr) = pack.get("prior_lessons").and_then(|v| v.as_array()) {
+        push_hits(&mut out, "prior lessons", arr);
+    }
+    if let Some(arr) = pack.get("prior_errors").and_then(|v| v.as_array()) {
+        push_hits(&mut out, "prior errors", arr);
+    }
+
+    if out.len() > max_chars {
+        out.truncate(max_chars.saturating_sub(20));
+        out.push_str("\n... [truncated]\n");
+    }
+    out
 }
 
 /// `wg entity get NAME` daemon path. wg_entity_get returns the

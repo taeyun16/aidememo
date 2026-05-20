@@ -9,6 +9,7 @@ author: Taeyun Jang <taeyun16@pm.me>
 kind: standalone
 requires_env: []
 provides_tools:
+  - wg_workflow_start
   - wg_query
   - wg_search
   - wg_recent

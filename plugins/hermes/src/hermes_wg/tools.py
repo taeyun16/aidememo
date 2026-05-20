@@ -77,6 +77,19 @@ def _make_handlers(client: WgClient) -> list[tuple[str, dict, Callable[..., Any]
             )
         )
 
+    def _workflow_start(args: dict, **_: Any) -> str:
+        return _serialize(
+            client.workflow_start(
+                str(args.get("title") or ""),
+                body=args.get("body"),
+                source=args.get("source"),
+                source_id=args.get("source_id"),
+                limit=int(args.get("limit") or 8),
+                depth=int(args.get("depth") or 2),
+                recent_limit=int(args.get("recent_limit") or 5),
+            )
+        )
+
     def _entity_list(args: dict, **_: Any) -> str:
         return _serialize(client.entity_list(limit=int(args.get("limit") or 50)))
 
@@ -114,6 +127,29 @@ def _make_handlers(client: WgClient) -> list[tuple[str, dict, Callable[..., Any]
         return {"name": name, "description": description, "parameters": parameters}
 
     return [
+        (
+            "wg_workflow_start",
+            _schema(
+                "wg_workflow_start",
+                "Start an issue/PR/ticket-driven coding workflow. Creates a tracked session, stores the trigger, and returns project memory: relevant decisions, lessons, errors, and search hits. Use before planning when the user gives a sparse issue or automation trigger.",
+                {
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string", "description": "Issue / PR / ticket title or short workflow trigger text."},
+                        "body": {"type": "string", "description": "Optional issue / PR / ticket body."},
+                        "source": {"type": "string", "description": "Optional upstream source id, e.g. github:org/repo#123 or linear:ENG-42."},
+                        "source_id": {"type": "string", "description": "Optional source namespace / tenant / agent id for shared-store scoping."},
+                        "limit": {"type": "integer", "description": "Max context search hits (default 8)."},
+                        "depth": {"type": "integer", "description": "Graph traversal depth (default 2)."},
+                        "recent_limit": {"type": "integer", "description": "Max recent facts attached to a resolved entity (default 5)."},
+                    },
+                    "required": ["title"],
+                },
+            ),
+            _workflow_start,
+            "Start a ticket/issue workflow and return the project-memory context pack.",
+            "🚦",
+        ),
         (
             "wg_query",
             _schema(
