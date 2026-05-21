@@ -35,10 +35,11 @@ or benchmark-specific `RESULTS.md` files; keep user-facing product work here.
 | P3.5 | done | Workflow setup failures are hard to diagnose | `wg doctor --json` reports workflow readiness, recent workflow tickets, and agent integration hints | `cargo test -p wg-cli doctor_json_includes_workflow_readiness_hints`; unit smoke covers `workflow.ready`, `recent_ticket_count`, recent ticket summaries, and actionable `hints[]` |
 | P3.6 | done | Doctor readiness exists but is not validated against real workflow traces | Scenario I creates workflow tickets through CLI, MCP, and Hermes, then validates `wg doctor --json` from an isolated agent config | `python3 bench/multi-agent/scenario_i_workflow_doctor.py`: 10/10 invariants; `workflow.ready=true`; `recent_ticket_count=3`; drivers CLI/MCP/Hermes; p95 workflow latency 1891.48 ms |
 | P3.7 | done | Release workflow checks require remembering several commands | One script builds `wg`, runs Scenario F + I, and asserts `wg doctor --json` workflow readiness on a fixture store | `scripts/workflow-release-smoke.sh`: Scenario F 13/13, Scenario I 10/10, fixture doctor `workflow_ready=true`, `recent_ticket_count=1` |
+| P3.8 | done | Workflow release smoke is local-only | CI runs the zero-token workflow release smoke as a named check after lint | `.github/workflows/ci.yml` job `workflow-release-smoke`; local command remains `scripts/workflow-release-smoke.sh` |
 
 ## Current Sprint
 
-All planned P0-P3.7 roadmap items are closed. Scenario H now isolates each
+All planned P0-P3.8 roadmap items are closed. Scenario H now isolates each
 agent's integration path: Claude project MCP, Codex temp `CODEX_HOME` MCP, and
 Hermes MCP-only profile to avoid redb lock contention with the in-process
 plugin. `wg doctor --json` now exposes workflow readiness, recent workflow
@@ -47,8 +48,8 @@ now validates that doctor view against actual CLI/MCP/Hermes workflow traces.
 
 Next measurement candidates:
 1. Hide a future daemon/socket broker behind auto-discovery only if higher-concurrency writes make serverless retry feel slow.
-2. Promote `workflow-release-smoke.sh` into CI if runtime stays under the push-budget threshold.
-3. Package/publish `wg-napi` artifacts so external `gbrain-evals` users can run the native backend without a local build.
+2. Package/publish `wg-napi` artifacts so external `gbrain-evals` users can run the native backend without a local build.
+3. Add CI runtime tracking for `workflow-release-smoke` if it becomes flaky or exceeds the 10-minute budget.
 
 ## Positioning Guardrails
 

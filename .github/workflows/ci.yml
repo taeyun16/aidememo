@@ -164,6 +164,33 @@ jobs:
           WG_E2E_N_PER_PROC: "10"
         run: python3 bench/multi-agent/scenario_d_concurrent_writers.py
 
+  # Zero-token release smoke for the workflow-memory path. Bundles
+  # Scenario F (workflow context quality), Scenario I (doctor readiness
+  # over real workflow traces), and a small fixture `wg doctor --json`
+  # assertion. This is intentionally separate from the matrix test job
+  # so workflow UX regressions are easy to spot in the checks list.
+  workflow-release-smoke:
+    name: workflow release smoke
+    needs: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.95.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ubuntu-wg-v2
+          save-if: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: workflow release smoke
+        env:
+          WG_RELEASE_SMOKE_BASE: ${{ runner.temp }}/wg-workflow-release-smoke
+        run: scripts/workflow-release-smoke.sh
+
   # release-debug profile + dhat-heap feature are how `wg bench` reports
   # allocation backtraces. Compile-only check to make sure that path
   # doesn't bitrot — no need to run a benchmark in CI.
