@@ -38,18 +38,22 @@ fi
 
 if have maturin; then
     if [[ "$RUN_OPTIONAL" == "1" ]]; then
-        run bash -lc 'cd crates/wg-python && maturin build --release -o /tmp/wg-python-wheel'
-        status_line "wg-python" "ok" "maturin build --release"
+        run scripts/wg-python-pack-smoke.sh
+        status_line "wg-python" "ok" "version gate + wheel install smoke"
     else
-        status_line "wg-python" "ready" "maturin found; set WG_BINDINGS_SMOKE_OPTIONAL=1 to build wheel"
+        run scripts/wg-python-version.sh
+        status_line "wg-python" "ready" "maturin found; set WG_BINDINGS_SMOKE_OPTIONAL=1 to run wheel install smoke"
     fi
 else
-    status_line "wg-python" "todo" "install maturin, then run: cd crates/wg-python && maturin build --release"
+    status_line "wg-python" "todo" "install maturin, then run scripts/wg-python-pack-smoke.sh"
 fi
 
 if have mix; then
     if [[ "$RUN_OPTIONAL" == "1" ]]; then
-        run bash -lc 'cd crates/wg-nif && mix deps.get && mix compile.cargo --force && mix test'
+        if [[ ! -d crates/wg-nif/deps/jason ]]; then
+            run bash -lc 'cd crates/wg-nif && mix deps.get'
+        fi
+        run bash -lc 'cd crates/wg-nif && mix compile.cargo --force && mix test'
         status_line "wg-nif" "ok" "mix compile.cargo --force && mix test"
     else
         status_line "wg-nif" "ready" "mix found; set WG_BINDINGS_SMOKE_OPTIONAL=1 to run mix test"

@@ -13,6 +13,8 @@ adding scratch note files.
 | `bench-agent-ux.sh` | Small agent-memory UX regression: Rust check, Hermes tests, and zero-token multi-agent scenarios. |
 | `bindings-release-smoke.sh` | Cross-binding release readiness: Rust checks for Python/Node/Elixir/C bindings, npm version/pack/install smoke, and optional Python/Elixir/C package smokes. |
 | `workflow-release-smoke.sh` | Release-oriented workflow memory smoke: builds `wg`, runs Scenario F + I, then asserts `wg doctor --json` workflow readiness on a fixture store. |
+| `wg-python-version.sh` | Verify or update `wg-python` package version pins across the Rust workspace version and Python `pyproject.toml`. |
+| `wg-python-pack-smoke.sh` | Build a `wg-python` wheel, install it into a temp venv, run the Python binding smoke, and verify wheel metadata matches `wg_python.__version__`. |
 | `wg-napi-version.sh` | Verify or update every `wg-napi` npm package version: root package, platform packages, and root `optionalDependencies`. |
 | `wg-napi-pack-smoke.sh` | Build, test, pack root `wg-napi`, pack the current platform package, then install both tarballs and verify `require("wg-napi")` resolves through the platform optional dependency. |
 | `wg-napi-publish.sh` | Shared npm publish engine for root/platform `wg-napi` packages. Defaults to dry-run; set `WG_NAPI_PUBLISH_MODE=publish` only from the trusted-publisher workflow. |

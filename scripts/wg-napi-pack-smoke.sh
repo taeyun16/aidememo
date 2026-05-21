@@ -12,7 +12,9 @@ run() {
 
 cd "$NAPI_DIR"
 
-run npm install
+if [[ ! -x node_modules/.bin/napi ]]; then
+    run npm ci --prefer-offline --no-audit --fund=false
+fi
 run "$ROOT_DIR/scripts/wg-napi-version.sh"
 run npm run build
 run npm test
@@ -80,7 +82,7 @@ test -f "$platform_package_file"
 
 tmp_project="$(mktemp -d)"
 cd "$tmp_project"
-run npm install "$NAPI_DIR/$package_file" "$platform_dir/$platform_package_file"
+run npm install --offline --ignore-scripts --package-lock=false --no-audit --fund=false --omit=optional "$NAPI_DIR/$package_file" "$platform_dir/$platform_package_file"
 run node -e "const wg = require('wg-napi'); console.log('installed wg-napi version:', wg.version())"
 
 echo "OK: wg-napi package smoke passed (root=$NAPI_DIR/$package_file platform=$platform_pkg)"
