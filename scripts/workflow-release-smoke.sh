@@ -5,10 +5,36 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WG_BIN="${WG_BIN:-$ROOT_DIR/target/debug/wg}"
 BASE="${WG_RELEASE_SMOKE_BASE:-$(mktemp -d "${TMPDIR:-/tmp}/wg-release-smoke.XXXXXX")}"
+SUMMARY_TSV="$BASE/workflow-release-smoke-timings.tsv"
 
 run() {
-    echo "==> $*"
+    local label start end status elapsed
+    label="$*"
+    echo "==> $label"
+    start="$(python3 - <<'PY'
+import time
+print(time.perf_counter())
+PY
+)"
+    set +e
     "$@"
+    status="$?"
+    set -e
+    end="$(python3 - <<'PY'
+import time
+print(time.perf_counter())
+PY
+)"
+    elapsed="$(python3 - "$start" "$end" <<'PY'
+import sys
+start = float(sys.argv[1])
+end = float(sys.argv[2])
+print(f"{end - start:.2f}")
+PY
+)"
+    printf "%s\t%s\n" "$elapsed" "$label" >> "$SUMMARY_TSV"
+    echo "    elapsed: ${elapsed}s"
+    return "$status"
 }
 
 json_assert() {
@@ -17,6 +43,7 @@ json_assert() {
 
 cd "$ROOT_DIR"
 mkdir -p "$BASE"
+: > "$SUMMARY_TSV"
 
 run cargo build -p wg-cli
 run python3 -m py_compile \
@@ -80,3 +107,31 @@ PY
 
 echo "OK: workflow release smoke passed"
 echo "base: $BASE"
+
+python3 - "$SUMMARY_TSV" <<'PY'
+from pathlib import Path
+import os
+import sys
+
+rows = []
+for line in Path(sys.argv[1]).read_text().splitlines():
+    elapsed, label = line.split("\t", 1)
+    rows.append((float(elapsed), label))
+total = sum(elapsed for elapsed, _ in rows)
+lines = [
+    "## workflow-release-smoke timings",
+    "",
+    "| Step | Seconds |",
+    "|---|---:|",
+    *[f"| `{label}` | {elapsed:.2f} |" for elapsed, label in rows],
+    f"| **total** | **{total:.2f}** |",
+]
+text = "\n".join(lines)
+print(text)
+
+summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+if summary_path:
+    with open(summary_path, "a", encoding="utf-8") as handle:
+        handle.write(text)
+        handle.write("\n")
+PY

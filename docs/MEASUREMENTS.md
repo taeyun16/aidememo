@@ -142,8 +142,19 @@ Validation:
 | `cargo test -p wg-cli doctor` | 22 passed; workflow unit tests cover ready/count/hints. |
 | `cargo test -p wg-cli doctor_json_includes_workflow_readiness_hints` | fixture CLI smoke validates JSON `workflow.ready`, `recent_ticket_count`, and actionable hints. |
 | `python3 bench/multi-agent/scenario_i_workflow_doctor.py` | 10/10 invariants; CLI/MCP/Hermes each created a workflow ticket; doctor reported `workflow.ready=true`, `recent_ticket_count=3`, and no false no-MCP/no-recent-ticket hints. |
-| `scripts/workflow-release-smoke.sh` | Bundles Scenario F + I plus a fresh fixture `wg doctor --json` assert for release checks. Latest run: Scenario F 13/13, Scenario I 10/10, fixture doctor `workflow_ready=true`, `recent_ticket_count=1`. |
+| `scripts/workflow-release-smoke.sh` | Bundles Scenario F + I plus a fresh fixture `wg doctor --json` assert for release checks. Latest run: Scenario F 13/13, Scenario I 10/10, fixture doctor `workflow_ready=true`, `recent_ticket_count=1`, total 15.13s. |
 | CI `workflow-release-smoke` job | Runs the same script on Ubuntu after lint with Python 3.13 and a 10-minute timeout. |
+
+Latest local `workflow-release-smoke` timing:
+
+| Step | Seconds |
+|---|---:|
+| `cargo build -p wg-cli` | 0.41 |
+| `py_compile` | 0.04 |
+| Scenario F | 7.53 |
+| Scenario I | 5.21 |
+| Fixture `wg workflow start` | 1.94 |
+| Total | 15.13 |
 
 Scenario I measurement, May 21 2026:
 

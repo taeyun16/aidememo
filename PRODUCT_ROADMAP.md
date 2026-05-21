@@ -37,10 +37,11 @@ or benchmark-specific `RESULTS.md` files; keep user-facing product work here.
 | P3.6 | done | Doctor readiness exists but is not validated against real workflow traces | Scenario I creates workflow tickets through CLI, MCP, and Hermes, then validates `wg doctor --json` from an isolated agent config | `python3 bench/multi-agent/scenario_i_workflow_doctor.py`: 10/10 invariants; `workflow.ready=true`; `recent_ticket_count=3`; drivers CLI/MCP/Hermes; p95 workflow latency 1891.48 ms |
 | P3.7 | done | Release workflow checks require remembering several commands | One script builds `wg`, runs Scenario F + I, and asserts `wg doctor --json` workflow readiness on a fixture store | `scripts/workflow-release-smoke.sh`: Scenario F 13/13, Scenario I 10/10, fixture doctor `workflow_ready=true`, `recent_ticket_count=1` |
 | P3.8 | done | Workflow release smoke is local-only | CI runs the zero-token workflow release smoke as a named check after lint | `.github/workflows/ci.yml` job `workflow-release-smoke`; local command remains `scripts/workflow-release-smoke.sh` |
+| P3.9 | done | Workflow release smoke runtime is opaque in CI | Smoke script prints per-step timing and writes the same markdown table to `$GITHUB_STEP_SUMMARY` | `scripts/workflow-release-smoke.sh`: latest local total 15.13s; Scenario F 7.53s, Scenario I 5.21s, fixture workflow start 1.94s |
 
 ## Current Sprint
 
-All planned P0-P3.8 roadmap items are closed. Scenario H now isolates each
+All planned P0-P3.9 roadmap items are closed. Scenario H now isolates each
 agent's integration path: Claude project MCP, Codex temp `CODEX_HOME` MCP, and
 Hermes MCP-only profile to avoid redb lock contention with the in-process
 plugin. `wg doctor --json` now exposes workflow readiness, recent workflow
@@ -50,7 +51,7 @@ now validates that doctor view against actual CLI/MCP/Hermes workflow traces.
 Next measurement candidates:
 1. Hide a future daemon/socket broker behind auto-discovery only if higher-concurrency writes make serverless retry feel slow.
 2. Turn the `wg-napi` artifact workflow into an npm publish path once package ownership/token policy is set.
-3. Add CI runtime tracking for `workflow-release-smoke` if it becomes flaky or exceeds the 10-minute budget.
+3. Add a shared-store concurrency sweep to identify when serverless lock retry stops feeling smooth.
 
 ## Positioning Guardrails
 
