@@ -1,6 +1,6 @@
 # multi-agent e2e
 
-Scenarios A–F exercise the integration between `wg` and the three
+Scenarios A–I exercise the integration between `wg` and the three
 agents installed on this machine: Claude Code, Codex, and Hermes.
 
 | script | what it does | model cost |
@@ -13,6 +13,7 @@ agents installed on this machine: Claude Code, Codex, and Hermes.
 | `scenario_f_workflow_triggers.py` | Starts multiple unrelated sparse tickets through CLI, MCP, and Hermes plugin paths; verifies unique sessions, ticket facts, topical priors, and `source_id` isolation. | 0 |
 | `scenario_g_hermes_binding.py` | Compares Hermes workflow-start CLI fallback vs `wg-python` in-process path for shape parity, leakage, and latency. Requires local `wg-python` install. | 0 |
 | `scenario_h_workflow_natural_prompt.py` | Sends sparse-ticket chat prompts to Claude, Codex, and Hermes; verifies workflow-start side effects, prior-memory reflection, and forbidden-source leakage with isolated MCP config per runtime. | token-burning |
+| `scenario_i_workflow_doctor.py` | Starts workflow tickets through CLI, MCP, and Hermes, then validates `wg doctor --json` readiness, recent ticket count, summaries, and setup hints from an isolated HOME. | 0 |
 
 ## Running locally
 
@@ -26,6 +27,7 @@ python3 bench/multi-agent/scenario_b_consistency.py
 python3 bench/multi-agent/scenario_d_concurrent_writers.py
 python3 bench/multi-agent/scenario_e_http_shared.py
 python3 bench/multi-agent/scenario_f_workflow_triggers.py
+python3 bench/multi-agent/scenario_i_workflow_doctor.py
 
 # binding comparison (requires wg-python wheel installed)
 (cd crates/wg-python && maturin build --release -o /tmp/wg-python-wheel)

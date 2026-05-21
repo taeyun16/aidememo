@@ -141,6 +141,18 @@ Validation:
 |---|---|
 | `cargo test -p wg-cli doctor` | 22 passed; workflow unit tests cover ready/count/hints. |
 | `cargo test -p wg-cli doctor_json_includes_workflow_readiness_hints` | fixture CLI smoke validates JSON `workflow.ready`, `recent_ticket_count`, and actionable hints. |
+| `python3 bench/multi-agent/scenario_i_workflow_doctor.py` | 10/10 invariants; CLI/MCP/Hermes each created a workflow ticket; doctor reported `workflow.ready=true`, `recent_ticket_count=3`, and no false no-MCP/no-recent-ticket hints. |
+
+Scenario I measurement, May 21 2026:
+
+| Metric | Value |
+|---|---:|
+| Workflow tickets | 3 |
+| Drivers | CLI, MCP, Hermes |
+| Workflow p50 latency | 1887.69 ms |
+| Workflow p95 latency | 1891.48 ms |
+| Doctor recent ticket count | 3 |
+| Doctor hint codes | `workflow_no_skill_prompt` |
 
 ## GBrain Adapter Native Backend
 
