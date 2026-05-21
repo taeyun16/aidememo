@@ -24,6 +24,7 @@ or benchmark-specific `RESULTS.md` files; keep user-facing product work here.
 | P0.2c | done | External users still need a local `wg-napi` build for the native adapter | `wg-napi` artifact workflow builds/test/packs platform packages and uploads tarballs; local pack smoke verifies package contents | `scripts/wg-napi-pack-smoke.sh`: `npm run build`, `npm test`, root `npm pack`, current-platform `npm pack`, and install smoke; `.github/workflows/wg-napi-artifacts.yml` covers Ubuntu/macOS/Windows |
 | P0.2d | done | `wg-napi` had artifacts but no publish-readiness gate | Local script and CI workflow run `npm publish --dry-run --access public`, verify publish payload files, and keep real publish separate until npm ownership/trusted-publisher policy is set | `scripts/wg-napi-publish-dry-run.sh`: root dry-run payload `wg-napi@0.1.0`, 3 files, 2.75 KB packed, no `.node`; platform payload `wg-napi-darwin-arm64@0.1.0`, 2 files, 2.78 MB packed |
 | P0.2e | done | Cross-platform npm release would break if the root package shipped only one platform `.node` | Root `wg-napi` now declares platform optionalDependencies and platform package scaffolds exist for macOS arm64/x64, Linux arm64/x64 glibc, and Windows x64 MSVC | `scripts/wg-napi-pack-smoke.sh`: root package excludes `.node`, `wg-napi-darwin-arm64` includes `wg-napi.darwin-arm64.node`, temp install of both tarballs resolves `require("wg-napi").version() = 0.1.0` |
+| P0.2f | done | Real npm release still required hand-written commands | Trusted-publisher workflow skeleton publishes platform packages first and root wrapper second; default is dry-run, real publish requires npm trusted publisher setup plus explicit `dry_run=false` and version match | `.github/workflows/wg-napi-publish.yml`; local `WG_NAPI_EXPECT_VERSION=0.1.0 scripts/wg-napi-publish-dry-run.sh`, `WG_NAPI_PUBLISH_SCOPE=platform ...`, and `WG_NAPI_PUBLISH_SCOPE=root ...` all passed |
 | P0.3 | done | Capture quality is not measured | Pending approval rate and extraction precision can be computed from one JSONL log | `wg pending stats --from LOG --json` returns total/count-by-type/confidence histogram |
 | P1.1 | done | First-run setup requires several commands | One command prints or applies init + MCP install + skill install for a target agent | `wg init --agent codex --no-ingest PATH --json` reports steps and elapsed ms |
 | P1.2 | done | Shared daemon is operational but opaque | HTTP MCP exposes health/sync/admin status without exposing secrets | `curl /health` and `curl /admin/status` return request count, store path, auth mode, sync cursors |
@@ -60,7 +61,7 @@ MCP `wg_doctor` now carries the same sharing summary so coding agents can react
 to retry/daemon guidance through the tool surface they already call.
 
 Next measurement candidates:
-1. Add the real trusted-publisher npm release workflow once npm package ownership is configured.
+1. Configure npm trusted publishers for `wg-napi*` package names, then run `.github/workflows/wg-napi-publish.yml` with `dry_run=false`.
 2. Prototype daemon auto-discovery only if a future scenario needs more than four concurrent local writers without user-visible setup.
 3. Add an end-to-end MCP doctor scenario if future agent regressions show the unit contract is not enough.
 

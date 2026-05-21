@@ -236,9 +236,11 @@ Packaging readiness:
 | Command / workflow | Result |
 |---|---|
 | `scripts/wg-napi-pack-smoke.sh` | Builds release addon, runs `npm test`, packs root `wg-napi`, packs the current platform package, then installs both tarballs into a temp project and verifies `require("wg-napi").version()`. Local macOS arm64: root `wg-napi-0.1.0.tgz` is 2.75 KB / 3 files / no `.node`; platform `wg-napi-darwin-arm64-0.1.0.tgz` is 2.78 MB / 2 files / includes `wg-napi.darwin-arm64.node`. |
-| `scripts/wg-napi-publish-dry-run.sh` | Builds release addon, runs `npm test`, then runs `npm publish --dry-run --access public --json` for root and current platform packages. Local macOS arm64: root payload `wg-napi@0.1.0`, 3 files, 2.75 KB packed; platform payload `wg-napi-darwin-arm64@0.1.0`, 2 files, 2.78 MB packed. |
+| `scripts/wg-napi-publish.sh` | Shared publish engine. `WG_NAPI_PUBLISH_MODE=dry-run|publish`, `WG_NAPI_PUBLISH_SCOPE=platform|root|both`, and optional `WG_NAPI_EXPECT_VERSION` gate both local and CI release flows. Local dry-run passed for all three scopes. |
+| `scripts/wg-napi-publish-dry-run.sh` | Wrapper around the publish engine with `WG_NAPI_PUBLISH_MODE=dry-run`. Local macOS arm64: root payload `wg-napi@0.1.0`, 3 files, 2.75 KB packed; platform payload `wg-napi-darwin-arm64@0.1.0`, 2 files, 2.78 MB packed. |
 | `.github/workflows/wg-napi-artifacts.yml` | Manual/tag workflow builds, tests, packs, and uploads root + platform `wg-napi` artifacts on Ubuntu, macOS, and Windows. |
 | `.github/workflows/wg-napi-publish-dry-run.yml` | Manual/tag workflow runs the publish dry-run on Ubuntu with `id-token: write` reserved for the later trusted-publisher publish path. |
+| `.github/workflows/wg-napi-publish.yml` | Manual trusted-publisher workflow. It publishes current-platform packages first, then the root wrapper. Default `dry_run=true`; real publish requires npm trusted-publisher setup for the exact workflow filename, `dry_run=false`, and `version` matching `package.json`. |
 
 Package split: root `wg-napi` now ships only the generated JS loader, types, and
 optional dependencies. Platform packages ship exactly one native binary each:
@@ -246,6 +248,13 @@ optional dependencies. Platform packages ship exactly one native binary each:
 `wg-napi-linux-arm64-gnu`, `wg-napi-linux-x64-gnu`, and
 `wg-napi-win32-x64-msvc`. This matches the generated NAPI loader fallback names
 and avoids publishing one platform's `.node` binary as the whole package.
+
+Trusted-publisher notes: npm's current guidance requires Node 22.14+ and npm
+11.5.1+ for trusted publishing, `id-token: write` in GitHub Actions, a
+cloud-hosted runner, and an exact trusted-publisher registration for the
+workflow filename. npm also notes trusted publishing automatically generates
+provenance for public packages from public repositories, so the release
+workflow uses OIDC rather than a long-lived `NPM_TOKEN`.
 
 ## Historical Notes
 
