@@ -18,6 +18,7 @@ python3 bench/multi-agent/scenario_e_http_shared.py
 python3 bench/multi-agent/scenario_f_workflow_triggers.py
 python3 bench/multi-agent/scenario_g_hermes_binding.py
 python3 bench/multi-agent/scenario_h_workflow_natural_prompt.py
+python3 bench/multi-agent/scenario_j_lock_retry_sweep.py
 ```
 
 The gbrain adapter path is documented in
@@ -142,6 +143,7 @@ Validation:
 | `cargo test -p wg-cli doctor` | 22 passed; workflow unit tests cover ready/count/hints. |
 | `cargo test -p wg-cli doctor_json_includes_workflow_readiness_hints` | fixture CLI smoke validates JSON `workflow.ready`, `recent_ticket_count`, and actionable hints. |
 | `python3 bench/multi-agent/scenario_i_workflow_doctor.py` | 10/10 invariants; CLI/MCP/Hermes each created a workflow ticket; doctor reported `workflow.ready=true`, `recent_ticket_count=3`, and no false no-MCP/no-recent-ticket hints. |
+| `python3 bench/multi-agent/scenario_j_lock_retry_sweep.py` | 7/7 invariants; `store.lock_retry_ms=5000` stayed smooth through 4 concurrent serverless writers and mostly recovered 8-writer contention. |
 | `scripts/workflow-release-smoke.sh` | Bundles Scenario F + I plus a fresh fixture `wg doctor --json` assert for release checks. Latest run: Scenario F 13/13, Scenario I 10/10, fixture doctor `workflow_ready=true`, `recent_ticket_count=1`, total 15.13s. |
 | CI `workflow-release-smoke` job | Runs the same script on Ubuntu after lint with Python 3.13 and a 10-minute timeout. |
 
@@ -166,6 +168,25 @@ Scenario I measurement, May 21 2026:
 | Workflow p95 latency | 1891.48 ms |
 | Doctor recent ticket count | 3 |
 | Doctor hint codes | `workflow_no_skill_prompt` |
+
+Scenario J lock-retry sweep, May 21 2026:
+
+| Writers | Retry ms | Persisted | Success | p50 ms | p95 ms | Max ms | Wall ms |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 0 | 10/10 | 100.0% | 94.80 | 185.26 | 185.26 | 1113.06 |
+| 2 | 0 | 10/20 | 50.0% | 92.80 | 124.25 | 179.96 | 1150.86 |
+| 4 | 0 | 10/40 | 25.0% | 8.72 | 106.01 | 192.92 | 1171.85 |
+| 8 | 0 | 10/80 | 12.5% | 9.52 | 107.85 | 200.79 | 1242.34 |
+| 1 | 5000 | 10/10 | 100.0% | 106.71 | 186.70 | 186.70 | 1207.83 |
+| 2 | 5000 | 20/20 | 100.0% | 103.61 | 196.69 | 1274.25 | 2255.45 |
+| 4 | 5000 | 40/40 | 100.0% | 101.86 | 1282.56 | 3452.56 | 4431.45 |
+| 8 | 5000 | 79/80 | 98.8% | 103.02 | 2988.40 | 5049.66 | 8529.39 |
+
+Product read: serverless CLI retry is appropriate for one to four same-host
+writers. At eight concurrent writers it is still much better than fail-fast
+mode, but p95 approaches three seconds and one write can still exhaust the
+5s retry budget; use a shared `wg mcp-serve` daemon when that level of
+parallelism is normal.
 
 ## GBrain Adapter Native Backend
 

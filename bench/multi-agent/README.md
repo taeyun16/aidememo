@@ -1,6 +1,6 @@
 # multi-agent e2e
 
-Scenarios A–I exercise the integration between `wg` and the three
+Scenarios A–J exercise the integration between `wg` and the three
 agents installed on this machine: Claude Code, Codex, and Hermes.
 
 | script | what it does | model cost |
@@ -14,6 +14,7 @@ agents installed on this machine: Claude Code, Codex, and Hermes.
 | `scenario_g_hermes_binding.py` | Compares Hermes workflow-start CLI fallback vs `wg-python` in-process path for shape parity, leakage, and latency. Requires local `wg-python` install. | 0 |
 | `scenario_h_workflow_natural_prompt.py` | Sends sparse-ticket chat prompts to Claude, Codex, and Hermes; verifies workflow-start side effects, prior-memory reflection, and forbidden-source leakage with isolated MCP config per runtime. | token-burning |
 | `scenario_i_workflow_doctor.py` | Starts workflow tickets through CLI, MCP, and Hermes, then validates `wg doctor --json` readiness, recent ticket count, summaries, and setup hints from an isolated HOME. | 0 |
+| `scenario_j_lock_retry_sweep.py` | Sweeps 1/2/4/8 serverless CLI writers with `store.lock_retry_ms=0` vs `5000` to find when retry remains smooth and when users should switch to a shared daemon. | 0 |
 
 ## Running locally
 
@@ -28,6 +29,7 @@ python3 bench/multi-agent/scenario_d_concurrent_writers.py
 python3 bench/multi-agent/scenario_e_http_shared.py
 python3 bench/multi-agent/scenario_f_workflow_triggers.py
 python3 bench/multi-agent/scenario_i_workflow_doctor.py
+python3 bench/multi-agent/scenario_j_lock_retry_sweep.py
 
 # binding comparison (requires wg-python wheel installed)
 (cd crates/wg-python && maturin build --release -o /tmp/wg-python-wheel)
