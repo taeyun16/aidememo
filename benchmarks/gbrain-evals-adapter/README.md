@@ -12,8 +12,9 @@ the cross-system validation path concrete and reproducible:
 4. Register it in `gbrain-evals/eval/runner/multi-adapter.ts`.
 5. Run the BrainBench or LongMemEval command from that repository.
 
-Validated against `garrytan/gbrain-evals` commit `ef7794f` on 2026-05-19.
-See `RESULTS.md` for the current fresh-checkout smoke and scorecard.
+Validated against `garrytan/gbrain-evals` commit `89445dd` on 2026-05-21.
+See `RESULTS.md` for the current fresh-checkout native backend scorecard and
+historical CLI / daemon baselines.
 
 ## Registration Patch
 

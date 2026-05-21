@@ -158,3 +158,73 @@ Interpretation: the native path removes the per-query CLI process spawn and
 store open overhead on this small fixture. The next validation step is the full
 fresh-checkout `gbrain-evals` scorecard with `WG_ADAPTER_BACKEND=napi`; that
 will measure end-to-end wall time under the public runner.
+
+## 2026-05-21 — BrainBench Native Backend Scorecard
+
+Fresh-checkout validation after adding `WG_ADAPTER_BACKEND=napi`.
+
+Environment:
+
+- `garrytan/gbrain-evals` commit: `89445dd`
+- `gbrain` dependency: `garrytan/gbrain#1580c6d`
+- Bun: `1.3.11`
+- wg binary: `/Users/mixlink/dev/wg/target/debug/wg`
+- wg-napi module: `/Users/mixlink/dev/wg/crates/wg-napi`
+- Adapter mode: `WG_ADAPTER_MODE=bm25`
+- Adapter limit: `WG_ADAPTER_LIMIT=10`
+- Runs: `BRAINBENCH_N=1`
+
+Setup:
+
+```bash
+git clone --depth 1 https://github.com/garrytan/gbrain-evals "$TMP/gbrain-evals"
+cd "$TMP/gbrain-evals"
+bun install
+cp /Users/mixlink/dev/wg/benchmarks/gbrain-evals-adapter/wg-adapter.ts \
+  eval/runner/adapters/wg.ts
+# Register WgAdapter in eval/runner/multi-adapter.ts.
+```
+
+Native backend scorecard:
+
+```bash
+/usr/bin/time -p env \
+  BRAINBENCH_N=1 \
+  WG_BIN=/Users/mixlink/dev/wg/target/debug/wg \
+  WG_ADAPTER_BACKEND=napi \
+  WG_NAPI_MODULE=/Users/mixlink/dev/wg/crates/wg-napi \
+  WG_ADAPTER_MODE=bm25 \
+  WG_ADAPTER_LIMIT=10 \
+  bun eval/runner/multi-adapter.ts --adapter=wg
+```
+
+Daemon baseline on the same checkout:
+
+```bash
+/usr/bin/time -p env \
+  BRAINBENCH_N=1 \
+  WG_BIN=/Users/mixlink/dev/wg/target/debug/wg \
+  WG_ADAPTER_BACKEND=cli \
+  WG_ADAPTER_DAEMON=1 \
+  WG_ADAPTER_MODE=bm25 \
+  WG_ADAPTER_LIMIT=10 \
+  bun eval/runner/multi-adapter.ts --adapter=wg
+```
+
+Result:
+
+| Adapter | Runs | Corpus Pages | Queries | P@5 | R@5 | Correct / Expected | Runner Time | Real Time |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| wg bm25 daemon | 1 | 240 | 145 | 17.4% | 64.1% | 125 / 261 | 10.7s | 10.77s |
+| wg bm25 napi | 1 | 240 | 145 | 17.4% | 64.1% | 125 / 261 | 6.2s | 6.48s |
+
+Delta:
+
+- NAPI vs daemon real time: `10.77s -> 6.48s`, `1.66x` faster.
+- NAPI vs historical direct CLI real time: `63.38s -> 6.48s`, `9.78x` faster.
+- Quality parity: unchanged at `P@5 17.4%`, `R@5 64.1%`, `125 / 261`.
+
+Interpretation: the NAPI path removes the remaining per-query CLI process spawn
+while preserving the same BrainBench scorecard as direct and daemon bm25. The
+remaining ~6s are dominated by initial ingest / benchmark runner overhead, not
+per-query search dispatch.

@@ -171,6 +171,17 @@ Local Bun-shaped fixture, 3 pages, 30 repeated BM25 queries:
 This is a scaffold-level latency check, not the full public `gbrain-evals`
 scorecard. Record full runner wall time separately when re-running BrainBench.
 
+Fresh-checkout BrainBench scorecard, `garrytan/gbrain-evals@89445dd`,
+`BRAINBENCH_N=1`, 240 pages, 145 queries:
+
+| Backend | P@5 | R@5 | Correct / Expected | Real Time |
+|---|---:|---:|---:|---:|
+| CLI daemon bm25 | 17.4% | 64.1% | 125 / 261 | 10.77 s |
+| NAPI bm25 | 17.4% | 64.1% | 125 / 261 | 6.48 s |
+
+NAPI preserves score parity and is `1.66x` faster than the daemon baseline
+(`9.78x` faster than the historical direct CLI `63.38 s` run).
+
 ## Historical Notes
 
 The old scratch-note directory was intentionally removed to keep the repository
