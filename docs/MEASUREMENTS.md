@@ -34,6 +34,7 @@ with current scorecards in
 | Hermes mixed-source prompt, `source_id=alpha` | alpha recall 2/2, beta leakage 0/2 | `source_id` gives clean per-agent/per-source reads. |
 | Hermes serverless shared store, retry `0` | 10/20 writes persisted, 10 lock errors | redb's process lock is visible without smoothing. |
 | Hermes serverless shared store, retry `5000` | 20/20 writes persisted, 0 errors; wall 2.16s, p50 98.1ms, max 1.22s | The default plugin path is smooth for ordinary two-agent local sharing. |
+| Scenario J serverless lock-retry sweep, retry `5000` | Smooth until 4 concurrent writers; at 8 writers 79/80 persisted, p95 2.99s | Keep serverless sharing for small same-host teams; switch to daemon when high parallel write volume is normal. |
 | HTTP shared `wg mcp-serve`, 2 clients x 10 writes | 20/20 persisted; p50 18.4ms, p95 41.8ms, wall 251ms | Daemon mode is still the faster high-concurrency path, but it can stay optional. |
 | Workflow trigger Scenario F, 4 sparse tickets | 13/13 invariants; p95 2.48s; max context 3,023 chars; forbidden leakage 0 | CLI, MCP, and Hermes paths create distinct sessions/ticket facts and keep `source_id`-scoped ticket context separated. |
 | Hermes workflow binding Scenario G, 4 sparse tickets | 5/5 invariants; shape parity 4/4; leakage 0; p50 1,795.71ms CLI vs 13.14ms binding | When `wg-python` is installed, Hermes composes workflow packs in process: same context contract, about 137x lower p50 after the first model/index warmup. |
@@ -125,9 +126,10 @@ synthetic wiki, p95 latency, default config:
 
 ## Workflow Doctor Readiness
 
-P3.5 adds a `workflow` block to `wg doctor --json` so sparse ticket automation
-failures are visible without manually inspecting agent configs or fact lists.
-The stable contract is:
+P3.5 adds a `workflow` block and P2.5 adds a separate `sharing` block to
+`wg doctor --json` so sparse ticket automation and shared-store ergonomics are
+visible without manually inspecting agent configs, fact lists, or benchmark
+notes. The stable workflow contract is:
 
 | Field | Meaning |
 |---|---|
@@ -136,12 +138,24 @@ The stable contract is:
 | `workflow.recent_tickets[]` | Up to five recent ticket summaries with `source` / `source_id`. |
 | `workflow.hints[]` | Actionable setup or usage hints with a concrete command in `action`. |
 
+The sharing contract is:
+
+| Field | Meaning |
+|---|---|
+| `sharing.lock_retry_ms` | Current serverless redb lock retry budget. |
+| `sharing.serverless_recommended_writers` | Measured smooth same-host writer envelope, currently 4. |
+| `sharing.high_concurrency_writers` | Stress point used by Scenario J, currently 8. |
+| `sharing.daemon.state` | `healthy`, `stale_registry`, or `none`. |
+| `sharing.recommended_mode` | `daemon`, `serverless_retry`, or `serverless_fail_fast`. |
+| `sharing.hints[]` | Actionable retry / daemon guidance with a concrete command in `action`. |
+
 Validation:
 
 | Command | Result |
 |---|---|
-| `cargo test -p wg-cli doctor` | 22 passed; workflow unit tests cover ready/count/hints. |
+| `cargo test -p wg-cli doctor` | 25 passed; workflow unit tests cover ready/count/hints, sharing unit tests cover retry advisory behaviour, and integration tests cover the JSON `sharing` contract. |
 | `cargo test -p wg-cli doctor_json_includes_workflow_readiness_hints` | fixture CLI smoke validates JSON `workflow.ready`, `recent_ticket_count`, and actionable hints. |
+| `cargo test -p wg-cli doctor_json_includes_shared_store_guidance` | fixture CLI smoke validates JSON `sharing.lock_retry_ms`, `serverless_recommended_writers=4`, `daemon.state`, `recommended_mode`, and actionable hints. |
 | `python3 bench/multi-agent/scenario_i_workflow_doctor.py` | 10/10 invariants; CLI/MCP/Hermes each created a workflow ticket; doctor reported `workflow.ready=true`, `recent_ticket_count=3`, and no false no-MCP/no-recent-ticket hints. |
 | `python3 bench/multi-agent/scenario_j_lock_retry_sweep.py` | 7/7 invariants; `store.lock_retry_ms=5000` stayed smooth through 4 concurrent serverless writers and mostly recovered 8-writer contention. |
 | `scripts/workflow-release-smoke.sh` | Bundles Scenario F + I plus a fresh fixture `wg doctor --json` assert for release checks. Latest run: Scenario F 13/13, Scenario I 10/10, fixture doctor `workflow_ready=true`, `recent_ticket_count=1`, total 15.13s. |

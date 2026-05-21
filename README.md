@@ -157,7 +157,10 @@ curl http://127.0.0.1:3000/admin/status
 ```
 
 Daemon mode is an optimization, not required onboarding. It keeps the model and
-store warm and avoids per-command open costs.
+store warm and avoids per-command open costs. For same-host serverless sharing,
+`wg config set store.lock_retry_ms 5000` is the smoother default up to about
+four concurrent writers; use the daemon path when more agents write in
+parallel.
 
 ## Measured Claims
 
@@ -168,6 +171,7 @@ store warm and avoids per-command open costs.
 | gbrain-evals BrainBench, wg BM25 | P@5 `17.4%`, R@5 `64.1%` |
 | gbrain-evals BrainBench, wg BM25 via daemon | same score, `5.7x` faster |
 | Hermes two-process serverless shared store, retry `5000` | 20/20 writes persisted, 0 lock errors |
+| Serverless lock-retry sweep, retry `5000` | smooth through 4 writers; 8 writers persisted 79/80 |
 | HTTP shared `mcp-serve`, 2 clients x 10 writes | p50 `18.4ms`, p95 `41.8ms`, 20/20 persisted |
 
 See [`docs/MEASUREMENTS.md`](docs/MEASUREMENTS.md) for methodology, commands,
@@ -203,6 +207,7 @@ Useful knobs:
 ```bash
 wg config set store.durability eventual    # faster writes, less power-loss safety
 wg config set store.lock_retry_ms 5000     # smooth short redb lock contention
+wg doctor --json                           # includes sharing.mode and daemon guidance
 wg config set model.provider fastembed
 wg config set model.name bge-small-en-v1.5
 ```

@@ -593,6 +593,13 @@ already open. Cannot acquire lock.` Two ways to handle this:
    wg config set store.lock_retry_ms 5000   # 5s budget, polls every 100ms
    ```
    `lock_retry_ms = 0` (default) preserves the old fail-fast behaviour.
+   Scenario J (`python3 bench/multi-agent/scenario_j_lock_retry_sweep.py`)
+   measured this path as smooth through **4 concurrent local writers**
+   (40/40 persisted, p95 1.28s). At 8 writers it still recovered
+   79/80 writes but p95 rose to 2.99s and one write exhausted the
+   5s budget, so use the shared daemon when that level of parallelism
+   is normal. `wg doctor --json` exposes the same threshold in its
+   `sharing` block.
 
 Don't try to give multiple agents their own stdio `wg mcp` against
 the same redb path — it will work for whichever started first, then

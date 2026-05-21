@@ -625,12 +625,21 @@ fn doctor_json_includes_fixes_array() {
         kinds.contains(&"mcp"),
         "fixes should include mcp suggestions"
     );
+    assert!(
+        kinds.contains(&"sharing"),
+        "fixes should include sharing suggestions"
+    );
     let commands: Vec<&str> = fixes
         .iter()
         .map(|f| f["command"].as_str().unwrap())
         .collect();
     assert!(commands.iter().any(|c| c.contains("wg skill install")));
     assert!(commands.iter().any(|c| c.contains("wg mcp-install")));
+    assert!(
+        commands
+            .iter()
+            .any(|c| c.contains("wg config set store.lock_retry_ms 5000"))
+    );
 }
 
 #[test]
@@ -653,6 +662,36 @@ fn doctor_json_includes_workflow_readiness_hints() {
                 .as_str()
                 .is_some_and(|s| !s.is_empty()),
             "workflow hint {code} needs an actionable command"
+        );
+    }
+}
+
+#[test]
+fn doctor_json_includes_shared_store_guidance() {
+    let home = tempfile::tempdir().unwrap();
+    let store = home.path().join("wiki.redb");
+    let payload = doctor_json(home.path(), &store);
+    let sharing = &payload["sharing"];
+
+    assert_eq!(sharing["lock_retry_ms"], 0);
+    assert_eq!(sharing["serverless_recommended_writers"], 4);
+    assert_eq!(sharing["high_concurrency_writers"], 8);
+    assert_eq!(sharing["daemon"]["state"], "none");
+    assert_eq!(sharing["recommended_mode"], "serverless_fail_fast");
+    let hints = sharing["hints"]
+        .as_array()
+        .expect("sharing hints must be an array");
+    for code in [
+        "sharing_retry_disabled",
+        "sharing_daemon_for_high_concurrency",
+    ] {
+        let hint = hints.iter().find(|h| h["code"] == code);
+        assert!(hint.is_some(), "missing sharing hint {code}: {hints:?}");
+        assert!(
+            hint.unwrap()["action"]
+                .as_str()
+                .is_some_and(|s| !s.is_empty()),
+            "sharing hint {code} needs an actionable command"
         );
     }
 }

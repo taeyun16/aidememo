@@ -12,6 +12,7 @@ use std::path::Path;
 use wg_core::{Config, FactListOpts, FactRecord, FactType, WgError, WikiGraph};
 
 use crate::cmd::Command;
+use crate::cmd::daemon::{self, RegistryState};
 use crate::cmd::mcp_install::{
     codex_config_path, cursor_config_path, opencode_config_path, verify_registered,
 };
@@ -54,6 +55,7 @@ pub fn run_doctor(
     global_json: bool,
 ) -> Result<String, WgError> {
     let memory = collect_memory(store_path, &config);
+    let sharing = collect_sharing_status(store_path, &config);
     let wiki = WikiGraph::open(store_path, config.clone())?;
     let issues = wiki.lint()?;
     let stats = wiki.stats()?;
@@ -65,6 +67,7 @@ pub fn run_doctor(
     let mut fixes = collect_fix_suggestions(&agents);
     fixes.extend(memory.advisories());
     fixes.extend(adaptation.advisories());
+    fixes.extend(sharing.advisories());
 
     // `--fix --shell` short-circuits to a pipe-friendly view: just
     // the bare commands, one per line, nothing else. Designed for
@@ -90,6 +93,7 @@ pub fn run_doctor(
             "agents": agents,
             "memory": memory,
             "adaptation": adaptation,
+            "sharing": sharing,
             "workflow": workflow,
             // Always emitted in JSON: tooling that consumes this
             // shouldn't have to re-derive the suggestion list.
@@ -115,6 +119,7 @@ pub fn run_doctor(
 
     out.push_str(&format_memory(&memory));
     out.push_str(&format_adaptation(&adaptation));
+    out.push_str(&format_sharing(&sharing));
     out.push_str(&format_workflow(&workflow));
     out.push_str(&format_agent_integration(&agents));
 
@@ -122,7 +127,7 @@ pub fn run_doctor(
         out.push_str(&format_fix_suggestions(&fixes));
     } else if !fixes.is_empty() {
         out.push_str(&format!(
-            "Tip: {} agent integration gap(s) detected. Run `wg doctor --fix` for the install commands.\n\n",
+            "Tip: {} doctor fix suggestion(s) available. Run `wg doctor --fix` for the commands.\n\n",
             fixes.len()
         ));
     }
@@ -356,7 +361,7 @@ fn collect_fix_suggestions(agents: &[AgentStatus]) -> Vec<FixSuggestion> {
 
 fn format_fix_suggestions(fixes: &[FixSuggestion]) -> String {
     if fixes.is_empty() {
-        return "✓ No gaps to fix — every reachable agent has wg installed.\n\n".to_string();
+        return "✓ No doctor fix suggestions.\n\n".to_string();
     }
     let mut out = format!("Suggested fixes ({}):\n", fixes.len());
     for f in fixes {
@@ -520,6 +525,160 @@ fn format_workflow(workflow: &WorkflowReport) -> String {
     } else {
         out.push_str("  hints\n");
         for hint in &workflow.hints {
+            out.push_str(&format!(
+                "    [{}] {} — {}\n      action: {}\n",
+                hint.code, hint.severity, hint.message, hint.action
+            ));
+        }
+        out.push('\n');
+    }
+    out
+}
+
+// ---------------------------------------------------------------------------
+// Shared-store ergonomics
+// ---------------------------------------------------------------------------
+
+const SERVERLESS_RECOMMENDED_WRITERS: u8 = 4;
+const HIGH_CONCURRENCY_WRITERS: u8 = 8;
+const RECOMMENDED_LOCK_RETRY_MS: u64 = 5_000;
+
+#[derive(Debug, serde::Serialize)]
+pub(crate) struct SharingReport {
+    pub lock_retry_ms: u64,
+    pub serverless_recommended_writers: u8,
+    pub high_concurrency_writers: u8,
+    pub daemon: DaemonStatus,
+    pub recommended_mode: &'static str,
+    pub hints: Vec<SharingHint>,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub(crate) struct DaemonStatus {
+    pub state: &'static str,
+    pub port: Option<u16>,
+    pub pid: Option<u32>,
+    pub store: Option<String>,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub(crate) struct SharingHint {
+    pub code: &'static str,
+    pub severity: &'static str,
+    pub message: String,
+    pub action: String,
+}
+
+fn collect_sharing_status(store_path: &Path, config: &Config) -> SharingReport {
+    let daemon = match daemon::registry_state(store_path) {
+        RegistryState::Healthy(reg) => DaemonStatus {
+            state: "healthy",
+            port: Some(reg.port),
+            pid: Some(reg.pid),
+            store: Some(reg.store.display().to_string()),
+        },
+        RegistryState::StaleRegistry => DaemonStatus {
+            state: "stale_registry",
+            port: None,
+            pid: None,
+            store: None,
+        },
+        RegistryState::None => DaemonStatus {
+            state: "none",
+            port: None,
+            pid: None,
+            store: None,
+        },
+    };
+
+    let mut hints = Vec::new();
+    if config.store.lock_retry_ms == 0 && daemon.state != "healthy" {
+        hints.push(SharingHint {
+            code: "sharing_retry_disabled",
+            severity: "info",
+            message: format!(
+                "serverless shared writes fail fast without lock retry; measured smooth path uses {RECOMMENDED_LOCK_RETRY_MS} ms"
+            ),
+            action: format!("wg config set store.lock_retry_ms {RECOMMENDED_LOCK_RETRY_MS}"),
+        });
+    }
+    if daemon.state == "stale_registry" {
+        hints.push(SharingHint {
+            code: "sharing_stale_daemon_registry",
+            severity: "warn",
+            message: "daemon registry exists but the daemon is not healthy for this store"
+                .to_string(),
+            action: "wg daemon status".to_string(),
+        });
+    }
+    if daemon.state != "healthy" {
+        hints.push(SharingHint {
+            code: "sharing_daemon_for_high_concurrency",
+            severity: "info",
+            message: format!(
+                "use a shared daemon when more than {SERVERLESS_RECOMMENDED_WRITERS} agents write to the same store concurrently"
+            ),
+            action: "wg daemon start".to_string(),
+        });
+    }
+
+    let recommended_mode = if daemon.state == "healthy" {
+        "daemon"
+    } else if config.store.lock_retry_ms >= RECOMMENDED_LOCK_RETRY_MS {
+        "serverless_retry"
+    } else {
+        "serverless_fail_fast"
+    };
+
+    SharingReport {
+        lock_retry_ms: config.store.lock_retry_ms,
+        serverless_recommended_writers: SERVERLESS_RECOMMENDED_WRITERS,
+        high_concurrency_writers: HIGH_CONCURRENCY_WRITERS,
+        daemon,
+        recommended_mode,
+        hints,
+    }
+}
+
+impl SharingReport {
+    fn advisories(&self) -> Vec<FixSuggestion> {
+        let mut out = Vec::new();
+        if self.lock_retry_ms == 0 && self.daemon.state != "healthy" {
+            out.push(FixSuggestion {
+                target: "store",
+                kind: "sharing",
+                command: format!("wg config set store.lock_retry_ms {RECOMMENDED_LOCK_RETRY_MS}"),
+                reason: format!(
+                    "smooth serverless sharing up to {SERVERLESS_RECOMMENDED_WRITERS} concurrent writers"
+                ),
+            });
+        }
+        out
+    }
+}
+
+fn format_sharing(sharing: &SharingReport) -> String {
+    let mut out = String::from("Shared-store ergonomics:\n");
+    out.push_str(&format!(
+        "  mode: {}   lock_retry_ms: {}   serverless writers: <= {}\n",
+        sharing.recommended_mode, sharing.lock_retry_ms, sharing.serverless_recommended_writers
+    ));
+    match (
+        sharing.daemon.state,
+        sharing.daemon.port,
+        sharing.daemon.pid,
+    ) {
+        ("healthy", Some(port), Some(pid)) => {
+            out.push_str(&format!("  daemon: healthy (pid={pid}, port={port})\n"));
+        }
+        ("stale_registry", _, _) => out.push_str("  daemon: stale registry\n"),
+        _ => out.push_str("  daemon: not running\n"),
+    }
+    if sharing.hints.is_empty() {
+        out.push_str("  ✓ sharing setup looks ready\n\n");
+    } else {
+        out.push_str("  hints\n");
+        for hint in &sharing.hints {
             out.push_str(&format!(
                 "    [{}] {} — {}\n      action: {}\n",
                 hint.code, hint.severity, hint.message, hint.action
@@ -1125,6 +1284,54 @@ mod tests {
                 "hint {code} must have a concrete action"
             );
         }
+    }
+
+    #[test]
+    fn sharing_report_advises_retry_when_serverless_fail_fast() {
+        let report = SharingReport {
+            lock_retry_ms: 0,
+            serverless_recommended_writers: SERVERLESS_RECOMMENDED_WRITERS,
+            high_concurrency_writers: HIGH_CONCURRENCY_WRITERS,
+            daemon: DaemonStatus {
+                state: "none",
+                port: None,
+                pid: None,
+                store: None,
+            },
+            recommended_mode: "serverless_fail_fast",
+            hints: Vec::new(),
+        };
+
+        let advisories = report.advisories();
+        assert!(
+            advisories
+                .iter()
+                .any(|a| a.command == "wg config set store.lock_retry_ms 5000"),
+            "expected lock retry advisory, got {:?}",
+            advisories
+        );
+    }
+
+    #[test]
+    fn sharing_report_suppresses_retry_advisory_when_daemon_is_healthy() {
+        let report = SharingReport {
+            lock_retry_ms: 0,
+            serverless_recommended_writers: SERVERLESS_RECOMMENDED_WRITERS,
+            high_concurrency_writers: HIGH_CONCURRENCY_WRITERS,
+            daemon: DaemonStatus {
+                state: "healthy",
+                port: Some(3000),
+                pid: Some(123),
+                store: Some("/tmp/wiki.redb".to_string()),
+            },
+            recommended_mode: "daemon",
+            hints: Vec::new(),
+        };
+
+        assert!(
+            report.advisories().is_empty(),
+            "healthy daemon should be the smooth sharing path"
+        );
     }
 
     #[test]
