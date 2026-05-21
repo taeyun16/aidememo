@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import secrets
 import shutil
 import subprocess
 import time
@@ -112,16 +113,22 @@ class WgClient:
         recent_limit: int = 5,
         source_id: str | None = None,
     ) -> dict:
-        if self._py is not None and source_id is None:
-            return self._py.query(topic, limit=limit, depth=depth, recent_limit=recent_limit)
+        if self._py is not None:
+            kwargs = {"limit": limit, "depth": depth, "recent_limit": recent_limit}
+            if source_id is not None:
+                kwargs["source_id"] = source_id
+            return self._py.query(topic, **kwargs)
         args = ["query", topic, "--limit", str(limit), "-d", str(depth), "--recent-limit", str(recent_limit)]
         if source_id:
             args += ["--source-id", source_id]
         return self._cli_json(args)
 
     def search(self, query: str, limit: int = 10, source_id: str | None = None) -> list[dict]:
-        if self._py is not None and source_id is None:
-            return self._py.search(query, limit=limit)
+        if self._py is not None:
+            kwargs = {"limit": limit}
+            if source_id is not None:
+                kwargs["source_id"] = source_id
+            return self._py.search(query, **kwargs)
         args = ["search", query, "--limit", str(limit)]
         if source_id:
             args += ["--source-id", source_id]
@@ -169,10 +176,21 @@ class WgClient:
     ) -> dict:
         """Start a workflow-triggered coding task.
 
-        This intentionally uses the CLI path even when the PyO3 binding
-        is available: `wg workflow start` composes session creation,
-        ticket capture, and context-pack retrieval in the CLI/MCP layer.
+        Prefer the PyO3 path when available so a Hermes process that
+        already holds the redb handle does not shell out to a second
+        `wg` process and fight its own file lock. The CLI path remains
+        the universal fallback when the binding is not installed.
         """
+        if self._py is not None:
+            return self._workflow_start_pyo3(
+                title,
+                body=body,
+                source=source,
+                source_id=source_id,
+                limit=limit,
+                depth=depth,
+                recent_limit=recent_limit,
+            )
         args = [
             "workflow",
             "start",
@@ -192,6 +210,86 @@ class WgClient:
             args += ["--source-id", source_id]
         return self._cli_json(args)
 
+    def _workflow_start_pyo3(
+        self,
+        title: str,
+        body: str | None = None,
+        source: str | None = None,
+        source_id: str | None = None,
+        limit: int = 8,
+        depth: int = 2,
+        recent_limit: int = 5,
+    ) -> dict:
+        if self._py is None:
+            raise WgUnavailable("wg-python backend is not available")
+
+        session_id = f"session-{_new_ulid()}"
+        session_entity_id = self._py.entity_add(
+            session_id,
+            entity_type="session",
+            source_page=source or title,
+        )
+
+        trimmed_body = body.strip() if isinstance(body, str) and body.strip() else None
+        ticket_content = f"Workflow ticket: {title}"
+        if trimmed_body:
+            ticket_content = f"{ticket_content}\n\n{trimmed_body}"
+
+        fact_kwargs: dict[str, Any] = {
+            "entity_ids": [session_entity_id],
+            "fact_type": "question",
+            "tags": ["workflow-start", "ticket"],
+            "confidence": 1.0,
+        }
+        if source is not None:
+            fact_kwargs["source"] = source
+        if source_id is not None:
+            fact_kwargs["source_id"] = source_id
+        try:
+            ticket_fact_id = self._py.fact_add(ticket_content, **fact_kwargs)
+        except TypeError as exc:
+            raise WgUnavailable(
+                "installed wg-python does not support workflow source_id fields; "
+                "rebuild/install the current wg-python package"
+            ) from exc
+
+        query_text = f"{title}\n\n{trimmed_body}" if trimmed_body else title
+        query_kwargs: dict[str, Any] = {
+            "limit": limit,
+            "depth": depth,
+            "recent_limit": recent_limit,
+            "current_only": True,
+            "mode": "hybrid",
+        }
+        search_kwargs: dict[str, Any] = {"limit": 30, "current_only": True}
+        if source_id is not None:
+            query_kwargs["source_id"] = source_id
+            search_kwargs["source_id"] = source_id
+        try:
+            context = self._py.query(query_text, **query_kwargs)
+            typed_hits = self._py.search(query_text, **search_kwargs)
+        except TypeError as exc:
+            raise WgUnavailable(
+                "installed wg-python does not support source-scoped workflow retrieval; "
+                "rebuild/install the current wg-python package"
+            ) from exc
+
+        prior_lessons = _take_fact_type(typed_hits, "lesson", 5)
+        prior_errors = _take_fact_type(typed_hits, "error", 5)
+        relevant_decisions = _take_fact_type(typed_hits, "decision", 5)
+        return {
+            "session_id": session_id,
+            "export": f"export WG_SESSION_ID={session_id}",
+            "title": title,
+            "source": source,
+            "source_id": source_id,
+            "ticket_fact_id": ticket_fact_id,
+            "context": context,
+            "prior_lessons": prior_lessons,
+            "prior_errors": prior_errors,
+            "relevant_decisions": relevant_decisions,
+        }
+
     # ------------------------------------------------------------------
     # Write API
     # ------------------------------------------------------------------
@@ -205,7 +303,7 @@ class WgClient:
         confidence: float | None = None,
         source_id: str | None = None,
     ) -> str:
-        if self._py is not None and source_id is None:
+        if self._py is not None:
             entity_ids = [self._py.resolve_entity(e) for e in (entities or [])]
             kwargs: dict = {
                 "entity_ids": entity_ids,
@@ -214,6 +312,8 @@ class WgClient:
             }
             if confidence is not None:
                 kwargs["confidence"] = confidence
+            if source_id is not None:
+                kwargs["source_id"] = source_id
             return self._py.fact_add(content, **kwargs)
         args = ["fact", "add", content, "--type", fact_type]
         if entities:
@@ -255,7 +355,7 @@ class WgClient:
         correctness — operators who care about the speedup should
         install the ``wg_python`` wheel.
         """
-        if self._py is not None and all(not item.get("source_id") for item in items):
+        if self._py is not None:
             py_items = []
             for item in items:
                 names = item.get("entities") or []
@@ -266,6 +366,7 @@ class WgClient:
                     "fact_type": item.get("fact_type", "note"),
                     "tags": item.get("tags") or [],
                     "confidence": item.get("confidence"),
+                    "source_id": item.get("source_id"),
                 })
             return list(self._py.fact_add_many(py_items))
         # CLI fallback — no `wg fact add-many` command yet, so loop.
@@ -346,6 +447,7 @@ def default_skills_path() -> Path:
 # match than the previous "isalnum + isupper" walk and good enough to
 # tell ULIDs apart from ordinary words in `wg fact add` prose output.
 _ULID_RE = re.compile(r"^[0-9A-Z]{26}$")
+_CROCKFORD32 = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 
 
 # Window grammar (`30d`, `12h`, `4w`, `1y`, `90m`, `60s`). Mirrors
@@ -365,6 +467,26 @@ _WINDOW_UNITS = {
 def _is_lock_error(stderr: str) -> bool:
     lowered = stderr.lower()
     return "cannot acquire lock" in lowered or "database already open" in lowered
+
+
+def _take_fact_type(hits: list[dict], fact_type: str, limit: int) -> list[dict]:
+    out: list[dict] = []
+    wanted = fact_type.lower()
+    for hit in hits:
+        if str(hit.get("fact_type") or "").lower() != wanted:
+            continue
+        out.append(hit)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _new_ulid() -> str:
+    value = (int(time.time() * 1000) << 80) | secrets.randbits(80)
+    chars = []
+    for shift in range(125, -1, -5):
+        chars.append(_CROCKFORD32[(value >> shift) & 0x1F])
+    return "".join(chars)
 
 
 def parse_window_ms(window: str) -> int:

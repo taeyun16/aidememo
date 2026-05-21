@@ -43,21 +43,25 @@ def main() -> None:
             fact_type="decision",
             tags=["ha"],
             confidence=0.9,
+            source_id="team-a",
         )
         fact = g.fact_get(fid)
         assert fact["content"].startswith("Redis Sentinel")
+        assert fact["source_id"] == "team-a"
 
-        facts = g.fact_list(entity="Redis", limit=10)
+        facts = g.fact_list(entity="Redis", limit=10, source_id="team-a")
         assert len(facts) == 1
+        assert all(f["source_id"] == "team-a" for f in facts)
 
         # Batch insert — single redb write txn for the whole list.
         many_ids = g.fact_add_many([
             {"content": "Redis Cluster shards keys by hash slot",
-             "entity_ids": [eid_redis], "fact_type": "pattern"},
+             "entity_ids": [eid_redis], "fact_type": "pattern", "source_id": "team-a"},
             {"content": "Redis 7 introduces Functions and ACL improvements",
-             "entity_ids": [eid_redis], "fact_type": "note", "confidence": 0.85},
+             "entity_ids": [eid_redis], "fact_type": "note", "confidence": 0.85,
+             "source_id": "team-a"},
             {"content": "Postgres logical replication is the default",
-             "entity_ids": [eid_postgres], "fact_type": "convention"},
+             "entity_ids": [eid_postgres], "fact_type": "convention", "source_id": "team-b"},
         ])
         assert len(many_ids) == 3
         assert all(isinstance(x, str) for x in many_ids)
@@ -74,8 +78,9 @@ def main() -> None:
         # Search (BM25 — no semantic model loaded for the smoke test, but the
         # call path should still succeed and return results from BM25 only).
         try:
-            hits = g.search("high availability", limit=5)
+            hits = g.search("high availability", limit=5, source_id="team-a")
             print(f"search hits: {len(hits)}")
+            assert all(h["source_id"] == "team-a" for h in hits)
         except RuntimeError as e:
             # If semantic model isn't downloaded, hybrid search may fail — that's
             # an environment issue, not a binding issue. Don't fail the test.
@@ -96,9 +101,10 @@ def main() -> None:
         # Query (unified) — relies on hybrid search; tolerate failure on that
         # but verify the call dispatches.
         try:
-            ctx = g.query("Redis", limit=3, depth=1, recent_limit=3)
+            ctx = g.query("Redis", limit=3, depth=1, recent_limit=3, source_id="team-a")
             assert ctx["topic"] == "Redis"
             assert ctx["entity"]["name"] == "Redis"
+            assert all(h["source_id"] == "team-a" for h in ctx["search"])
             print(f"query keys: {list(ctx.keys())}")
         except RuntimeError as e:
             print(f"query skipped: {e}")

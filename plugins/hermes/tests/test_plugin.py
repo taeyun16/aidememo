@@ -137,6 +137,28 @@ def test_pre_llm_call_returns_recent_facts_block_on_first_turn(fake_ctx: FakeCtx
     assert "HNSW is the default index" in result["context"]
 
 
+def test_pre_llm_call_auto_starts_sparse_ticket_workflow(fake_ctx: FakeCtx) -> None:
+    pre = next(cb for name, cb in fake_ctx.hooks if name == "pre_llm_call")
+    result = pre(
+        is_first_turn=True,
+        user_message='Issue #123: Fix Redis timeout\nPass source_id exactly as "team-a".',
+        session_id="s",
+    )
+    assert isinstance(result, dict)
+    assert "workflow context pack" in result["context"]
+
+
+def test_post_llm_call_captures_sparse_ticket_even_when_auto_record_off(
+    fake_ctx: FakeCtx,
+) -> None:
+    post = next(cb for name, cb in fake_ctx.hooks if name == "post_llm_call")
+    post(
+        user_message='Issue #123: Fix Redis timeout\nPass source_id exactly as "team-a".',
+        assistant_response="Plan follows.",
+        session_id="s",
+    )
+
+
 def test_pre_llm_call_returns_none_on_later_turns(fake_ctx: FakeCtx) -> None:
     pre = next(cb for name, cb in fake_ctx.hooks if name == "pre_llm_call")
     assert pre(is_first_turn=False, user_message="follow up", session_id="s") is None

@@ -123,22 +123,20 @@ def test_recent_uses_pyo3_without_cli(monkeypatch: pytest.MonkeyPatch) -> None:
     assert client.recent(last="14d", limit=3) == [{"content": "recent"}]
 
 
-def test_fact_add_many_with_source_id_falls_back_to_cli(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_fact_add_many_with_source_id_uses_pyo3(monkeypatch: pytest.MonkeyPatch) -> None:
     class FakePy:
+        def resolve_entity(self, name):
+            return f"id-{name}"
+
         def fact_add_many(self, items):
-            raise AssertionError("source-scoped batches require the CLI until wg-python supports source_id")
+            assert items[0]["source_id"] == "agent-a"
+            assert items[1]["source_id"] == "agent-b"
+            assert items[0]["entity_ids"] == ["id-Redis"]
+            return ["fact-1", "fact-2"]
 
     monkeypatch.setattr("hermes_wg.client.WgClient._try_load_pyo3", lambda self: FakePy())
     monkeypatch.setattr("hermes_wg.client.WgClient._has_cli", staticmethod(lambda: True))
     client = WgClient(store_path="/tmp/wiki.redb")
-
-    calls: list[list[str]] = []
-
-    def fake_cli_json(args: list[str]):
-        calls.append(args)
-        return {"id": f"fact-{len(calls)}"}
-
-    monkeypatch.setattr(client, "_cli_json", fake_cli_json)
 
     ids = client.fact_add_many([
         {"content": "alpha", "entities": ["Redis"], "source_id": "agent-a"},
@@ -146,8 +144,6 @@ def test_fact_add_many_with_source_id_falls_back_to_cli(monkeypatch: pytest.Monk
     ])
 
     assert ids == ["fact-1", "fact-2"]
-    assert calls[0][-2:] == ["--source-id", "agent-a"]
-    assert calls[1][-2:] == ["--source-id", "agent-b"]
 
 
 def test_fact_add_prefers_json(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -214,6 +210,55 @@ def test_workflow_start_dispatches_to_cli(monkeypatch: pytest.MonkeyPatch) -> No
     assert "start" in cmd
     assert "Fix Redis timeout" in cmd
     assert cmd[-2:] == ["--source-id", "team-a"]
+
+
+def test_workflow_start_prefers_pyo3(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakePy:
+        def entity_add(self, name, **kwargs):
+            assert name.startswith("session-")
+            assert kwargs["entity_type"] == "session"
+            assert kwargs["source_page"] == "github:org/repo#123"
+            return "entity-session"
+
+        def fact_add(self, content, **kwargs):
+            assert content == "Workflow ticket: Fix Redis timeout\n\nWorker jobs timeout"
+            assert kwargs["entity_ids"] == ["entity-session"]
+            assert kwargs["fact_type"] == "question"
+            assert kwargs["tags"] == ["workflow-start", "ticket"]
+            assert kwargs["source"] == "github:org/repo#123"
+            assert kwargs["source_id"] == "team-a"
+            return "01KQ6RT4RXQFF14MBYTB40M4N4"
+
+        def query(self, topic, **kwargs):
+            assert "Worker jobs timeout" in topic
+            assert kwargs["source_id"] == "team-a"
+            assert kwargs["current_only"] is True
+            return {"topic": topic, "search": []}
+
+        def search(self, query, **kwargs):
+            assert kwargs["source_id"] == "team-a"
+            return [
+                {"fact_type": "decision", "content": "Decision: wrapper"},
+                {"fact_type": "lesson", "content": "Lesson: DNS"},
+                {"fact_type": "error", "content": "Error: pool"},
+            ]
+
+    monkeypatch.setattr("hermes_wg.client.WgClient._try_load_pyo3", lambda self: FakePy())
+    monkeypatch.setattr("hermes_wg.client.WgClient._has_cli", staticmethod(lambda: False))
+    client = WgClient(store_path="/tmp/wiki.redb")
+
+    out = client.workflow_start(
+        "Fix Redis timeout",
+        body="Worker jobs timeout",
+        source="github:org/repo#123",
+        source_id="team-a",
+    )
+
+    assert out["session_id"].startswith("session-")
+    assert out["ticket_fact_id"] == "01KQ6RT4RXQFF14MBYTB40M4N4"
+    assert len(out["relevant_decisions"]) == 1
+    assert len(out["prior_lessons"]) == 1
+    assert len(out["prior_errors"]) == 1
 
 
 def test_fact_add_falls_back_to_human_output(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -32,7 +32,9 @@ propagates back into Hermes's agent loop.
 
 from __future__ import annotations
 
+import json
 import logging
+import re
 from pathlib import Path
 from typing import Any
 
@@ -43,28 +45,94 @@ from .decisions import detect
 log = logging.getLogger("hermes_wg")
 
 
-def _format_recent_block(facts: list[dict]) -> str | None:
-    """Render a compact, model-friendly preamble. Returns ``None`` if
-    there's nothing worth injecting (no recent facts)."""
-    if not facts:
-        return None
+_SOURCE_ID_QUOTED_RE = re.compile(
+    r"\bsource[_ -]?id\b.{0,80}?[\"'`]([^\"'`]+)[\"'`]",
+    re.IGNORECASE | re.DOTALL,
+)
+_SOURCE_ID_RE = re.compile(
+    r"\bsource[_ -]?id\b\s*[:=]\s*([A-Za-z0-9_.:/#-]+)",
+    re.IGNORECASE,
+)
+_TICKET_RE = re.compile(r"\b(issue|ticket|pr|pull request|automation trigger)\b", re.IGNORECASE)
+
+
+def _looks_like_workflow_trigger(message: str) -> bool:
+    return bool(_TICKET_RE.search(message))
+
+
+def _extract_source_id(message: str) -> str | None:
+    match = _SOURCE_ID_QUOTED_RE.search(message) or _SOURCE_ID_RE.search(message)
+    return match.group(1) if match else None
+
+
+def _extract_title(message: str) -> str:
+    for line in message.splitlines():
+        stripped = line.strip()
+        if stripped:
+            return stripped[:160]
+    return "Hermes workflow"
+
+
+def _format_workflow_pack(pack: dict[str, Any]) -> str:
     lines = [
-        "## wg - recent knowledge graph snapshot",
+        "## wg - workflow context pack",
         "",
-        "Auto-loaded by the wg Hermes plugin. The most recent facts "
-        "from your knowledge base are below; consult them before "
-        "answering questions about prior decisions, conventions, or "
-        "ongoing topics.",
+        "`wg_workflow_start` was run automatically for this sparse "
+        "ticket. Base the plan on the scoped prior memory below.",
         "",
     ]
+    sections = [
+        ("Relevant decisions", pack.get("relevant_decisions") or []),
+        ("Prior lessons", pack.get("prior_lessons") or []),
+        ("Prior errors", pack.get("prior_errors") or []),
+    ]
+    for heading, facts in sections:
+        if not facts:
+            continue
+        lines.extend([f"### {heading}", ""])
+        for fact in facts[:5]:
+            content = str(fact.get("content") or "").strip()
+            if content:
+                lines.append(f"- {content}")
+        lines.append("")
+    lines.extend(
+        [
+            "Raw context pack:",
+            json.dumps(pack, ensure_ascii=False, default=str)[:6000],
+        ]
+    )
+    return "\n".join(lines).strip()
+
+
+def _format_recent_block(facts: list[dict]) -> str:
+    """Render a compact, model-friendly preamble."""
+    lines = [
+        "## wg - workflow memory",
+        "",
+        "Auto-loaded by the wg Hermes plugin. When the user gives a "
+        "sparse issue, ticket, PR, or automation trigger, call "
+        "`wg_workflow_start` before making a plan. Pass any user-provided "
+        "`source_id` through to the tool so neighbouring project memory "
+        "does not leak in.",
+        "",
+    ]
+    if not facts:
+        return "\n".join(lines).strip()
+
+    lines.extend(
+        [
+            "Recent facts from your knowledge base are below; consult "
+            "them before answering questions about prior decisions, "
+            "conventions, or ongoing topics.",
+            "",
+        ]
+    )
     for f in facts[:10]:
         content = (f.get("content") or "").strip()
         if not content:
             continue
         ftype = f.get("fact_type") or "note"
         lines.append(f"- ({ftype}) {content}")
-    if len(lines) <= 4:  # only the header survived - nothing to show
-        return None
     return "\n".join(lines)
 
 
@@ -78,6 +146,20 @@ def make_pre_llm_call(client: WgClient, last: str = "7d", limit: int = 10):
     """
 
     def pre_llm_call(**kwargs: Any) -> dict[str, str] | None:
+        user_message = str(kwargs.get("user_message") or "")
+        if _looks_like_workflow_trigger(user_message):
+            try:
+                pack = client.workflow_start(
+                    _extract_title(user_message),
+                    body=user_message,
+                    source_id=_extract_source_id(user_message),
+                )
+            except CLIENT_ERRORS as exc:
+                log.warning("wg workflow_start failed at pre_llm_call: %s", exc)
+            else:
+                log.info("wg workflow_start auto-context injected for sparse trigger")
+                return {"context": _format_workflow_pack(pack)}
+
         if not kwargs.get("is_first_turn"):
             return None
         try:
@@ -86,8 +168,6 @@ def make_pre_llm_call(client: WgClient, last: str = "7d", limit: int = 10):
             log.warning("wg recent failed at pre_llm_call: %s", exc)
             return None
         block = _format_recent_block(facts)
-        if not block:
-            return None
         return {"context": block}
 
     return pre_llm_call
@@ -134,6 +214,17 @@ def make_post_llm_call(
         detect_in = "both"
 
     def post_llm_call(**kwargs: Any) -> None:
+        user_message = str(kwargs.get("user_message") or "")
+        if _looks_like_workflow_trigger(user_message):
+            try:
+                client.workflow_start(
+                    _extract_title(user_message),
+                    body=user_message,
+                    source_id=_extract_source_id(user_message),
+                )
+            except CLIENT_ERRORS as exc:
+                log.warning("wg workflow_start capture failed at post_llm_call: %s", exc)
+
         if not enable_auto_record:
             return
         text_chunks: list[str] = []

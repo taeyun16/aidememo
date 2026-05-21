@@ -11,6 +11,8 @@ agents installed on this machine: Claude Code, Codex, and Hermes.
 | `scenario_d_concurrent_writers.py` | Multi-process write contention; verifies lock failures are explicit and non-destructive. | 0 |
 | `scenario_e_http_shared.py` | One `wg mcp-serve` + 4 HTTP clients × 25 inserts; the recommended shared-write pattern. | 0 |
 | `scenario_f_workflow_triggers.py` | Starts multiple unrelated sparse tickets through CLI, MCP, and Hermes plugin paths; verifies unique sessions, ticket facts, topical priors, and `source_id` isolation. | 0 |
+| `scenario_g_hermes_binding.py` | Compares Hermes workflow-start CLI fallback vs `wg-python` in-process path for shape parity, leakage, and latency. Requires local `wg-python` install. | 0 |
+| `scenario_h_workflow_natural_prompt.py` | Sends sparse-ticket chat prompts to Claude, Codex, and Hermes; verifies workflow-start side effects, prior-memory reflection, and forbidden-source leakage with isolated MCP config per runtime. | token-burning |
 
 ## Running locally
 
@@ -25,11 +27,20 @@ python3 bench/multi-agent/scenario_d_concurrent_writers.py
 python3 bench/multi-agent/scenario_e_http_shared.py
 python3 bench/multi-agent/scenario_f_workflow_triggers.py
 
+# binding comparison (requires wg-python wheel installed)
+(cd crates/wg-python && maturin build --release -o /tmp/wg-python-wheel)
+python3 -m pip install --force-reinstall /tmp/wg-python-wheel/*.whl
+python3 bench/multi-agent/scenario_g_hermes_binding.py
+
 # compact local UX regression
 scripts/bench-agent-ux.sh
 
 # token-burning scenario (one-shot demo / opt-in regression)
 python3 bench/multi-agent/scenario_c_natural_prompt.py
+python3 bench/multi-agent/scenario_h_workflow_natural_prompt.py
+
+# debug one agent in Scenario H
+WG_E2E_AGENTS=hermes python3 bench/multi-agent/scenario_h_workflow_natural_prompt.py
 ```
 
 Override the binary / store paths via env vars (defaults match this

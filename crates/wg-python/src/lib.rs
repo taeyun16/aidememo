@@ -37,29 +37,11 @@ fn map_err(e: WgError) -> PyErr {
 }
 
 fn parse_entity_type(value: &str) -> Option<EntityType> {
-    match value.to_lowercase().as_str() {
-        "technology" | "tech" => Some(EntityType::Technology),
-        "concept" => Some(EntityType::Concept),
-        "comparison" | "compare" => Some(EntityType::Comparison),
-        "query" | "question" => Some(EntityType::Query),
-        "person" => Some(EntityType::Person),
-        "team" => Some(EntityType::Team),
-        "" | "unknown" => Some(EntityType::Unknown),
-        _ => None,
-    }
+    Some(EntityType::parse(value))
 }
 
 fn parse_fact_type(value: &str) -> Option<FactType> {
-    match value.to_lowercase().as_str() {
-        "decision" | "decide" => Some(FactType::Decision),
-        "pattern" => Some(FactType::Pattern),
-        "convention" => Some(FactType::Convention),
-        "claim" | "assertion" => Some(FactType::Claim),
-        "note" | "notes" => Some(FactType::Note),
-        "question" | "query" => Some(FactType::Question),
-        "" | "unknown" => Some(FactType::Unknown),
-        _ => None,
-    }
+    Some(FactType::parse(value))
 }
 
 fn parse_direction(value: Option<&str>) -> TraverseDirection {
@@ -128,6 +110,7 @@ fn fact_input_from_dict(item: &Bound<'_, PyDict>) -> PyResult<FactInput> {
         entity_ids,
         tags: dict_opt::<Vec<String>>(item, "tags")?,
         source: dict_opt::<String>(item, "source")?,
+        source_id: dict_opt::<String>(item, "source_id")?,
         source_confidence: dict_opt::<f32>(item, "confidence")?,
         observed_at: None,
     })
@@ -193,7 +176,7 @@ impl PyWikiGraph {
 
     /// Hybrid search (BM25 + semantic). Returns a list of result dicts.
     /// Set `current_only=True` to exclude superseded facts.
-    #[pyo3(signature = (query, limit=None, min_confidence=None, current_only=false))]
+    #[pyo3(signature = (query, limit=None, min_confidence=None, current_only=false, source_id=None))]
     fn search(
         &self,
         py: Python<'_>,
@@ -201,11 +184,13 @@ impl PyWikiGraph {
         limit: Option<usize>,
         min_confidence: Option<f32>,
         current_only: bool,
+        source_id: Option<String>,
     ) -> PyResult<PyObject> {
         let opts = SearchOpts {
             limit,
             min_confidence,
             current_only,
+            source_id,
             ..Default::default()
         };
         let results = self.0.hybrid_search(&query, opts).map_err(map_err)?;
@@ -215,7 +200,7 @@ impl PyWikiGraph {
     /// Unified context fetch: search + entity resolve + traverse + recent facts.
     /// Returns one dict with keys: topic, entity, search, related, recent_facts.
     /// `mode`: "naive" | "local" | "hybrid" (default) | "global".
-    #[pyo3(signature = (topic, limit=10, depth=2, recent_limit=10, current_only=false, mode=None))]
+    #[pyo3(signature = (topic, limit=10, depth=2, recent_limit=10, current_only=false, mode=None, source_id=None))]
     #[allow(clippy::too_many_arguments)]
     fn query(
         &self,
@@ -226,6 +211,7 @@ impl PyWikiGraph {
         recent_limit: usize,
         current_only: bool,
         mode: Option<String>,
+        source_id: Option<String>,
     ) -> PyResult<PyObject> {
         let opts = QueryOpts {
             search_limit: limit,
@@ -238,6 +224,7 @@ impl PyWikiGraph {
                 .map(wg_core::QueryMode::parse)
                 .unwrap_or_default(),
             bm25_only: false,
+            source_id,
         };
         let result = self.0.query(&topic, opts).map_err(map_err)?;
         to_py(py, &result)
@@ -337,7 +324,7 @@ impl PyWikiGraph {
     // === Fact CRUD ===
 
     /// Add a fact. `entity_ids` are ULIDs (use `resolve_entity` to convert names).
-    #[pyo3(signature = (content, entity_ids=None, fact_type=None, tags=None, source=None, confidence=None))]
+    #[pyo3(signature = (content, entity_ids=None, fact_type=None, tags=None, source=None, confidence=None, source_id=None))]
     fn fact_add(
         &self,
         content: String,
@@ -346,6 +333,7 @@ impl PyWikiGraph {
         tags: Option<Vec<String>>,
         source: Option<String>,
         confidence: Option<f32>,
+        source_id: Option<String>,
     ) -> PyResult<String> {
         let entity_ids = match entity_ids {
             Some(ids) => Some(
@@ -361,6 +349,7 @@ impl PyWikiGraph {
             entity_ids,
             tags,
             source,
+            source_id,
             source_confidence: confidence,
             observed_at: None,
         };
@@ -372,7 +361,7 @@ impl PyWikiGraph {
     ///
     /// Each item is a dict with the same keys `fact_add` accepts:
     /// `content` (required), `entity_ids`, `fact_type`, `tags`,
-    /// `source`, `confidence`. Returns the new fact ULIDs in input
+    /// `source`, `source_id`, `confidence`. Returns the new fact ULIDs in input
     /// order. All-or-nothing — if one item fails to validate, no
     /// facts land.
     fn fact_add_many<'py>(&self, items: Vec<Bound<'py, PyDict>>) -> PyResult<Vec<String>> {
@@ -402,6 +391,7 @@ impl PyWikiGraph {
         current_only=false,
         since_epoch_ms=None,
         until_epoch_ms=None,
+        source_id=None,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn fact_list(
@@ -414,6 +404,7 @@ impl PyWikiGraph {
         current_only: bool,
         since_epoch_ms: Option<u64>,
         until_epoch_ms: Option<u64>,
+        source_id: Option<String>,
     ) -> PyResult<PyObject> {
         let entity_id = match entity {
             Some(name) => Some(self.0.resolve_entity(&name).map_err(map_err)?),
@@ -429,6 +420,7 @@ impl PyWikiGraph {
             until: until_epoch_ms,
             current_only,
             as_of: None,
+            source_id,
         };
         let facts = self.0.fact_list(opts).map_err(map_err)?;
         to_py(py, &facts)

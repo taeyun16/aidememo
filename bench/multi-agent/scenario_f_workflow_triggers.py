@@ -29,6 +29,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -237,6 +238,13 @@ def workflow_start(ticket: Ticket) -> dict[str, Any]:
     raise ValueError(f"unknown driver: {ticket.driver}")
 
 
+def timed_workflow_start(ticket: Ticket) -> tuple[dict[str, Any], float]:
+    start = time.perf_counter_ns()
+    payload = workflow_start(ticket)
+    elapsed_ms = (time.perf_counter_ns() - start) / 1e6
+    return payload, elapsed_ms
+
+
 def json_text(payload: Any) -> str:
     return json.dumps(payload, ensure_ascii=False)
 
@@ -246,6 +254,61 @@ def count_prior_items(payload: dict[str, Any]) -> int:
         len(payload.get(key) or [])
         for key in ("prior_lessons", "prior_errors", "relevant_decisions")
     )
+
+
+def prior_type_counts(payload: dict[str, Any]) -> dict[str, int]:
+    return {
+        "decision": len(payload.get("relevant_decisions") or []),
+        "lesson": len(payload.get("prior_lessons") or []),
+        "error": len(payload.get("prior_errors") or []),
+    }
+
+
+def percentile(xs: list[float], p: float) -> float:
+    if not xs:
+        return 0.0
+    ordered = sorted(xs)
+    idx = int(round((p / 100.0) * (len(ordered) - 1)))
+    return ordered[idx]
+
+
+def summarize_runs(runs: list[dict[str, Any]]) -> dict[str, Any]:
+    latencies = [float(r["latency_ms"]) for r in runs]
+    context_chars = [int(r["context_chars"]) for r in runs]
+    leakage_counts = [int(r["forbidden_leakage_count"]) for r in runs]
+    driver_latencies: dict[str, list[float]] = {}
+    for run in runs:
+        driver_latencies.setdefault(str(run["driver"]), []).append(float(run["latency_ms"]))
+    return {
+        "tickets": len(runs),
+        "latency_ms": {
+            "p50": round(percentile(latencies, 50), 2),
+            "p95": round(percentile(latencies, 95), 2),
+            "max": round(max(latencies) if latencies else 0.0, 2),
+            "by_driver": {
+                driver: {
+                    "count": len(values),
+                    "p50": round(percentile(values, 50), 2),
+                    "p95": round(percentile(values, 95), 2),
+                    "max": round(max(values), 2),
+                }
+                for driver, values in sorted(driver_latencies.items())
+            },
+        },
+        "context_chars": {
+            "p50": percentile(context_chars, 50),
+            "p95": percentile(context_chars, 95),
+            "max": max(context_chars) if context_chars else 0,
+        },
+        "forbidden_leakage_total": sum(leakage_counts),
+        "prior_total": sum(int(r["prior_total"]) for r in runs),
+        "prior_type_totals": {
+            "decision": sum(int(r["prior_type_counts"]["decision"]) for r in runs),
+            "lesson": sum(int(r["prior_type_counts"]["lesson"]) for r in runs),
+            "error": sum(int(r["prior_type_counts"]["error"]) for r in runs),
+        },
+        "search_hits_total": sum(int(r["search_hits"]) for r in runs),
+    }
 
 
 def list_workflow_questions() -> list[dict[str, Any]]:
@@ -306,7 +369,7 @@ def main() -> int:
 
     runs: list[dict[str, Any]] = []
     for ticket in tickets:
-        payload = workflow_start(ticket)
+        payload, elapsed_ms = timed_workflow_start(ticket)
         text = json_text(payload)
         contains = {needle: needle in text for needle in ticket.must_contain}
         leaks = {needle: needle in text for needle in ticket.must_not_contain}
@@ -317,11 +380,15 @@ def main() -> int:
                 "source_id": ticket.source_id,
                 "session_id": payload.get("session_id"),
                 "ticket_fact_id": payload.get("ticket_fact_id"),
+                "latency_ms": round(elapsed_ms, 2),
+                "context_chars": len(text),
                 "search_hits": len((payload.get("context") or {}).get("search") or []),
                 "prior_lessons": len(payload.get("prior_lessons") or []),
                 "prior_errors": len(payload.get("prior_errors") or []),
                 "relevant_decisions": len(payload.get("relevant_decisions") or []),
+                "prior_type_counts": prior_type_counts(payload),
                 "prior_total": count_prior_items(payload),
+                "forbidden_leakage_count": sum(1 for leaked in leaks.values() if leaked),
                 "must_contain": contains,
                 "must_not_contain": leaks,
                 "expect_priors": ticket.expect_priors,
@@ -331,6 +398,7 @@ def main() -> int:
     question_facts = list_workflow_questions()
     sessions = [r["session_id"] for r in runs]
     ticket_fact_ids = [r["ticket_fact_id"] for r in runs]
+    measurements = summarize_runs(runs)
 
     invariants = {
         "every_run_has_session": all(isinstance(s, str) and s.startswith("session-") for s in sessions),
@@ -350,6 +418,9 @@ def main() -> int:
             r["prior_total"] == 0 for r in runs if not r["expect_priors"]
         ),
         "every_run_has_search_hit": all(r["search_hits"] >= 1 for r in runs),
+        "forbidden_leakage_total_is_zero": measurements["forbidden_leakage_total"] == 0,
+        "p95_latency_under_5s": measurements["latency_ms"]["p95"] < 5_000,
+        "max_context_under_12k_chars": measurements["context_chars"]["max"] < 12_000,
     }
 
     out = {
@@ -357,6 +428,7 @@ def main() -> int:
         "store": STORE,
         "seed_count": len(seed_ids),
         "runs": runs,
+        "measurements": measurements,
         "question_facts": [
             {
                 "id": f.get("id"),
