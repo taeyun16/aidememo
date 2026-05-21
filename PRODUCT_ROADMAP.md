@@ -21,6 +21,7 @@ or benchmark-specific `RESULTS.md` files; keep user-facing product work here.
 | P0.2 | done | Cross-system validation is not packaged | A `gbrain-evals` adapter exists, matches the current Adapter interface, and has fresh-checkout scorecards for direct and daemon modes | direct bm25: P@5 17.4%, R@5 64.1%, 125/261, real 63.38s; daemon bm25: same score, real 11.04s (5.7x faster); daemon hybrid: R@5 62.5%, real 45.64s |
 | P0.2a | done | `gbrain-evals` adapter still pays per-query CLI spawn even after daemon work | Adapter supports `WG_ADAPTER_BACKEND=auto|cli|napi`; `napi` uses `wg-napi` in process while preserving CLI/daemon baselines | Temp Bun harness, 30 BM25 queries: CLI p50 124.55 ms / p95 132.08 ms; NAPI p50 0.02 ms / p95 0.03 ms; both returned top=`redis` |
 | P0.2b | done | Native adapter speedup was only fixture-level, not public-runner validated | Fresh `gbrain-evals` BrainBench scorecard runs with `WG_ADAPTER_BACKEND=napi` and daemon baseline on the same checkout | `gbrain-evals@89445dd`, `BRAINBENCH_N=1`: NAPI bm25 P@5 17.4%, R@5 64.1%, 125/261, real 6.48s; daemon bm25 same score, real 10.77s; NAPI 1.66x faster |
+| P0.2c | done | External users still need a local `wg-napi` build for the native adapter | `wg-napi` artifact workflow builds/test/packs platform packages and uploads tarballs; local pack smoke verifies package contents | `scripts/wg-napi-pack-smoke.sh`: `npm run build`, `npm test`, `npm pack`; tarball contains `index.js`, `index.d.ts`, and platform `.node`; `.github/workflows/wg-napi-artifacts.yml` covers Ubuntu/macOS/Windows |
 | P0.3 | done | Capture quality is not measured | Pending approval rate and extraction precision can be computed from one JSONL log | `wg pending stats --from LOG --json` returns total/count-by-type/confidence histogram |
 | P1.1 | done | First-run setup requires several commands | One command prints or applies init + MCP install + skill install for a target agent | `wg init --agent codex --no-ingest PATH --json` reports steps and elapsed ms |
 | P1.2 | done | Shared daemon is operational but opaque | HTTP MCP exposes health/sync/admin status without exposing secrets | `curl /health` and `curl /admin/status` return request count, store path, auth mode, sync cursors |
@@ -48,7 +49,7 @@ now validates that doctor view against actual CLI/MCP/Hermes workflow traces.
 
 Next measurement candidates:
 1. Hide a future daemon/socket broker behind auto-discovery only if higher-concurrency writes make serverless retry feel slow.
-2. Package/publish `wg-napi` artifacts so external `gbrain-evals` users can run the native backend without a local build.
+2. Turn the `wg-napi` artifact workflow into an npm publish path once package ownership/token policy is set.
 3. Add CI runtime tracking for `workflow-release-smoke` if it becomes flaky or exceeds the 10-minute budget.
 
 ## Positioning Guardrails

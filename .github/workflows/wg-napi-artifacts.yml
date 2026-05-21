@@ -1,0 +1,78 @@
+name: wg-napi artifacts
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "wg-napi-v*"
+
+concurrency:
+  group: wg-napi-artifacts-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  CARGO_NET_RETRY: 10
+  CARGO_NET_GIT_FETCH_WITH_CLI: true
+  RUSTUP_MAX_RETRIES: 10
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.95.0
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: wg-napi-${{ matrix.os }}-v1
+
+      - name: install npm deps
+        working-directory: crates/wg-napi
+        run: npm install
+
+      - name: build native package
+        working-directory: crates/wg-napi
+        run: npm run build
+
+      - name: smoke test
+        working-directory: crates/wg-napi
+        run: npm test
+
+      - name: npm pack
+        working-directory: crates/wg-napi
+        shell: bash
+        run: |
+          rm -f wg-napi-*.tgz
+          npm pack --json
+          tar -tzf wg-napi-*.tgz | grep -E 'package/(index\.js|index\.d\.ts|wg-napi\..*\.node)$'
+
+      - name: upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: wg-napi-${{ matrix.os }}
+          path: |
+            crates/wg-napi/wg-napi-*.tgz
+            crates/wg-napi/*.node
+            crates/wg-napi/index.js
+            crates/wg-napi/index.d.ts
+          if-no-files-found: error
+          retention-days: 14

@@ -12,6 +12,7 @@ adding scratch note files.
 | `openai_check.sh` | Quick OpenAI-compatible API smoke. |
 | `bench-agent-ux.sh` | Small agent-memory UX regression: Rust check, Hermes tests, and zero-token multi-agent scenarios. |
 | `workflow-release-smoke.sh` | Release-oriented workflow memory smoke: builds `wg`, runs Scenario F + I, then asserts `wg doctor --json` workflow readiness on a fixture store. |
+| `wg-napi-pack-smoke.sh` | Build, test, and `npm pack` the local `wg-napi` package, then verify the tarball contains JS, types, and the platform `.node` binary. |
 
 ## Install And Hermes
 

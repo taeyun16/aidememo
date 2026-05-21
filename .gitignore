@@ -29,6 +29,7 @@ __pycache__/
 # Node bindings — built artifacts
 crates/wg-napi/node_modules/
 crates/wg-napi/package-lock.json
+crates/wg-napi/*.tgz
 crates/wg-napi/*.node
 crates/wg-napi/index.js
 crates/wg-napi/index.d.ts

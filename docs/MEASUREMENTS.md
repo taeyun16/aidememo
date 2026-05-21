@@ -183,6 +183,13 @@ Fresh-checkout BrainBench scorecard, `garrytan/gbrain-evals@89445dd`,
 NAPI preserves score parity and is `1.66x` faster than the daemon baseline
 (`9.78x` faster than the historical direct CLI `63.38 s` run).
 
+Packaging readiness:
+
+| Command / workflow | Result |
+|---|---|
+| `scripts/wg-napi-pack-smoke.sh` | Builds release addon, runs `npm test`, runs `npm pack`, and verifies `index.js`, `index.d.ts`, and the platform `.node` binary are present. Local macOS arm64 tarball: `wg-napi-0.1.0.tgz`, 2.78 MB packed. |
+| `.github/workflows/wg-napi-artifacts.yml` | Manual/tag workflow builds, tests, packs, and uploads `wg-napi` artifacts on Ubuntu, macOS, and Windows. |
+
 ## Historical Notes
 
 The old scratch-note directory was intentionally removed to keep the repository
