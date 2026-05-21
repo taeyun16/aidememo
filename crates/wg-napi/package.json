@@ -15,9 +15,18 @@
   },
   "files": [
     "index.js",
-    "index.d.ts",
-    "*.node"
+    "index.d.ts"
   ],
+  "optionalDependencies": {
+    "wg-napi-darwin-arm64": "0.1.0",
+    "wg-napi-darwin-x64": "0.1.0",
+    "wg-napi-linux-arm64-gnu": "0.1.0",
+    "wg-napi-linux-x64-gnu": "0.1.0",
+    "wg-napi-win32-x64-msvc": "0.1.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "license": "MIT OR Apache-2.0",
   "engines": {
     "node": ">= 16"

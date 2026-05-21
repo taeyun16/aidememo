@@ -173,7 +173,7 @@ parallel.
 | Hermes two-process serverless shared store, retry `5000` | 20/20 writes persisted, 0 lock errors |
 | Serverless lock-retry sweep, retry `5000` | smooth through 4 writers; 8 writers persisted 79/80 |
 | HTTP shared `mcp-serve`, 2 clients x 10 writes | p50 `18.4ms`, p95 `41.8ms`, 20/20 persisted |
-| `wg-napi` publish dry-run | payload validated: JS, types, package metadata, current-platform `.node` |
+| `wg-napi` package split | root JS/types package + current-platform optional package install smoke passed |
 
 See [`docs/MEASUREMENTS.md`](docs/MEASUREMENTS.md) for methodology, commands,
 and caveats. The short version: `wg` should lead with operational simplicity

@@ -1,0 +1,31 @@
+{
+  "name": "wg-napi-linux-x64-gnu",
+  "version": "0.1.0",
+  "description": "Linux x64 glibc native binding for wg-napi",
+  "main": "wg-napi.linux-x64-gnu.node",
+  "files": [
+    "wg-napi.linux-x64-gnu.node"
+  ],
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "libc": [
+    "glibc"
+  ],
+  "license": "MIT OR Apache-2.0",
+  "homepage": "https://github.com/taeyun16/wg#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/taeyun16/wg.git",
+    "directory": "crates/wg-napi/npm/wg-napi-linux-x64-gnu"
+  },
+  "bugs": {
+    "url": "https://github.com/taeyun16/wg/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

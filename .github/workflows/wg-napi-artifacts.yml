@@ -45,25 +45,9 @@ jobs:
         with:
           shared-key: wg-napi-${{ matrix.os }}-v1
 
-      - name: install npm deps
-        working-directory: crates/wg-napi
-        run: npm install
-
-      - name: build native package
-        working-directory: crates/wg-napi
-        run: npm run build
-
-      - name: smoke test
-        working-directory: crates/wg-napi
-        run: npm test
-
-      - name: npm pack
-        working-directory: crates/wg-napi
+      - name: pack smoke
         shell: bash
-        run: |
-          rm -f wg-napi-*.tgz
-          npm pack --json
-          tar -tzf wg-napi-*.tgz | grep -E 'package/(index\.js|index\.d\.ts|wg-napi\..*\.node)$'
+        run: scripts/wg-napi-pack-smoke.sh
 
       - name: upload package
         uses: actions/upload-artifact@v4
@@ -71,7 +55,9 @@ jobs:
           name: wg-napi-${{ matrix.os }}
           path: |
             crates/wg-napi/wg-napi-*.tgz
+            crates/wg-napi/npm/*/*.tgz
             crates/wg-napi/*.node
+            crates/wg-napi/npm/**/*.node
             crates/wg-napi/index.js
             crates/wg-napi/index.d.ts
           if-no-files-found: error
