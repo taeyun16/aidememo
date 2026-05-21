@@ -129,7 +129,8 @@ synthetic wiki, p95 latency, default config:
 P3.5 adds a `workflow` block and P2.5 adds a separate `sharing` block to
 `wg doctor --json` so sparse ticket automation and shared-store ergonomics are
 visible without manually inspecting agent configs, fact lists, or benchmark
-notes. The stable workflow contract is:
+notes. P2.6 threads the same `sharing` contract through MCP `wg_doctor`, so
+agents can see it without shelling out. The stable workflow contract is:
 
 | Field | Meaning |
 |---|---|
@@ -156,6 +157,7 @@ Validation:
 | `cargo test -p wg-cli doctor` | 25 passed; workflow unit tests cover ready/count/hints, sharing unit tests cover retry advisory behaviour, and integration tests cover the JSON `sharing` contract. |
 | `cargo test -p wg-cli doctor_json_includes_workflow_readiness_hints` | fixture CLI smoke validates JSON `workflow.ready`, `recent_ticket_count`, and actionable hints. |
 | `cargo test -p wg-cli doctor_json_includes_shared_store_guidance` | fixture CLI smoke validates JSON `sharing.lock_retry_ms`, `serverless_recommended_writers=4`, `daemon.state`, `recommended_mode`, and actionable hints. |
+| `cargo test -p wg-cli doctor_groups_by_code_with_action_hints` | MCP `wg_doctor` unit validates lint grouping plus `sharing.serverless_recommended_writers=4`, `recommended_mode=serverless_fail_fast`, and `sharing_retry_disabled`. |
 | `python3 bench/multi-agent/scenario_i_workflow_doctor.py` | 10/10 invariants; CLI/MCP/Hermes each created a workflow ticket; doctor reported `workflow.ready=true`, `recent_ticket_count=3`, and no false no-MCP/no-recent-ticket hints. |
 | `python3 bench/multi-agent/scenario_j_lock_retry_sweep.py` | 7/7 invariants; `store.lock_retry_ms=5000` stayed smooth through 4 concurrent serverless writers and mostly recovered 8-writer contention. |
 | `scripts/workflow-release-smoke.sh` | Bundles Scenario F + I plus a fresh fixture `wg doctor --json` assert for release checks. Latest run: Scenario F 13/13, Scenario I 10/10, fixture doctor `workflow_ready=true`, `recent_ticket_count=1`, total 15.13s. |

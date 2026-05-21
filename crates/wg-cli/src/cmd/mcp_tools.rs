@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use wg_core::WikiGraph;
 
+use crate::cmd::doctor::collect_sharing_status;
+
 pub const PROTOCOL_VERSION: &str = "2025-06-18";
 pub const SERVER_NAME: &str = "wg";
 pub const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -1097,6 +1099,7 @@ fn tool_overview(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, Strin
 fn tool_doctor(wiki: &WikiGraph) -> Result<ToolCallResult, String> {
     let issues = wiki.lint().map_err(|e| e.to_string())?;
     let stats = wiki.stats().map_err(|e| e.to_string())?;
+    let sharing = collect_sharing_status(wiki.store_path(), wiki.config());
     // Group issues by code so an agent can triage "I have 5 conflicts
     // to fix" without scanning the full issue list. Each group gets
     // an action hint pointing at the right next tool — gives the agent
@@ -1120,6 +1123,7 @@ fn tool_doctor(wiki: &WikiGraph) -> Result<ToolCallResult, String> {
         "stats": stats,
         "issue_count": issues.len(),
         "by_code": by_code,
+        "sharing": sharing,
         "issues": issues,
     });
     let text = serde_json::to_string_pretty(&payload).map_err(|e| e.to_string())?;
@@ -3227,7 +3231,7 @@ pub fn list_tools() -> Vec<Tool> {
         },
         Tool {
             name: "wg_doctor".into(),
-            description: "Wiki health check: counts plus any lint issues (orphans, broken refs, stale facts). Call this first if results look wrong."
+            description: "Wiki health check: counts, lint issues, and shared-store ergonomics. The `sharing` block reports lock_retry_ms, daemon state, the measured serverless writer envelope, and concrete retry/daemon hints. Call this first if results look wrong or multiple agents share one store."
                 .into(),
             input_schema: json!({"type": "object", "properties": {}}),
         },
@@ -4282,6 +4286,20 @@ mod tests {
                 .unwrap_or("")
                 .contains("relations"),
             "action hint should explain how to resolve an orphan",
+        );
+        assert_eq!(payload["sharing"]["serverless_recommended_writers"], 4);
+        assert_eq!(
+            payload["sharing"]["recommended_mode"],
+            "serverless_fail_fast"
+        );
+        let sharing_hints = payload["sharing"]["hints"]
+            .as_array()
+            .expect("sharing hints present");
+        assert!(
+            sharing_hints
+                .iter()
+                .any(|h| h["code"] == "sharing_retry_disabled"),
+            "MCP doctor should carry retry guidance: {sharing_hints:?}"
         );
     }
 

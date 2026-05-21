@@ -569,7 +569,7 @@ pub(crate) struct SharingHint {
     pub action: String,
 }
 
-fn collect_sharing_status(store_path: &Path, config: &Config) -> SharingReport {
+pub(crate) fn collect_sharing_status(store_path: &Path, config: &Config) -> SharingReport {
     let daemon = match daemon::registry_state(store_path) {
         RegistryState::Healthy(reg) => DaemonStatus {
             state: "healthy",

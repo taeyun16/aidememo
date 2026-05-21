@@ -365,7 +365,7 @@ should lead with the core 4; the rest are there when needed.
 | `wg_recent` | Last N days of facts. |
 | `wg_overview` | First-impression snapshot for an unfamiliar wiki — entity-type buckets, top centrals, recent activity. |
 | `wg_traverse` | Walk the graph from a known entity. `direction:"reverse"` for "what depends on X". |
-| `wg_doctor` | Health snapshot — counts + lint issues + per-code action hints. |
+| `wg_doctor` | Health snapshot — counts + lint issues + per-code action hints + shared-store `sharing` guidance (`lock_retry_ms`, daemon state, serverless writer envelope). |
 | `wg_entity_get` | Fetch one entity (name / alias). |
 | `wg_fact_get` | Fetch one fact by ULID. |
 | `wg_entity_list` | Browse entities. |

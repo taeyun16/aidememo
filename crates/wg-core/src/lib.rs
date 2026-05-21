@@ -1855,6 +1855,11 @@ impl WikiGraph {
     pub fn config(&self) -> &Config {
         &self.config
     }
+
+    /// Get the redb store path captured when this graph was opened.
+    pub fn store_path(&self) -> &std::path::Path {
+        &self.store_path
+    }
 }
 
 struct EntityTypeBucketAcc {

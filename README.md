@@ -187,7 +187,7 @@ and temporal memory semantics, not a SOTA benchmark claim.
 | Time | `supersede`, `current_only`, `as_of`, archive / cold tier |
 | Agent tools | 25 MCP tools including `wg_workflow_start`, `wg_context`, `wg_query`, `wg_aggregate`, `wg_fact_add_many` |
 | Capture | `wg_extract`, pending review queue, `wg pending list/stats/approve/reject` |
-| Ops | `doctor`, `overview`, `bench`, `vector-rebuild`, `consolidate`, `auto-relate` |
+| Ops | `doctor` / MCP `wg_doctor`, `overview`, `bench`, `vector-rebuild`, `consolidate`, `auto-relate` |
 | Sharing | `source_id`, multi-project stores, stdio MCP, HTTP/SSE MCP, daemon discovery |
 | Bindings | Python, Node, Elixir, C |
 
