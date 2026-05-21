@@ -235,6 +235,7 @@ Packaging readiness:
 
 | Command / workflow | Result |
 |---|---|
+| `scripts/wg-napi-version.sh` | Version gate for root + platform package graph. With no args, verifies all versions and root `optionalDependencies`; with a semver arg, updates every package. Latest run: `0.1.0` pinned across 5 platform packages; temp-copy bump to `0.1.1` updated root, platform packages, and optionalDependency pins. |
 | `scripts/wg-napi-pack-smoke.sh` | Builds release addon, runs `npm test`, packs root `wg-napi`, packs the current platform package, then installs both tarballs into a temp project and verifies `require("wg-napi").version()`. Local macOS arm64: root `wg-napi-0.1.0.tgz` is 2.75 KB / 3 files / no `.node`; platform `wg-napi-darwin-arm64-0.1.0.tgz` is 2.78 MB / 2 files / includes `wg-napi.darwin-arm64.node`. |
 | `scripts/wg-napi-publish.sh` | Shared publish engine. `WG_NAPI_PUBLISH_MODE=dry-run|publish`, `WG_NAPI_PUBLISH_SCOPE=platform|root|both`, and optional `WG_NAPI_EXPECT_VERSION` gate both local and CI release flows. Local dry-run passed for all three scopes. |
 | `scripts/wg-napi-publish-dry-run.sh` | Wrapper around the publish engine with `WG_NAPI_PUBLISH_MODE=dry-run`. Local macOS arm64: root payload `wg-napi@0.1.0`, 3 files, 2.75 KB packed; platform payload `wg-napi-darwin-arm64@0.1.0`, 2 files, 2.78 MB packed. |

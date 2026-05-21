@@ -12,6 +12,7 @@ adding scratch note files.
 | `openai_check.sh` | Quick OpenAI-compatible API smoke. |
 | `bench-agent-ux.sh` | Small agent-memory UX regression: Rust check, Hermes tests, and zero-token multi-agent scenarios. |
 | `workflow-release-smoke.sh` | Release-oriented workflow memory smoke: builds `wg`, runs Scenario F + I, then asserts `wg doctor --json` workflow readiness on a fixture store. |
+| `wg-napi-version.sh` | Verify or update every `wg-napi` npm package version: root package, platform packages, and root `optionalDependencies`. |
 | `wg-napi-pack-smoke.sh` | Build, test, pack root `wg-napi`, pack the current platform package, then install both tarballs and verify `require("wg-napi")` resolves through the platform optional dependency. |
 | `wg-napi-publish.sh` | Shared npm publish engine for root/platform `wg-napi` packages. Defaults to dry-run; set `WG_NAPI_PUBLISH_MODE=publish` only from the trusted-publisher workflow. |
 | `wg-napi-publish-dry-run.sh` | Build, test, and `npm publish --dry-run --access public` root + current platform packages, verifying root excludes `.node` and the platform payload includes exactly one `.node`. |

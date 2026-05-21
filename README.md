@@ -174,6 +174,7 @@ parallel.
 | Serverless lock-retry sweep, retry `5000` | smooth through 4 writers; 8 writers persisted 79/80 |
 | HTTP shared `mcp-serve`, 2 clients x 10 writes | p50 `18.4ms`, p95 `41.8ms`, 20/20 persisted |
 | `wg-napi` package split | root JS/types package + current-platform optional package install smoke passed |
+| `wg-napi` version gate | root/platform package versions and optionalDependency pins verified together |
 | `wg-napi` publish workflow | trusted-publisher workflow defaults to dry-run and gates real publish on exact version input |
 
 See [`docs/MEASUREMENTS.md`](docs/MEASUREMENTS.md) for methodology, commands,

@@ -37,6 +37,7 @@ fi
 cd "$NAPI_DIR"
 
 run npm install
+run "$ROOT_DIR/scripts/wg-napi-version.sh"
 run npm run build
 run npm test
 
