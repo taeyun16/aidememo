@@ -1,0 +1,47 @@
+name: wg-napi publish dry-run
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "wg-napi-v*"
+
+concurrency:
+  group: wg-napi-publish-dry-run-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  CARGO_NET_RETRY: 10
+  CARGO_NET_GIT_FETCH_WITH_CLI: true
+  RUSTUP_MAX_RETRIES: 10
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  dry-run:
+    name: npm publish dry-run
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.95.0
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: wg-napi-publish-dry-run-v1
+
+      - name: publish dry-run
+        run: scripts/wg-napi-publish-dry-run.sh

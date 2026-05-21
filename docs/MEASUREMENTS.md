@@ -236,7 +236,16 @@ Packaging readiness:
 | Command / workflow | Result |
 |---|---|
 | `scripts/wg-napi-pack-smoke.sh` | Builds release addon, runs `npm test`, runs `npm pack`, and verifies `index.js`, `index.d.ts`, and the platform `.node` binary are present. Local macOS arm64 tarball: `wg-napi-0.1.0.tgz`, 2.78 MB packed. |
+| `scripts/wg-napi-publish-dry-run.sh` | Builds release addon, runs `npm test`, then runs `npm publish --dry-run --access public --json`. Local macOS arm64 payload: `wg-napi@0.1.0`, 4 files, 2.79 MB packed, includes `index.js`, `index.d.ts`, `package.json`, and `wg-napi.darwin-arm64.node`. |
 | `.github/workflows/wg-napi-artifacts.yml` | Manual/tag workflow builds, tests, packs, and uploads `wg-napi` artifacts on Ubuntu, macOS, and Windows. |
+| `.github/workflows/wg-napi-publish-dry-run.yml` | Manual/tag workflow runs the publish dry-run on Ubuntu with `id-token: write` reserved for the later trusted-publisher publish path. |
+
+Publish caveat: the dry-run intentionally validates the current platform package
+shape only. The generated NAPI loader can fall back to platform packages such
+as `wg-napi-darwin-arm64` and `wg-napi-linux-x64-gnu`, but the root
+`wg-napi` package does not yet declare/publish those optional dependencies.
+Real cross-platform npm release should split the wrapper and platform packages
+instead of publishing one platform's `.node` binary as the whole package.
 
 ## Historical Notes
 
