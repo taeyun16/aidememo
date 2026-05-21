@@ -19,6 +19,7 @@ or benchmark-specific `RESULTS.md` files; keep user-facing product work here.
 |---|---|---|---|---|
 | P0.1 | done | Capture inbox is TUI-only, hard to automate | `wg pending list/approve/reject` work non-interactively; JSON includes `count`, `selected`, `committed`, `discarded`, `failed`, `remaining` | `cargo test -p wg-cli pending::` plus a CLI smoke with a temp pending log |
 | P0.2 | done | Cross-system validation is not packaged | A `gbrain-evals` adapter exists, matches the current Adapter interface, and has fresh-checkout scorecards for direct and daemon modes | direct bm25: P@5 17.4%, R@5 64.1%, 125/261, real 63.38s; daemon bm25: same score, real 11.04s (5.7x faster); daemon hybrid: R@5 62.5%, real 45.64s |
+| P0.2a | done | `gbrain-evals` adapter still pays per-query CLI spawn even after daemon work | Adapter supports `WG_ADAPTER_BACKEND=auto|cli|napi`; `napi` uses `wg-napi` in process while preserving CLI/daemon baselines | Temp Bun harness, 30 BM25 queries: CLI p50 124.55 ms / p95 132.08 ms; NAPI p50 0.02 ms / p95 0.03 ms; both returned top=`redis` |
 | P0.3 | done | Capture quality is not measured | Pending approval rate and extraction precision can be computed from one JSONL log | `wg pending stats --from LOG --json` returns total/count-by-type/confidence histogram |
 | P1.1 | done | First-run setup requires several commands | One command prints or applies init + MCP install + skill install for a target agent | `wg init --agent codex --no-ingest PATH --json` reports steps and elapsed ms |
 | P1.2 | done | Shared daemon is operational but opaque | HTTP MCP exposes health/sync/admin status without exposing secrets | `curl /health` and `curl /admin/status` return request count, store path, auth mode, sync cursors |
@@ -41,9 +42,9 @@ plugin. `wg doctor --json` now exposes workflow readiness, recent workflow
 tickets, and actionable setup hints for sparse ticket automation.
 
 Next measurement candidates:
-1. Reduce P0.2 adapter overhead further with `wg-napi` to remove per-query CLI spawn.
-2. Hide a future daemon/socket broker behind auto-discovery only if higher-concurrency writes make serverless retry feel slow.
-3. Add a fixture-backed workflow readiness benchmark that creates tickets through CLI, MCP, and Hermes, then validates `wg doctor --json` against all three traces.
+1. Hide a future daemon/socket broker behind auto-discovery only if higher-concurrency writes make serverless retry feel slow.
+2. Add a fixture-backed workflow readiness benchmark that creates tickets through CLI, MCP, and Hermes, then validates `wg doctor --json` against all three traces.
+3. Run the full fresh-checkout `gbrain-evals` scorecard with `WG_ADAPTER_BACKEND=napi` and record real wall-clock speedup against the daemon baseline.
 
 ## Positioning Guardrails
 

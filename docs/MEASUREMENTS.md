@@ -142,6 +142,22 @@ Validation:
 | `cargo test -p wg-cli doctor` | 22 passed; workflow unit tests cover ready/count/hints. |
 | `cargo test -p wg-cli doctor_json_includes_workflow_readiness_hints` | fixture CLI smoke validates JSON `workflow.ready`, `recent_ticket_count`, and actionable hints. |
 
+## GBrain Adapter Native Backend
+
+The `gbrain-evals` scaffold now supports `WG_ADAPTER_BACKEND=auto|cli|napi`.
+The native path imports `wg-napi` in process and keeps the existing CLI and
+daemon paths as baselines.
+
+Local Bun-shaped fixture, 3 pages, 30 repeated BM25 queries:
+
+| Backend | Top Hit | p50 | p95 |
+|---|---|---:|---:|
+| CLI | `redis` | 124.55 ms | 132.08 ms |
+| NAPI | `redis` | 0.02 ms | 0.03 ms |
+
+This is a scaffold-level latency check, not the full public `gbrain-evals`
+scorecard. Record full runner wall time separately when re-running BrainBench.
+
 ## Historical Notes
 
 The old scratch-note directory was intentionally removed to keep the repository

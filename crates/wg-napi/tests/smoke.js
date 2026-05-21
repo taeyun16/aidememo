@@ -38,12 +38,13 @@ function main() {
       entityIds: [eidRedis],
       factType: 'decision',
       tags: ['ha'],
+      sourceId: 'alpha',
       confidence: 0.9,
     });
     const fact = JSON.parse(g.factGet(fid));
     if (!fact.content.startsWith('Redis Sentinel')) throw new Error('fact content mismatch');
 
-    const facts = JSON.parse(g.factList({ entity: 'Redis', limit: 10 }));
+    const facts = JSON.parse(g.factList({ entity: 'Redis', limit: 10, sourceId: 'alpha' }));
     if (facts.length !== 1) throw new Error(`expected 1 fact, got ${facts.length}`);
 
     // Batch insert — single redb write txn for the whole array.
@@ -67,7 +68,7 @@ function main() {
 
     // Search (BM25 + semantic — semantic may no-op without model, but must dispatch)
     try {
-      const hits = JSON.parse(g.search('high availability', { limit: 5 }));
+      const hits = JSON.parse(g.search('high availability', { limit: 5, bm25Only: true, sourceId: 'alpha' }));
       console.log(`search hits: ${hits.length}`);
     } catch (e) {
       console.log(`search skipped: ${e.message}`);

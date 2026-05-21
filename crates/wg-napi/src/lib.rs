@@ -39,16 +39,7 @@ fn parse_entity_type(value: &str) -> Option<EntityType> {
 }
 
 fn parse_fact_type(value: &str) -> Option<FactType> {
-    match value.to_lowercase().as_str() {
-        "decision" | "decide" => Some(FactType::Decision),
-        "pattern" => Some(FactType::Pattern),
-        "convention" => Some(FactType::Convention),
-        "claim" | "assertion" => Some(FactType::Claim),
-        "note" | "notes" => Some(FactType::Note),
-        "question" | "query" => Some(FactType::Question),
-        "" | "unknown" => Some(FactType::Unknown),
-        _ => None,
-    }
+    Some(FactType::parse(value))
 }
 
 fn parse_direction(value: Option<String>) -> TraverseDirection {
@@ -76,6 +67,9 @@ pub struct SearchArgs {
     pub limit: Option<u32>,
     pub min_confidence: Option<f64>,
     pub current_only: Option<bool>,
+    pub source_id: Option<String>,
+    pub as_of: Option<f64>,
+    pub bm25_only: Option<bool>,
 }
 
 #[napi(object)]
@@ -89,6 +83,7 @@ pub struct QueryArgs {
     /// Skip the embedding-model load — pure BM25. Cuts cold-start
     /// latency at the cost of semantic recall.
     pub bm25_only: Option<bool>,
+    pub source_id: Option<String>,
 }
 
 #[napi(object)]
@@ -118,6 +113,7 @@ pub struct FactAddArgs {
     pub fact_type: Option<String>,
     pub tags: Option<Vec<String>>,
     pub source: Option<String>,
+    pub source_id: Option<String>,
     pub confidence: Option<f64>,
 }
 
@@ -129,6 +125,7 @@ pub struct FactAddManyItem {
     pub fact_type: Option<String>,
     pub tags: Option<Vec<String>>,
     pub source: Option<String>,
+    pub source_id: Option<String>,
     pub confidence: Option<f64>,
 }
 
@@ -137,6 +134,7 @@ pub struct FactListArgs {
     pub entity: Option<String>,
     pub fact_type: Option<String>,
     pub min_confidence: Option<f64>,
+    pub source_id: Option<String>,
     pub limit: Option<u32>,
     pub current_only: Option<bool>,
 }
@@ -168,11 +166,17 @@ impl WgStore {
             limit: None,
             min_confidence: None,
             current_only: None,
+            source_id: None,
+            as_of: None,
+            bm25_only: None,
         });
         let opts = SearchOpts {
             limit: args.limit.map(|v| v as usize),
             min_confidence: args.min_confidence.map(|v| v as f32),
+            source_id: args.source_id,
             current_only: args.current_only.unwrap_or(false),
+            as_of: args.as_of.map(|v| v as u64),
+            bm25_only: args.bm25_only.unwrap_or(false),
             ..Default::default()
         };
         let results = self.wiki.hybrid_search(&query, opts).map_err(err)?;
@@ -188,6 +192,7 @@ impl WgStore {
             current_only: None,
             mode: None,
             bm25_only: None,
+            source_id: None,
         });
         let opts = QueryOpts {
             search_limit: args.limit.unwrap_or(10) as usize,
@@ -201,6 +206,7 @@ impl WgStore {
                 .map(wg_core::QueryMode::parse)
                 .unwrap_or_default(),
             bm25_only: args.bm25_only.unwrap_or(false),
+            source_id: args.source_id,
         };
         let result = self.wiki.query(&topic, opts).map_err(err)?;
         to_json(&result)
@@ -300,6 +306,7 @@ impl WgStore {
             fact_type: None,
             tags: None,
             source: None,
+            source_id: None,
             confidence: None,
         });
         let entity_ids = match args.entity_ids {
@@ -316,6 +323,7 @@ impl WgStore {
             entity_ids,
             tags: args.tags,
             source: args.source,
+            source_id: args.source_id,
             source_confidence: args.confidence.map(|v| v as f32),
             observed_at: None,
         };
@@ -344,6 +352,7 @@ impl WgStore {
                 entity_ids,
                 tags: item.tags,
                 source: item.source,
+                source_id: item.source_id,
                 source_confidence: item.confidence.map(|v| v as f32),
                 observed_at: None,
             });
@@ -365,6 +374,7 @@ impl WgStore {
             entity: None,
             fact_type: None,
             min_confidence: None,
+            source_id: None,
             limit: None,
             current_only: None,
         });
@@ -376,6 +386,7 @@ impl WgStore {
             fact_type: args.fact_type.as_deref().and_then(parse_fact_type),
             entity_id,
             min_confidence: args.min_confidence.map(|v| v as f32),
+            source_id: args.source_id,
             limit: args.limit.map(|v| v as usize),
             offset: 0,
             since: None,

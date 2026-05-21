@@ -125,5 +125,36 @@ Notes:
   time is mostly redb open / process-local setup overhead.
 - The daemon adapter still shells out once per query, but the expensive store
   and model state live in `wg mcp-serve`.
-- `wg-napi` can still reduce overhead further by removing per-query CLI process
-  spawn.
+- Follow-up implementation note: `WG_ADAPTER_BACKEND=auto|napi|cli` now lets
+  the scaffold use `wg-napi` in process when the native package is available,
+  removing per-query CLI spawn while preserving the previous CLI and daemon
+  baselines for apples-to-apples comparisons. Fresh gbrain-evals scorecards
+  should record `WG_ADAPTER_BACKEND` and `WG_NAPI_MODULE` alongside the existing
+  knobs.
+
+## 2026-05-21 — Native Backend Adapter Smoke
+
+This is a local fixture smoke for the adapter scaffold, not the full public
+BrainBench scorecard. It verifies that the copied `wg-adapter.ts` can run both
+the preserved CLI backend and the new native `wg-napi` backend against the same
+Bun-shaped harness.
+
+Setup:
+
+- `wg-napi`: `npm install && npm run build`
+- CLI binary: `/Users/mixlink/dev/wg/target/debug/wg`
+- Adapter mode: `WG_ADAPTER_MODE=bm25`
+- Fixture: 3 markdown pages, 30 repeated queries for
+  `high availability cache failover`
+
+Result:
+
+| Backend | Queries | Top Hit | p50 | p95 |
+|---|---:|---|---:|---:|
+| `WG_ADAPTER_BACKEND=cli` | 30 | `redis` | 124.55 ms | 132.08 ms |
+| `WG_ADAPTER_BACKEND=napi` | 30 | `redis` | 0.02 ms | 0.03 ms |
+
+Interpretation: the native path removes the per-query CLI process spawn and
+store open overhead on this small fixture. The next validation step is the full
+fresh-checkout `gbrain-evals` scorecard with `WG_ADAPTER_BACKEND=napi`; that
+will measure end-to-end wall time under the public runner.

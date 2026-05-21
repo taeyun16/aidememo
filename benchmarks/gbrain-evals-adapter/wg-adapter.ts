@@ -11,13 +11,29 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { Adapter, AdapterConfig, BrainState, Page, Query, RankedDoc } from "../types.ts";
 
+declare const require: ((id: string) => any) | undefined;
+
+type WgBackend = "cli" | "napi";
+
+type WgNativeStore = {
+  ingest(wikiRoot: string, incremental?: boolean): string;
+  search(query: string, args?: {
+    limit?: number;
+    currentOnly?: boolean;
+    bm25Only?: boolean;
+    asOf?: number;
+  }): string;
+};
+
 type WgState = {
   root: string;
   wikiRoot: string;
   store: string;
   wgBin: string;
+  backend: WgBackend;
   mode: "bm25" | "hybrid";
   sourceToSlug: Map<string, string>;
+  nativeStore?: WgNativeStore;
   daemonUrl?: string;
   daemonProc?: ReturnType<typeof Bun.spawn>;
 };
@@ -139,6 +155,31 @@ function parseRows(raw: string): WgSearchRow[] {
   return [];
 }
 
+function loadNativeStore(store: string): WgNativeStore | undefined {
+  if (typeof require !== "function") return undefined;
+  const moduleName = process.env.WG_NAPI_MODULE ?? "wg-napi";
+  try {
+    const mod = require(moduleName);
+    if (typeof mod?.WgStore !== "function") return undefined;
+    return new mod.WgStore(store) as WgNativeStore;
+  } catch {
+    return undefined;
+  }
+}
+
+function requestedBackend(): "auto" | WgBackend {
+  const raw = process.env.WG_ADAPTER_BACKEND ?? "auto";
+  if (raw === "napi" || raw === "cli" || raw === "auto") return raw;
+  throw new Error(`unsupported WG_ADAPTER_BACKEND=${raw}; expected auto, cli, or napi`);
+}
+
+function asOfMs(value: string | undefined): number | undefined {
+  if (!value || value === "corpus-end" || value === "per-source") return undefined;
+  const ms = Date.parse(value);
+  if (Number.isNaN(ms)) throw new Error(`invalid as_of_date: ${value}`);
+  return ms;
+}
+
 export class WgAdapter implements Adapter {
   readonly name = "wg";
 
@@ -150,18 +191,32 @@ export class WgAdapter implements Adapter {
     const sourceToSlug = writePages(wikiRoot, rawPages);
 
     const wgBin = process.env.WG_BIN ?? "wg";
-    run([wgBin, "--store", store, "ingest", wikiRoot]);
+    const backendRequest = requestedBackend();
+    const nativeStore = backendRequest === "cli" ? undefined : loadNativeStore(store);
+    if (backendRequest === "napi" && !nativeStore) {
+      throw new Error(
+        "WG_ADAPTER_BACKEND=napi requested but wg-napi could not be loaded. Set WG_NAPI_MODULE to the built package path.",
+      );
+    }
+
+    if (nativeStore) {
+      nativeStore.ingest(wikiRoot, false);
+    } else {
+      run([wgBin, "--store", store, "ingest", wikiRoot]);
+    }
 
     const state: WgState = {
       root,
       wikiRoot,
       store,
       wgBin,
+      backend: nativeStore ? "napi" : "cli",
       mode: process.env.WG_ADAPTER_MODE === "bm25" ? "bm25" : "hybrid",
       sourceToSlug,
+      nativeStore,
     };
 
-    if (process.env.WG_ADAPTER_DAEMON === "1") {
+    if (!nativeStore && process.env.WG_ADAPTER_DAEMON === "1") {
       const daemon = await startDaemon(wgBin, store);
       state.daemonUrl = daemon.url;
       state.daemonProc = daemon.proc;
@@ -173,18 +228,31 @@ export class WgAdapter implements Adapter {
   async query(q: Query, state: BrainState): Promise<RankedDoc[]> {
     const s = state as WgState;
     const limit = Number(process.env.WG_ADAPTER_LIMIT ?? "10");
-    const args = [s.wgBin, "--store", s.store, "--json", "search", q.text, "-l", String(limit)];
-    if (q.as_of_date && q.as_of_date !== "corpus-end" && q.as_of_date !== "per-source") {
-      args.push("--as-of", q.as_of_date);
-    }
-    if (s.mode === "hybrid") {
-      args.push("--hybrid");
-    }
-    if (s.daemonUrl) {
-      args.push("--via", s.daemonUrl);
+    let rows: WgSearchRow[];
+
+    if (s.nativeStore) {
+      rows = parseRows(
+        s.nativeStore.search(q.text, {
+          limit,
+          currentOnly: true,
+          bm25Only: s.mode === "bm25",
+          asOf: asOfMs(q.as_of_date),
+        }),
+      );
+    } else {
+      const args = [s.wgBin, "--store", s.store, "--json", "search", q.text, "-l", String(limit)];
+      if (q.as_of_date && q.as_of_date !== "corpus-end" && q.as_of_date !== "per-source") {
+        args.push("--as-of", q.as_of_date);
+      }
+      if (s.mode === "hybrid") {
+        args.push("--hybrid");
+      }
+      if (s.daemonUrl) {
+        args.push("--via", s.daemonUrl);
+      }
+      rows = parseRows(run(args));
     }
 
-    const rows = parseRows(run(args));
     const out: RankedDoc[] = [];
     const seen = new Set<string>();
     for (const row of rows) {
