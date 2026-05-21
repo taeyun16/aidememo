@@ -9,7 +9,7 @@
 
 use bpaf::*;
 use std::path::Path;
-use wg_core::{Config, WgError, WikiGraph};
+use wg_core::{Config, FactListOpts, FactRecord, FactType, WgError, WikiGraph};
 
 use crate::cmd::Command;
 use crate::cmd::mcp_install::{
@@ -61,6 +61,7 @@ pub fn run_doctor(
     let memory = memory.with_counts(stats.fact_count, superseded);
     let adaptation = collect_adaptation(&wiki, &config);
     let agents = collect_agent_integration();
+    let workflow = collect_workflow_status(&wiki, &agents)?;
     let mut fixes = collect_fix_suggestions(&agents);
     fixes.extend(memory.advisories());
     fixes.extend(adaptation.advisories());
@@ -89,6 +90,7 @@ pub fn run_doctor(
             "agents": agents,
             "memory": memory,
             "adaptation": adaptation,
+            "workflow": workflow,
             // Always emitted in JSON: tooling that consumes this
             // shouldn't have to re-derive the suggestion list.
             "fixes": fixes,
@@ -113,6 +115,7 @@ pub fn run_doctor(
 
     out.push_str(&format_memory(&memory));
     out.push_str(&format_adaptation(&adaptation));
+    out.push_str(&format_workflow(&workflow));
     out.push_str(&format_agent_integration(&agents));
 
     if sub.fix {
@@ -363,6 +366,167 @@ fn format_fix_suggestions(fixes: &[FixSuggestion]) -> String {
         ));
     }
     out.push_str("  (none of these run automatically — copy what you want)\n\n");
+    out
+}
+
+// ---------------------------------------------------------------------------
+// Workflow readiness
+// ---------------------------------------------------------------------------
+
+const WORKFLOW_RECENT_DAYS: u64 = 30;
+
+#[derive(Debug, serde::Serialize)]
+pub(crate) struct WorkflowReport {
+    pub ready: bool,
+    pub mcp_ready: bool,
+    pub recent_window_days: u64,
+    pub recent_ticket_count: usize,
+    pub recent_tickets: Vec<WorkflowTicketSummary>,
+    pub hints: Vec<WorkflowHint>,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub(crate) struct WorkflowTicketSummary {
+    pub id: String,
+    pub source: Option<String>,
+    pub source_id: Option<String>,
+    pub timestamp_ms: u64,
+    pub preview: String,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub(crate) struct WorkflowHint {
+    pub code: &'static str,
+    pub severity: &'static str,
+    pub message: String,
+    pub action: String,
+}
+
+fn collect_workflow_status(
+    wiki: &WikiGraph,
+    agents: &[AgentStatus],
+) -> Result<WorkflowReport, WgError> {
+    let now = wg_core::time::current_epoch_ms();
+    let since = now.saturating_sub(WORKFLOW_RECENT_DAYS * 24 * 60 * 60 * 1_000);
+    let mut tickets: Vec<FactRecord> = wiki
+        .fact_list(FactListOpts {
+            fact_type: Some(FactType::Question),
+            since: Some(since),
+            current_only: true,
+            ..Default::default()
+        })?
+        .into_iter()
+        .filter(is_workflow_ticket)
+        .collect();
+
+    tickets.sort_by_key(|f| std::cmp::Reverse(f.observed_at.unwrap_or(f.created_at)));
+    let recent_ticket_count = tickets.len();
+    let recent_tickets = tickets
+        .iter()
+        .take(5)
+        .map(summarize_workflow_ticket)
+        .collect();
+
+    let mcp_ready = agents
+        .iter()
+        .any(|a| matches!(a.mcp_registered, Some(true)));
+    let skill_ready = agents
+        .iter()
+        .any(|a| matches!(a.skill_installed, Some(true)));
+
+    let mut hints = Vec::new();
+    if !mcp_ready {
+        hints.push(WorkflowHint {
+            code: "workflow_no_mcp_agent",
+            severity: "error",
+            message: "no checked agent has wg registered as an MCP server".to_string(),
+            action: "wg mcp-install --target codex".to_string(),
+        });
+    }
+    if !skill_ready {
+        hints.push(WorkflowHint {
+            code: "workflow_no_skill_prompt",
+            severity: "warn",
+            message: "no checked agent has the wg workflow skill/prompt installed".to_string(),
+            action: "wg skill install --target claude".to_string(),
+        });
+    }
+    if recent_ticket_count == 0 {
+        hints.push(WorkflowHint {
+            code: "workflow_no_recent_tickets",
+            severity: "info",
+            message: format!(
+                "no workflow-start ticket facts found in the last {WORKFLOW_RECENT_DAYS} days"
+            ),
+            action: "wg workflow start \"Fix sparse ticket\" --source github:org/repo#123"
+                .to_string(),
+        });
+    }
+
+    Ok(WorkflowReport {
+        ready: mcp_ready,
+        mcp_ready,
+        recent_window_days: WORKFLOW_RECENT_DAYS,
+        recent_ticket_count,
+        recent_tickets,
+        hints,
+    })
+}
+
+fn is_workflow_ticket(fact: &FactRecord) -> bool {
+    fact.tags.iter().any(|t| t == "workflow-start") && fact.tags.iter().any(|t| t == "ticket")
+}
+
+fn summarize_workflow_ticket(fact: &FactRecord) -> WorkflowTicketSummary {
+    WorkflowTicketSummary {
+        id: fact.id.to_string(),
+        source: fact.source.clone(),
+        source_id: fact.source_id.clone(),
+        timestamp_ms: fact.observed_at.unwrap_or(fact.created_at),
+        preview: preview(&fact.content, 96),
+    }
+}
+
+fn preview(s: &str, max_chars: usize) -> String {
+    let normalized = s.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut out = String::new();
+    for ch in normalized.chars().take(max_chars) {
+        out.push(ch);
+    }
+    if normalized.chars().count() > max_chars {
+        out.push('…');
+    }
+    out
+}
+
+fn format_workflow(workflow: &WorkflowReport) -> String {
+    let mut out = String::from("Workflow readiness:\n");
+    let ready = if workflow.ready { "yes" } else { "no" };
+    let mcp = if workflow.mcp_ready { "yes" } else { "no" };
+    out.push_str(&format!(
+        "  ready: {ready}   mcp: {mcp}   recent tickets ({}d): {}\n",
+        workflow.recent_window_days, workflow.recent_ticket_count
+    ));
+    for ticket in &workflow.recent_tickets {
+        let source = ticket.source.as_deref().unwrap_or("-");
+        let source_id = ticket.source_id.as_deref().unwrap_or("-");
+        out.push_str(&format!(
+            "    {}  source={}  source_id={}  {}\n",
+            ticket.id, source, source_id, ticket.preview
+        ));
+    }
+    if workflow.hints.is_empty() {
+        out.push_str("  ✓ workflow setup looks ready\n\n");
+    } else {
+        out.push_str("  hints\n");
+        for hint in &workflow.hints {
+            out.push_str(&format!(
+                "    [{}] {} — {}\n      action: {}\n",
+                hint.code, hint.severity, hint.message, hint.action
+            ));
+        }
+        out.push('\n');
+    }
     out
 }
 
@@ -753,6 +917,7 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
     use tempfile::TempDir;
+    use wg_core::{EntityInput, EntityType, FactInput};
 
     fn config_with_model(name: &str, quantize: bool, semantic_index: &str) -> Config {
         let mut c = Config::default();
@@ -862,6 +1027,104 @@ mod tests {
             "expected search.use_adapter advisory, got {:?}",
             advisories
         );
+    }
+
+    #[test]
+    fn workflow_status_counts_recent_ticket_facts() {
+        let dir = TempDir::new().unwrap();
+        let store_path = dir.path().join("wiki.redb");
+        let wiki = WikiGraph::open(&store_path, Config::default()).unwrap();
+        let session_id = wiki
+            .entity_add(EntityInput {
+                name: "session-test".to_string(),
+                entity_type: Some(EntityType::parse("session")),
+                ..Default::default()
+            })
+            .unwrap();
+
+        wiki.add_fact(FactInput {
+            content: "Workflow ticket: Fix sparse Redis timeout\n\nBody text".to_string(),
+            fact_type: Some(FactType::Question),
+            entity_ids: Some(vec![session_id]),
+            tags: Some(vec!["workflow-start".into(), "ticket".into()]),
+            source: Some("github:org/repo#123".to_string()),
+            source_id: Some("alpha".to_string()),
+            source_confidence: Some(1.0),
+            observed_at: None,
+        })
+        .unwrap();
+        wiki.add_fact(FactInput {
+            content: "Ordinary question that is not a workflow ticket".to_string(),
+            fact_type: Some(FactType::Question),
+            entity_ids: Some(vec![session_id]),
+            tags: Some(vec!["question".into()]),
+            source: None,
+            source_id: None,
+            source_confidence: Some(1.0),
+            observed_at: None,
+        })
+        .unwrap();
+
+        let agents = vec![AgentStatus {
+            target: "codex",
+            skill_path: None,
+            skill_installed: Some(true),
+            mcp_detail: "test".to_string(),
+            mcp_registered: Some(true),
+        }];
+        let report = collect_workflow_status(&wiki, &agents).unwrap();
+
+        assert!(report.ready);
+        assert!(report.mcp_ready);
+        assert_eq!(report.recent_ticket_count, 1);
+        assert_eq!(report.recent_tickets[0].source_id.as_deref(), Some("alpha"));
+        assert!(report.recent_tickets[0].preview.contains("Workflow ticket"));
+        assert!(
+            !report
+                .hints
+                .iter()
+                .any(|h| h.code == "workflow_no_mcp_agent"),
+            "mcp-ready agent must not produce no-mcp hint"
+        );
+        assert!(
+            !report
+                .hints
+                .iter()
+                .any(|h| h.code == "workflow_no_recent_tickets"),
+            "workflow ticket exists, got hints {:?}",
+            report.hints
+        );
+    }
+
+    #[test]
+    fn workflow_status_surfaces_actionable_setup_hints() {
+        let dir = TempDir::new().unwrap();
+        let store_path = dir.path().join("wiki.redb");
+        let wiki = WikiGraph::open(&store_path, Config::default()).unwrap();
+        let agents = vec![AgentStatus {
+            target: "codex",
+            skill_path: None,
+            skill_installed: Some(false),
+            mcp_detail: "test".to_string(),
+            mcp_registered: Some(false),
+        }];
+
+        let report = collect_workflow_status(&wiki, &agents).unwrap();
+
+        assert!(!report.ready);
+        assert_eq!(report.recent_ticket_count, 0);
+        for code in [
+            "workflow_no_mcp_agent",
+            "workflow_no_skill_prompt",
+            "workflow_no_recent_tickets",
+        ] {
+            let hint = report.hints.iter().find(|h| h.code == code);
+            assert!(hint.is_some(), "missing {code} in {:?}", report.hints);
+            assert!(
+                !hint.unwrap().action.trim().is_empty(),
+                "hint {code} must have a concrete action"
+            );
+        }
     }
 
     #[test]

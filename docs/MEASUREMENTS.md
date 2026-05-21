@@ -122,6 +122,26 @@ synthetic wiki, p95 latency, default config:
 `fact_add` is limited by the OS fsync floor under immediate durability. Use
 `fact_add_many` or `store.durability = eventual` when ingest throughput matters.
 
+## Workflow Doctor Readiness
+
+P3.5 adds a `workflow` block to `wg doctor --json` so sparse ticket automation
+failures are visible without manually inspecting agent configs or fact lists.
+The stable contract is:
+
+| Field | Meaning |
+|---|---|
+| `workflow.ready` | At least one checked agent has `wg` registered as MCP. |
+| `workflow.recent_ticket_count` | Current workflow-start ticket facts in the last 30 days. |
+| `workflow.recent_tickets[]` | Up to five recent ticket summaries with `source` / `source_id`. |
+| `workflow.hints[]` | Actionable setup or usage hints with a concrete command in `action`. |
+
+Validation:
+
+| Command | Result |
+|---|---|
+| `cargo test -p wg-cli doctor` | 22 passed; workflow unit tests cover ready/count/hints. |
+| `cargo test -p wg-cli doctor_json_includes_workflow_readiness_hints` | fixture CLI smoke validates JSON `workflow.ready`, `recent_ticket_count`, and actionable hints. |
+
 ## Historical Notes
 
 The old scratch-note directory was intentionally removed to keep the repository

@@ -634,6 +634,30 @@ fn doctor_json_includes_fixes_array() {
 }
 
 #[test]
+fn doctor_json_includes_workflow_readiness_hints() {
+    let home = tempfile::tempdir().unwrap();
+    let store = home.path().join("wiki.redb");
+    let payload = doctor_json(home.path(), &store);
+    let workflow = &payload["workflow"];
+
+    assert_eq!(workflow["ready"], false);
+    assert_eq!(workflow["recent_ticket_count"], 0);
+    let hints = workflow["hints"]
+        .as_array()
+        .expect("hints must be an array");
+    for code in ["workflow_no_mcp_agent", "workflow_no_recent_tickets"] {
+        let hint = hints.iter().find(|h| h["code"] == code);
+        assert!(hint.is_some(), "missing workflow hint {code}: {hints:?}");
+        assert!(
+            hint.unwrap()["action"]
+                .as_str()
+                .is_some_and(|s| !s.is_empty()),
+            "workflow hint {code} needs an actionable command"
+        );
+    }
+}
+
+#[test]
 fn doctor_fix_shell_emits_only_commands_one_per_line() {
     // `wg doctor --fix --shell | sh` is the documented quick-fix
     // pipeline, so the contract is: every non-empty line is a

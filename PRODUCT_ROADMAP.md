@@ -30,19 +30,20 @@ or benchmark-specific `RESULTS.md` files; keep user-facing product work here.
 | P3.2 | done | Workflow trigger quality claims are pass/fail only | Scenario F reports latency, context size, prior type distribution, and forbidden context leakage for each ticket | `python3 bench/multi-agent/scenario_f_workflow_triggers.py` validates 4 tickets with 13/13 invariants; p95 workflow latency < 5s; max context < 12k chars; leakage total = 0 |
 | P3.3 | done | Hermes workflow start still shells out even when `wg-python` is installed | `wg-python` exposes `source_id` and Hermes composes workflow packs in process when the binding is available, falling back to CLI otherwise | `python3 bench/multi-agent/scenario_g_hermes_binding.py`: 5/5 invariants; shape parity 4/4; leakage 0; p50 1795.71ms CLI vs 13.14ms binding (136.66x) |
 | P3.4 | done | Natural-language workflow adoption differs by agent | Claude / Codex / Hermes sparse-ticket prompts naturally call `wg_workflow_start` or produce its store side effect | `python3 bench/multi-agent/scenario_h_workflow_natural_prompt.py`: 4/4 invariants; 3/3 agents passed; each created 1 scoped workflow fact; prior reflection Claude 3/3, Codex 2/3, Hermes 3/3; forbidden leakage 0 |
-| P3.5 | planned | Workflow setup failures are hard to diagnose | `wg doctor --json` reports workflow readiness, recent workflow tickets, and agent integration hints | Fixture store + config smoke: `workflow.ready`, `recent_ticket_count`, and actionable `hints[]` are stable |
+| P3.5 | done | Workflow setup failures are hard to diagnose | `wg doctor --json` reports workflow readiness, recent workflow tickets, and agent integration hints | `cargo test -p wg-cli doctor_json_includes_workflow_readiness_hints`; unit smoke covers `workflow.ready`, `recent_ticket_count`, recent ticket summaries, and actionable `hints[]` |
 
 ## Current Sprint
 
-All planned P0-P3.4 roadmap items are closed. Scenario H now isolates each
+All planned P0-P3.5 roadmap items are closed. Scenario H now isolates each
 agent's integration path: Claude project MCP, Codex temp `CODEX_HOME` MCP, and
 Hermes MCP-only profile to avoid redb lock contention with the in-process
-plugin.
+plugin. `wg doctor --json` now exposes workflow readiness, recent workflow
+tickets, and actionable setup hints for sparse ticket automation.
 
 Next measurement candidates:
-1. P3.5 — surface workflow readiness in `wg doctor`.
-2. Reduce P0.2 adapter overhead further with `wg-napi` to remove per-query CLI spawn.
-3. Hide a future daemon/socket broker behind auto-discovery only if higher-concurrency writes make serverless retry feel slow.
+1. Reduce P0.2 adapter overhead further with `wg-napi` to remove per-query CLI spawn.
+2. Hide a future daemon/socket broker behind auto-discovery only if higher-concurrency writes make serverless retry feel slow.
+3. Add a fixture-backed workflow readiness benchmark that creates tickets through CLI, MCP, and Hermes, then validates `wg doctor --json` against all three traces.
 
 ## Positioning Guardrails
 
