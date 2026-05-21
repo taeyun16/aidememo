@@ -33,10 +33,11 @@ or benchmark-specific `RESULTS.md` files; keep user-facing product work here.
 | P3.4 | done | Natural-language workflow adoption differs by agent | Claude / Codex / Hermes sparse-ticket prompts naturally call `wg_workflow_start` or produce its store side effect | `python3 bench/multi-agent/scenario_h_workflow_natural_prompt.py`: 4/4 invariants; 3/3 agents passed; each created 1 scoped workflow fact; prior reflection Claude 3/3, Codex 2/3, Hermes 3/3; forbidden leakage 0 |
 | P3.5 | done | Workflow setup failures are hard to diagnose | `wg doctor --json` reports workflow readiness, recent workflow tickets, and agent integration hints | `cargo test -p wg-cli doctor_json_includes_workflow_readiness_hints`; unit smoke covers `workflow.ready`, `recent_ticket_count`, recent ticket summaries, and actionable `hints[]` |
 | P3.6 | done | Doctor readiness exists but is not validated against real workflow traces | Scenario I creates workflow tickets through CLI, MCP, and Hermes, then validates `wg doctor --json` from an isolated agent config | `python3 bench/multi-agent/scenario_i_workflow_doctor.py`: 10/10 invariants; `workflow.ready=true`; `recent_ticket_count=3`; drivers CLI/MCP/Hermes; p95 workflow latency 1891.48 ms |
+| P3.7 | done | Release workflow checks require remembering several commands | One script builds `wg`, runs Scenario F + I, and asserts `wg doctor --json` workflow readiness on a fixture store | `scripts/workflow-release-smoke.sh`: Scenario F 13/13, Scenario I 10/10, fixture doctor `workflow_ready=true`, `recent_ticket_count=1` |
 
 ## Current Sprint
 
-All planned P0-P3.6 roadmap items are closed. Scenario H now isolates each
+All planned P0-P3.7 roadmap items are closed. Scenario H now isolates each
 agent's integration path: Claude project MCP, Codex temp `CODEX_HOME` MCP, and
 Hermes MCP-only profile to avoid redb lock contention with the in-process
 plugin. `wg doctor --json` now exposes workflow readiness, recent workflow
@@ -46,7 +47,7 @@ now validates that doctor view against actual CLI/MCP/Hermes workflow traces.
 Next measurement candidates:
 1. Hide a future daemon/socket broker behind auto-discovery only if higher-concurrency writes make serverless retry feel slow.
 2. Run the full fresh-checkout `gbrain-evals` scorecard with `WG_ADAPTER_BACKEND=napi` and record real wall-clock speedup against the daemon baseline.
-3. Add a lightweight release smoke script that runs Scenario F + I plus `wg doctor --json` on a fixture store.
+3. Promote `workflow-release-smoke.sh` into CI if runtime stays under the push-budget threshold.
 
 ## Positioning Guardrails
 
