@@ -21,18 +21,27 @@ defmodule Mix.Tasks.Compile.Cargo do
 
     priv = Path.join(crate_dir, "priv")
     File.mkdir_p!(priv)
+    build_priv = Path.join(Mix.Project.app_path(), "priv")
+    File.mkdir_p!(build_priv)
 
     src_ext = if :os.type() == {:unix, :darwin}, do: "dylib", else: "so"
     src = Path.join([workspace, "target", target_dir, "libwg_nif.#{src_ext}"])
     # Erlang's :erlang.load_nif expects .so on every Unix (incl. macOS).
-    dst = Path.join(priv, "libwg_nif.so")
+    source_dst = Path.join(priv, "libwg_nif.so")
+    build_dst = Path.join(build_priv, "libwg_nif.so")
 
-    case File.cp(src, dst) do
+    case File.cp(src, source_dst) do
       :ok ->
-        {:ok, []}
+        case File.cp(src, build_dst) do
+          :ok ->
+            {:ok, []}
+
+          {:error, reason} ->
+            Mix.raise("failed to copy #{src} → #{build_dst}: #{inspect(reason)}")
+        end
 
       {:error, reason} ->
-        Mix.raise("failed to copy #{src} → #{dst}: #{inspect(reason)}")
+        Mix.raise("failed to copy #{src} → #{source_dst}: #{inspect(reason)}")
     end
   end
 end

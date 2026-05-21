@@ -221,6 +221,7 @@ pub extern "C" fn wg_query(
             current_only,
             mode,
             bm25_only: false,
+            source_id: None,
         };
         let result = s.wiki.query(topic, opts).map_err(|e| e.to_string())?;
         json_serialize(&result)
@@ -470,6 +471,7 @@ pub extern "C" fn wg_fact_add(
             entity_ids,
             tags,
             source,
+            source_id: None,
             source_confidence: if confidence > 0.0 {
                 Some(confidence)
             } else {
@@ -566,6 +568,7 @@ pub extern "C" fn wg_fact_add_many(
                 entity_ids,
                 tags,
                 source,
+                source_id: None,
                 source_confidence: confidence,
                 observed_at: None,
             });
@@ -626,6 +629,7 @@ pub extern "C" fn wg_fact_list(
             until: None,
             current_only,
             as_of: None,
+            source_id: None,
         };
         let facts = s.wiki.fact_list(opts).map_err(|e| e.to_string())?;
         json_serialize(&facts)

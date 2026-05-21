@@ -26,6 +26,7 @@ or benchmark-specific `RESULTS.md` files; keep user-facing product work here.
 | P0.2e | done | Cross-platform npm release would break if the root package shipped only one platform `.node` | Root `wg-napi` now declares platform optionalDependencies and platform package scaffolds exist for macOS arm64/x64, Linux arm64/x64 glibc, and Windows x64 MSVC | `scripts/wg-napi-pack-smoke.sh`: root package excludes `.node`, `wg-napi-darwin-arm64` includes `wg-napi.darwin-arm64.node`, temp install of both tarballs resolves `require("wg-napi").version() = 0.1.0` |
 | P0.2f | done | Real npm release still required hand-written commands | Trusted-publisher workflow skeleton publishes platform packages first and root wrapper second; default is dry-run, real publish requires npm trusted publisher setup plus explicit `dry_run=false` and version match | `.github/workflows/wg-napi-publish.yml`; local `WG_NAPI_EXPECT_VERSION=0.1.0 scripts/wg-napi-publish-dry-run.sh`, `WG_NAPI_PUBLISH_SCOPE=platform ...`, and `WG_NAPI_PUBLISH_SCOPE=root ...` all passed |
 | P0.2g | done | npm release can drift if root/platform versions or optionalDependency pins are edited by hand | `scripts/wg-napi-version.sh [VERSION]` verifies or updates root + platform package versions and root optionalDependency pins; pack/publish scripts run this gate automatically | `scripts/wg-napi-version.sh`: 0.1.0 pinned across 5 platform packages; temp-copy bump to 0.1.1 updated root, platform packages, and optionalDependencies; root publish dry-run with `WG_NAPI_EXPECT_VERSION=0.1.0` passed |
+| P0.2h | done | Binding release readiness was language-specific and hard to compare | One cross-binding smoke checks Rust binding crates, runs npm's full version/pack/install smoke, and can run Python/Elixir/C package smokes. The first run caught and fixed `source_id` type drift in `wg-ffi` / `wg-nif` before release work moved on. | `scripts/bindings-release-smoke.sh`: `cargo check -p wg-python -p wg-napi -p wg-nif -p wg-ffi`; npm smoke passed; `WG_BINDINGS_SMOKE_NPM=0 WG_BINDINGS_SMOKE_OPTIONAL=1 scripts/bindings-release-smoke.sh` built the Python wheel, ran `mix compile.cargo --force && mix test`, and passed the C FFI smoke |
 | P0.3 | done | Capture quality is not measured | Pending approval rate and extraction precision can be computed from one JSONL log | `wg pending stats --from LOG --json` returns total/count-by-type/confidence histogram |
 | P1.1 | done | First-run setup requires several commands | One command prints or applies init + MCP install + skill install for a target agent | `wg init --agent codex --no-ingest PATH --json` reports steps and elapsed ms |
 | P1.2 | done | Shared daemon is operational but opaque | HTTP MCP exposes health/sync/admin status without exposing secrets | `curl /health` and `curl /admin/status` return request count, store path, auth mode, sync cursors |
@@ -62,9 +63,9 @@ MCP `wg_doctor` now carries the same sharing summary so coding agents can react
 to retry/daemon guidance through the tool surface they already call.
 
 Next measurement candidates:
-1. Configure npm trusted publishers for `wg-napi*` package names, then run `.github/workflows/wg-napi-publish.yml` with `dry_run=false`.
-2. Prototype daemon auto-discovery only if a future scenario needs more than four concurrent local writers without user-visible setup.
-3. Add an end-to-end MCP doctor scenario if future agent regressions show the unit contract is not enough.
+1. Add a `wg-python` wheel version/build gate mirroring the npm package discipline.
+2. Configure npm trusted publishers for `wg-napi*` package names, then run `.github/workflows/wg-napi-publish.yml` with `dry_run=false`.
+3. Prototype daemon auto-discovery only if a future scenario needs more than four concurrent local writers without user-visible setup.
 
 ## Positioning Guardrails
 
