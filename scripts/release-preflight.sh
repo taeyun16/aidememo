@@ -40,6 +40,7 @@ RUN_SDK_PROMOTION="${WG_RELEASE_PREFLIGHT_SDK_PROMOTION:-1}"
 RUN_SDK_PROMOTION_SMOKE="${WG_RELEASE_PREFLIGHT_SDK_SMOKE:-0}"
 RUN_SDK_PROMOTION_SCENARIO_K="${WG_RELEASE_PREFLIGHT_SDK_SCENARIO_K:-0}"
 RUN_SDK_PROMOTION_REQUIRE_PUBLIC="${WG_RELEASE_PREFLIGHT_SDK_REQUIRE_PUBLIC:-0}"
+ACTIONLINT_BIN="${WG_RELEASE_PREFLIGHT_ACTIONLINT_BIN:-actionlint}"
 
 have() {
     command -v "$1" >/dev/null 2>&1
@@ -50,6 +51,13 @@ record_skip() {
     local reason="$2"
     echo "==> skip: $label ($reason)"
     printf "skip\t-\t%s\t%s\n" "$label" "$reason" >> "$SUMMARY_TSV"
+}
+
+record_fail() {
+    local label="$1"
+    local reason="$2"
+    echo "==> fail: $label ($reason)" >&2
+    printf "fail\t0.00\t%s\t%s\n" "$label" "$reason" >> "$SUMMARY_TSV"
 }
 
 run() {
@@ -138,13 +146,13 @@ else
 fi
 
 if [[ "$RUN_ACTIONLINT" == "1" ]]; then
-    if have actionlint; then
-        run "workflow syntax lint" actionlint .github/workflows/*.yml
+    if have "$ACTIONLINT_BIN"; then
+        run "workflow syntax lint" "$ACTIONLINT_BIN" .github/workflows/*.yml
     elif [[ "$REQUIRE_ACTIONLINT" == "1" ]]; then
-        echo "actionlint is required for full release preflight" >&2
+        record_fail "workflow syntax lint" "$ACTIONLINT_BIN not installed"
         exit 1
     else
-        record_skip "workflow syntax lint" "actionlint not installed"
+        record_skip "workflow syntax lint" "$ACTIONLINT_BIN not installed"
     fi
 else
     record_skip "workflow syntax lint" "WG_RELEASE_PREFLIGHT_ACTIONLINT=0"

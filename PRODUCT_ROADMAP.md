@@ -51,7 +51,7 @@ or benchmark-specific `RESULTS.md` files; keep user-facing product work here.
 | P3.8 | done | Workflow release smoke is local-only | CI runs the zero-token workflow release smoke as a named check after lint | `.github/workflows/ci.yml` job `workflow-release-smoke`; local command remains `scripts/workflow-release-smoke.sh` |
 | P3.9 | done | Workflow release smoke runtime is opaque in CI | Smoke script prints per-step timing and writes the same markdown table to `$GITHUB_STEP_SUMMARY` | `scripts/workflow-release-smoke.sh`: latest local total 13.40s; demo 0.65s, Scenario F 7.17s, Scenario I 5.10s, fixture workflow start 0.20s |
 | P3.10 | done | Release workflows can drift syntactically without a cheap CI signal | CI now runs `actionlint` over every GitHub Actions workflow before heavier Rust jobs; local-only `.codex/` agent config is ignored so status stays clean | `actionlint .github/workflows/*.yml`: 0 issues; `.github/workflows/ci.yml` job `workflow-lint` installs `actionlint@v1.7.1` |
-| P3.11 | done | Release readiness still required stitching several gates together by hand | `scripts/release-preflight.sh` gives local/full profiles with timed status rows; full profile adds optional binding smokes and Python/npm publish dry-runs | `scripts/release-preflight.sh`: local profile passed version, actionlint, binding smoke, and workflow smoke in 66.03s; fast path with bindings/workflow disabled passed version + actionlint in 0.35s |
+| P3.11 | done | Release readiness still required stitching several gates together by hand | `scripts/release-preflight.sh` gives local/full profiles with timed status rows; full profile adds optional binding smokes and Python/npm publish dry-runs | `scripts/release-preflight.sh`: local profile passed version, actionlint, binding smoke, and workflow smoke in 66.03s; fast path with bindings/workflow/sdk/publish disabled passed version + actionlint in 0.29s |
 | P3.12 | done | Python/Node bindings were too low-level to support SDK positioning for sparse-ticket agents | `WikiGraph::workflow_start` is now shared by CLI, MCP, Python, and Node; Python/Node package docs include workflow-level examples with `source_id` scoping | `cargo check -p wg-core -p wg-cli -p wg-python -p wg-napi`; `cargo test -p wg-cli workflow_start`; `scripts/wg-python-pack-smoke.sh`; `scripts/wg-napi-pack-smoke.sh` |
 | P3.13 | done | SDK candidates still surfaced Rust errors as undifferentiated runtime failures | `WgError::code()` gives stable machine codes; Python maps core failures to typed exceptions; Node throws JS errors with N-API `code` plus `[wg_code]` message prefixes | `cargo check -p wg-core -p wg-python -p wg-napi`; `cargo test -p wg-core entity_not_found_display_includes_suggestions`; `scripts/wg-python-pack-smoke.sh`; `cd crates/wg-napi && npm test` |
 | P3.14 | done | SDK workflow APIs had no cross-language parity measurement | Scenario K compares CLI, `wg-python`, and `wg-napi` workflow-start packs across four sparse tickets and checks session/ticket side effects, prior counts, `source_id`, and leakage | `python3 bench/multi-agent/scenario_k_sdk_workflow_parity.py`: 8/8 invariants; Python/Node shape parity 4/4 each; leakage 0; p50 CLI 1864.55ms, Python 16.19ms, Node 13.69ms |
@@ -65,10 +65,11 @@ or benchmark-specific `RESULTS.md` files; keep user-facing product work here.
 | P3.22 | done | First-run workflow demo was not part of daily local CI | `scripts/ci-local.sh demo` runs the zero-token workflow smoke directly, and `scripts/ci-local.sh all` now runs it between lint and SDK promotion | `scripts/ci-local.sh demo`: decision=1, lesson=1, error=1, search_hits=4, workflow latency 128ms, wall 0.91s; `bash -n scripts/ci-local.sh` |
 | P3.23 | done | Local CI failures had no per-step timing context | `scripts/ci-local.sh` now records each command status/seconds and prints a Markdown timing table, also appending it to `$GITHUB_STEP_SUMMARY` when available | `scripts/ci-local.sh demo`: timing table total 0.91s; `bash -n scripts/ci-local.sh`; `git diff --check` |
 | P3.24 | done | Workflow release smoke only printed timing after full success | `scripts/workflow-release-smoke.sh` now records `ok`/`fail` status and detail for each step, prints the timing table from an EXIT trap, and appends the same table to `$GITHUB_STEP_SUMMARY` | `GITHUB_STEP_SUMMARY=$(mktemp) scripts/workflow-release-smoke.sh`: total 13.40s; status table written to stdout and summary file; forced `WG_BIN=/bin/false` failure records `fail ... exit 1` |
+| P3.25 | done | Full release preflight could exit on missing required actionlint without a failed row | `scripts/release-preflight.sh` now supports `WG_RELEASE_PREFLIGHT_ACTIONLINT_BIN` and records missing required actionlint as `fail` in the summary table before exiting | Forced missing actionlint: `fail | workflow syntax lint | 0.00 | /nonexistent/actionlint not installed`; fast path with actionlint present total 0.29s |
 
 ## Current Sprint
 
-All planned P0-P3.24 roadmap items are closed. Scenario H now isolates each
+All planned P0-P3.25 roadmap items are closed. Scenario H now isolates each
 agent's integration path: Claude project MCP, Codex temp `CODEX_HOME` MCP, and
 Hermes MCP-only profile to avoid redb lock contention with the in-process
 plugin. `wg doctor --json` now exposes workflow readiness, recent workflow
@@ -95,7 +96,9 @@ Elixir and C remain low-level bindings. First-run onboarding now starts with a
 zero-token workflow demo that shows the sparse-ticket memory loop directly, and
 release smoke plus local CI protect that demo. Local CI now prints the same
 kind of timed summary used by release smoke and preflight scripts, and workflow
-release smoke keeps that timing context even when a later step fails.
+release smoke keeps that timing context even when a later step fails. Full
+release preflight now also records missing required `actionlint` as a failed
+summary row instead of exiting without a step record.
 
 Next measurement candidates:
 1. Reserve/configure the PyPI `wg-python` trusted publisher, then run `.github/workflows/wg-python-publish.yml` with `dry_run=false`.
