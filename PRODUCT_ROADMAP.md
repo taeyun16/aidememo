@@ -51,10 +51,11 @@ or benchmark-specific `RESULTS.md` files; keep user-facing product work here.
 | P3.8 | done | Workflow release smoke is local-only | CI runs the zero-token workflow release smoke as a named check after lint | `.github/workflows/ci.yml` job `workflow-release-smoke`; local command remains `scripts/workflow-release-smoke.sh` |
 | P3.9 | done | Workflow release smoke runtime is opaque in CI | Smoke script prints per-step timing and writes the same markdown table to `$GITHUB_STEP_SUMMARY` | `scripts/workflow-release-smoke.sh`: latest local total 15.13s; Scenario F 7.53s, Scenario I 5.21s, fixture workflow start 1.94s |
 | P3.10 | done | Release workflows can drift syntactically without a cheap CI signal | CI now runs `actionlint` over every GitHub Actions workflow before heavier Rust jobs; local-only `.codex/` agent config is ignored so status stays clean | `actionlint .github/workflows/*.yml`: 0 issues; `.github/workflows/ci.yml` job `workflow-lint` installs `actionlint@v1.7.1` |
+| P3.11 | done | Release readiness still required stitching several gates together by hand | `scripts/release-preflight.sh` gives local/full profiles with timed status rows; full profile adds optional binding smokes and Python/npm publish dry-runs | `scripts/release-preflight.sh`: local profile passed version, actionlint, binding smoke, and workflow smoke in 66.03s; fast path with bindings/workflow disabled passed version + actionlint in 0.35s |
 
 ## Current Sprint
 
-All planned P0-P3.10 roadmap items are closed. Scenario H now isolates each
+All planned P0-P3.11 roadmap items are closed. Scenario H now isolates each
 agent's integration path: Claude project MCP, Codex temp `CODEX_HOME` MCP, and
 Hermes MCP-only profile to avoid redb lock contention with the in-process
 plugin. `wg doctor --json` now exposes workflow readiness, recent workflow
@@ -68,12 +69,16 @@ MCP `wg_doctor` now carries the same sharing summary so coding agents can react
 to retry/daemon guidance through the tool surface they already call. Release
 version bumps are now one measured gate: `scripts/wg-release-version.sh
 [VERSION]` verifies Cargo, Python, npm, and NIF package versions together while
-leaving C FFI on Cargo metadata.
+leaving C FFI on Cargo metadata. `scripts/release-preflight.sh` now wraps the
+release gates into a timed local/full preflight. SDK naming stays conservative:
+Python and Node are SDK candidates after public registry releases; Elixir and C
+remain low-level bindings until their packaging and lifecycle docs catch up.
 
 Next measurement candidates:
 1. Reserve/configure the PyPI `wg-python` trusted publisher, then run `.github/workflows/wg-python-publish.yml` with `dry_run=false`.
 2. Configure npm trusted publishers for `wg-napi*` package names, then run `.github/workflows/wg-napi-publish.yml` with `dry_run=false`.
-3. Prototype daemon auto-discovery only if a future scenario needs more than four concurrent local writers without user-visible setup.
+3. Promote `wg-python` from binding to SDK only after the PyPI release succeeds and the workflow-level examples are public.
+4. Prototype daemon auto-discovery only if a future scenario needs more than four concurrent local writers without user-visible setup.
 
 ## Positioning Guardrails
 

@@ -238,7 +238,8 @@ wg config set model.name bge-small-en-v1.5
 | OMEGA-style systems | You optimize for top LongMemEval scores with heavier prompt/hook machinery. | You optimize for portability, deployment simplicity, and explicit memory control. |
 
 Full comparison: [`COMPARE.md`](COMPARE.md). Product positioning:
-[`POSITIONING.md`](POSITIONING.md). Current roadmap:
+[`POSITIONING.md`](POSITIONING.md). SDK promotion criteria:
+[`docs/SDK_POSITIONING.md`](docs/SDK_POSITIONING.md). Current roadmap:
 [`PRODUCT_ROADMAP.md`](PRODUCT_ROADMAP.md).
 
 ## Repository Guide
