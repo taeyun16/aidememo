@@ -43,7 +43,7 @@ with current scorecards in
 | Workflow trigger Scenario F, 4 sparse tickets | 13/13 invariants; p95 2.48s; max context 3,023 chars; forbidden leakage 0 | CLI, MCP, and Hermes paths create distinct sessions/ticket facts and keep `source_id`-scoped ticket context separated. |
 | Hermes workflow binding Scenario G, 4 sparse tickets | 5/5 invariants; shape parity 4/4; leakage 0; p50 1,795.71ms CLI vs 13.14ms binding | When `wg-python` is installed, Hermes composes workflow packs in process: same context contract, about 137x lower p50 after the first model/index warmup. |
 | SDK workflow parity Scenario K, 4 sparse tickets | 8/8 invariants; Python and Node shape parity 4/4 each; leakage 0; p50 CLI 1,864.55ms, Python 16.19ms, Node 13.69ms | `wg-python` and `wg-napi` expose the same sparse-ticket context contract as CLI while avoiding per-command CLI spawn overhead. |
-| Zero-token workflow demo | decision + lesson + error surfaced; search hits 4; workflow latency 119ms | `scripts/demo-workflow.sh` demonstrates the product position without an agent, model call, or persistent store. It uses CLI `workflow start --bm25-only` for deterministic first-run behaviour. |
+| Zero-token workflow demo | decision + lesson + error surfaced; search hits 4; workflow latency 118ms | `scripts/demo-workflow.sh` demonstrates the product position without an agent, model call, or persistent store. It uses CLI `workflow start --bm25-only` for deterministic first-run behaviour. |
 | Natural workflow adoption Scenario H, 3 agents | 4/4 invariants; 3/3 agents passed; each created 1 scoped workflow fact; prior reflection Claude 3/3, Codex 2/3, Hermes 3/3; forbidden leakage 0 | Sparse-ticket prompts can drive the workflow entry point across Claude, Codex, and Hermes when each runtime gets an isolated, deterministic MCP config. Hermes uses MCP-only here to avoid redb lock contention with the in-process plugin. |
 
 ## gbrain-evals Adapter
@@ -166,7 +166,7 @@ Validation:
 | `cargo test -p wg-cli doctor_groups_by_code_with_action_hints` | MCP `wg_doctor` unit validates lint grouping plus `sharing.serverless_recommended_writers=4`, `recommended_mode=serverless_fail_fast`, and `sharing_retry_disabled`. |
 | `python3 bench/multi-agent/scenario_i_workflow_doctor.py` | 10/10 invariants; CLI/MCP/Hermes each created a workflow ticket; doctor reported `workflow.ready=true`, `recent_ticket_count=3`, and no false no-MCP/no-recent-ticket hints. |
 | `python3 bench/multi-agent/scenario_j_lock_retry_sweep.py` | 7/7 invariants; `store.lock_retry_ms=5000` stayed smooth through 4 concurrent serverless writers and mostly recovered 8-writer contention. |
-| `scripts/workflow-release-smoke.sh` | Bundles Scenario F + I plus a fresh fixture `wg doctor --json` assert for release checks. Latest run: Scenario F 13/13, Scenario I 10/10, fixture doctor `workflow_ready=true`, `recent_ticket_count=1`, total 15.13s. |
+| `scripts/workflow-release-smoke.sh` | Bundles the first-run workflow demo, Scenario F + I, and a fresh fixture `wg doctor --json` assert for release checks. Latest run: demo recovered decision/lesson/error, Scenario F 13/13, Scenario I 10/10, fixture doctor `workflow_ready=true`, `recent_ticket_count=1`, total 13.60s. |
 | CI `workflow-release-smoke` job | Runs the same script on Ubuntu after lint with Python 3.13 and a 10-minute timeout. |
 | CI `workflow-lint` job | Runs `actionlint@v1.7.1` across `.github/workflows/*.yml` before heavier Rust checks. Local `actionlint .github/workflows/*.yml`: 0 issues. |
 
@@ -174,12 +174,14 @@ Latest local `workflow-release-smoke` timing:
 
 | Step | Seconds |
 |---|---:|
-| `cargo build -p wg-cli` | 0.41 |
+| `cargo build -p wg-cli` | 0.23 |
+| `bash -n scripts/demo-workflow.sh` | 0.02 |
 | `py_compile` | 0.04 |
-| Scenario F | 7.53 |
-| Scenario I | 5.21 |
-| Fixture `wg workflow start` | 1.94 |
-| Total | 15.13 |
+| `scripts/demo-workflow.sh` | 0.64 |
+| Scenario F | 7.28 |
+| Scenario I | 5.19 |
+| Fixture `wg workflow start --bm25-only` | 0.20 |
+| Total | 13.60 |
 
 Scenario I measurement, May 21 2026:
 

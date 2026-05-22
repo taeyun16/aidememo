@@ -15,7 +15,7 @@ adding scratch note files.
 | `bindings-release-smoke.sh` | Cross-binding release readiness: Rust checks for Python/Node/Elixir/C bindings, npm version/pack/install smoke, and optional Python/Elixir/C package smokes. |
 | `release-preflight.sh` | One-command release gate. Local profile runs version, workflow lint, binding smoke, workflow smoke, and SDK promotion check; full profile adds optional binding smokes plus Python/npm publish dry-runs. |
 | `sdk-promotion-check.sh` | SDK wording gate for `wg-python` and `wg-napi`: checks local criteria, optional package smokes / Scenario K, and public-registry blockers. Also runs as the CI `SDK promotion check` job and writes `$GITHUB_STEP_SUMMARY` when available. |
-| `workflow-release-smoke.sh` | Release-oriented workflow memory smoke: builds `wg`, runs Scenario F + I, then asserts `wg doctor --json` workflow readiness on a fixture store. |
+| `workflow-release-smoke.sh` | Release-oriented workflow memory smoke: builds `wg`, runs the first-run demo plus Scenario F + I, then asserts `wg doctor --json` workflow readiness on a fixture store. |
 | `wg-release-version.sh` | Verify or update the release version across Cargo, Python, npm, and Elixir/NIF packages. |
 | `wg-python-version.sh` | Verify or update `wg-python` package version pins across the Rust workspace version and Python `pyproject.toml`. |
 | `wg-python-pack-smoke.sh` | Build a `wg-python` wheel, install it into a temp venv, run the Python binding smoke, and verify wheel metadata matches `wg_python.__version__`. |

@@ -46,9 +46,15 @@ mkdir -p "$BASE"
 : > "$SUMMARY_TSV"
 
 run cargo build -p wg-cli
+run bash -n scripts/demo-workflow.sh
 run python3 -m py_compile \
     bench/multi-agent/scenario_f_workflow_triggers.py \
     bench/multi-agent/scenario_i_workflow_doctor.py
+
+run env \
+    WG_BIN="$WG_BIN" \
+    WG_DEMO_BASE="$BASE/demo-workflow" \
+    scripts/demo-workflow.sh
 
 run env \
     WG_BIN="$WG_BIN" \
@@ -76,7 +82,8 @@ run "$WG_BIN" \
     "Release smoke ticket" \
     --body "Verify workflow doctor readiness before release." \
     --source "smoke:release" \
-    --source-id "release"
+    --source-id "release" \
+    --bm25-only
 
 doctor_json="$(
     HOME="$FIXTURE_HOME" \
