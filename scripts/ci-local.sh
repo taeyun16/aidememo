@@ -27,6 +27,10 @@ tests() {
     run "${cargo_cmd[@]}" test -p wg-cli --bin wg
 }
 
+sdk() {
+    run "$ROOT_DIR/scripts/sdk-promotion-check.sh"
+}
+
 case "${1:-all}" in
     lint)
         lint
@@ -34,12 +38,16 @@ case "${1:-all}" in
     test)
         tests
         ;;
+    sdk)
+        sdk
+        ;;
     all)
         lint
+        sdk
         tests
         ;;
     *)
-        echo "usage: $0 [lint|test|all]" >&2
+        echo "usage: $0 [lint|test|sdk|all]" >&2
         exit 1
         ;;
 esac

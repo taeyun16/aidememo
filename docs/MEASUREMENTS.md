@@ -21,6 +21,7 @@ python3 bench/multi-agent/scenario_h_workflow_natural_prompt.py
 python3 bench/multi-agent/scenario_j_lock_retry_sweep.py
 python3 bench/multi-agent/scenario_k_sdk_workflow_parity.py
 scripts/sdk-promotion-check.sh
+scripts/ci-local.sh sdk
 ```
 
 The gbrain adapter path is documented in
@@ -241,6 +242,7 @@ Packaging readiness:
 |---|---|
 | `scripts/release-preflight.sh` | One-command release gate with timed summary rows. `local` profile runs version gate, workflow syntax lint when `actionlint` is available, binding release smoke, workflow release smoke, and SDK promotion check; `full` profile adds optional Python/Elixir/C binding smokes plus Python/npm publish dry-runs. Latest fast path with bindings/workflow/actionlint/publish disabled passed version + SDK promotion in `0.28s` with SDK step `0.13s`; `WG_RELEASE_PREFLIGHT_SDK_REQUIRE_PUBLIC=1` failed the SDK step with exit 1 while recording the failure row. |
 | CI `sdk-promotion-check` job | Runs `scripts/sdk-promotion-check.sh` on Ubuntu after lint with Python 3.13 and Node 22, keeping SDK wording drift visible in PR checks without running package smokes. Local workflow lint: `actionlint .github/workflows/*.yml` 0 issues; local gate: ok=6, ready=3, blocked=2, fail=0. |
+| `scripts/ci-local.sh sdk` | Local CI parity hook for the same SDK wording gate. `bash -n scripts/ci-local.sh` passes; `scripts/ci-local.sh sdk` reports ok=6, ready=3, blocked=2, fail=0. `scripts/ci-local.sh all` now runs this check between lint and tests. |
 | `scripts/wg-release-version.sh` | Unified release version gate. With no args, verifies Cargo, Python, npm, and NIF package versions together; with a semver arg, updates every managed package version. Latest run: `0.1.0` pinned; temp-copy bump to `0.1.1` updated Cargo workspace, Python `pyproject.toml`, npm root/platform packages plus optionalDependency pins, and `wg-nif` `mix.exs`. |
 | `scripts/wg-python-version.sh` | Version gate for the Python wheel. With no args, verifies `Cargo.toml` workspace version equals `crates/wg-python/pyproject.toml` `project.version`; with a semver arg, updates both. Latest run: `0.1.0` pinned. |
 | `scripts/wg-python-pack-smoke.sh` | Builds a `wg-python` wheel with maturin for a temp venv interpreter, installs that wheel into the venv, runs `crates/wg-python/tests/smoke.py`, and verifies installed wheel metadata equals `wg_python.__version__`. Local macOS arm64: built `wg_python-0.1.0-cp313-cp313-macosx_11_0_arm64.whl`, smoke passed including `workflow_start(..., bm25_only=True)` and `WgNotFoundError` typed exception handling, installed version `0.1.0`. |
