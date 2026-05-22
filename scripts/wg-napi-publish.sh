@@ -7,10 +7,152 @@ NAPI_DIR="$ROOT_DIR/crates/wg-napi"
 MODE="${WG_NAPI_PUBLISH_MODE:-dry-run}" # dry-run | publish
 SCOPE="${WG_NAPI_PUBLISH_SCOPE:-both}"   # root | platform | both
 EXPECT_VERSION="${WG_NAPI_EXPECT_VERSION:-}"
+BASE="${WG_NAPI_PUBLISH_BASE:-$(mktemp -d "${TMPDIR:-/tmp}/wg-napi-publish.XXXXXX")}"
+SUMMARY_TSV="$BASE/wg-napi-publish.tsv"
 
 run() {
-    echo "==> $*"
+    local label start end status elapsed
+    label="$*"
+    echo "==> $label"
+    start="$(python3 - <<'PY'
+import time
+print(time.perf_counter())
+PY
+)"
+    set +e
     "$@"
+    status="$?"
+    set -e
+    end="$(python3 - <<'PY'
+import time
+print(time.perf_counter())
+PY
+)"
+    elapsed="$(python3 - "$start" "$end" <<'PY'
+import sys
+start = float(sys.argv[1])
+end = float(sys.argv[2])
+print(f"{end - start:.2f}")
+PY
+)"
+    if [[ "$status" == "0" ]]; then
+        printf "ok\t%s\t%s\t\n" "$elapsed" "$label" >> "$SUMMARY_TSV"
+    else
+        printf "fail\t%s\t%s\texit %s\n" "$elapsed" "$label" "$status" >> "$SUMMARY_TSV"
+    fi
+    echo "    elapsed: ${elapsed}s"
+    return "$status"
+}
+
+run_labeled() {
+    local label start end status elapsed
+    label="$1"
+    shift
+    echo "==> $label"
+    start="$(python3 - <<'PY'
+import time
+print(time.perf_counter())
+PY
+)"
+    set +e
+    "$@"
+    status="$?"
+    set -e
+    end="$(python3 - <<'PY'
+import time
+print(time.perf_counter())
+PY
+)"
+    elapsed="$(python3 - "$start" "$end" <<'PY'
+import sys
+start = float(sys.argv[1])
+end = float(sys.argv[2])
+print(f"{end - start:.2f}")
+PY
+)"
+    if [[ "$status" == "0" ]]; then
+        printf "ok\t%s\t%s\t\n" "$elapsed" "$label" >> "$SUMMARY_TSV"
+    else
+        printf "fail\t%s\t%s\texit %s\n" "$elapsed" "$label" "$status" >> "$SUMMARY_TSV"
+    fi
+    echo "    elapsed: ${elapsed}s"
+    return "$status"
+}
+
+run_capture() {
+    local outvar label start end status elapsed output
+    outvar="$1"
+    shift
+    label="$1"
+    shift
+    echo "==> $label"
+    start="$(python3 - <<'PY'
+import time
+print(time.perf_counter())
+PY
+)"
+    set +e
+    output="$("$@")"
+    status="$?"
+    set -e
+    end="$(python3 - <<'PY'
+import time
+print(time.perf_counter())
+PY
+)"
+    elapsed="$(python3 - "$start" "$end" <<'PY'
+import sys
+start = float(sys.argv[1])
+end = float(sys.argv[2])
+print(f"{end - start:.2f}")
+PY
+)"
+    if [[ "$status" == "0" ]]; then
+        printf "ok\t%s\t%s\t\n" "$elapsed" "$label" >> "$SUMMARY_TSV"
+    else
+        printf "fail\t%s\t%s\texit %s\n" "$elapsed" "$label" "$status" >> "$SUMMARY_TSV"
+    fi
+    printf '%s\n' "$output"
+    echo "    elapsed: ${elapsed}s"
+    printf -v "$outvar" '%s' "$output"
+    return "$status"
+}
+
+print_summary() {
+    if [[ ! -s "$SUMMARY_TSV" ]]; then
+        return
+    fi
+
+    python3 - "$SUMMARY_TSV" <<'PY'
+from pathlib import Path
+import os
+import sys
+
+rows = []
+for line in Path(sys.argv[1]).read_text().splitlines():
+    status, elapsed, label, detail = line.split("\t", 3)
+    rows.append((status, elapsed, label, detail))
+
+total = sum(float(elapsed) for _, elapsed, _, _ in rows if elapsed != "-")
+lines = [
+    "## wg-napi-publish",
+    "",
+    "| Status | Step | Seconds | Detail |",
+    "|---|---|---:|---|",
+]
+for status, elapsed, label, detail in rows:
+    lines.append(f"| {status} | `{label}` | {elapsed} | {detail} |")
+lines.append(f"| total | | {total:.2f} | |")
+
+text = "\n".join(lines)
+print(text)
+
+summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+if summary_path:
+    with open(summary_path, "a", encoding="utf-8") as handle:
+        handle.write(text)
+        handle.write("\n")
+PY
 }
 
 case "$MODE" in
@@ -33,6 +175,10 @@ publish_args=(--access public --json)
 if [[ "$MODE" == "dry-run" ]]; then
     publish_args=(--dry-run "${publish_args[@]}")
 fi
+
+mkdir -p "$BASE"
+: > "$SUMMARY_TSV"
+trap print_summary EXIT
 
 cd "$NAPI_DIR"
 
@@ -75,11 +221,9 @@ cp "$node_file" "$platform_dir/$node_base"
 publish_platform() {
     cd "$platform_dir"
     rm -f "$platform_pkg"-*.tgz
-    echo "==> npm publish ${publish_args[*]} ($platform_pkg)"
     local publish_json
-    publish_json="$(npm publish "${publish_args[@]}")"
-    echo "$publish_json"
-    PUBLISH_JSON="$publish_json" NODE_BASE="$node_base" python3 - <<'PY'
+    run_capture publish_json "npm publish ${publish_args[*]} ($platform_pkg)" npm publish "${publish_args[@]}"
+    run_labeled "validate platform publish payload" env PUBLISH_JSON="$publish_json" NODE_BASE="$node_base" python3 - <<'PY'
 import json
 import os
 
@@ -110,11 +254,9 @@ PY
 publish_root() {
     cd "$NAPI_DIR"
     rm -f wg-napi-*.tgz
-    echo "==> npm publish ${publish_args[*]} (wg-napi)"
     local publish_json
-    publish_json="$(npm publish "${publish_args[@]}")"
-    echo "$publish_json"
-    PUBLISH_JSON="$publish_json" python3 - <<'PY'
+    run_capture publish_json "npm publish ${publish_args[*]} (wg-napi)" npm publish "${publish_args[@]}"
+    run_labeled "validate root publish payload" env PUBLISH_JSON="$publish_json" python3 - <<'PY'
 import json
 import os
 
