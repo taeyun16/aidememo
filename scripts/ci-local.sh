@@ -31,6 +31,10 @@ sdk() {
     run "$ROOT_DIR/scripts/sdk-promotion-check.sh"
 }
 
+demo() {
+    run "$ROOT_DIR/scripts/demo-workflow.sh"
+}
+
 case "${1:-all}" in
     lint)
         lint
@@ -41,13 +45,17 @@ case "${1:-all}" in
     sdk)
         sdk
         ;;
+    demo)
+        demo
+        ;;
     all)
         lint
+        demo
         sdk
         tests
         ;;
     *)
-        echo "usage: $0 [lint|test|sdk|all]" >&2
+        echo "usage: $0 [lint|test|sdk|demo|all]" >&2
         exit 1
         ;;
 esac

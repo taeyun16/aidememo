@@ -44,6 +44,7 @@ cargo test --workspace                              # default features
 cargo test -p wg-core --features semantic           # includes hybrid search
 cargo test -p wg-cli --bin wg                       # CLI parsing + helpers
 ./scripts/ci-local.sh lint
+./scripts/ci-local.sh demo
 ./scripts/ci-local.sh test
 ./scripts/ci-local.sh
 ```

@@ -8,7 +8,7 @@ adding scratch note files.
 
 | Script | Purpose |
 |---|---|
-| `ci-local.sh` | Local CI parity: fmt, clippy, docs, SDK promotion check, and tests. Use `ci-local.sh sdk` for just the SDK wording gate. |
+| `ci-local.sh` | Local CI parity: fmt, clippy, docs, first-run workflow demo, SDK promotion check, and tests. Use `ci-local.sh demo` for just the workflow onboarding smoke or `ci-local.sh sdk` for just the SDK wording gate. |
 | `demo-workflow.sh` | Zero-token first-run demo: seeds a temp store, starts a sparse ticket, and verifies decision + lesson + error context. |
 | `openai_check.sh` | Quick OpenAI-compatible API smoke. |
 | `bench-agent-ux.sh` | Small agent-memory UX regression: Rust check, Hermes tests, and zero-token multi-agent scenarios. |

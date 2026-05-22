@@ -28,6 +28,7 @@ cargo build -p wg-cli --release         # release binary
 cargo test -p wg-core --features semantic
 cargo test -p wg-cli --bin wg
 ./scripts/ci-local.sh lint
+./scripts/ci-local.sh demo               # first-run workflow memory smoke
 ./scripts/ci-local.sh test
 # Tests that download a HuggingFace embedding model are #[ignore]'d
 # (CI skips them — first run hits HF lock races). Run locally for the
