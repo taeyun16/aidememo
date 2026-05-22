@@ -30,6 +30,7 @@ or benchmark-specific `RESULTS.md` files; keep user-facing product work here.
 | P0.2i | done | Python wheel releases could drift between `pyproject.toml`, Cargo metadata, and runtime `__version__` | `scripts/wg-python-version.sh [VERSION]` gates the Rust workspace + Python package version, and `scripts/wg-python-pack-smoke.sh` builds a wheel, installs it into a temp venv, runs the binding smoke, and checks installed metadata against `wg_python.__version__` | `scripts/wg-python-version.sh`: 0.1.0 pinned; `scripts/wg-python-pack-smoke.sh`: wheel build + temp install + `tests/smoke.py` + metadata/runtime version check |
 | P0.2j | done | Python publish readiness had no CI-safe dry-run because `maturin publish` uploads directly | `scripts/wg-python-publish-dry-run.sh` builds wheel + sdist payloads, validates metadata/file contents without uploading, and CI runs the same check on `wg-python-v*` tags/manual dispatch. The dry-run caught that the sdist could not rebuild with the workspace-only `tokenizers` patch, so the vendored patch is now included in the Python sdist. | `scripts/wg-python-publish-dry-run.sh`: built `wg_python-0.1.0-cp313-cp313-macosx_11_0_arm64.whl` + `wg_python-0.1.0.tar.gz` and validated payload metadata/files; `.github/workflows/wg-python-publish-dry-run.yml` |
 | P0.2k | done | Real Python release still required hand-written trusted-publisher wiring | `.github/workflows/wg-python-publish.yml` builds/validates distributions in a non-publishing job, uploads the checked artifacts, and only the `dry_run=false` publish job gets PyPI OIDC permissions via `pypa/gh-action-pypi-publish@release/v1` | `WG_PYTHON_DIST_DIR=/tmp/wg-python-dist scripts/wg-python-publish-dry-run.sh`: checked reusable artifact output; workflow defaults to `dry_run=true` and requires exact version input |
+| P0.2l | done | Multi-language release versions could still drift when bumping packages by hand | `scripts/wg-release-version.sh [VERSION]` composes the Python, npm, and NIF version gates so Cargo/Python/npm/Elixir stay pinned; FFI follows Cargo package metadata | `scripts/wg-release-version.sh`: 0.1.0 pinned; temp-copy bump to 0.1.1 updated Cargo workspace, Python `pyproject.toml`, npm root/platform packages, npm optionalDependencies, and `wg-nif` `mix.exs` |
 | P0.3 | done | Capture quality is not measured | Pending approval rate and extraction precision can be computed from one JSONL log | `wg pending stats --from LOG --json` returns total/count-by-type/confidence histogram |
 | P1.1 | done | First-run setup requires several commands | One command prints or applies init + MCP install + skill install for a target agent | `wg init --agent codex --no-ingest PATH --json` reports steps and elapsed ms |
 | P1.2 | done | Shared daemon is operational but opaque | HTTP MCP exposes health/sync/admin status without exposing secrets | `curl /health` and `curl /admin/status` return request count, store path, auth mode, sync cursors |
@@ -64,7 +65,10 @@ is smooth through four concurrent local writers, while eight writers should use
 the shared daemon path if every write matters. `wg doctor --json` now surfaces
 that as a first-class `sharing` report instead of burying it in workflow hints.
 MCP `wg_doctor` now carries the same sharing summary so coding agents can react
-to retry/daemon guidance through the tool surface they already call.
+to retry/daemon guidance through the tool surface they already call. Release
+version bumps are now one measured gate: `scripts/wg-release-version.sh
+[VERSION]` verifies Cargo, Python, npm, and NIF package versions together while
+leaving C FFI on Cargo metadata.
 
 Next measurement candidates:
 1. Reserve/configure the PyPI `wg-python` trusted publisher, then run `.github/workflows/wg-python-publish.yml` with `dry_run=false`.
