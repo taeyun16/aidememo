@@ -95,6 +95,12 @@ PY
     return "$status"
 }
 
+run_without_child_summary() {
+    local label="$1"
+    shift
+    run "$label" env GITHUB_STEP_SUMMARY= "$@"
+}
+
 print_summary() {
     python3 - "$SUMMARY_TSV" <<'PY'
 from pathlib import Path
@@ -159,7 +165,7 @@ else
 fi
 
 if [[ "$RUN_BINDINGS" == "1" ]]; then
-    run "binding release smoke" env \
+    run_without_child_summary "binding release smoke" env \
         WG_BINDINGS_SMOKE_OPTIONAL="$RUN_BINDINGS_OPTIONAL" \
         "$ROOT_DIR/scripts/bindings-release-smoke.sh"
 else
@@ -167,13 +173,13 @@ else
 fi
 
 if [[ "$RUN_WORKFLOW" == "1" ]]; then
-    run "workflow release smoke" "$ROOT_DIR/scripts/workflow-release-smoke.sh"
+    run_without_child_summary "workflow release smoke" "$ROOT_DIR/scripts/workflow-release-smoke.sh"
 else
     record_skip "workflow release smoke" "WG_RELEASE_PREFLIGHT_WORKFLOW=0"
 fi
 
 if [[ "$RUN_SDK_PROMOTION" == "1" ]]; then
-    run "sdk promotion check" env \
+    run_without_child_summary "sdk promotion check" env \
         WG_SDK_PROMOTION_RUN_SMOKE="$RUN_SDK_PROMOTION_SMOKE" \
         WG_SDK_PROMOTION_RUN_SCENARIO_K="$RUN_SDK_PROMOTION_SCENARIO_K" \
         WG_SDK_PROMOTION_REQUIRE_PUBLIC="$RUN_SDK_PROMOTION_REQUIRE_PUBLIC" \
@@ -183,8 +189,8 @@ else
 fi
 
 if [[ "$RUN_PUBLISH" == "1" ]]; then
-    run "wg-python publish dry-run" "$ROOT_DIR/scripts/wg-python-publish-dry-run.sh"
-    run "wg-napi publish dry-run" "$ROOT_DIR/scripts/wg-napi-publish-dry-run.sh"
+    run_without_child_summary "wg-python publish dry-run" "$ROOT_DIR/scripts/wg-python-publish-dry-run.sh"
+    run_without_child_summary "wg-napi publish dry-run" "$ROOT_DIR/scripts/wg-napi-publish-dry-run.sh"
 else
     record_skip "wg-python publish dry-run" "set WG_RELEASE_PREFLIGHT_PROFILE=full"
     record_skip "wg-napi publish dry-run" "set WG_RELEASE_PREFLIGHT_PROFILE=full"

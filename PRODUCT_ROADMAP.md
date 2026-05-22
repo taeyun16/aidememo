@@ -51,7 +51,7 @@ or benchmark-specific `RESULTS.md` files; keep user-facing product work here.
 | P3.8 | done | Workflow release smoke is local-only | CI runs the zero-token workflow release smoke as a named check after lint | `.github/workflows/ci.yml` job `workflow-release-smoke`; local command remains `scripts/workflow-release-smoke.sh` |
 | P3.9 | done | Workflow release smoke runtime is opaque in CI | Smoke script prints per-step timing and writes the same markdown table to `$GITHUB_STEP_SUMMARY` | `scripts/workflow-release-smoke.sh`: latest local total 13.40s; demo 0.65s, Scenario F 7.17s, Scenario I 5.10s, fixture workflow start 0.20s |
 | P3.10 | done | Release workflows can drift syntactically without a cheap CI signal | CI now runs `actionlint` over every GitHub Actions workflow before heavier Rust jobs; local-only `.codex/` agent config is ignored so status stays clean | `actionlint .github/workflows/*.yml`: 0 issues; `.github/workflows/ci.yml` job `workflow-lint` installs `actionlint@v1.7.1` |
-| P3.11 | done | Release readiness still required stitching several gates together by hand | `scripts/release-preflight.sh` gives local/full profiles with timed status rows; full profile adds optional binding smokes and Python/npm publish dry-runs | `scripts/release-preflight.sh`: local profile passed version, actionlint, binding smoke, and workflow smoke in 66.03s; fast path with bindings/workflow/sdk/publish disabled passed version + actionlint in 0.29s |
+| P3.11 | done | Release readiness still required stitching several gates together by hand | `scripts/release-preflight.sh` gives local/full profiles with timed status rows; full profile adds optional binding smokes and Python/npm publish dry-runs | `scripts/release-preflight.sh`: local profile can run version, actionlint, binding smoke, workflow smoke, and SDK promotion; binding-only measured path passed in 3.79s; fast path with bindings/workflow/sdk/publish disabled passed version + actionlint in 0.29s |
 | P3.12 | done | Python/Node bindings were too low-level to support SDK positioning for sparse-ticket agents | `WikiGraph::workflow_start` is now shared by CLI, MCP, Python, and Node; Python/Node package docs include workflow-level examples with `source_id` scoping | `cargo check -p wg-core -p wg-cli -p wg-python -p wg-napi`; `cargo test -p wg-cli workflow_start`; `scripts/wg-python-pack-smoke.sh`; `scripts/wg-napi-pack-smoke.sh` |
 | P3.13 | done | SDK candidates still surfaced Rust errors as undifferentiated runtime failures | `WgError::code()` gives stable machine codes; Python maps core failures to typed exceptions; Node throws JS errors with N-API `code` plus `[wg_code]` message prefixes | `cargo check -p wg-core -p wg-python -p wg-napi`; `cargo test -p wg-core entity_not_found_display_includes_suggestions`; `scripts/wg-python-pack-smoke.sh`; `cd crates/wg-napi && npm test` |
 | P3.14 | done | SDK workflow APIs had no cross-language parity measurement | Scenario K compares CLI, `wg-python`, and `wg-napi` workflow-start packs across four sparse tickets and checks session/ticket side effects, prior counts, `source_id`, and leakage | `python3 bench/multi-agent/scenario_k_sdk_workflow_parity.py`: 8/8 invariants; Python/Node shape parity 4/4 each; leakage 0; p50 CLI 1864.55ms, Python 16.19ms, Node 13.69ms |
@@ -72,10 +72,11 @@ or benchmark-specific `RESULTS.md` files; keep user-facing product work here.
 | P3.29 | done | NAPI pack/install smoke had no standalone timing artifact | `scripts/wg-napi-pack-smoke.sh` now records timed rows for version gate, build, test, root/platform `npm pack`, packed tarball install, and installed package verification, then writes the summary to stdout and `$GITHUB_STEP_SUMMARY` | `GITHUB_STEP_SUMMARY=$(mktemp) scripts/wg-napi-pack-smoke.sh`: total 2.81s; build 0.67s; test 1.00s; root pack 0.22s; platform pack 0.53s; install 0.30s |
 | P3.30 | done | Python wheel pack smoke had no standalone timing artifact | `scripts/wg-python-pack-smoke.sh` now records timed rows for version gate, venv creation, `maturin build --release`, wheel install, binding smoke, and installed version verification, then writes the summary to stdout and `$GITHUB_STEP_SUMMARY` | `GITHUB_STEP_SUMMARY=$(mktemp) scripts/wg-python-pack-smoke.sh`: total 48.38s; venv 1.43s; maturin build 45.51s; install 0.30s; smoke 1.03s |
 | P3.31 | done | Composite binding smoke duplicated child package summary tables in `$GITHUB_STEP_SUMMARY` | `bindings-release-smoke.sh` suppresses child pack-smoke summary-file writes while preserving their stdout summaries, so the GitHub summary contains one top-level binding table | `summary_file=$(mktemp) && GITHUB_STEP_SUMMARY=$summary_file scripts/bindings-release-smoke.sh`: `rg -n '^## ' "$summary_file"` returns one heading; top-level total 3.37s; nested NAPI summary remains in stdout |
+| P3.32 | done | Release preflight could duplicate child smoke/check summary tables in `$GITHUB_STEP_SUMMARY` | `release-preflight.sh` suppresses child summary-file writes for binding, workflow, SDK, and publish subchecks while preserving child stdout summaries, so CI shows one preflight table | `summary_file=$(mktemp) && GITHUB_STEP_SUMMARY=$summary_file WG_RELEASE_PREFLIGHT_WORKFLOW=0 WG_RELEASE_PREFLIGHT_SDK_PROMOTION=0 WG_RELEASE_PREFLIGHT_PUBLISH=0 scripts/release-preflight.sh`: `rg -n '^## ' "$summary_file"` returns one heading; total 3.79s; binding smoke 3.45s |
 
 ## Current Sprint
 
-All planned P0-P3.31 roadmap items are closed. Scenario H now isolates each
+All planned P0-P3.32 roadmap items are closed. Scenario H now isolates each
 agent's integration path: Claude project MCP, Codex temp `CODEX_HOME` MCP, and
 Hermes MCP-only profile to avoid redb lock contention with the in-process
 plugin. `wg doctor --json` now exposes workflow readiness, recent workflow
@@ -115,7 +116,10 @@ Python wheel pack smoke now exposes the same summary style for the release
 wheel build/install/test path, making its 45s maturin build cost visible before
 the heavier publish dry-run is needed. Binding release smoke now keeps child
 pack-smoke tables in stdout but writes only one top-level table to
-`$GITHUB_STEP_SUMMARY`, avoiding duplicated CI summary sections.
+`$GITHUB_STEP_SUMMARY`, avoiding duplicated CI summary sections. Release
+preflight now follows the same rule for binding, workflow, SDK, and publish
+subchecks, so a full preflight keeps detailed logs without flooding the GitHub
+summary page.
 
 Next measurement candidates:
 1. Reserve/configure the PyPI `wg-python` trusted publisher, then run `.github/workflows/wg-python-publish.yml` with `dry_run=false`.
