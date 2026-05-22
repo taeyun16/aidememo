@@ -4,18 +4,128 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 NAPI_DIR="$ROOT_DIR/crates/wg-napi"
+BASE="${WG_NAPI_PACK_SMOKE_BASE:-$(mktemp -d "${TMPDIR:-/tmp}/wg-napi-pack-smoke.XXXXXX")}"
+SUMMARY_TSV="$BASE/wg-napi-pack-smoke.tsv"
+
+timer_now() {
+    python3 - <<'PY'
+import time
+print(time.perf_counter())
+PY
+}
+
+elapsed_since() {
+    python3 - "$1" <<'PY'
+import sys
+import time
+start = float(sys.argv[1])
+print(f"{time.perf_counter() - start:.2f}")
+PY
+}
+
+record_summary_row() {
+    local status elapsed label row_status detail
+    status="$1"
+    elapsed="$2"
+    label="$3"
+    if [[ "$status" == "0" ]]; then
+        row_status="ok"
+        detail=""
+    else
+        row_status="fail"
+        detail="exit $status"
+    fi
+
+    printf "%s\t%s\t%s\t%s\n" "$row_status" "$elapsed" "$label" "$detail" >> "$SUMMARY_TSV"
+}
 
 run() {
-    echo "==> $*"
-    "$@"
+    run_labeled "$*" "$@"
 }
+
+run_labeled() {
+    local label start status elapsed
+    label="$1"
+    shift
+    echo "==> $label"
+    start="$(timer_now)"
+    set +e
+    "$@"
+    status="$?"
+    set -e
+    elapsed="$(elapsed_since "$start")"
+    record_summary_row "$status" "$elapsed" "$label"
+    echo "    elapsed: ${elapsed}s"
+    return "$status"
+}
+
+run_capture() {
+    local outvar label start status elapsed output
+    outvar="$1"
+    shift
+    label="$1"
+    shift
+    echo "==> $label"
+    start="$(timer_now)"
+    set +e
+    output="$("$@")"
+    status="$?"
+    set -e
+    elapsed="$(elapsed_since "$start")"
+    record_summary_row "$status" "$elapsed" "$label"
+    printf '%s\n' "$output"
+    echo "    elapsed: ${elapsed}s"
+    printf -v "$outvar" '%s' "$output"
+    return "$status"
+}
+
+print_summary() {
+    if [[ ! -s "$SUMMARY_TSV" ]]; then
+        return
+    fi
+
+    python3 - "$SUMMARY_TSV" <<'PY'
+from pathlib import Path
+import os
+import sys
+
+rows = []
+for line in Path(sys.argv[1]).read_text().splitlines():
+    status, elapsed, label, detail = line.split("\t", 3)
+    rows.append((status, elapsed, label, detail))
+
+total = sum(float(elapsed) for _, elapsed, _, _ in rows if elapsed != "-")
+lines = [
+    "## wg-napi-pack-smoke",
+    "",
+    "| Status | Step | Seconds | Detail |",
+    "|---|---|---:|---|",
+]
+for status, elapsed, label, detail in rows:
+    lines.append(f"| {status} | `{label}` | {elapsed} | {detail} |")
+lines.append(f"| total | | {total:.2f} | |")
+
+text = "\n".join(lines)
+print(text)
+
+summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+if summary_path:
+    with open(summary_path, "a", encoding="utf-8") as handle:
+        handle.write(text)
+        handle.write("\n")
+PY
+}
+
+mkdir -p "$BASE"
+: > "$SUMMARY_TSV"
+trap print_summary EXIT
 
 cd "$NAPI_DIR"
 
 if [[ ! -x node_modules/.bin/napi ]]; then
     run npm ci --prefer-offline --no-audit --fund=false
 fi
-run "$ROOT_DIR/scripts/wg-napi-version.sh"
+run_labeled "wg-napi version gate" "$ROOT_DIR/scripts/wg-napi-version.sh"
 run npm run build
 run npm test
 
@@ -35,8 +145,7 @@ fi
 cp "$node_file" "$platform_dir/$node_base"
 
 rm -f wg-napi-*.tgz
-pack_json="$(npm pack --json)"
-echo "$pack_json"
+run_capture pack_json "npm pack root wg-napi" npm pack --json
 
 package_file="$(PACK_JSON="$pack_json" python3 - <<'PY'
 import json
@@ -61,8 +170,7 @@ test -f "$package_file"
 
 cd "$platform_dir"
 rm -f "$platform_pkg"-*.tgz
-platform_pack_json="$(npm pack --json)"
-echo "$platform_pack_json"
+run_capture platform_pack_json "npm pack $platform_pkg" npm pack --json
 platform_package_file="$(PACK_JSON="$platform_pack_json" NODE_BASE="$node_base" python3 - <<'PY'
 import json
 import os
@@ -82,7 +190,7 @@ test -f "$platform_package_file"
 
 tmp_project="$(mktemp -d)"
 cd "$tmp_project"
-run npm install --offline --ignore-scripts --package-lock=false --no-audit --fund=false --omit=optional "$NAPI_DIR/$package_file" "$platform_dir/$platform_package_file"
-run node -e "const wg = require('wg-napi'); console.log('installed wg-napi version:', wg.version())"
+run_labeled "npm install packed wg-napi tarballs" npm install --offline --ignore-scripts --package-lock=false --no-audit --fund=false --omit=optional "$NAPI_DIR/$package_file" "$platform_dir/$platform_package_file"
+run_labeled "verify installed wg-napi" node -e "const wg = require('wg-napi'); console.log('installed wg-napi version:', wg.version())"
 
 echo "OK: wg-napi package smoke passed (root=$NAPI_DIR/$package_file platform=$platform_pkg)"
