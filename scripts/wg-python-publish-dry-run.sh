@@ -34,8 +34,14 @@ if [[ -n "$EXPECT_VERSION" && "$version" != "$EXPECT_VERSION" ]]; then
 fi
 
 tmp_dir="$(mktemp -d)"
-trap 'rm -rf "$tmp_dir"' EXIT
-dist_dir="$tmp_dir/dist"
+if [[ -z "${WG_PYTHON_DIST_DIR:-}" ]]; then
+    trap 'rm -rf "$tmp_dir"' EXIT
+    dist_dir="$tmp_dir/dist"
+else
+    trap 'rm -rf "$tmp_dir"' EXIT
+    dist_dir="$WG_PYTHON_DIST_DIR"
+    rm -rf "$dist_dir"
+fi
 venv_dir="$tmp_dir/venv"
 mkdir -p "$dist_dir"
 

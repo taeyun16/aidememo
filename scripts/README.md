@@ -16,6 +16,7 @@ adding scratch note files.
 | `wg-python-version.sh` | Verify or update `wg-python` package version pins across the Rust workspace version and Python `pyproject.toml`. |
 | `wg-python-pack-smoke.sh` | Build a `wg-python` wheel, install it into a temp venv, run the Python binding smoke, and verify wheel metadata matches `wg_python.__version__`. |
 | `wg-python-publish-dry-run.sh` | Build `wg-python` wheel + sdist publish payloads and validate their metadata/file contents without uploading to PyPI. |
+| `.github/workflows/wg-python-publish.yml` | Trusted-publisher release path: build/validate distributions first, then publish through PyPA's OIDC action only when `dry_run=false`. |
 | `wg-napi-version.sh` | Verify or update every `wg-napi` npm package version: root package, platform packages, and root `optionalDependencies`. |
 | `wg-napi-pack-smoke.sh` | Build, test, pack root `wg-napi`, pack the current platform package, then install both tarballs and verify `require("wg-napi")` resolves through the platform optional dependency. |
 | `wg-napi-publish.sh` | Shared npm publish engine for root/platform `wg-napi` packages. Defaults to dry-run; set `WG_NAPI_PUBLISH_MODE=publish` only from the trusted-publisher workflow. |
