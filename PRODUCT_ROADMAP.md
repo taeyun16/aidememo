@@ -73,10 +73,11 @@ or benchmark-specific `RESULTS.md` files; keep user-facing product work here.
 | P3.30 | done | Python wheel pack smoke had no standalone timing artifact | `scripts/wg-python-pack-smoke.sh` now records timed rows for version gate, venv creation, `maturin build --release`, wheel install, binding smoke, and installed version verification, then writes the summary to stdout and `$GITHUB_STEP_SUMMARY` | `GITHUB_STEP_SUMMARY=$(mktemp) scripts/wg-python-pack-smoke.sh`: total 48.38s; venv 1.43s; maturin build 45.51s; install 0.30s; smoke 1.03s |
 | P3.31 | done | Composite binding smoke duplicated child package summary tables in `$GITHUB_STEP_SUMMARY` | `bindings-release-smoke.sh` suppresses child pack-smoke summary-file writes while preserving their stdout summaries, so the GitHub summary contains one top-level binding table | `summary_file=$(mktemp) && GITHUB_STEP_SUMMARY=$summary_file scripts/bindings-release-smoke.sh`: `rg -n '^## ' "$summary_file"` returns one heading; top-level total 3.37s; nested NAPI summary remains in stdout |
 | P3.32 | done | Release preflight could duplicate child smoke/check summary tables in `$GITHUB_STEP_SUMMARY` | `release-preflight.sh` suppresses child summary-file writes for binding, workflow, SDK, and publish subchecks while preserving child stdout summaries, so CI shows one preflight table | `summary_file=$(mktemp) && GITHUB_STEP_SUMMARY=$summary_file WG_RELEASE_PREFLIGHT_WORKFLOW=0 WG_RELEASE_PREFLIGHT_SDK_PROMOTION=0 WG_RELEASE_PREFLIGHT_PUBLISH=0 scripts/release-preflight.sh`: `rg -n '^## ' "$summary_file"` returns one heading; total 3.79s; binding smoke 3.45s |
+| P3.33 | done | Local CI SDK mode duplicated the SDK promotion table in `$GITHUB_STEP_SUMMARY` | `ci-local.sh` suppresses child summary-file writes for `sdk-promotion-check.sh` while preserving its stdout details, so local CI summary remains one top-level timing table | `summary_file=$(mktemp) && GITHUB_STEP_SUMMARY=$summary_file scripts/ci-local.sh sdk`: `rg -n '^## ' "$summary_file"` returns one heading; total 0.14s; SDK gate reports ok=6, ready=3, blocked=2 |
 
 ## Current Sprint
 
-All planned P0-P3.32 roadmap items are closed. Scenario H now isolates each
+All planned P0-P3.33 roadmap items are closed. Scenario H now isolates each
 agent's integration path: Claude project MCP, Codex temp `CODEX_HOME` MCP, and
 Hermes MCP-only profile to avoid redb lock contention with the in-process
 plugin. `wg doctor --json` now exposes workflow readiness, recent workflow
@@ -119,7 +120,7 @@ pack-smoke tables in stdout but writes only one top-level table to
 `$GITHUB_STEP_SUMMARY`, avoiding duplicated CI summary sections. Release
 preflight now follows the same rule for binding, workflow, SDK, and publish
 subchecks, so a full preflight keeps detailed logs without flooding the GitHub
-summary page.
+summary page. Local CI now applies the same rule to its SDK promotion subcheck.
 
 Next measurement candidates:
 1. Reserve/configure the PyPI `wg-python` trusted publisher, then run `.github/workflows/wg-python-publish.yml` with `dry_run=false`.

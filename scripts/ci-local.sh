@@ -12,9 +12,10 @@ if [[ -n "${TOOLCHAIN}" ]]; then
     cargo_cmd+=("+${TOOLCHAIN}")
 fi
 
-run() {
+run_timed() {
     local label start end status elapsed
-    label="$*"
+    label="$1"
+    shift
     echo "==> $label"
     start="$(python3 - <<'PY'
 import time
@@ -44,6 +45,22 @@ PY
     fi
     echo "    elapsed: ${elapsed}s"
     return "$status"
+}
+
+run() {
+    run_timed "$*" "$@"
+}
+
+run_labeled() {
+    local label="$1"
+    shift
+    run_timed "$label" "$@"
+}
+
+run_without_child_summary() {
+    local label="$1"
+    shift
+    run_labeled "$label" env GITHUB_STEP_SUMMARY= "$@"
 }
 
 print_summary() {
@@ -100,7 +117,7 @@ tests() {
 }
 
 sdk() {
-    run "$ROOT_DIR/scripts/sdk-promotion-check.sh"
+    run_without_child_summary "sdk promotion check" "$ROOT_DIR/scripts/sdk-promotion-check.sh"
 }
 
 demo() {
