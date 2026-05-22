@@ -20,6 +20,7 @@ python3 bench/multi-agent/scenario_g_hermes_binding.py
 python3 bench/multi-agent/scenario_h_workflow_natural_prompt.py
 python3 bench/multi-agent/scenario_j_lock_retry_sweep.py
 python3 bench/multi-agent/scenario_k_sdk_workflow_parity.py
+scripts/sdk-promotion-check.sh
 ```
 
 The gbrain adapter path is documented in
@@ -249,6 +250,7 @@ Packaging readiness:
 | `scripts/wg-napi-publish-dry-run.sh` | Wrapper around the publish engine with `WG_NAPI_PUBLISH_MODE=dry-run`. Local macOS arm64: root payload `wg-napi@0.1.0`, 4 files, 4.18 KB packed, README included, no `.node`; platform payload `wg-napi-darwin-arm64@0.1.0`, 2 files, 2.79 MB packed. |
 | `scripts/wg-nif-version.sh` | Version gate for the Elixir package. With no args, verifies `Cargo.toml` workspace version equals `crates/wg-nif/mix.exs`; with a semver arg, updates both. Latest run: `0.1.0` pinned. |
 | `scripts/bindings-release-smoke.sh` | Cross-binding readiness smoke. Runs `cargo check -p wg-python -p wg-napi -p wg-nif -p wg-ffi`, npm version/pack/install smoke, and reports Python/Elixir/C optional package smokes based on local tools. Local macOS arm64: cargo check passed and npm version/pack/install smoke passed. With `WG_BINDINGS_SMOKE_NPM=0 WG_BINDINGS_SMOKE_OPTIONAL=1`, the Python wheel build, Elixir `mix compile.cargo --force && mix test`, and C FFI smoke all passed. |
+| `scripts/sdk-promotion-check.sh` | SDK wording gate for `wg-python` and `wg-napi`. Default local run: ok=6, ready=3, blocked=2, fail=0, `local_ready=true`, `sdk_promotable=false` because public PyPI/npm installs are not verified. With `WG_SDK_PROMOTION_RUN_SCENARIO_K=1`: ok=7, ready=2, blocked=2, fail=0 and Scenario K reports 8/8 invariants with p50 CLI 1882.33ms, Python 19.97ms, Node 20.0ms. |
 | `.github/workflows/wg-napi-artifacts.yml` | Manual/tag workflow builds, tests, packs, and uploads root + platform `wg-napi` artifacts on Ubuntu, macOS, and Windows. |
 | `.github/workflows/wg-python-publish-dry-run.yml` | Manual/tag workflow builds and validates `wg-python` PyPI payloads on Ubuntu without uploading. |
 | `.github/workflows/wg-python-publish.yml` | Manual trusted-publisher workflow. It builds and validates distributions without PyPI permissions, uploads them as artifacts, then publishes via `pypa/gh-action-pypi-publish@release/v1` only when `dry_run=false`. Default `dry_run=true`; real publish requires a PyPI trusted publisher for this workflow and the `pypi-publish` environment. Local artifact-mode check: `WG_PYTHON_DIST_DIR=/tmp/wg-python-dist scripts/wg-python-publish-dry-run.sh` produced wheel 2.87 MB + sdist 352 KB. |
