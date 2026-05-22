@@ -93,6 +93,30 @@ print([hit["content"] for hit in pack["relevant_decisions"]])
 For a multi-agent shared store, pass `source_id` on writes and reads. The same
 field flows through `search`, `query`, `fact_list`, and `workflow_start`.
 
+## Errors
+
+Core `wg` failures are mapped to typed Python exceptions. Every message starts
+with a stable machine-readable code such as `[entity_not_found]`.
+
+```python
+try:
+    g.entity_get("Rdis")
+except wg.WgNotFoundError as exc:
+    print(exc)  # [entity_not_found] entity not found: 'Rdis' ...
+except wg.WgError as exc:
+    print("wg failed", exc)
+```
+
+Exception classes:
+
+| Exception | Use |
+|---|---|
+| `WgError` | Base class for all wg-python errors |
+| `WgNotFoundError` | Missing entity, fact, relation, or path |
+| `WgInvalidInputError` | Invalid caller input or schema mismatch |
+| `WgStoreError` | Store open/read/write/config IO failures |
+| `WgSearchError` | Search, index, or embedding-model failures |
+
 ## API
 
 | Method | Returns |

@@ -36,6 +36,14 @@ def main() -> None:
         assert len(ents) == 2
         assert {x["name"] for x in ents} == {"Redis", "Postgres"}
 
+        try:
+            g.entity_get("Rdis")
+            raise AssertionError("entity_get should raise WgNotFoundError")
+        except wg.WgNotFoundError as e:
+            assert isinstance(e, wg.WgError)
+            assert "[entity_not_found]" in str(e)
+            assert "Rdis" in str(e)
+
         # Facts
         fid = g.fact_add(
             "Redis Sentinel provides high availability",

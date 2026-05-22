@@ -13,6 +13,8 @@
 //! ctx = g.query("Redis")
 //! ```
 
+use pyo3::create_exception;
+use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyModule};
 use pythonize::pythonize;
@@ -20,20 +22,76 @@ use std::path::Path;
 use std::sync::Arc;
 use wg_core::{
     Config, EntityId, EntityInput, EntityType, FactId, FactInput, FactListOpts, FactType, ListOpts,
-    QueryOpts, RelationInput, RelationType, SearchOpts, TraverseDirection, TraverseOpts, WgError,
-    WikiGraph, WorkflowStartOpts,
+    QueryOpts, RelationInput, RelationType, SearchOpts, TraverseDirection, TraverseOpts,
+    WgError as CoreWgError, WikiGraph, WorkflowStartOpts,
 };
+
+create_exception!(wg_python, WgError, PyRuntimeError, "Base wg-python error.");
+create_exception!(
+    wg_python,
+    WgNotFoundError,
+    WgError,
+    "A requested wg entity, fact, relation, or path was not found."
+);
+create_exception!(
+    wg_python,
+    WgInvalidInputError,
+    WgError,
+    "The caller passed invalid input to wg."
+);
+create_exception!(
+    wg_python,
+    WgStoreError,
+    WgError,
+    "The wg store could not be opened, read, or written."
+);
+create_exception!(
+    wg_python,
+    WgSearchError,
+    WgError,
+    "Search, index, or embedding-model operation failed."
+);
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
 fn err<E: std::fmt::Display>(e: E) -> PyErr {
-    pyo3::exceptions::PyRuntimeError::new_err(e.to_string())
+    PyErr::new::<WgError, _>(e.to_string())
 }
 
-fn map_err(e: WgError) -> PyErr {
-    err(e)
+fn map_err(e: CoreWgError) -> PyErr {
+    let message = format!("[{}] {e}", e.code());
+    match e {
+        CoreWgError::EntityNotFound { .. }
+        | CoreWgError::EntityIdNotFound(_)
+        | CoreWgError::FactNotFound(_)
+        | CoreWgError::RelationNotFound { .. }
+        | CoreWgError::PathNotFound { .. } => PyErr::new::<WgNotFoundError, _>(message),
+        CoreWgError::InvalidInput(_)
+        | CoreWgError::EntityAlreadyExists { .. }
+        | CoreWgError::ConfigKeyNotFound(_)
+        | CoreWgError::FrontmatterParse { .. }
+        | CoreWgError::WikilinkParse { .. }
+        | CoreWgError::CycleDetected { .. }
+        | CoreWgError::SchemaVersionMismatch { .. }
+        | CoreWgError::UnsupportedSchemaVersion(_) => PyErr::new::<WgInvalidInputError, _>(message),
+        CoreWgError::StoreOpen { .. }
+        | CoreWgError::StoreRead { .. }
+        | CoreWgError::StoreWrite { .. }
+        | CoreWgError::TransactionBegin { .. }
+        | CoreWgError::TransactionConflict
+        | CoreWgError::FileRead(_, _)
+        | CoreWgError::ConfigRead { .. }
+        | CoreWgError::ConfigParse { .. } => PyErr::new::<WgStoreError, _>(message),
+        CoreWgError::ModelNotFound { .. }
+        | CoreWgError::ModelDownloadFailed { .. }
+        | CoreWgError::ModelLoadFailed { .. }
+        | CoreWgError::ModelInferenceFailed(_)
+        | CoreWgError::SearchFailed(_)
+        | CoreWgError::IndexCorrupted(_) => PyErr::new::<WgSearchError, _>(message),
+        _ => PyErr::new::<WgError, _>(message),
+    }
 }
 
 fn parse_entity_type(value: &str) -> Option<EntityType> {
@@ -538,6 +596,11 @@ impl PyWikiGraph {
 #[pymodule]
 fn wg_python(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyWikiGraph>()?;
+    m.add("WgError", _py.get_type::<WgError>())?;
+    m.add("WgNotFoundError", _py.get_type::<WgNotFoundError>())?;
+    m.add("WgInvalidInputError", _py.get_type::<WgInvalidInputError>())?;
+    m.add("WgStoreError", _py.get_type::<WgStoreError>())?;
+    m.add("WgSearchError", _py.get_type::<WgSearchError>())?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     Ok(())
 }

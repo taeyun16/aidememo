@@ -198,6 +198,51 @@ pub enum WgError {
 }
 
 impl WgError {
+    /// Stable machine-readable error code for bindings and SDKs.
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::StoreOpen { .. } => "store_open",
+            Self::StoreRead { .. } => "store_read",
+            Self::StoreWrite { .. } => "store_write",
+            Self::TransactionBegin { .. } => "transaction_begin",
+            Self::TransactionConflict => "transaction_conflict",
+            Self::Serialize { .. } => "serialize",
+            Self::Deserialize { .. } => "deserialize",
+            Self::EntityNotFound { .. } => "entity_not_found",
+            Self::EntityAlreadyExists { .. } => "entity_already_exists",
+            Self::EntityIdNotFound(_) => "entity_id_not_found",
+            Self::FactNotFound(_) => "fact_not_found",
+            Self::RelationNotFound { .. } => "relation_not_found",
+            Self::CycleDetected { .. } => "cycle_detected",
+            Self::PathNotFound { .. } => "path_not_found",
+            Self::ConfigRead { .. } => "config_read",
+            Self::ConfigParse { .. } => "config_parse",
+            Self::ConfigKeyNotFound(_) => "config_key_not_found",
+            Self::FrontmatterParse { .. } => "frontmatter_parse",
+            Self::WikilinkParse { .. } => "wikilink_parse",
+            Self::IngestFailed(_) => "ingest_failed",
+            Self::FileRead(_, _) => "file_read",
+            #[cfg(feature = "semantic")]
+            Self::ModelNotFound { .. } => "model_not_found",
+            #[cfg(feature = "semantic")]
+            Self::ModelDownloadFailed { .. } => "model_download_failed",
+            #[cfg(feature = "semantic")]
+            Self::ModelLoadFailed { .. } => "model_load_failed",
+            #[cfg(feature = "semantic")]
+            Self::ModelInferenceFailed(_) => "model_inference_failed",
+            Self::MigrationFailed { .. } => "migration_failed",
+            Self::SchemaVersionMismatch { .. } => "schema_version_mismatch",
+            Self::UnsupportedSchemaVersion(_) => "unsupported_schema_version",
+            #[cfg(feature = "remote")]
+            Self::RemoteIo { .. } => "remote_io",
+            Self::SearchFailed(_) => "search_failed",
+            Self::IndexCorrupted(_) => "index_corrupted",
+            Self::LintFailed(_) => "lint_failed",
+            Self::InvalidInput(_) => "invalid_input",
+            Self::Internal(_) => "internal",
+        }
+    }
+
     /// Create an EntityNotFound error with fuzzy suggestions.
     pub fn entity_not_found(name: String, suggestions: Vec<String>) -> Self {
         Self::EntityNotFound { name, suggestions }
@@ -257,6 +302,7 @@ mod tests {
         assert!(msg.contains("Postgrs"), "name present: {msg}");
         assert!(msg.contains("did you mean"), "hint present: {msg}");
         assert!(msg.contains("Postgres"), "first suggestion present: {msg}");
+        assert_eq!(err.code(), "entity_not_found");
     }
 
     #[test]

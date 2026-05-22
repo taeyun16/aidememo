@@ -33,6 +33,15 @@ function main() {
     const ents = JSON.parse(g.entityList({ limit: 10 }));
     if (ents.length !== 2) throw new Error(`expected 2 entities, got ${ents.length}`);
 
+    try {
+      g.entityGet('Rdis');
+      throw new Error('entityGet should throw for missing entity');
+    } catch (e) {
+      if (!e.message.includes('[entity_not_found]')) throw new Error(`missing wg error code: ${e.message}`);
+      if (!e.message.includes('Rdis')) throw new Error(`missing entity name in error: ${e.message}`);
+      if (e.code !== 'InvalidArg') throw new Error(`expected InvalidArg code, got ${e.code}`);
+    }
+
     // Facts
     const fid = g.factAdd('Redis Sentinel provides high availability', {
       entityIds: [eidRedis],

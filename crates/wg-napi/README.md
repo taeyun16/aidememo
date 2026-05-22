@@ -92,6 +92,23 @@ console.log(pack.relevant_decisions.map((hit) => hit.content));
 For a multi-agent shared store, pass `sourceId` on writes and reads. The same
 field flows through `search`, `query`, `factList`, and `workflowStart`.
 
+## Errors
+
+Native failures throw JavaScript `Error` objects. The N-API `error.code` is
+`InvalidArg` for caller-actionable failures such as missing entities or invalid
+input, and `GenericFailure` for store/search/internal failures. The message
+starts with a stable wg code such as `[entity_not_found]`.
+
+```js
+try {
+  g.entityGet('Rdis');
+} catch (error) {
+  if (error.message.includes('[entity_not_found]')) {
+    console.log(error.code); // InvalidArg
+  }
+}
+```
+
 ## API
 
 | Method | Returns |

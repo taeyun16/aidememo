@@ -4,26 +4,52 @@
 //! This keeps the Rust surface tiny and lets us evolve schemas without
 //! recompiling the bindings every time a field is added.
 
+use napi::Status;
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use std::path::Path;
 use std::sync::Arc;
 use wg_core::{
     Config, EntityId, EntityInput, EntityType, FactId, FactInput, FactListOpts, FactType, ListOpts,
-    QueryOpts, RelationInput, RelationType, SearchOpts, TraverseDirection, TraverseOpts, WikiGraph,
-    WorkflowStartOpts,
+    QueryOpts, RelationInput, RelationType, SearchOpts, TraverseDirection, TraverseOpts, WgError,
+    WikiGraph, WorkflowStartOpts,
 };
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn err<E: std::fmt::Display>(e: E) -> Error {
-    Error::from_reason(e.to_string())
+fn generic_err<E: std::fmt::Display>(e: E) -> Error {
+    Error::new(Status::GenericFailure, e.to_string())
+}
+
+fn invalid_arg<E: std::fmt::Display>(e: E) -> Error {
+    Error::new(Status::InvalidArg, e.to_string())
+}
+
+fn map_err(e: WgError) -> Error {
+    let reason = format!("[{}] {e}", e.code());
+    let status = match e {
+        WgError::EntityNotFound { .. }
+        | WgError::EntityIdNotFound(_)
+        | WgError::FactNotFound(_)
+        | WgError::RelationNotFound { .. }
+        | WgError::PathNotFound { .. }
+        | WgError::InvalidInput(_)
+        | WgError::EntityAlreadyExists { .. }
+        | WgError::ConfigKeyNotFound(_)
+        | WgError::FrontmatterParse { .. }
+        | WgError::WikilinkParse { .. }
+        | WgError::CycleDetected { .. }
+        | WgError::SchemaVersionMismatch { .. }
+        | WgError::UnsupportedSchemaVersion(_) => Status::InvalidArg,
+        _ => Status::GenericFailure,
+    };
+    Error::new(status, reason)
 }
 
 fn to_json<T: serde::Serialize>(value: &T) -> napi::Result<String> {
-    serde_json::to_string(value).map_err(err)
+    serde_json::to_string(value).map_err(generic_err)
 }
 
 fn parse_entity_type(value: &str) -> Option<EntityType> {
@@ -52,11 +78,11 @@ fn parse_direction(value: Option<String>) -> TraverseDirection {
 }
 
 fn parse_entity_id(s: &str) -> napi::Result<EntityId> {
-    EntityId::parse(s).ok_or_else(|| err(format!("invalid entity id: {s}")))
+    EntityId::parse(s).ok_or_else(|| invalid_arg(format!("invalid entity id: {s}")))
 }
 
 fn parse_fact_id(s: &str) -> napi::Result<FactId> {
-    FactId::parse(s).ok_or_else(|| err(format!("invalid fact id: {s}")))
+    FactId::parse(s).ok_or_else(|| invalid_arg(format!("invalid fact id: {s}")))
 }
 
 // ---------------------------------------------------------------------------
@@ -164,7 +190,7 @@ pub struct WgStore {
 impl WgStore {
     #[napi(constructor)]
     pub fn new(store_path: String) -> napi::Result<Self> {
-        let wiki = WikiGraph::open(Path::new(&store_path), Config::default()).map_err(err)?;
+        let wiki = WikiGraph::open(Path::new(&store_path), Config::default()).map_err(map_err)?;
         Ok(Self {
             wiki: Arc::new(wiki),
         })
@@ -191,7 +217,7 @@ impl WgStore {
             bm25_only: args.bm25_only.unwrap_or(false),
             ..Default::default()
         };
-        let results = self.wiki.hybrid_search(&query, opts).map_err(err)?;
+        let results = self.wiki.hybrid_search(&query, opts).map_err(map_err)?;
         to_json(&results)
     }
 
@@ -220,7 +246,7 @@ impl WgStore {
             bm25_only: args.bm25_only.unwrap_or(false),
             source_id: args.source_id,
         };
-        let result = self.wiki.query(&topic, opts).map_err(err)?;
+        let result = self.wiki.query(&topic, opts).map_err(map_err)?;
         to_json(&result)
     }
 
@@ -253,7 +279,7 @@ impl WgStore {
                     bm25_only: args.bm25_only.unwrap_or(false),
                 },
             )
-            .map_err(err)?;
+            .map_err(map_err)?;
         to_json(&result)
     }
 
@@ -270,13 +296,13 @@ impl WgStore {
             relation_types: None,
             direction: parse_direction(args.direction),
         };
-        let result = self.wiki.traverse(&entity, opts).map_err(err)?;
+        let result = self.wiki.traverse(&entity, opts).map_err(map_err)?;
         to_json(&result)
     }
 
     #[napi]
     pub fn path_find(&self, from: String, to: String) -> napi::Result<String> {
-        let path = self.wiki.path_find(&from, &to).map_err(err)?;
+        let path = self.wiki.path_find(&from, &to).map_err(map_err)?;
         to_json(&path)
     }
 
@@ -297,13 +323,13 @@ impl WgStore {
             aliases: args.aliases,
             source_page: args.source_page,
         };
-        let id = self.wiki.entity_add(input).map_err(err)?;
+        let id = self.wiki.entity_add(input).map_err(map_err)?;
         Ok(id.to_string())
     }
 
     #[napi]
     pub fn entity_get(&self, name: String) -> napi::Result<String> {
-        let entity = self.wiki.entity_get(&name).map_err(err)?;
+        let entity = self.wiki.entity_get(&name).map_err(map_err)?;
         to_json(&entity)
     }
 
@@ -321,24 +347,24 @@ impl WgStore {
             sort_by: Default::default(),
             offset: 0,
         };
-        let entities = self.wiki.entity_list(opts).map_err(err)?;
+        let entities = self.wiki.entity_list(opts).map_err(map_err)?;
         to_json(&entities)
     }
 
     #[napi]
     pub fn entity_delete(&self, name: String) -> napi::Result<()> {
-        self.wiki.entity_delete(&name).map_err(err)
+        self.wiki.entity_delete(&name).map_err(map_err)
     }
 
     /// Set (or clear, with `""`) the entity's compiled-truth summary.
     #[napi]
     pub fn entity_describe(&self, name: String, summary: String) -> napi::Result<()> {
-        self.wiki.entity_describe(&name, &summary).map_err(err)
+        self.wiki.entity_describe(&name, &summary).map_err(map_err)
     }
 
     #[napi]
     pub fn resolve_entity(&self, name: String) -> napi::Result<String> {
-        let id = self.wiki.resolve_entity(&name).map_err(err)?;
+        let id = self.wiki.resolve_entity(&name).map_err(map_err)?;
         Ok(id.to_string())
     }
 
@@ -372,7 +398,7 @@ impl WgStore {
             source_confidence: args.confidence.map(|v| v as f32),
             observed_at: None,
         };
-        let id = self.wiki.fact_add(input).map_err(err)?;
+        let id = self.wiki.fact_add(input).map_err(map_err)?;
         Ok(id.to_string())
     }
 
@@ -402,14 +428,14 @@ impl WgStore {
                 observed_at: None,
             });
         }
-        let ids = self.wiki.fact_add_many(inputs).map_err(err)?;
+        let ids = self.wiki.fact_add_many(inputs).map_err(map_err)?;
         Ok(ids.iter().map(|id| id.to_string()).collect())
     }
 
     #[napi]
     pub fn fact_get(&self, fact_id: String) -> napi::Result<String> {
         let id = parse_fact_id(&fact_id)?;
-        let fact = self.wiki.fact_get(&id).map_err(err)?;
+        let fact = self.wiki.fact_get(&id).map_err(map_err)?;
         to_json(&fact)
     }
 
@@ -424,7 +450,7 @@ impl WgStore {
             current_only: None,
         });
         let entity_id = match args.entity {
-            Some(name) => Some(self.wiki.resolve_entity(&name).map_err(err)?),
+            Some(name) => Some(self.wiki.resolve_entity(&name).map_err(map_err)?),
             None => None,
         };
         let opts = FactListOpts {
@@ -439,7 +465,7 @@ impl WgStore {
             current_only: args.current_only.unwrap_or(false),
             as_of: None,
         };
-        let facts = self.wiki.fact_list(opts).map_err(err)?;
+        let facts = self.wiki.fact_list(opts).map_err(map_err)?;
         to_json(&facts)
     }
 
@@ -447,13 +473,13 @@ impl WgStore {
     pub fn fact_supersede(&self, old_id: String, new_id: String) -> napi::Result<()> {
         let old = parse_fact_id(&old_id)?;
         let new = parse_fact_id(&new_id)?;
-        self.wiki.fact_supersede(&old, &new).map_err(err)
+        self.wiki.fact_supersede(&old, &new).map_err(map_err)
     }
 
     #[napi]
     pub fn fact_delete(&self, fact_id: String) -> napi::Result<()> {
         let id = parse_fact_id(&fact_id)?;
-        self.wiki.fact_delete(&id).map_err(err)
+        self.wiki.fact_delete(&id).map_err(map_err)
     }
 
     // === Relations ===
@@ -472,7 +498,7 @@ impl WgStore {
             weight: None,
             evidence: None,
         };
-        self.wiki.relation_add(input).map_err(err)
+        self.wiki.relation_add(input).map_err(map_err)
     }
 
     #[napi]
@@ -484,13 +510,13 @@ impl WgStore {
     ) -> napi::Result<()> {
         self.wiki
             .relation_remove(&source, &target, &rel_type)
-            .map_err(err)
+            .map_err(map_err)
     }
 
     #[napi]
     pub fn relations_get(&self, entity: String, direction: Option<String>) -> napi::Result<String> {
         let dir = parse_direction(direction);
-        let relations = self.wiki.relations_get(&entity, dir).map_err(err)?;
+        let relations = self.wiki.relations_get(&entity, dir).map_err(map_err)?;
         to_json(&relations)
     }
 
@@ -501,19 +527,19 @@ impl WgStore {
         let stats = self
             .wiki
             .ingest(Path::new(&wiki_root), incremental.unwrap_or(false))
-            .map_err(err)?;
+            .map_err(map_err)?;
         to_json(&stats)
     }
 
     #[napi]
     pub fn lint(&self) -> napi::Result<String> {
-        let issues = self.wiki.lint().map_err(err)?;
+        let issues = self.wiki.lint().map_err(map_err)?;
         to_json(&issues)
     }
 
     #[napi]
     pub fn stats(&self) -> napi::Result<String> {
-        let stats = self.wiki.stats().map_err(err)?;
+        let stats = self.wiki.stats().map_err(map_err)?;
         to_json(&stats)
     }
 }
