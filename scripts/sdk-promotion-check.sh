@@ -115,6 +115,44 @@ def optional_scenario_k(checks: list[Check]) -> None:
     append_status(checks, package, "workflow parity scenario", ok, detail, detail)
 
 
+def md_cell(value: object) -> str:
+    return str(value).replace("|", "\\|").replace("\n", " ")
+
+
+def markdown_summary(payload: dict) -> str:
+    summary = payload["summary"]
+    lines = [
+        "## SDK promotion check",
+        "",
+        "| Package | Status | Criterion | Detail |",
+        "|---|---|---|---|",
+    ]
+    for check in payload["checks"]:
+        lines.append(
+            "| "
+            + " | ".join(
+                md_cell(check[key])
+                for key in ("package", "status", "criterion", "detail")
+            )
+            + " |"
+        )
+    lines.extend(
+        [
+            "",
+            "| Metric | Value |",
+            "|---|---:|",
+            f"| ok | {summary['ok']} |",
+            f"| ready | {summary['ready']} |",
+            f"| blocked | {summary['blocked']} |",
+            f"| fail | {summary['fail']} |",
+            f"| total | {summary['total']} |",
+            f"| local_ready | {str(summary['local_ready']).lower()} |",
+            f"| sdk_promotable | {str(summary['sdk_promotable']).lower()} |",
+        ]
+    )
+    return "\n".join(lines)
+
+
 checks: list[Check] = []
 
 checks.append(public_install_check("wg-python", "WG_PYTHON_PUBLIC_INSTALL_OK", "PyPI"))
@@ -165,6 +203,12 @@ payload = {
         "sdk_promotable": not failures and not blocking,
     },
 }
+
+summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+if summary_path:
+    with open(summary_path, "a", encoding="utf-8") as handle:
+        handle.write(markdown_summary(payload))
+        handle.write("\n")
 
 if JSON_OUT:
     print(json.dumps(payload, indent=2))

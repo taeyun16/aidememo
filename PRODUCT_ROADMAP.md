@@ -59,10 +59,11 @@ or benchmark-specific `RESULTS.md` files; keep user-facing product work here.
 | P3.16 | done | Release preflight still did not enforce the SDK wording gate | `scripts/release-preflight.sh` runs `sdk promotion check` by default, can skip it explicitly, and can fail on public install blockers when `WG_RELEASE_PREFLIGHT_SDK_REQUIRE_PUBLIC=1` | Fast profile with bindings/workflow/actionlint/publish disabled: sdk promotion step ok in 0.13s, total 0.28s; require-public mode fails the step with exit 1 and records `fail | sdk promotion check` |
 | P3.17 | done | SDK wording gate was local/preflight-only and could be skipped in PRs | CI now has a dedicated `SDK promotion check` job that runs the fast gate after lint with Python 3.13 and Node 22, separate from heavier package smokes | `actionlint .github/workflows/*.yml`: 0 issues; `scripts/sdk-promotion-check.sh`: ok=6, ready=3, blocked=2, fail=0 |
 | P3.18 | done | Local CI parity did not include the new SDK wording check | `scripts/ci-local.sh sdk` runs the SDK promotion gate directly, and `scripts/ci-local.sh all` now includes it between lint and tests | `bash -n scripts/ci-local.sh`; `scripts/ci-local.sh sdk`: ok=6, ready=3, blocked=2, fail=0 |
+| P3.19 | done | SDK promotion CI details required opening raw logs | `scripts/sdk-promotion-check.sh` writes a Markdown table to `$GITHUB_STEP_SUMMARY` while preserving text and JSON stdout modes | Summary smoke writes 11 check rows plus metric rows; `WG_SDK_PROMOTION_JSON=1` remains valid JSON; `bash -n scripts/sdk-promotion-check.sh`; `git diff --check` |
 
 ## Current Sprint
 
-All planned P0-P3.18 roadmap items are closed. Scenario H now isolates each
+All planned P0-P3.19 roadmap items are closed. Scenario H now isolates each
 agent's integration path: Claude project MCP, Codex temp `CODEX_HOME` MCP, and
 Hermes MCP-only profile to avoid redb lock contention with the in-process
 plugin. `wg doctor --json` now exposes workflow readiness, recent workflow
@@ -82,10 +83,10 @@ Python and Node now have workflow-level sparse-ticket APIs, package docs, and
 stable error handling. Scenario K now validates their workflow contract against
 the CLI. `scripts/sdk-promotion-check.sh` now turns the SDK promotion rule into
 a local gate, `ci-local.sh all` runs it, release preflight runs it by default,
-and CI now exposes it as a dedicated fast check: local criteria pass, but
-public registry installs still block actual SDK wording. They remain SDK
-candidates until public registry releases succeed. Elixir and C remain
-low-level bindings.
+and CI now exposes it as a dedicated fast check with a GitHub summary table:
+local criteria pass, but public registry installs still block actual SDK
+wording. They remain SDK candidates until public registry releases succeed.
+Elixir and C remain low-level bindings.
 
 Next measurement candidates:
 1. Reserve/configure the PyPI `wg-python` trusted publisher, then run `.github/workflows/wg-python-publish.yml` with `dry_run=false`.
