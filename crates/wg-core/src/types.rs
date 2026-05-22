@@ -1037,6 +1037,54 @@ pub struct QueryResult {
     pub recent_facts: Vec<FactRecord>,
 }
 
+/// Options for starting an agent workflow from a sparse issue / ticket.
+#[derive(Debug, Clone)]
+pub struct WorkflowStartOpts {
+    /// Optional issue / ticket body. Blank strings are ignored.
+    pub body: Option<String>,
+    /// Upstream source identifier, for example `github:org/repo#123`.
+    pub source: Option<String>,
+    /// Optional namespace / tenant / agent scope.
+    pub source_id: Option<String>,
+    /// Max search hits in the returned context pack.
+    pub limit: usize,
+    /// Graph traversal depth in the returned context pack.
+    pub depth: u32,
+    /// Max recent facts in the returned context pack.
+    pub recent_limit: usize,
+    /// Skip embedding-model load and use BM25-only retrieval for this pack.
+    pub bm25_only: bool,
+}
+
+impl Default for WorkflowStartOpts {
+    fn default() -> Self {
+        Self {
+            body: None,
+            source: None,
+            source_id: None,
+            limit: 8,
+            depth: 2,
+            recent_limit: 5,
+            bm25_only: false,
+        }
+    }
+}
+
+/// Context pack returned by `WikiGraph::workflow_start`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowStartPack {
+    pub session_id: String,
+    pub export: String,
+    pub title: String,
+    pub source: Option<String>,
+    pub source_id: Option<String>,
+    pub ticket_fact_id: String,
+    pub context: QueryResult,
+    pub prior_lessons: Vec<SearchResult>,
+    pub prior_errors: Vec<SearchResult>,
+    pub relevant_decisions: Vec<SearchResult>,
+}
+
 /// Store statistics.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct StoreStats {

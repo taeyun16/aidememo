@@ -21,7 +21,7 @@ use std::sync::Arc;
 use wg_core::{
     Config, EntityId, EntityInput, EntityType, FactId, FactInput, FactListOpts, FactType, ListOpts,
     QueryOpts, RelationInput, RelationType, SearchOpts, TraverseDirection, TraverseOpts, WgError,
-    WikiGraph,
+    WikiGraph, WorkflowStartOpts,
 };
 
 // ---------------------------------------------------------------------------
@@ -227,6 +227,39 @@ impl PyWikiGraph {
             source_id,
         };
         let result = self.0.query(&topic, opts).map_err(map_err)?;
+        to_py(py, &result)
+    }
+
+    /// Start a workflow from a sparse issue/ticket and return the context pack.
+    #[pyo3(signature = (title, body=None, source=None, source_id=None, limit=8, depth=2, recent_limit=5, bm25_only=false))]
+    #[allow(clippy::too_many_arguments)]
+    fn workflow_start(
+        &self,
+        py: Python<'_>,
+        title: String,
+        body: Option<String>,
+        source: Option<String>,
+        source_id: Option<String>,
+        limit: usize,
+        depth: u32,
+        recent_limit: usize,
+        bm25_only: bool,
+    ) -> PyResult<PyObject> {
+        let result = self
+            .0
+            .workflow_start(
+                &title,
+                WorkflowStartOpts {
+                    body,
+                    source,
+                    source_id,
+                    limit,
+                    depth,
+                    recent_limit,
+                    bm25_only,
+                },
+            )
+            .map_err(map_err)?;
         to_py(py, &result)
     }
 

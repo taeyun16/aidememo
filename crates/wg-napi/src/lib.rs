@@ -11,6 +11,7 @@ use std::sync::Arc;
 use wg_core::{
     Config, EntityId, EntityInput, EntityType, FactId, FactInput, FactListOpts, FactType, ListOpts,
     QueryOpts, RelationInput, RelationType, SearchOpts, TraverseDirection, TraverseOpts, WikiGraph,
+    WorkflowStartOpts,
 };
 
 // ---------------------------------------------------------------------------
@@ -84,6 +85,17 @@ pub struct QueryArgs {
     /// latency at the cost of semantic recall.
     pub bm25_only: Option<bool>,
     pub source_id: Option<String>,
+}
+
+#[napi(object)]
+pub struct WorkflowStartArgs {
+    pub body: Option<String>,
+    pub source: Option<String>,
+    pub source_id: Option<String>,
+    pub limit: Option<u32>,
+    pub depth: Option<u32>,
+    pub recent_limit: Option<u32>,
+    pub bm25_only: Option<bool>,
 }
 
 #[napi(object)]
@@ -209,6 +221,39 @@ impl WgStore {
             source_id: args.source_id,
         };
         let result = self.wiki.query(&topic, opts).map_err(err)?;
+        to_json(&result)
+    }
+
+    #[napi]
+    pub fn workflow_start(
+        &self,
+        title: String,
+        args: Option<WorkflowStartArgs>,
+    ) -> napi::Result<String> {
+        let args = args.unwrap_or(WorkflowStartArgs {
+            body: None,
+            source: None,
+            source_id: None,
+            limit: None,
+            depth: None,
+            recent_limit: None,
+            bm25_only: None,
+        });
+        let result = self
+            .wiki
+            .workflow_start(
+                &title,
+                WorkflowStartOpts {
+                    body: args.body,
+                    source: args.source,
+                    source_id: args.source_id,
+                    limit: args.limit.unwrap_or(8) as usize,
+                    depth: args.depth.unwrap_or(2),
+                    recent_limit: args.recent_limit.unwrap_or(5) as usize,
+                    bm25_only: args.bm25_only.unwrap_or(false),
+                },
+            )
+            .map_err(err)?;
         to_json(&result)
     }
 

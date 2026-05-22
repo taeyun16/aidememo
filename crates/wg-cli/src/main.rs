@@ -8,7 +8,7 @@ use std::process::exit;
 use wg_core::{
     Config, EntityInput, EntitySort, EntityType, ExportScope, FactInput, FactListOpts, FactType,
     LintReport, ListOpts, QueryOpts, SearchOpts, TraverseDirection, TraverseOpts, WgError,
-    WikiGraph,
+    WikiGraph, WorkflowStartOpts,
 };
 
 // Hook into the global allocator so `wg bench` can report Rust-heap-only
@@ -1204,93 +1204,22 @@ fn workflow_start_pack(
     depth: u32,
     recent_limit: usize,
 ) -> Result<serde_json::Value, WgError> {
-    let session_name = format!("session-{}", wg_core::ulid::Ulid::new());
-    let session_entity_id = wiki.entity_add(EntityInput {
-        name: session_name.clone(),
-        entity_type: Some(EntityType::parse("session")),
-        source_page: Some(source.unwrap_or(title).to_string()),
-        ..Default::default()
-    })?;
-
-    let body = body.map(str::trim).filter(|s| !s.is_empty());
-    let mut ticket_content = format!("Workflow ticket: {title}");
-    if let Some(body) = body {
-        ticket_content.push_str("\n\n");
-        ticket_content.push_str(body);
-    }
-
-    let ticket_fact_id = wiki.add_fact(FactInput {
-        content: ticket_content.clone(),
-        fact_type: Some(FactType::Question),
-        entity_ids: Some(vec![session_entity_id]),
-        tags: Some(vec!["workflow-start".into(), "ticket".into()]),
-        source: source.map(str::to_string),
-        source_id: source_id.map(str::to_string),
-        source_confidence: Some(1.0),
-        observed_at: None,
-    })?;
-
-    let query_text = if let Some(body) = body {
-        format!("{title}\n\n{body}")
-    } else {
-        title.to_string()
-    };
-    let context = wiki.query(
-        &query_text,
-        QueryOpts {
-            search_limit: limit,
+    let pack = wiki.workflow_start(
+        title,
+        WorkflowStartOpts {
+            body: body.map(str::to_string),
+            source: source.map(str::to_string),
+            source_id: source_id.map(str::to_string),
+            limit,
             depth,
             recent_limit,
-            since: None,
-            current_only: true,
-            mode: wg_core::QueryMode::Hybrid,
             bm25_only: false,
-            source_id: source_id.map(str::to_string),
         },
     )?;
-
-    let typed_hits = wiki
-        .hybrid_search(
-            &query_text,
-            SearchOpts {
-                limit: Some(30),
-                current_only: true,
-                source_id: source_id.map(str::to_string),
-                ..Default::default()
-            },
-        )
-        .unwrap_or_default();
-    let prior_lessons: Vec<_> = typed_hits
-        .iter()
-        .filter(|hit| hit.fact_type == FactType::Lesson)
-        .take(5)
-        .cloned()
-        .collect();
-    let prior_errors: Vec<_> = typed_hits
-        .iter()
-        .filter(|hit| hit.fact_type == FactType::Error)
-        .take(5)
-        .cloned()
-        .collect();
-    let relevant_decisions: Vec<_> = typed_hits
-        .iter()
-        .filter(|hit| hit.fact_type == FactType::Decision)
-        .take(5)
-        .cloned()
-        .collect();
-
-    Ok(serde_json::json!({
-        "session_id": session_name,
-        "export": format!("export WG_SESSION_ID={session_name}"),
-        "title": title,
-        "source": source,
-        "source_id": source_id,
-        "ticket_fact_id": ticket_fact_id.to_string(),
-        "context": context,
-        "prior_lessons": prior_lessons,
-        "prior_errors": prior_errors,
-        "relevant_decisions": relevant_decisions,
-    }))
+    serde_json::to_value(pack).map_err(|e| WgError::Serialize {
+        context: "workflow start pack".into(),
+        source: e,
+    })
 }
 
 fn render_workflow_start_text(pack: &serde_json::Value, max_chars: usize) -> String {

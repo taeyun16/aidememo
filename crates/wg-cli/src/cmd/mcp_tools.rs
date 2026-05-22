@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use wg_core::WikiGraph;
+use wg_core::{WikiGraph, WorkflowStartOpts};
 
 use crate::cmd::doctor::collect_sharing_status;
 
@@ -2250,99 +2250,24 @@ fn tool_workflow_start(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult,
         .and_then(|v| v.as_u64())
         .unwrap_or(5) as usize;
 
-    let session_name = format!("session-{}", wg_core::ulid::Ulid::new());
-    let session_entity_id = wiki
-        .entity_add(wg_core::EntityInput {
-            name: session_name.clone(),
-            entity_type: Some(wg_core::EntityType::parse("session")),
-            source_page: Some(source.unwrap_or(title).to_string()),
-            ..Default::default()
-        })
-        .map_err(|e| e.to_string())?;
-
-    let mut ticket_content = format!("Workflow ticket: {title}");
-    if let Some(body) = body {
-        ticket_content.push_str("\n\n");
-        ticket_content.push_str(body);
-    }
-    let ticket_fact_id = wiki
-        .add_fact(wg_core::FactInput {
-            content: ticket_content,
-            fact_type: Some(wg_core::FactType::Question),
-            entity_ids: Some(vec![session_entity_id]),
-            tags: Some(vec!["workflow-start".into(), "ticket".into()]),
-            source: source.map(str::to_string),
-            source_id: source_id.map(str::to_string),
-            source_confidence: Some(1.0),
-            observed_at: None,
-        })
-        .map_err(|e| e.to_string())?;
-
-    let query_text = if let Some(body) = body {
-        format!("{title}\n\n{body}")
-    } else {
-        title.to_string()
-    };
-    let context = wiki
-        .query(
-            &query_text,
-            wg_core::QueryOpts {
-                search_limit: limit,
+    let payload = wiki
+        .workflow_start(
+            title,
+            WorkflowStartOpts {
+                body: body.map(str::to_string),
+                source: source.map(str::to_string),
+                source_id: source_id.map(str::to_string),
+                limit,
                 depth,
                 recent_limit,
-                since: None,
-                current_only: true,
-                mode: wg_core::QueryMode::Hybrid,
                 bm25_only: false,
-                source_id: source_id.map(str::to_string),
             },
         )
         .map_err(|e| e.to_string())?;
-
-    let typed_hits = wiki
-        .hybrid_search(
-            &query_text,
-            wg_core::SearchOpts {
-                limit: Some(30),
-                current_only: true,
-                source_id: source_id.map(str::to_string),
-                ..Default::default()
-            },
-        )
-        .unwrap_or_default();
-    let prior_lessons: Vec<_> = typed_hits
-        .iter()
-        .filter(|hit| hit.fact_type == wg_core::FactType::Lesson)
-        .take(5)
-        .cloned()
-        .collect();
-    let prior_errors: Vec<_> = typed_hits
-        .iter()
-        .filter(|hit| hit.fact_type == wg_core::FactType::Error)
-        .take(5)
-        .cloned()
-        .collect();
-    let relevant_decisions: Vec<_> = typed_hits
-        .iter()
-        .filter(|hit| hit.fact_type == wg_core::FactType::Decision)
-        .take(5)
-        .cloned()
-        .collect();
-
-    let payload = json!({
-        "session_id": session_name,
-        "export": format!("export WG_SESSION_ID={session_name}"),
-        "title": title,
-        "source": source,
-        "source_id": source_id,
-        "ticket_fact_id": ticket_fact_id.to_string(),
-        "context": context,
-        "prior_lessons": prior_lessons,
-        "prior_errors": prior_errors,
-        "relevant_decisions": relevant_decisions,
-    });
     Ok(ToolCallResult {
-        content: vec![ContentBlock::text(payload.to_string())],
+        content: vec![ContentBlock::text(
+            serde_json::to_string(&payload).map_err(|e| e.to_string())?,
+        )],
         is_error: None,
     })
 }

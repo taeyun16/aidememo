@@ -10,8 +10,8 @@ and semantic-version guarantees.
 
 | Package | Current label | Why |
 |---|---|---|
-| `wg-python` | SDK candidate | Hermes already gets the largest measured lift from in-process Python: Scenario G showed p50 `1795.71ms` CLI vs `13.14ms` binding with shape parity. Python is also the most natural automation surface for coding-agent plugins and benchmarks. |
-| `wg-napi` | SDK candidate | Node has platform package split, npm pack/install smoke, dry-run publish gates, and a native adapter path that was `1.66x` faster than daemon BrainBench on the same checkout. It still needs workflow-level examples before the README should call it an SDK. |
+| `wg-python` | SDK candidate | Hermes already gets the largest measured lift from in-process Python: Scenario G showed p50 `1795.71ms` CLI vs `13.14ms` binding with shape parity. Python now exposes `workflow_start`, so the remaining blocker is public PyPI install plus SDK-level error ergonomics. |
+| `wg-napi` | SDK candidate | Node has platform package split, npm pack/install smoke, dry-run publish gates, a native adapter path that was `1.66x` faster than daemon BrainBench on the same checkout, a `workflowStart` API, and package README examples. The remaining blocker is public npm install plus SDK-level error ergonomics. |
 | `wg-nif` | Binding | Useful for Elixir/Erlang systems, but the package is still a thin NIF wrapper over the Rust core. Keep it low-level until Hex packaging, examples, and supervision-friendly lifecycle docs exist. |
 | `wg-ffi` | Binding / ABI | C should stay an ABI surface for embedding and downstream language wrappers. Calling it an SDK would imply ownership of memory-management ergonomics across C applications. |
 

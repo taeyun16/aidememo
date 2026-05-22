@@ -1677,6 +1677,128 @@ impl WikiGraph {
         })
     }
 
+    /// Start a tracked workflow from a sparse issue / ticket.
+    ///
+    /// This is the in-process equivalent of `wg workflow start` and MCP
+    /// `wg_workflow_start`: create a session entity, store the incoming
+    /// ticket as a `question` fact, then return a context pack with scoped
+    /// search, lessons, errors, and decisions.
+    #[cfg(feature = "semantic")]
+    pub fn workflow_start(
+        &self,
+        title: &str,
+        opts: types::WorkflowStartOpts,
+    ) -> Result<types::WorkflowStartPack> {
+        let title = title.trim();
+        if title.is_empty() {
+            return Err(WgError::InvalidInput("workflow title required".into()));
+        }
+
+        let body = opts
+            .body
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        let source = opts
+            .source
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        let source_id = opts
+            .source_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+
+        let session_name = format!("session-{}", ulid::Ulid::new());
+        let session_entity_id = self.entity_add(EntityInput {
+            name: session_name.clone(),
+            entity_type: Some(EntityType::parse("session")),
+            source_page: Some(source.unwrap_or(title).to_string()),
+            ..Default::default()
+        })?;
+
+        let mut ticket_content = format!("Workflow ticket: {title}");
+        if let Some(body) = body {
+            ticket_content.push_str("\n\n");
+            ticket_content.push_str(body);
+        }
+
+        let ticket_fact_id = self.add_fact(FactInput {
+            content: ticket_content,
+            fact_type: Some(FactType::Question),
+            entity_ids: Some(vec![session_entity_id]),
+            tags: Some(vec!["workflow-start".into(), "ticket".into()]),
+            source: source.map(str::to_string),
+            source_id: source_id.map(str::to_string),
+            source_confidence: Some(1.0),
+            observed_at: None,
+        })?;
+
+        let query_text = if let Some(body) = body {
+            format!("{title}\n\n{body}")
+        } else {
+            title.to_string()
+        };
+        let context = self.query(
+            &query_text,
+            types::QueryOpts {
+                search_limit: opts.limit,
+                depth: opts.depth,
+                recent_limit: opts.recent_limit,
+                since: None,
+                current_only: true,
+                mode: types::QueryMode::Hybrid,
+                bm25_only: opts.bm25_only,
+                source_id: source_id.map(str::to_string),
+            },
+        )?;
+
+        let typed_hits = self
+            .hybrid_search(
+                &query_text,
+                SearchOpts {
+                    limit: Some(30),
+                    current_only: true,
+                    bm25_only: opts.bm25_only,
+                    source_id: source_id.map(str::to_string),
+                    ..Default::default()
+                },
+            )
+            .unwrap_or_default();
+        let prior_lessons = typed_hits
+            .iter()
+            .filter(|hit| hit.fact_type == FactType::Lesson)
+            .take(5)
+            .cloned()
+            .collect();
+        let prior_errors = typed_hits
+            .iter()
+            .filter(|hit| hit.fact_type == FactType::Error)
+            .take(5)
+            .cloned()
+            .collect();
+        let relevant_decisions = typed_hits
+            .iter()
+            .filter(|hit| hit.fact_type == FactType::Decision)
+            .take(5)
+            .cloned()
+            .collect();
+
+        Ok(types::WorkflowStartPack {
+            session_id: session_name.clone(),
+            export: format!("export WG_SESSION_ID={session_name}"),
+            title: title.to_string(),
+            source: source.map(str::to_string),
+            source_id: source_id.map(str::to_string),
+            ticket_fact_id: ticket_fact_id.to_string(),
+            context,
+            prior_lessons,
+            prior_errors,
+            relevant_decisions,
+        })
+    }
+
     // === Lint ===
 
     /// Run graph health checks.
@@ -1896,6 +2018,7 @@ pub use types::{
     LintSeverity, ListOpts, OverviewOpts, OverviewResult, PathStep, QueryMode, QueryOpts,
     QueryResult, RelationInput, RelationRecord, RelationType, SearchFeedback, SearchOpts,
     SearchResult, SearchSession, StoreStats, TraverseDirection, TraverseOpts, TraverseResult,
+    WorkflowStartOpts, WorkflowStartPack,
 };
 
 #[cfg(feature = "semantic")]

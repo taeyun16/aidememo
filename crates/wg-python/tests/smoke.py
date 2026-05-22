@@ -55,10 +55,10 @@ def main() -> None:
 
         # Batch insert — single redb write txn for the whole list.
         many_ids = g.fact_add_many([
-            {"content": "Redis Cluster shards keys by hash slot",
-             "entity_ids": [eid_redis], "fact_type": "pattern", "source_id": "team-a"},
-            {"content": "Redis 7 introduces Functions and ACL improvements",
-             "entity_ids": [eid_redis], "fact_type": "note", "confidence": 0.85,
+            {"content": "Redis worker timeout lesson: DNS resolution caused queue stalls",
+             "entity_ids": [eid_redis], "fact_type": "lesson", "source_id": "team-a"},
+            {"content": "Redis timeout error: missing DNS metrics hid resolver failures",
+             "entity_ids": [eid_redis], "fact_type": "error", "confidence": 0.85,
              "source_id": "team-a"},
             {"content": "Postgres logical replication is the default",
              "entity_ids": [eid_postgres], "fact_type": "convention", "source_id": "team-b"},
@@ -108,6 +108,26 @@ def main() -> None:
             print(f"query keys: {list(ctx.keys())}")
         except RuntimeError as e:
             print(f"query skipped: {e}")
+
+        # Workflow start — sparse ticket entrypoint for SDK-style callers.
+        pack = g.workflow_start(
+            "Fix Redis timeout in worker",
+            body="Worker jobs time out against Redis with sparse issue details.",
+            source="github:org/app#123",
+            source_id="team-a",
+            limit=5,
+            depth=1,
+            recent_limit=3,
+            bm25_only=True,
+        )
+        assert pack["session_id"].startswith("session-")
+        assert pack["source_id"] == "team-a"
+        assert pack["ticket_fact_id"]
+        assert pack["context"]["topic"].startswith("Fix Redis timeout")
+        assert all(h["source_id"] == "team-a" for h in pack["context"]["search"])
+        assert pack["prior_lessons"], "workflow_start should surface scoped lessons"
+        assert pack["prior_errors"], "workflow_start should surface scoped errors"
+        assert pack["relevant_decisions"], "workflow_start should surface scoped decisions"
 
         # Validity windows: supersede the first fact with a new one and verify
         # current_only filtering hides it.

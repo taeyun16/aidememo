@@ -49,11 +49,12 @@ function main() {
 
     // Batch insert — single redb write txn for the whole array.
     const manyIds = g.factAddMany([
-      { content: 'Redis Cluster shards by hash slot', entityIds: [eidRedis], factType: 'pattern' },
-      { content: 'Redis 7 introduces Functions and ACL improvements',
-        entityIds: [eidRedis], factType: 'note', confidence: 0.85 },
+      { content: 'Redis worker timeout lesson: DNS resolution caused queue stalls',
+        entityIds: [eidRedis], factType: 'lesson', sourceId: 'alpha' },
+      { content: 'Redis timeout error: missing DNS metrics hid resolver failures',
+        entityIds: [eidRedis], factType: 'error', confidence: 0.85, sourceId: 'alpha' },
       { content: 'Postgres logical replication is the default',
-        entityIds: [g.resolveEntity('Postgres')], factType: 'convention' },
+        entityIds: [g.resolveEntity('Postgres')], factType: 'convention', sourceId: 'beta' },
     ]);
     if (manyIds.length !== 3) throw new Error(`expected 3 batch ids, got ${manyIds.length}`);
     for (const id of manyIds) {
@@ -95,6 +96,27 @@ function main() {
     } catch (e) {
       console.log(`query skipped: ${e.message}`);
     }
+
+    // Workflow start — sparse ticket entrypoint for SDK-style callers.
+    const pack = JSON.parse(g.workflowStart('Fix Redis timeout in worker', {
+      body: 'Worker jobs time out against Redis with sparse issue details.',
+      source: 'github:org/app#123',
+      sourceId: 'alpha',
+      limit: 5,
+      depth: 1,
+      recentLimit: 3,
+      bm25Only: true,
+    }));
+    if (!pack.session_id.startsWith('session-')) throw new Error('workflow_start missing session');
+    if (pack.source_id !== 'alpha') throw new Error(`workflow_start source_id mismatch: ${pack.source_id}`);
+    if (!pack.ticket_fact_id) throw new Error('workflow_start missing ticket fact');
+    if (!pack.context.topic.startsWith('Fix Redis timeout')) throw new Error('workflow_start topic mismatch');
+    if (!pack.context.search.every((hit) => hit.source_id === 'alpha')) {
+      throw new Error('workflow_start leaked out-of-scope search hit');
+    }
+    if (pack.prior_lessons.length < 1) throw new Error('workflow_start should surface scoped lessons');
+    if (pack.prior_errors.length < 1) throw new Error('workflow_start should surface scoped errors');
+    if (pack.relevant_decisions.length < 1) throw new Error('workflow_start should surface scoped decisions');
 
     // Validity windows
     const newFid = g.factAdd('Redis Sentinel + Cluster supersedes Sentinel-only HA', {
