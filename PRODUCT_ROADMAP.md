@@ -54,10 +54,11 @@ or benchmark-specific `RESULTS.md` files; keep user-facing product work here.
 | P3.11 | done | Release readiness still required stitching several gates together by hand | `scripts/release-preflight.sh` gives local/full profiles with timed status rows; full profile adds optional binding smokes and Python/npm publish dry-runs | `scripts/release-preflight.sh`: local profile passed version, actionlint, binding smoke, and workflow smoke in 66.03s; fast path with bindings/workflow disabled passed version + actionlint in 0.35s |
 | P3.12 | done | Python/Node bindings were too low-level to support SDK positioning for sparse-ticket agents | `WikiGraph::workflow_start` is now shared by CLI, MCP, Python, and Node; Python/Node package docs include workflow-level examples with `source_id` scoping | `cargo check -p wg-core -p wg-cli -p wg-python -p wg-napi`; `cargo test -p wg-cli workflow_start`; `scripts/wg-python-pack-smoke.sh`; `scripts/wg-napi-pack-smoke.sh` |
 | P3.13 | done | SDK candidates still surfaced Rust errors as undifferentiated runtime failures | `WgError::code()` gives stable machine codes; Python maps core failures to typed exceptions; Node throws JS errors with N-API `code` plus `[wg_code]` message prefixes | `cargo check -p wg-core -p wg-python -p wg-napi`; `cargo test -p wg-core entity_not_found_display_includes_suggestions`; `scripts/wg-python-pack-smoke.sh`; `cd crates/wg-napi && npm test` |
+| P3.14 | done | SDK workflow APIs had no cross-language parity measurement | Scenario K compares CLI, `wg-python`, and `wg-napi` workflow-start packs across four sparse tickets and checks session/ticket side effects, prior counts, `source_id`, and leakage | `python3 bench/multi-agent/scenario_k_sdk_workflow_parity.py`: 8/8 invariants; Python/Node shape parity 4/4 each; leakage 0; p50 CLI 1864.55ms, Python 16.19ms, Node 13.69ms |
 
 ## Current Sprint
 
-All planned P0-P3.13 roadmap items are closed. Scenario H now isolates each
+All planned P0-P3.14 roadmap items are closed. Scenario H now isolates each
 agent's integration path: Claude project MCP, Codex temp `CODEX_HOME` MCP, and
 Hermes MCP-only profile to avoid redb lock contention with the in-process
 plugin. `wg doctor --json` now exposes workflow readiness, recent workflow
@@ -74,8 +75,9 @@ version bumps are now one measured gate: `scripts/wg-release-version.sh
 leaving C FFI on Cargo metadata. `scripts/release-preflight.sh` now wraps the
 release gates into a timed local/full preflight. SDK naming stays conservative:
 Python and Node now have workflow-level sparse-ticket APIs, package docs, and
-stable error handling. They remain SDK candidates until public registry
-releases succeed. Elixir and C remain low-level bindings.
+stable error handling. Scenario K now validates their workflow contract against
+the CLI. They remain SDK candidates until public registry releases succeed.
+Elixir and C remain low-level bindings.
 
 Next measurement candidates:
 1. Reserve/configure the PyPI `wg-python` trusted publisher, then run `.github/workflows/wg-python-publish.yml` with `dry_run=false`.
