@@ -60,13 +60,14 @@ or benchmark-specific `RESULTS.md` files; keep user-facing product work here.
 | P3.17 | done | SDK wording gate was local/preflight-only and could be skipped in PRs | CI now has a dedicated `SDK promotion check` job that runs the fast gate after lint with Python 3.13 and Node 22, separate from heavier package smokes | `actionlint .github/workflows/*.yml`: 0 issues; `scripts/sdk-promotion-check.sh`: ok=6, ready=3, blocked=2, fail=0 |
 | P3.18 | done | Local CI parity did not include the new SDK wording check | `scripts/ci-local.sh sdk` runs the SDK promotion gate directly, and `scripts/ci-local.sh all` now includes it between lint and tests | `bash -n scripts/ci-local.sh`; `scripts/ci-local.sh sdk`: ok=6, ready=3, blocked=2, fail=0 |
 | P3.19 | done | SDK promotion CI details required opening raw logs | `scripts/sdk-promotion-check.sh` writes a Markdown table to `$GITHUB_STEP_SUMMARY` while preserving text and JSON stdout modes | Summary smoke writes 11 check rows plus metric rows; `WG_SDK_PROMOTION_JSON=1` remains valid JSON; `bash -n scripts/sdk-promotion-check.sh`; `git diff --check` |
-| P3.20 | done | First-run README did not immediately demonstrate sparse-ticket workflow memory | `scripts/demo-workflow.sh` seeds a temp store and verifies `wg workflow start --bm25-only` recovers decision, lesson, and error context from a sparse ticket | `scripts/demo-workflow.sh`: decision=1, lesson=1, error=1, search_hits=4, latency 117ms; `cargo check -p wg-cli` |
+| P3.20 | done | First-run README did not immediately demonstrate sparse-ticket workflow memory | `scripts/demo-workflow.sh` seeds a temp store and verifies `wg workflow start --bm25-only` recovers decision, lesson, and error context from a sparse ticket | `scripts/demo-workflow.sh`: decision=1, lesson=1, error=1, search_hits=4, latency 128ms; `cargo check -p wg-cli` |
 | P3.21 | done | First-run demo was not protected by release smoke | `scripts/workflow-release-smoke.sh` now runs `scripts/demo-workflow.sh` after build and uses `--bm25-only` for the fixture workflow start to avoid semantic cold-start noise | `scripts/workflow-release-smoke.sh`: demo step 0.64s; fixture workflow start 0.20s; total 13.60s; Scenario F 13/13; Scenario I 10/10 |
-| P3.22 | done | First-run workflow demo was not part of daily local CI | `scripts/ci-local.sh demo` runs the zero-token workflow smoke directly, and `scripts/ci-local.sh all` now runs it between lint and SDK promotion | `scripts/ci-local.sh demo`: decision=1, lesson=1, error=1, search_hits=4, workflow latency 117ms, wall 0.68s; `bash -n scripts/ci-local.sh` |
+| P3.22 | done | First-run workflow demo was not part of daily local CI | `scripts/ci-local.sh demo` runs the zero-token workflow smoke directly, and `scripts/ci-local.sh all` now runs it between lint and SDK promotion | `scripts/ci-local.sh demo`: decision=1, lesson=1, error=1, search_hits=4, workflow latency 128ms, wall 0.91s; `bash -n scripts/ci-local.sh` |
+| P3.23 | done | Local CI failures had no per-step timing context | `scripts/ci-local.sh` now records each command status/seconds and prints a Markdown timing table, also appending it to `$GITHUB_STEP_SUMMARY` when available | `scripts/ci-local.sh demo`: timing table total 0.91s; `bash -n scripts/ci-local.sh`; `git diff --check` |
 
 ## Current Sprint
 
-All planned P0-P3.22 roadmap items are closed. Scenario H now isolates each
+All planned P0-P3.23 roadmap items are closed. Scenario H now isolates each
 agent's integration path: Claude project MCP, Codex temp `CODEX_HOME` MCP, and
 Hermes MCP-only profile to avoid redb lock contention with the in-process
 plugin. `wg doctor --json` now exposes workflow readiness, recent workflow
@@ -91,7 +92,8 @@ local criteria pass, but public registry installs still block actual SDK
 wording. They remain SDK candidates until public registry releases succeed.
 Elixir and C remain low-level bindings. First-run onboarding now starts with a
 zero-token workflow demo that shows the sparse-ticket memory loop directly, and
-release smoke plus local CI protect that demo.
+release smoke plus local CI protect that demo. Local CI now prints the same
+kind of timed summary used by release smoke and preflight scripts.
 
 Next measurement candidates:
 1. Reserve/configure the PyPI `wg-python` trusted publisher, then run `.github/workflows/wg-python-publish.yml` with `dry_run=false`.
