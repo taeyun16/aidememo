@@ -12,7 +12,7 @@ adding scratch note files.
 | `openai_check.sh` | Quick OpenAI-compatible API smoke. |
 | `bench-agent-ux.sh` | Small agent-memory UX regression: Rust check, Hermes tests, and zero-token multi-agent scenarios. |
 | `bindings-release-smoke.sh` | Cross-binding release readiness: Rust checks for Python/Node/Elixir/C bindings, npm version/pack/install smoke, and optional Python/Elixir/C package smokes. |
-| `release-preflight.sh` | One-command release gate. Local profile runs version, workflow lint, binding smoke, and workflow smoke; full profile adds optional binding smokes plus Python/npm publish dry-runs. |
+| `release-preflight.sh` | One-command release gate. Local profile runs version, workflow lint, binding smoke, workflow smoke, and SDK promotion check; full profile adds optional binding smokes plus Python/npm publish dry-runs. |
 | `sdk-promotion-check.sh` | SDK wording gate for `wg-python` and `wg-napi`: checks local criteria, optional package smokes / Scenario K, and public-registry blockers. |
 | `workflow-release-smoke.sh` | Release-oriented workflow memory smoke: builds `wg`, runs Scenario F + I, then asserts `wg doctor --json` workflow readiness on a fixture store. |
 | `wg-release-version.sh` | Verify or update the release version across Cargo, Python, npm, and Elixir/NIF packages. |

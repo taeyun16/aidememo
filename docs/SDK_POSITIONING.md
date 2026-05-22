@@ -37,6 +37,7 @@ Run the local gate before changing README or release wording:
 scripts/sdk-promotion-check.sh
 WG_SDK_PROMOTION_RUN_SCENARIO_K=1 scripts/sdk-promotion-check.sh
 WG_SDK_PROMOTION_REQUIRE_PUBLIC=1 scripts/sdk-promotion-check.sh
+WG_RELEASE_PREFLIGHT_SDK_REQUIRE_PUBLIC=1 scripts/release-preflight.sh
 ```
 
 The default check should keep `local_ready=true` but `sdk_promotable=false`

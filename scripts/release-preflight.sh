@@ -36,6 +36,10 @@ fi
 RUN_BINDINGS="${WG_RELEASE_PREFLIGHT_BINDINGS:-1}"
 RUN_WORKFLOW="${WG_RELEASE_PREFLIGHT_WORKFLOW:-1}"
 RUN_ACTIONLINT="${WG_RELEASE_PREFLIGHT_ACTIONLINT:-1}"
+RUN_SDK_PROMOTION="${WG_RELEASE_PREFLIGHT_SDK_PROMOTION:-1}"
+RUN_SDK_PROMOTION_SMOKE="${WG_RELEASE_PREFLIGHT_SDK_SMOKE:-0}"
+RUN_SDK_PROMOTION_SCENARIO_K="${WG_RELEASE_PREFLIGHT_SDK_SCENARIO_K:-0}"
+RUN_SDK_PROMOTION_REQUIRE_PUBLIC="${WG_RELEASE_PREFLIGHT_SDK_REQUIRE_PUBLIC:-0}"
 
 have() {
     command -v "$1" >/dev/null 2>&1
@@ -158,6 +162,16 @@ if [[ "$RUN_WORKFLOW" == "1" ]]; then
     run "workflow release smoke" "$ROOT_DIR/scripts/workflow-release-smoke.sh"
 else
     record_skip "workflow release smoke" "WG_RELEASE_PREFLIGHT_WORKFLOW=0"
+fi
+
+if [[ "$RUN_SDK_PROMOTION" == "1" ]]; then
+    run "sdk promotion check" env \
+        WG_SDK_PROMOTION_RUN_SMOKE="$RUN_SDK_PROMOTION_SMOKE" \
+        WG_SDK_PROMOTION_RUN_SCENARIO_K="$RUN_SDK_PROMOTION_SCENARIO_K" \
+        WG_SDK_PROMOTION_REQUIRE_PUBLIC="$RUN_SDK_PROMOTION_REQUIRE_PUBLIC" \
+        "$ROOT_DIR/scripts/sdk-promotion-check.sh"
+else
+    record_skip "sdk promotion check" "WG_RELEASE_PREFLIGHT_SDK_PROMOTION=0"
 fi
 
 if [[ "$RUN_PUBLISH" == "1" ]]; then
