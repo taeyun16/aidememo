@@ -5,18 +5,140 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PY_DIR="$ROOT_DIR/crates/wg-python"
 EXPECT_VERSION="${WG_PYTHON_EXPECT_VERSION:-}"
+BASE="${WG_PYTHON_PUBLISH_BASE:-$(mktemp -d "${TMPDIR:-/tmp}/wg-python-publish.XXXXXX")}"
+SUMMARY_TSV="$BASE/wg-python-publish.tsv"
+tmp_dir=""
 
 run() {
-    echo "==> $*"
+    local label start end status elapsed
+    label="$*"
+    echo "==> $label"
+    start="$(python3 - <<'PY'
+import time
+print(time.perf_counter())
+PY
+)"
+    set +e
     "$@"
+    status="$?"
+    set -e
+    end="$(python3 - <<'PY'
+import time
+print(time.perf_counter())
+PY
+)"
+    elapsed="$(python3 - "$start" "$end" <<'PY'
+import sys
+start = float(sys.argv[1])
+end = float(sys.argv[2])
+print(f"{end - start:.2f}")
+PY
+)"
+    if [[ "$status" == "0" ]]; then
+        printf "ok\t%s\t%s\t\n" "$elapsed" "$label" >> "$SUMMARY_TSV"
+    else
+        printf "fail\t%s\t%s\texit %s\n" "$elapsed" "$label" "$status" >> "$SUMMARY_TSV"
+    fi
+    echo "    elapsed: ${elapsed}s"
+    return "$status"
 }
 
+run_labeled() {
+    local label start end status elapsed
+    label="$1"
+    shift
+    echo "==> $label"
+    start="$(python3 - <<'PY'
+import time
+print(time.perf_counter())
+PY
+)"
+    set +e
+    "$@"
+    status="$?"
+    set -e
+    end="$(python3 - <<'PY'
+import time
+print(time.perf_counter())
+PY
+)"
+    elapsed="$(python3 - "$start" "$end" <<'PY'
+import sys
+start = float(sys.argv[1])
+end = float(sys.argv[2])
+print(f"{end - start:.2f}")
+PY
+)"
+    if [[ "$status" == "0" ]]; then
+        printf "ok\t%s\t%s\t\n" "$elapsed" "$label" >> "$SUMMARY_TSV"
+    else
+        printf "fail\t%s\t%s\texit %s\n" "$elapsed" "$label" "$status" >> "$SUMMARY_TSV"
+    fi
+    echo "    elapsed: ${elapsed}s"
+    return "$status"
+}
+
+record_fail() {
+    local label="$1"
+    local reason="$2"
+    echo "==> fail: $label ($reason)" >&2
+    printf "fail\t0.00\t%s\t%s\n" "$label" "$reason" >> "$SUMMARY_TSV"
+}
+
+print_summary() {
+    if [[ ! -s "$SUMMARY_TSV" ]]; then
+        return
+    fi
+
+    python3 - "$SUMMARY_TSV" <<'PY'
+from pathlib import Path
+import os
+import sys
+
+rows = []
+for line in Path(sys.argv[1]).read_text().splitlines():
+    status, elapsed, label, detail = line.split("\t", 3)
+    rows.append((status, elapsed, label, detail))
+
+total = sum(float(elapsed) for _, elapsed, _, _ in rows if elapsed != "-")
+lines = [
+    "## wg-python-publish-dry-run",
+    "",
+    "| Status | Step | Seconds | Detail |",
+    "|---|---|---:|---|",
+]
+for status, elapsed, label, detail in rows:
+    lines.append(f"| {status} | `{label}` | {elapsed} | {detail} |")
+lines.append(f"| total | | {total:.2f} | |")
+
+text = "\n".join(lines)
+print(text)
+
+summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+if summary_path:
+    with open(summary_path, "a", encoding="utf-8") as handle:
+        handle.write(text)
+        handle.write("\n")
+PY
+}
+
+cleanup() {
+    print_summary
+    if [[ -n "$tmp_dir" ]]; then
+        rm -rf "$tmp_dir"
+    fi
+}
+
+mkdir -p "$BASE"
+: > "$SUMMARY_TSV"
+trap cleanup EXIT
+
 if ! command -v maturin >/dev/null 2>&1; then
-    echo "maturin is required for wg-python publish dry-run" >&2
+    record_fail "maturin availability" "maturin is required for wg-python publish dry-run"
     exit 1
 fi
 
-run "$ROOT_DIR/scripts/wg-python-version.sh"
+run_labeled "wg-python version gate" "$ROOT_DIR/scripts/wg-python-version.sh"
 
 version="$(
     python3 - "$PY_DIR/pyproject.toml" <<'PY'
@@ -29,24 +151,22 @@ PY
 )"
 
 if [[ -n "$EXPECT_VERSION" && "$version" != "$EXPECT_VERSION" ]]; then
-    echo "expected wg-python version $EXPECT_VERSION but pyproject.toml has $version" >&2
+    record_fail "version expectation" "expected $EXPECT_VERSION but pyproject.toml has $version"
     exit 1
 fi
 
 tmp_dir="$(mktemp -d)"
 if [[ -z "${WG_PYTHON_DIST_DIR:-}" ]]; then
-    trap 'rm -rf "$tmp_dir"' EXIT
     dist_dir="$tmp_dir/dist"
 else
-    trap 'rm -rf "$tmp_dir"' EXIT
     dist_dir="$WG_PYTHON_DIST_DIR"
     rm -rf "$dist_dir"
 fi
 venv_dir="$tmp_dir/venv"
 mkdir -p "$dist_dir"
 
-run python3 -m venv "$venv_dir"
-run bash -lc "cd '$PY_DIR' && maturin build --release --sdist -i '$venv_dir/bin/python' -o '$dist_dir'"
-run "$ROOT_DIR/scripts/wg_python_publish_check.py" "$dist_dir" "$version"
+run_labeled "create virtualenv" python3 -m venv "$venv_dir"
+run_labeled "maturin build --release --sdist" bash -lc "cd '$PY_DIR' && maturin build --release --sdist -i '$venv_dir/bin/python' -o '$dist_dir'"
+run_labeled "validate publish payload" "$ROOT_DIR/scripts/wg_python_publish_check.py" "$dist_dir" "$version"
 
 echo "OK: wg-python publish dry-run passed"
