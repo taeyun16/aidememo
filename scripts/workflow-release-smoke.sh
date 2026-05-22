@@ -32,7 +32,11 @@ end = float(sys.argv[2])
 print(f"{end - start:.2f}")
 PY
 )"
-    printf "%s\t%s\n" "$elapsed" "$label" >> "$SUMMARY_TSV"
+    if [[ "$status" == "0" ]]; then
+        printf "ok\t%s\t%s\t\n" "$elapsed" "$label" >> "$SUMMARY_TSV"
+    else
+        printf "fail\t%s\t%s\texit %s\n" "$elapsed" "$label" "$status" >> "$SUMMARY_TSV"
+    fi
     echo "    elapsed: ${elapsed}s"
     return "$status"
 }
@@ -41,9 +45,47 @@ json_assert() {
     python3 - "$@"
 }
 
+print_summary() {
+    if [[ ! -s "$SUMMARY_TSV" ]]; then
+        return
+    fi
+
+    python3 - "$SUMMARY_TSV" <<'PY'
+from pathlib import Path
+import os
+import sys
+
+rows = []
+for line in Path(sys.argv[1]).read_text().splitlines():
+    status, elapsed, label, detail = line.split("\t", 3)
+    rows.append((status, float(elapsed), label, detail))
+total = sum(elapsed for _, elapsed, _, _ in rows)
+lines = [
+    "## workflow-release-smoke timings",
+    "",
+    "| Status | Step | Seconds | Detail |",
+    "|---|---|---:|---|",
+    *[
+        f"| {status} | `{label}` | {elapsed:.2f} | {detail} |"
+        for status, elapsed, label, detail in rows
+    ],
+    f"| total | | {total:.2f} | |",
+]
+text = "\n".join(lines)
+print(text)
+
+summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+if summary_path:
+    with open(summary_path, "a", encoding="utf-8") as handle:
+        handle.write(text)
+        handle.write("\n")
+PY
+}
+
 cd "$ROOT_DIR"
 mkdir -p "$BASE"
 : > "$SUMMARY_TSV"
+trap print_summary EXIT
 
 run cargo build -p wg-cli
 run bash -n scripts/demo-workflow.sh
@@ -114,31 +156,3 @@ PY
 
 echo "OK: workflow release smoke passed"
 echo "base: $BASE"
-
-python3 - "$SUMMARY_TSV" <<'PY'
-from pathlib import Path
-import os
-import sys
-
-rows = []
-for line in Path(sys.argv[1]).read_text().splitlines():
-    elapsed, label = line.split("\t", 1)
-    rows.append((float(elapsed), label))
-total = sum(elapsed for elapsed, _ in rows)
-lines = [
-    "## workflow-release-smoke timings",
-    "",
-    "| Step | Seconds |",
-    "|---|---:|",
-    *[f"| `{label}` | {elapsed:.2f} |" for elapsed, label in rows],
-    f"| **total** | **{total:.2f}** |",
-]
-text = "\n".join(lines)
-print(text)
-
-summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
-if summary_path:
-    with open(summary_path, "a", encoding="utf-8") as handle:
-        handle.write(text)
-        handle.write("\n")
-PY

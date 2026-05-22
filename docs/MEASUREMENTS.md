@@ -167,22 +167,22 @@ Validation:
 | `cargo test -p wg-cli doctor_groups_by_code_with_action_hints` | MCP `wg_doctor` unit validates lint grouping plus `sharing.serverless_recommended_writers=4`, `recommended_mode=serverless_fail_fast`, and `sharing_retry_disabled`. |
 | `python3 bench/multi-agent/scenario_i_workflow_doctor.py` | 10/10 invariants; CLI/MCP/Hermes each created a workflow ticket; doctor reported `workflow.ready=true`, `recent_ticket_count=3`, and no false no-MCP/no-recent-ticket hints. |
 | `python3 bench/multi-agent/scenario_j_lock_retry_sweep.py` | 7/7 invariants; `store.lock_retry_ms=5000` stayed smooth through 4 concurrent serverless writers and mostly recovered 8-writer contention. |
-| `scripts/workflow-release-smoke.sh` | Bundles the first-run workflow demo, Scenario F + I, and a fresh fixture `wg doctor --json` assert for release checks. Latest run: demo recovered decision/lesson/error, Scenario F 13/13, Scenario I 10/10, fixture doctor `workflow_ready=true`, `recent_ticket_count=1`, total 13.60s. |
+| `scripts/workflow-release-smoke.sh` | Bundles the first-run workflow demo, Scenario F + I, and a fresh fixture `wg doctor --json` assert for release checks. Latest run: demo recovered decision/lesson/error, Scenario F 13/13, Scenario I 10/10, fixture doctor `workflow_ready=true`, `recent_ticket_count=1`, total 13.40s. The timing table includes `ok`/`fail` status and is printed from an EXIT trap so partial failures still leave context; forced `WG_BIN=/bin/false` failure records `fail ... exit 1`. |
 | CI `workflow-release-smoke` job | Runs the same script on Ubuntu after lint with Python 3.13 and a 10-minute timeout. |
 | CI `workflow-lint` job | Runs `actionlint@v1.7.1` across `.github/workflows/*.yml` before heavier Rust checks. Local `actionlint .github/workflows/*.yml`: 0 issues. |
 
 Latest local `workflow-release-smoke` timing:
 
-| Step | Seconds |
-|---|---:|
-| `cargo build -p wg-cli` | 0.23 |
-| `bash -n scripts/demo-workflow.sh` | 0.02 |
-| `py_compile` | 0.04 |
-| `scripts/demo-workflow.sh` | 0.64 |
-| Scenario F | 7.28 |
-| Scenario I | 5.19 |
-| Fixture `wg workflow start --bm25-only` | 0.20 |
-| Total | 13.60 |
+| Status | Step | Seconds |
+|---|---|---:|
+| ok | `cargo build -p wg-cli` | 0.22 |
+| ok | `bash -n scripts/demo-workflow.sh` | 0.02 |
+| ok | `py_compile` | 0.04 |
+| ok | `scripts/demo-workflow.sh` | 0.65 |
+| ok | Scenario F | 7.17 |
+| ok | Scenario I | 5.10 |
+| ok | Fixture `wg workflow start --bm25-only` | 0.20 |
+| total | | 13.40 |
 
 Scenario I measurement, May 21 2026:
 
