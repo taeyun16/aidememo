@@ -8,38 +8,68 @@ RUN_OPTIONAL="${WG_BINDINGS_SMOKE_OPTIONAL:-0}"
 BASE="${WG_BINDINGS_SMOKE_BASE:-$(mktemp -d "${TMPDIR:-/tmp}/wg-bindings-smoke.XXXXXX")}"
 SUMMARY_TSV="$BASE/bindings-release-smoke.tsv"
 
-run() {
-    local label start end status elapsed
-    label="$*"
-    echo "==> $label"
-    start="$(python3 - <<'PY'
+timer_now() {
+    python3 - <<'PY'
 import time
 print(time.perf_counter())
 PY
-)"
+}
+
+elapsed_since() {
+    python3 - "$1" <<'PY'
+import sys
+import time
+start = float(sys.argv[1])
+print(f"{time.perf_counter() - start:.2f}")
+PY
+}
+
+record_timed_row() {
+    local status elapsed label row_status detail
+    status="$1"
+    elapsed="$2"
+    label="$3"
+    if [[ "$status" == "0" ]]; then
+        row_status="ok"
+        detail=""
+    else
+        row_status="fail"
+        detail="exit $status"
+    fi
+
+    printf "%s\t%s\t%s\t%s\n" "$row_status" "$elapsed" "$label" "$detail" >> "$SUMMARY_TSV"
+}
+
+run_timed() {
+    local label start status elapsed
+    label="$1"
+    shift
+    echo "==> $label"
+    start="$(timer_now)"
     set +e
     "$@"
     status="$?"
     set -e
-    end="$(python3 - <<'PY'
-import time
-print(time.perf_counter())
-PY
-)"
-    elapsed="$(python3 - "$start" "$end" <<'PY'
-import sys
-start = float(sys.argv[1])
-end = float(sys.argv[2])
-print(f"{end - start:.2f}")
-PY
-)"
-    if [[ "$status" == "0" ]]; then
-        printf "ok\t%s\t%s\t\n" "$elapsed" "$label" >> "$SUMMARY_TSV"
-    else
-        printf "fail\t%s\t%s\texit %s\n" "$elapsed" "$label" "$status" >> "$SUMMARY_TSV"
-    fi
+    elapsed="$(elapsed_since "$start")"
+    record_timed_row "$status" "$elapsed" "$label"
     echo "    elapsed: ${elapsed}s"
     return "$status"
+}
+
+run() {
+    run_timed "$*" "$@"
+}
+
+run_labeled() {
+    local label="$1"
+    shift
+    run_timed "$label" "$@"
+}
+
+run_without_child_summary() {
+    local label="$1"
+    shift
+    run_labeled "$label" env GITHUB_STEP_SUMMARY= "$@"
 }
 
 have() {
@@ -106,7 +136,7 @@ run cargo check -p wg-python -p wg-napi -p wg-nif -p wg-ffi
 
 if [[ "$RUN_NPM" == "1" ]]; then
     run scripts/wg-napi-version.sh
-    run scripts/wg-napi-pack-smoke.sh
+    run_without_child_summary "scripts/wg-napi-pack-smoke.sh" scripts/wg-napi-pack-smoke.sh
     record_status "wg-napi" "ok" "version gate + root/platform pack/install smoke"
 else
     record_status "wg-napi" "skip" "set WG_BINDINGS_SMOKE_NPM=1 to run npm pack/install smoke"
@@ -114,7 +144,7 @@ fi
 
 if have maturin; then
     if [[ "$RUN_OPTIONAL" == "1" ]]; then
-        run scripts/wg-python-pack-smoke.sh
+        run_without_child_summary "scripts/wg-python-pack-smoke.sh" scripts/wg-python-pack-smoke.sh
         record_status "wg-python" "ok" "version gate + wheel install smoke"
     else
         run scripts/wg-python-version.sh
