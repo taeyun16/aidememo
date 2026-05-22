@@ -12,7 +12,7 @@ adding scratch note files.
 | `demo-workflow.sh` | Zero-token first-run demo: seeds a temp store, starts a sparse ticket, and verifies decision + lesson + error context. |
 | `openai_check.sh` | Quick OpenAI-compatible API smoke. |
 | `bench-agent-ux.sh` | Small agent-memory UX regression: Rust check, Hermes tests, and zero-token multi-agent scenarios. |
-| `bindings-release-smoke.sh` | Cross-binding release readiness: Rust checks for Python/Node/Elixir/C bindings, npm version/pack/install smoke, and optional Python/Elixir/C package smokes. |
+| `bindings-release-smoke.sh` | Cross-binding release readiness with a timed summary: Rust checks for Python/Node/Elixir/C bindings, npm version/pack/install smoke, and optional Python/Elixir/C package smokes. |
 | `release-preflight.sh` | One-command release gate. Local profile runs version, workflow lint, binding smoke, workflow smoke, and SDK promotion check; full profile adds optional binding smokes plus Python/npm publish dry-runs. Set `WG_RELEASE_PREFLIGHT_ACTIONLINT_BIN` to pin or test the actionlint executable. |
 | `sdk-promotion-check.sh` | SDK wording gate for `wg-python` and `wg-napi`: checks local criteria, optional package smokes / Scenario K, and public-registry blockers. Also runs as the CI `SDK promotion check` job and writes `$GITHUB_STEP_SUMMARY` when available. |
 | `workflow-release-smoke.sh` | Release-oriented workflow memory smoke with an always-printed timing summary: builds `wg`, runs the first-run demo plus Scenario F + I, then asserts `wg doctor --json` workflow readiness on a fixture store. |
