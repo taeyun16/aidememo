@@ -20,6 +20,7 @@ python3 bench/multi-agent/scenario_g_hermes_binding.py
 python3 bench/multi-agent/scenario_h_workflow_natural_prompt.py
 python3 bench/multi-agent/scenario_j_lock_retry_sweep.py
 python3 bench/multi-agent/scenario_k_sdk_workflow_parity.py
+scripts/demo-workflow.sh
 scripts/sdk-promotion-check.sh
 scripts/ci-local.sh sdk
 ```
@@ -42,6 +43,7 @@ with current scorecards in
 | Workflow trigger Scenario F, 4 sparse tickets | 13/13 invariants; p95 2.48s; max context 3,023 chars; forbidden leakage 0 | CLI, MCP, and Hermes paths create distinct sessions/ticket facts and keep `source_id`-scoped ticket context separated. |
 | Hermes workflow binding Scenario G, 4 sparse tickets | 5/5 invariants; shape parity 4/4; leakage 0; p50 1,795.71ms CLI vs 13.14ms binding | When `wg-python` is installed, Hermes composes workflow packs in process: same context contract, about 137x lower p50 after the first model/index warmup. |
 | SDK workflow parity Scenario K, 4 sparse tickets | 8/8 invariants; Python and Node shape parity 4/4 each; leakage 0; p50 CLI 1,864.55ms, Python 16.19ms, Node 13.69ms | `wg-python` and `wg-napi` expose the same sparse-ticket context contract as CLI while avoiding per-command CLI spawn overhead. |
+| Zero-token workflow demo | decision + lesson + error surfaced; search hits 4; workflow latency 119ms | `scripts/demo-workflow.sh` demonstrates the product position without an agent, model call, or persistent store. It uses CLI `workflow start --bm25-only` for deterministic first-run behaviour. |
 | Natural workflow adoption Scenario H, 3 agents | 4/4 invariants; 3/3 agents passed; each created 1 scoped workflow fact; prior reflection Claude 3/3, Codex 2/3, Hermes 3/3; forbidden leakage 0 | Sparse-ticket prompts can drive the workflow entry point across Claude, Codex, and Hermes when each runtime gets an isolated, deterministic MCP config. Hermes uses MCP-only here to avoid redb lock contention with the in-process plugin. |
 
 ## gbrain-evals Adapter

@@ -69,6 +69,18 @@ validates with Rust `1.95.0`; the workspace MSRV is `1.85`.
 
 ## 60-Second Quickstart
 
+From a checkout, see the core workflow in one zero-token command:
+
+```bash
+scripts/demo-workflow.sh
+```
+
+It creates a temporary store, seeds one Redis decision / lesson / error, then
+starts a sparse ticket. Expected result: `OK: sparse ticket recovered decision
++ lesson + error context`.
+
+Then try the same primitives by hand:
+
 ```bash
 wg init ./my-wiki
 wg fact add "Decided to use Redis Cluster for cache HA" \
@@ -136,13 +148,16 @@ to start a server.
 wg workflow start "Fix Redis timeout in worker" \
   --body-file issue.md \
   --source github:org/repo#123 \
+  --bm25-only \
   --json
 ```
 
 This creates a tracked session, records the incoming ticket as a `question`
 fact, and returns a context pack with relevant decisions, lessons, errors, and
 search hits so an automation-triggered agent can start with project memory
-instead of only the issue body.
+instead of only the issue body. `--bm25-only` keeps demos and hooks
+deterministic by skipping embedding-model load; omit it when semantic recall is
+worth the warm model cost.
 
 ### Share a warm store when concurrency matters
 
@@ -173,6 +188,7 @@ parallel.
 | Hermes two-process serverless shared store, retry `5000` | 20/20 writes persisted, 0 lock errors |
 | Serverless lock-retry sweep, retry `5000` | smooth through 4 writers; 8 writers persisted 79/80 |
 | HTTP shared `mcp-serve`, 2 clients x 10 writes | p50 `18.4ms`, p95 `41.8ms`, 20/20 persisted |
+| Zero-token workflow demo | decision + lesson + error surfaced in `119ms` |
 | `wg-napi` package split | root JS/types package + current-platform optional package install smoke passed |
 | `wg-napi` version gate | root/platform package versions and optionalDependency pins verified together |
 | `wg-napi` publish workflow | trusted-publisher workflow defaults to dry-run and gates real publish on exact version input |

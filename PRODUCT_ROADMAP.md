@@ -60,10 +60,11 @@ or benchmark-specific `RESULTS.md` files; keep user-facing product work here.
 | P3.17 | done | SDK wording gate was local/preflight-only and could be skipped in PRs | CI now has a dedicated `SDK promotion check` job that runs the fast gate after lint with Python 3.13 and Node 22, separate from heavier package smokes | `actionlint .github/workflows/*.yml`: 0 issues; `scripts/sdk-promotion-check.sh`: ok=6, ready=3, blocked=2, fail=0 |
 | P3.18 | done | Local CI parity did not include the new SDK wording check | `scripts/ci-local.sh sdk` runs the SDK promotion gate directly, and `scripts/ci-local.sh all` now includes it between lint and tests | `bash -n scripts/ci-local.sh`; `scripts/ci-local.sh sdk`: ok=6, ready=3, blocked=2, fail=0 |
 | P3.19 | done | SDK promotion CI details required opening raw logs | `scripts/sdk-promotion-check.sh` writes a Markdown table to `$GITHUB_STEP_SUMMARY` while preserving text and JSON stdout modes | Summary smoke writes 11 check rows plus metric rows; `WG_SDK_PROMOTION_JSON=1` remains valid JSON; `bash -n scripts/sdk-promotion-check.sh`; `git diff --check` |
+| P3.20 | done | First-run README did not immediately demonstrate sparse-ticket workflow memory | `scripts/demo-workflow.sh` seeds a temp store and verifies `wg workflow start --bm25-only` recovers decision, lesson, and error context from a sparse ticket | `scripts/demo-workflow.sh`: decision=1, lesson=1, error=1, search_hits=4, latency 119ms; `cargo check -p wg-cli` |
 
 ## Current Sprint
 
-All planned P0-P3.19 roadmap items are closed. Scenario H now isolates each
+All planned P0-P3.20 roadmap items are closed. Scenario H now isolates each
 agent's integration path: Claude project MCP, Codex temp `CODEX_HOME` MCP, and
 Hermes MCP-only profile to avoid redb lock contention with the in-process
 plugin. `wg doctor --json` now exposes workflow readiness, recent workflow
@@ -86,7 +87,8 @@ a local gate, `ci-local.sh all` runs it, release preflight runs it by default,
 and CI now exposes it as a dedicated fast check with a GitHub summary table:
 local criteria pass, but public registry installs still block actual SDK
 wording. They remain SDK candidates until public registry releases succeed.
-Elixir and C remain low-level bindings.
+Elixir and C remain low-level bindings. First-run onboarding now starts with a
+zero-token workflow demo that shows the sparse-ticket memory loop directly.
 
 Next measurement candidates:
 1. Reserve/configure the PyPI `wg-python` trusted publisher, then run `.github/workflows/wg-python-publish.yml` with `dry_run=false`.

@@ -1136,6 +1136,7 @@ fn handle_workflow(
             limit,
             depth,
             recent_limit,
+            bm25_only,
             max_chars,
             title,
         } => {
@@ -1150,6 +1151,7 @@ fn handle_workflow(
                     limit.unwrap_or(8),
                     depth.unwrap_or(2),
                     recent_limit.unwrap_or(5),
+                    bm25_only,
                 )?;
                 if json {
                     return serde_json::to_string_pretty(&pack).map_err(|e| WgError::Serialize {
@@ -1203,6 +1205,7 @@ fn workflow_start_pack(
     limit: usize,
     depth: u32,
     recent_limit: usize,
+    bm25_only: bool,
 ) -> Result<serde_json::Value, WgError> {
     let pack = wiki.workflow_start(
         title,
@@ -1213,7 +1216,7 @@ fn workflow_start_pack(
             limit,
             depth,
             recent_limit,
-            bm25_only: false,
+            bm25_only,
         },
     )?;
     serde_json::to_value(pack).map_err(|e| WgError::Serialize {

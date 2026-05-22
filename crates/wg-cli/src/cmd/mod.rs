@@ -156,6 +156,7 @@ pub enum WorkflowSub {
         limit: Option<usize>,
         depth: Option<u32>,
         recent_limit: Option<usize>,
+        bm25_only: bool,
         max_chars: Option<usize>,
         title: String,
     },
@@ -638,6 +639,9 @@ fn workflow_command() -> impl Parser<Command> {
         .help("Max recent facts in the context pack")
         .argument::<usize>("N")
         .optional();
+    let bm25_only = long("bm25-only")
+        .help("Skip embedding-model load and use deterministic BM25-only retrieval")
+        .switch();
     let max_chars = long("max-chars")
         .help("Hard cap for human text output")
         .argument::<usize>("N")
@@ -652,6 +656,7 @@ fn workflow_command() -> impl Parser<Command> {
         limit,
         depth,
         recent_limit,
+        bm25_only,
         max_chars,
         title,
     })

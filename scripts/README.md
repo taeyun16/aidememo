@@ -9,6 +9,7 @@ adding scratch note files.
 | Script | Purpose |
 |---|---|
 | `ci-local.sh` | Local CI parity: fmt, clippy, docs, SDK promotion check, and tests. Use `ci-local.sh sdk` for just the SDK wording gate. |
+| `demo-workflow.sh` | Zero-token first-run demo: seeds a temp store, starts a sparse ticket, and verifies decision + lesson + error context. |
 | `openai_check.sh` | Quick OpenAI-compatible API smoke. |
 | `bench-agent-ux.sh` | Small agent-memory UX regression: Rust check, Hermes tests, and zero-token multi-agent scenarios. |
 | `bindings-release-smoke.sh` | Cross-binding release readiness: Rust checks for Python/Node/Elixir/C bindings, npm version/pack/install smoke, and optional Python/Elixir/C package smokes. |

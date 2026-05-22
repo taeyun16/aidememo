@@ -159,6 +159,8 @@ wg session current / list                   current/recent tracked sessions.
 wg workflow start <TITLE> [--body-file issue.md] [--source github:org/repo#123]
                                             sparse issue/ticket entry point: create session,
                                             store trigger, return project context pack.
+                                            Use --bm25-only for deterministic demos/hooks
+                                            that should skip embedding-model load.
 wg export [--scope all|...] / wg import
 wg config get/set/list
 
