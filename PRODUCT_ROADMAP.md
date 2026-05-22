@@ -49,10 +49,11 @@ or benchmark-specific `RESULTS.md` files; keep user-facing product work here.
 | P3.7 | done | Release workflow checks require remembering several commands | One script builds `wg`, runs Scenario F + I, and asserts `wg doctor --json` workflow readiness on a fixture store | `scripts/workflow-release-smoke.sh`: Scenario F 13/13, Scenario I 10/10, fixture doctor `workflow_ready=true`, `recent_ticket_count=1` |
 | P3.8 | done | Workflow release smoke is local-only | CI runs the zero-token workflow release smoke as a named check after lint | `.github/workflows/ci.yml` job `workflow-release-smoke`; local command remains `scripts/workflow-release-smoke.sh` |
 | P3.9 | done | Workflow release smoke runtime is opaque in CI | Smoke script prints per-step timing and writes the same markdown table to `$GITHUB_STEP_SUMMARY` | `scripts/workflow-release-smoke.sh`: latest local total 15.13s; Scenario F 7.53s, Scenario I 5.21s, fixture workflow start 1.94s |
+| P3.10 | done | Release workflows can drift syntactically without a cheap CI signal | CI now runs `actionlint` over every GitHub Actions workflow before heavier Rust jobs; local-only `.codex/` agent config is ignored so status stays clean | `actionlint .github/workflows/*.yml`: 0 issues; `.github/workflows/ci.yml` job `workflow-lint` installs `actionlint@v1.7.1` |
 
 ## Current Sprint
 
-All planned P0-P3.9 roadmap items are closed. Scenario H now isolates each
+All planned P0-P3.10 roadmap items are closed. Scenario H now isolates each
 agent's integration path: Claude project MCP, Codex temp `CODEX_HOME` MCP, and
 Hermes MCP-only profile to avoid redb lock contention with the in-process
 plugin. `wg doctor --json` now exposes workflow readiness, recent workflow

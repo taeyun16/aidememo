@@ -162,6 +162,7 @@ Validation:
 | `python3 bench/multi-agent/scenario_j_lock_retry_sweep.py` | 7/7 invariants; `store.lock_retry_ms=5000` stayed smooth through 4 concurrent serverless writers and mostly recovered 8-writer contention. |
 | `scripts/workflow-release-smoke.sh` | Bundles Scenario F + I plus a fresh fixture `wg doctor --json` assert for release checks. Latest run: Scenario F 13/13, Scenario I 10/10, fixture doctor `workflow_ready=true`, `recent_ticket_count=1`, total 15.13s. |
 | CI `workflow-release-smoke` job | Runs the same script on Ubuntu after lint with Python 3.13 and a 10-minute timeout. |
+| CI `workflow-lint` job | Runs `actionlint@v1.7.1` across `.github/workflows/*.yml` before heavier Rust checks. Local `actionlint .github/workflows/*.yml`: 0 issues. |
 
 Latest local `workflow-release-smoke` timing:
 
