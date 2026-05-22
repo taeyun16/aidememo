@@ -31,3 +31,7 @@ Repository = "https://github.com/taeyun16/wg"
 module-name = "wg_python"
 features = ["pyo3/extension-module"]
 strip = true
+include = [
+    { path = "vendor/tokenizers/Cargo.toml", format = "sdist" },
+    { path = "vendor/tokenizers/src/**/*", format = "sdist" },
+]

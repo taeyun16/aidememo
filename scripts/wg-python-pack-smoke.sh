@@ -50,7 +50,7 @@ if [[ -z "$wheel" ]]; then
     exit 1
 fi
 
-run "$venv_dir/bin/python" -m pip install "$wheel"
+run "$venv_dir/bin/python" -m pip --disable-pip-version-check install "$wheel"
 run "$venv_dir/bin/python" "$PY_DIR/tests/smoke.py"
 run "$venv_dir/bin/python" - "$version" <<'PY'
 import importlib.metadata

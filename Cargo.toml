@@ -60,7 +60,9 @@ codegen-units = 16
 
 # Local fork of tokenizers 0.20.4 with one upstream-bound fix:
 #  - models/unigram/model.rs: HashMap::new() → with_capacity(n)
-# Vendored under vendor/tokenizers; the upstream PR is tracked outside
-# the public measurement docs.
+# `vendor/tokenizers` is a repo-root symlink to the Python package's vendored
+# copy. That keeps the Cargo patch path stable while letting maturin include
+# the same files in the Python sdist as `vendor/tokenizers`. The upstream PR is
+# tracked outside the public measurement docs.
 [patch.crates-io]
 tokenizers = { path = "vendor/tokenizers" }
