@@ -33,3 +33,8 @@ run env \
     WG_E2E_CLIENTS="$CLIENTS" \
     WG_E2E_N_PER_CLIENT="$N_PER_CLIENT" \
     python3 bench/multi-agent/scenario_e_http_shared.py
+
+run env \
+    WG_BIN="$WG_BIN" \
+    WG_E2E_BASE="/tmp/wg-agent-ux-m" \
+    python3 bench/multi-agent/scenario_m_mcp_install_source_defaults.py

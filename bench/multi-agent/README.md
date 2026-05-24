@@ -1,6 +1,6 @@
 # multi-agent e2e
 
-Scenarios A-L exercise the integration between `wg` and the three
+Scenarios A-M exercise the integration between `wg` and the three
 agents installed on this machine: Claude Code, Codex, and Hermes.
 
 | script | what it does | model cost |
@@ -17,6 +17,7 @@ agents installed on this machine: Claude Code, Codex, and Hermes.
 | `scenario_j_lock_retry_sweep.py` | Sweeps 1/2/4/8 serverless CLI writers with `store.lock_retry_ms=0` vs `5000` to find when retry remains smooth and when users should switch to a shared daemon. | 0 |
 | `scenario_k_sdk_workflow_parity.py` | Compares `workflow_start` shape parity across CLI, `wg-python`, and `wg-napi`; verifies scoped priors, unique sessions/tickets, and forbidden-source leakage. | 0 |
 | `scenario_l_self_extraction.py` | Simulates an agent-classified `wg_fact_add_many` batch, then verifies typed facts drive sparse-ticket workflow context and `source_id` isolation. | 0 |
+| `scenario_m_mcp_install_source_defaults.py` | Installs MCP configs into an isolated HOME, verifies `WG_SOURCE_ID` is written for file targets / printed for shell targets, then proves the installed env scopes MCP write/search calls. | 0 |
 
 ## Running locally
 
@@ -33,6 +34,7 @@ python3 bench/multi-agent/scenario_f_workflow_triggers.py
 python3 bench/multi-agent/scenario_i_workflow_doctor.py
 python3 bench/multi-agent/scenario_j_lock_retry_sweep.py
 python3 bench/multi-agent/scenario_l_self_extraction.py
+python3 bench/multi-agent/scenario_m_mcp_install_source_defaults.py
 
 # binding / SDK comparisons (require local native packages)
 (cd crates/wg-python && maturin build --release -o /tmp/wg-python-wheel)
