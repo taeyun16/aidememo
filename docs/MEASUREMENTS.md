@@ -20,6 +20,7 @@ python3 bench/multi-agent/scenario_g_hermes_binding.py
 python3 bench/multi-agent/scenario_h_workflow_natural_prompt.py
 python3 bench/multi-agent/scenario_j_lock_retry_sweep.py
 python3 bench/multi-agent/scenario_k_sdk_workflow_parity.py
+python3 bench/multi-agent/scenario_l_self_extraction.py
 scripts/demo-workflow.sh
 scripts/ci-local.sh demo
 scripts/sdk-promotion-check.sh
@@ -44,6 +45,7 @@ with current scorecards in
 | Workflow trigger Scenario F, 4 sparse tickets | 13/13 invariants; p95 2.48s; max context 3,023 chars; forbidden leakage 0 | CLI, MCP, and Hermes paths create distinct sessions/ticket facts and keep `source_id`-scoped ticket context separated. |
 | Hermes workflow binding Scenario G, 4 sparse tickets | 5/5 invariants; shape parity 4/4; leakage 0; p50 1,795.71ms CLI vs 13.14ms binding | When `wg-python` is installed, Hermes composes workflow packs in process: same context contract, about 137x lower p50 after the first model/index warmup. |
 | SDK workflow parity Scenario K, 4 sparse tickets | 8/8 invariants; Python and Node shape parity 4/4 each; leakage 0; p50 CLI 1,864.55ms, Python 16.19ms, Node 13.69ms | `wg-python` and `wg-napi` expose the same sparse-ticket context contract as CLI while avoiding per-command CLI spawn overhead. |
+| Self-extraction Scenario L, MCP batch | 8/8 invariants; `wg_fact_add_many` inserted 7 classified facts in 258.87ms; alpha sparse-ticket workflow recovered decision=1, lesson=1, error=1 with beta leakage 0; preference search surfaced the preference fact | If the calling agent classifies facts before `wg_fact_add_many`, wg preserves typed memory and returns it in the workflow shape agents consume without a built-in LLM extraction pipeline. |
 | Zero-token workflow demo | decision + lesson + error surfaced; search hits 4; workflow latency 128ms | `scripts/demo-workflow.sh` demonstrates the product position without an agent, model call, or persistent store. It uses CLI `workflow start --bm25-only` for deterministic first-run behaviour. `scripts/ci-local.sh demo` wraps the same smoke for daily local checks in about 0.91s warm. |
 | Natural workflow adoption Scenario H, 3 agents | 4/4 invariants; 3/3 agents passed; each created 1 scoped workflow fact; prior reflection Claude 3/3, Codex 2/3, Hermes 3/3; forbidden leakage 0 | Sparse-ticket prompts can drive the workflow entry point across Claude, Codex, and Hermes when each runtime gets an isolated, deterministic MCP config. Hermes uses MCP-only here to avoid redb lock contention with the in-process plugin. |
 

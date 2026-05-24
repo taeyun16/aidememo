@@ -75,10 +75,11 @@ or benchmark-specific `RESULTS.md` files; keep user-facing product work here.
 | P3.32 | done | Release preflight could duplicate child smoke/check summary tables in `$GITHUB_STEP_SUMMARY` | `release-preflight.sh` suppresses child summary-file writes for binding, workflow, SDK, and publish subchecks while preserving child stdout summaries, so CI shows one preflight table | `summary_file=$(mktemp) && GITHUB_STEP_SUMMARY=$summary_file WG_RELEASE_PREFLIGHT_WORKFLOW=0 WG_RELEASE_PREFLIGHT_SDK_PROMOTION=0 WG_RELEASE_PREFLIGHT_PUBLISH=0 scripts/release-preflight.sh`: `rg -n '^## ' "$summary_file"` returns one heading; total 3.79s; binding smoke 3.45s |
 | P3.33 | done | Local CI SDK mode duplicated the SDK promotion table in `$GITHUB_STEP_SUMMARY` | `ci-local.sh` suppresses child summary-file writes for `sdk-promotion-check.sh` while preserving its stdout details, so local CI summary remains one top-level timing table | `summary_file=$(mktemp) && GITHUB_STEP_SUMMARY=$summary_file scripts/ci-local.sh sdk`: `rg -n '^## ' "$summary_file"` returns one heading; total 0.14s; SDK gate reports ok=6, ready=3, blocked=2 |
 | P3.34 | done | Public comparison page had stale gap claims after rerank/type-weighted ranking shipped | `COMPARE.md` now describes rerank, type-aware ranking, MCP tool count, explicit extraction, and shared-store limits using the current implementation state | `rg -n "24-tool|17 \\(after|doesn't use|Roadmap: add|Roadmap: enable|we haven't measured|TEI rerank wired but" COMPARE.md README.md docs/MEASUREMENTS.md` returns no matches |
+| P3.35 | done | Self-extraction positioning lacked a zero-token contract test | Scenario L simulates an agent-classified `wg_fact_add_many` batch and verifies typed facts feed sparse-ticket workflow context without cross-source leakage | `python3 bench/multi-agent/scenario_l_self_extraction.py`: 8/8 invariants; 7 facts inserted via MCP in 258.87ms; alpha workflow recovered decision=1, lesson=1, error=1; beta leakage 0 |
 
 ## Current Sprint
 
-All planned P0-P3.34 roadmap items are closed. Scenario H now isolates each
+All planned P0-P3.35 roadmap items are closed. Scenario H now isolates each
 agent's integration path: Claude project MCP, Codex temp `CODEX_HOME` MCP, and
 Hermes MCP-only profile to avoid redb lock contention with the in-process
 plugin. `wg doctor --json` now exposes workflow readiness, recent workflow
@@ -126,6 +127,10 @@ The public comparison page now matches the current implementation: rerank and
 type-aware ranking are no longer described as roadmap gaps, tool count is
 current, and remaining trade-offs are explicit extraction, E2E SOTA gap,
 single-writer semantics, community detection, and hosted multi-tenant ops.
+Scenario L now makes the explicit self-extraction contract measurable: an
+agent-classified `wg_fact_add_many` batch persists decision / lesson / error /
+preference / convention facts and drives sparse-ticket workflow recall without
+requiring a built-in LLM extraction pipeline.
 
 Next measurement candidates:
 1. Reserve/configure the PyPI `wg-python` trusted publisher, then run `.github/workflows/wg-python-publish.yml` with `dry_run=false`.
