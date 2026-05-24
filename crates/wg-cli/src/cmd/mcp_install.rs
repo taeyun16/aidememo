@@ -32,6 +32,7 @@ pub struct McpInstallSub {
     pub print: bool,
     pub list_targets: bool,
     pub no_verify: bool,
+    pub source_id: Option<String>,
 }
 
 pub fn mcp_install_command() -> impl Parser<Command> {
@@ -59,6 +60,14 @@ pub fn mcp_install_command() -> impl Parser<Command> {
              reach, or returns noisy output that breaks the heuristic.",
         )
         .switch();
+    let source_id = long("source-id")
+        .help(
+            "Set WG_SOURCE_ID in the installed MCP server environment so \
+             read/write tools default to this source namespace. Explicit \
+             tool-call source_id values still override it.",
+        )
+        .argument::<String>("SOURCE_ID")
+        .optional();
 
     construct!(McpInstallSub {
         target,
@@ -66,6 +75,7 @@ pub fn mcp_install_command() -> impl Parser<Command> {
         print,
         list_targets,
         no_verify,
+        source_id,
     })
     .map(Command::McpInstall)
     .to_options()
@@ -86,6 +96,8 @@ struct InstallReport {
     method: String,
     detail: String,
     overwrote: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source_id: Option<String>,
     /// Result of the post-install best-effort check that the agent
     /// actually picked up the new server. `None` when verification
     /// wasn't attempted (file-edit targets, `--print` mode, missing
@@ -161,31 +173,35 @@ pub fn run_mcp_install(sub: McpInstallSub, json: bool) -> Result<String, WgError
         return Ok(out);
     }
 
+    let source_id = normalise_source_id_arg(sub.source_id.as_deref())?;
     let report = match sub.target.as_str() {
         "claude" | "claude-code" => install_via_cli(
             "claude",
-            &["mcp", "add", "wg", "--", "wg", "mcp"],
+            claude_install_args(source_id.as_deref()),
             sub.force,
             sub.print,
             sub.no_verify,
+            source_id.as_deref(),
         )?,
         "hermes" => install_via_cli(
             "hermes",
-            &["mcp", "add", "wg", "--command", "wg", "--args", "mcp"],
+            hermes_install_args(source_id.as_deref()),
             sub.force,
             sub.print,
             sub.no_verify,
+            source_id.as_deref(),
         )?,
         "openclaw" => install_via_cli(
             "openclaw",
-            &["mcp", "set", "wg", r#"{"command":"wg","args":["mcp"]}"#],
+            openclaw_install_args(source_id.as_deref()),
             sub.force,
             sub.print,
             sub.no_verify,
+            source_id.as_deref(),
         )?,
-        "codex" => install_codex(sub.force, sub.print)?,
-        "cursor" => install_cursor(sub.force, sub.print)?,
-        "opencode" => install_opencode(sub.force, sub.print)?,
+        "codex" => install_codex(sub.force, sub.print, source_id.as_deref())?,
+        "cursor" => install_cursor(sub.force, sub.print, source_id.as_deref())?,
+        "opencode" => install_opencode(sub.force, sub.print, source_id.as_deref())?,
         "pi" => {
             return Err(WgError::InvalidInput(
                 "pi has no MCP support by upstream design — pi rejects MCP \
@@ -243,10 +259,11 @@ pub fn run_mcp_install(sub: McpInstallSub, json: bool) -> Result<String, WgError
 
 fn install_via_cli(
     bin: &str,
-    args: &[&str],
+    args: Vec<String>,
     _force: bool,
     print: bool,
     no_verify: bool,
+    source_id: Option<&str>,
 ) -> Result<InstallReport, WgError> {
     let cmdline = format!("{} {}", bin, args.join(" "));
     let target = bin.to_string();
@@ -257,11 +274,12 @@ fn install_via_cli(
             method: "shell-out".to_string(),
             detail: cmdline,
             overwrote: false,
+            source_id: source_id.map(str::to_string),
             verified: None,
         });
     }
 
-    let out = ProcessCommand::new(bin).args(args).output().map_err(|e| {
+    let out = ProcessCommand::new(bin).args(&args).output().map_err(|e| {
         WgError::InvalidInput(format!(
             "could not run `{}` — is the {} CLI on your PATH? (raw error: {})",
             bin, bin, e
@@ -297,8 +315,64 @@ fn install_via_cli(
         method: "shell-out".to_string(),
         detail: cmdline,
         overwrote: false,
+        source_id: source_id.map(str::to_string),
         verified,
     })
+}
+
+fn normalise_source_id_arg(source_id: Option<&str>) -> Result<Option<String>, WgError> {
+    let Some(source_id) = source_id.map(str::trim) else {
+        return Ok(None);
+    };
+    if source_id.is_empty() {
+        return Err(WgError::InvalidInput(
+            "--source-id must not be empty".to_string(),
+        ));
+    }
+    Ok(Some(source_id.to_string()))
+}
+
+fn env_pair(source_id: &str) -> String {
+    format!("WG_SOURCE_ID={source_id}")
+}
+
+fn claude_install_args(source_id: Option<&str>) -> Vec<String> {
+    let mut args = vec!["mcp".to_string(), "add".to_string()];
+    if let Some(source_id) = source_id {
+        args.push("-e".to_string());
+        args.push(env_pair(source_id));
+    }
+    args.extend(["wg", "--", "wg", "mcp"].into_iter().map(String::from));
+    args
+}
+
+fn hermes_install_args(source_id: Option<&str>) -> Vec<String> {
+    let mut args: Vec<String> = ["mcp", "add", "wg", "--command", "wg", "--args", "mcp"]
+        .into_iter()
+        .map(String::from)
+        .collect();
+    if let Some(source_id) = source_id {
+        args.push("--env".to_string());
+        args.push(env_pair(source_id));
+    }
+    args
+}
+
+fn openclaw_install_args(source_id: Option<&str>) -> Vec<String> {
+    let payload = match source_id {
+        Some(source_id) => serde_json::json!({
+            "command": "wg",
+            "args": ["mcp"],
+            "env": {"WG_SOURCE_ID": source_id},
+        }),
+        None => serde_json::json!({"command": "wg", "args": ["mcp"]}),
+    };
+    vec![
+        "mcp".to_string(),
+        "set".to_string(),
+        "wg".to_string(),
+        payload.to_string(),
+    ]
 }
 
 /// Run `<bin> mcp list` (text output) and check whether `token`
@@ -337,12 +411,19 @@ pub(crate) fn codex_config_path() -> Result<PathBuf, WgError> {
     Ok(home.join(".codex/config.toml"))
 }
 
-fn install_codex(force: bool, print: bool) -> Result<InstallReport, WgError> {
+fn install_codex(
+    force: bool,
+    print: bool,
+    source_id: Option<&str>,
+) -> Result<InstallReport, WgError> {
     let path = codex_config_path()?;
-    let detail = format!(
+    let mut detail = format!(
         "{} ([mcp_servers.wg] command=wg args=[\"mcp\"])",
         path.display()
     );
+    if let Some(source_id) = source_id {
+        detail.push_str(&format!(" env.WG_SOURCE_ID={source_id}"));
+    }
 
     if print {
         return Ok(InstallReport {
@@ -350,6 +431,7 @@ fn install_codex(force: bool, print: bool) -> Result<InstallReport, WgError> {
             method: "file-edit".to_string(),
             detail,
             overwrote: false,
+            source_id: source_id.map(str::to_string),
             verified: None,
         });
     }
@@ -392,6 +474,14 @@ fn install_codex(force: bool, print: bool) -> Result<InstallReport, WgError> {
         "args".to_string(),
         toml::Value::Array(vec![toml::Value::String("mcp".to_string())]),
     );
+    if let Some(source_id) = source_id {
+        let mut env = toml::value::Table::new();
+        env.insert(
+            "WG_SOURCE_ID".to_string(),
+            toml::Value::String(source_id.to_string()),
+        );
+        wg_entry.insert("env".to_string(), toml::Value::Table(env));
+    }
     servers_table.insert("wg".to_string(), toml::Value::Table(wg_entry));
 
     let serialized = toml::to_string_pretty(&doc)
@@ -406,6 +496,7 @@ fn install_codex(force: bool, print: bool) -> Result<InstallReport, WgError> {
         method: "file-edit".to_string(),
         detail,
         overwrote: already,
+        source_id: source_id.map(str::to_string),
         verified: Some(true),
     })
 }
@@ -422,9 +513,16 @@ pub(crate) fn opencode_config_path() -> Result<PathBuf, WgError> {
     Ok(home.join(".config/opencode/opencode.json"))
 }
 
-fn install_opencode(force: bool, print: bool) -> Result<InstallReport, WgError> {
+fn install_opencode(
+    force: bool,
+    print: bool,
+    source_id: Option<&str>,
+) -> Result<InstallReport, WgError> {
     let path = opencode_config_path()?;
-    let detail = format!("{} (mcp.wg)", path.display());
+    let mut detail = format!("{} (mcp.wg)", path.display());
+    if let Some(source_id) = source_id {
+        detail.push_str(&format!(" env.WG_SOURCE_ID={source_id}"));
+    }
 
     if print {
         return Ok(InstallReport {
@@ -432,6 +530,7 @@ fn install_opencode(force: bool, print: bool) -> Result<InstallReport, WgError> 
             method: "file-edit".to_string(),
             detail,
             overwrote: false,
+            source_id: source_id.map(str::to_string),
             verified: None,
         });
     }
@@ -471,14 +570,15 @@ fn install_opencode(force: bool, print: bool) -> Result<InstallReport, WgError> 
             path.display()
         )));
     }
-    servers_obj.insert(
-        "wg".to_string(),
-        serde_json::json!({
+    let mut wg_entry = serde_json::json!({
             "type": "local",
             "command": ["wg", "mcp"],
             "enabled": true,
-        }),
-    );
+    });
+    if let Some(source_id) = source_id {
+        wg_entry["env"] = serde_json::json!({"WG_SOURCE_ID": source_id});
+    }
+    servers_obj.insert("wg".to_string(), wg_entry);
 
     let serialized = serde_json::to_string_pretty(&doc)
         .map_err(|e| WgError::Internal(format!("serialize opencode config: {e}")))?;
@@ -489,6 +589,7 @@ fn install_opencode(force: bool, print: bool) -> Result<InstallReport, WgError> 
         method: "file-edit".to_string(),
         detail,
         overwrote: already,
+        source_id: source_id.map(str::to_string),
         verified: Some(true),
     })
 }
@@ -499,9 +600,16 @@ pub(crate) fn cursor_config_path() -> Result<PathBuf, WgError> {
     Ok(home.join(".cursor/mcp.json"))
 }
 
-fn install_cursor(force: bool, print: bool) -> Result<InstallReport, WgError> {
+fn install_cursor(
+    force: bool,
+    print: bool,
+    source_id: Option<&str>,
+) -> Result<InstallReport, WgError> {
     let path = cursor_config_path()?;
-    let detail = format!("{} (mcpServers.wg)", path.display());
+    let mut detail = format!("{} (mcpServers.wg)", path.display());
+    if let Some(source_id) = source_id {
+        detail.push_str(&format!(" env.WG_SOURCE_ID={source_id}"));
+    }
 
     if print {
         return Ok(InstallReport {
@@ -509,6 +617,7 @@ fn install_cursor(force: bool, print: bool) -> Result<InstallReport, WgError> {
             method: "file-edit".to_string(),
             detail,
             overwrote: false,
+            source_id: source_id.map(str::to_string),
             verified: None,
         });
     }
@@ -543,10 +652,11 @@ fn install_cursor(force: bool, print: bool) -> Result<InstallReport, WgError> {
             path.display()
         )));
     }
-    servers_obj.insert(
-        "wg".to_string(),
-        serde_json::json!({"command": "wg", "args": ["mcp"]}),
-    );
+    let mut wg_entry = serde_json::json!({"command": "wg", "args": ["mcp"]});
+    if let Some(source_id) = source_id {
+        wg_entry["env"] = serde_json::json!({"WG_SOURCE_ID": source_id});
+    }
+    servers_obj.insert("wg".to_string(), wg_entry);
 
     let serialized = serde_json::to_string_pretty(&doc)
         .map_err(|e| WgError::Internal(format!("serialize cursor config: {e}")))?;
@@ -557,6 +667,7 @@ fn install_cursor(force: bool, print: bool) -> Result<InstallReport, WgError> {
         method: "file-edit".to_string(),
         detail,
         overwrote: already,
+        source_id: source_id.map(str::to_string),
         verified: Some(true),
     })
 }
@@ -586,10 +697,11 @@ mod tests {
     fn print_mode_for_claude_returns_command() {
         let report = install_via_cli(
             "claude",
-            &["mcp", "add", "wg", "--", "wg", "mcp"],
+            claude_install_args(None),
             false,
             true,
             false,
+            None,
         )
         .unwrap();
         assert_eq!(report.target, "claude");
@@ -605,6 +717,7 @@ mod tests {
             print: true,
             list_targets: false,
             no_verify: false,
+            source_id: None,
         };
         let err = run_mcp_install(sub, false).unwrap_err();
         assert!(err.to_string().contains("unknown target"));
@@ -620,7 +733,7 @@ mod tests {
         // through to `true mcp list` which would also be `None` but
         // for a different reason. The contract we care about is:
         // `no_verify=true` short-circuits the call.
-        let report = install_via_cli("true", &[], false, false, true).unwrap();
+        let report = install_via_cli("true", Vec::new(), false, false, true, None).unwrap();
         assert_eq!(report.verified, None);
     }
 
@@ -641,6 +754,12 @@ mod tests {
             "args".into(),
             toml::Value::Array(vec![toml::Value::String("mcp".into())]),
         );
+        let mut env = toml::value::Table::new();
+        env.insert(
+            "WG_SOURCE_ID".into(),
+            toml::Value::String("project-alpha".into()),
+        );
+        wg.insert("env".into(), toml::Value::Table(env));
         servers
             .as_table_mut()
             .unwrap()
@@ -650,6 +769,10 @@ mod tests {
         std::fs::write(&path, &s).unwrap();
         let parsed: toml::Value = std::fs::read_to_string(&path).unwrap().parse().unwrap();
         assert_eq!(parsed["mcp_servers"]["wg"]["command"].as_str(), Some("wg"));
+        assert_eq!(
+            parsed["mcp_servers"]["wg"]["env"]["WG_SOURCE_ID"].as_str(),
+            Some("project-alpha")
+        );
     }
 
     #[test]
@@ -689,10 +812,18 @@ mod tests {
         obj.insert("mcpServers".into(), serde_json::json!({}));
         obj["mcpServers"].as_object_mut().unwrap().insert(
             "wg".into(),
-            serde_json::json!({"command": "wg", "args": ["mcp"]}),
+            serde_json::json!({
+                "command": "wg",
+                "args": ["mcp"],
+                "env": {"WG_SOURCE_ID": "project-alpha"}
+            }),
         );
         assert_eq!(doc["mcpServers"]["wg"]["command"], "wg");
         assert_eq!(doc["mcpServers"]["wg"]["args"][0], "mcp");
+        assert_eq!(
+            doc["mcpServers"]["wg"]["env"]["WG_SOURCE_ID"],
+            "project-alpha"
+        );
     }
 
     #[test]
@@ -706,10 +837,33 @@ mod tests {
 
     #[test]
     fn opencode_install_print_describes_the_path() {
-        let report = install_opencode(false, /*print*/ true).unwrap();
+        let report = install_opencode(false, /*print*/ true, Some("project-alpha")).unwrap();
         assert_eq!(report.target, "opencode");
         assert_eq!(report.method, "file-edit");
         assert!(report.detail.contains("opencode.json"));
         assert!(report.detail.contains("mcp.wg"));
+        assert_eq!(report.source_id.as_deref(), Some("project-alpha"));
+    }
+
+    #[test]
+    fn shell_install_args_include_source_id_env() {
+        assert_eq!(
+            claude_install_args(Some("project-alpha")),
+            vec![
+                "mcp",
+                "add",
+                "-e",
+                "WG_SOURCE_ID=project-alpha",
+                "wg",
+                "--",
+                "wg",
+                "mcp"
+            ]
+        );
+        assert!(
+            hermes_install_args(Some("project-alpha"))
+                .contains(&"WG_SOURCE_ID=project-alpha".to_string())
+        );
+        assert!(openclaw_install_args(Some("project-alpha"))[3].contains("WG_SOURCE_ID"));
     }
 }

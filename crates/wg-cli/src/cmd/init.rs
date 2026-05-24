@@ -236,6 +236,7 @@ fn run_agent_setup(target: &str, force: bool) -> Vec<InitStep> {
                 print: false,
                 list_targets: false,
                 no_verify: true,
+                source_id: None,
             },
             false,
         );

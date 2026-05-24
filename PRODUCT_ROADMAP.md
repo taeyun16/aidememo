@@ -78,10 +78,11 @@ or benchmark-specific `RESULTS.md` files; keep user-facing product work here.
 | P3.35 | done | Self-extraction positioning lacked a zero-token contract test | Scenario L simulates an agent-classified `wg_fact_add_many` batch and verifies typed facts feed sparse-ticket workflow context without cross-source leakage | `python3 bench/multi-agent/scenario_l_self_extraction.py`: 10/10 invariants; 7 facts inserted via MCP in 295.44ms; alpha workflow recovered decision=1, lesson=1, error=1; beta leakage 0 |
 | P3.36 | done | MCP workflow sessions returned a session id but follow-up fact writes had no first-class way to attach to that thread | `wg_fact_add` accepts `session_id`; `wg_fact_add_many` accepts top-level or per-item `session_id`; tool descriptions now tell agents to pass the id from `wg_workflow_start` | `cargo test -p wg-cli --bin wg workflow_start_creates_session_ticket_and_scoped_context` passed; `cargo test -p wg-cli --bin wg fact_add_many_attaches_top_level_session_id_to_each_item` passed |
 | P3.37 | done | Agents had to repeat `source_id` on every MCP read/write to keep shared-store isolation smooth | MCP tools now fall back to `WG_SOURCE_ID` for source scoping when the tool call omits `source_id`, while explicit arguments still override the environment default | `cargo test -p wg-cli --bin wg`: 114 passed, 1 ignored; `python3 bench/multi-agent/scenario_l_self_extraction.py`: 10/10 invariants including env-default write + search |
+| P3.38 | done | `WG_SOURCE_ID` default scoping still required manual agent config edits after install | `wg mcp-install --source-id <namespace>` injects `WG_SOURCE_ID` into Claude / Hermes / OpenClaw shell registrations and Codex / Cursor / OpenCode config files | `cargo test -p wg-cli --bin wg mcp_install`: 10/10 tests passed; `wg mcp-install --target codex --source-id agent-alpha --print --json` reports `source_id=agent-alpha` and `env.WG_SOURCE_ID` detail |
 
 ## Current Sprint
 
-All planned P0-P3.37 roadmap items are closed. Scenario H now isolates each
+All planned P0-P3.38 roadmap items are closed. Scenario H now isolates each
 agent's integration path: Claude project MCP, Codex temp `CODEX_HOME` MCP, and
 Hermes MCP-only profile to avoid redb lock contention with the in-process
 plugin. `wg doctor --json` now exposes workflow readiness, recent workflow
@@ -140,6 +141,9 @@ thread without relying on CLI-only environment variables.
 MCP source scoping now has the same low-friction shape: set `WG_SOURCE_ID`
 once in the MCP server environment and the common read/write tools stay scoped
 without requiring every agent turn to repeat `source_id`.
+The install path now wires that default directly: `wg mcp-install --source-id`
+adds `WG_SOURCE_ID` to the agent MCP server registration, so the recommended
+workflow no longer requires a manual config edit.
 
 Next measurement candidates:
 1. Reserve/configure the PyPI `wg-python` trusted publisher, then run `.github/workflows/wg-python-publish.yml` with `dry_run=false`.

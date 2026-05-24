@@ -142,9 +142,13 @@ commands. Its CLI fallback retries short redb lock collisions for 5 seconds by
 default, so two local Hermes agents can share a store without asking the user
 to start a server.
 
-For MCP agents, set `WG_SOURCE_ID` once in the MCP server environment to make
-that namespace the default for reads and writes. Explicit `source_id` tool
-arguments still override the environment value.
+For MCP agents, install with `--source-id` to set `WG_SOURCE_ID` once in the
+server environment. That namespace becomes the default for reads and writes;
+explicit `source_id` tool arguments still override it.
+
+```bash
+wg mcp-install --target codex --source-id agent-a
+```
 
 ### Start from a sparse issue or ticket
 

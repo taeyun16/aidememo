@@ -97,7 +97,8 @@ If `wg` is registered as an MCP server (`.mcp.json` at the repo root, or
 `wg mcp-install --target <agent>`), use the MCP tools instead of shelling
 out. They return structured JSON.
 
-When a shared store needs per-agent / per-project isolation, set
+When a shared store needs per-agent / per-project isolation, install with
+`wg mcp-install --target <agent> --source-id <namespace>`. That sets
 `WG_SOURCE_ID` in the MCP server environment. `wg_search`, `wg_query`,
 `wg_context`, `wg_workflow_start`, `wg_fact_add`, `wg_fact_add_many`, and
 `wg_fact_list` use it as the default source namespace unless the tool call
@@ -162,8 +163,8 @@ wg skill install --target openclaw   # → ~/.openclaw/skills/wg/
 wg skill install --target opencode   # → ~/.config/opencode/AGENTS.md (appended)
 wg skill install --target pi         # → ~/.config/pi/AGENTS.md (pi has no MCP — skill only)
 
-wg mcp-install --target claude       # claude mcp add wg -- wg mcp
-wg mcp-install --target codex        # writes [mcp_servers.wg] in ~/.codex/config.toml
+wg mcp-install --target claude --source-id my-project
+wg mcp-install --target codex --source-id my-project
 wg mcp-install --target cursor       # writes mcpServers.wg in ~/.cursor/mcp.json
 wg mcp-install --target opencode     # writes mcp.wg in ~/.config/opencode/opencode.json
 ```
