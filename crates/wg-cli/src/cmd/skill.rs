@@ -660,7 +660,7 @@ fn install_into_agents_md(
         );
     } else {
         out.push_str(&format!(
-            "Next: register the MCP server with `wg mcp-install --target {target}`.\n"
+            "Next: register the MCP server with `wg mcp-install --target {target}`; add `--source-id <namespace>` when sharing one store.\n"
         ));
     }
     Ok(out)
@@ -779,9 +779,11 @@ fn run_install(
         resolved_dest.display()
     );
     out.push_str("  SKILL.md\n  REFERENCE.md\n\n");
-    out.push_str("Next: register the MCP server with `wg mcp install --target ");
+    out.push_str("Next: register the MCP server with `wg mcp-install --target ");
     out.push_str(&target);
-    out.push_str("` (or run `wg mcp` directly from your agent's tool config).\n");
+    out.push_str(
+        "`; add `--source-id <namespace>` when sharing one store (or run `wg mcp` directly from your agent's tool config).\n",
+    );
     Ok(out)
 }
 
@@ -1010,6 +1012,7 @@ mod tests {
         let path = dir.path().join(".config/opencode/AGENTS.md");
         let out = install_into_agents_md("opencode", path.clone(), false, false).unwrap();
         assert!(out.contains("Installed wg skill section"));
+        assert!(out.contains("--source-id <namespace>"));
         let body = std::fs::read_to_string(&path).unwrap();
         assert!(body.contains(WG_AGENTS_BEGIN));
         assert!(body.contains(WG_AGENTS_END));

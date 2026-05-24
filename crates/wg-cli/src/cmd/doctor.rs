@@ -431,6 +431,12 @@ fn collect_workflow_status(
         .take(5)
         .map(summarize_workflow_ticket)
         .collect();
+    let suggested_source_id = tickets.iter().find_map(|f| {
+        f.source_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+    });
 
     let mcp_ready = agents
         .iter()
@@ -445,7 +451,7 @@ fn collect_workflow_status(
             code: "workflow_no_mcp_agent",
             severity: "error",
             message: "no checked agent has wg registered as an MCP server".to_string(),
-            action: "wg mcp-install --target codex".to_string(),
+            action: mcp_install_action(suggested_source_id),
         });
     }
     if !skill_ready {
@@ -490,6 +496,26 @@ fn summarize_workflow_ticket(fact: &FactRecord) -> WorkflowTicketSummary {
         timestamp_ms: fact.observed_at.unwrap_or(fact.created_at),
         preview: preview(&fact.content, 96),
     }
+}
+
+fn mcp_install_action(source_id: Option<&str>) -> String {
+    match source_id {
+        Some(source_id) => format!(
+            "wg mcp-install --target codex --source-id {}",
+            shell_arg(source_id)
+        ),
+        None => "wg mcp-install --target codex".to_string(),
+    }
+}
+
+fn shell_arg(value: &str) -> String {
+    if value
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.' | '/' | ':'))
+    {
+        return value.to_string();
+    }
+    format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 fn preview(s: &str, max_chars: usize) -> String {
@@ -1252,6 +1278,72 @@ mod tests {
                 .any(|h| h.code == "workflow_no_recent_tickets"),
             "workflow ticket exists, got hints {:?}",
             report.hints
+        );
+    }
+
+    #[test]
+    fn workflow_status_recommends_source_id_for_mcp_install_when_ticket_is_scoped() {
+        let dir = TempDir::new().unwrap();
+        let store_path = dir.path().join("wiki.redb");
+        let wiki = WikiGraph::open(&store_path, Config::default()).unwrap();
+        let session_id = wiki
+            .entity_add(EntityInput {
+                name: "session-scoped".to_string(),
+                entity_type: Some(EntityType::parse("session")),
+                ..Default::default()
+            })
+            .unwrap();
+
+        wiki.add_fact(FactInput {
+            content: "Workflow ticket: Add Redis retry policy".to_string(),
+            fact_type: Some(FactType::Question),
+            entity_ids: Some(vec![session_id]),
+            tags: Some(vec!["workflow-start".into(), "ticket".into()]),
+            source: Some("github:org/repo#124".to_string()),
+            source_id: Some("team-alpha".to_string()),
+            source_confidence: Some(1.0),
+            observed_at: None,
+        })
+        .unwrap();
+
+        let agents = vec![AgentStatus {
+            target: "codex",
+            skill_path: None,
+            skill_installed: Some(true),
+            mcp_detail: "test".to_string(),
+            mcp_registered: Some(false),
+        }];
+
+        let report = collect_workflow_status(&wiki, &agents).unwrap();
+        let hint = report
+            .hints
+            .iter()
+            .find(|h| h.code == "workflow_no_mcp_agent")
+            .expect("missing no-mcp workflow hint");
+
+        assert_eq!(
+            hint.action,
+            "wg mcp-install --target codex --source-id team-alpha"
+        );
+        assert!(
+            !report
+                .hints
+                .iter()
+                .any(|h| h.code == "workflow_no_recent_tickets"),
+            "scoped ticket exists, got hints {:?}",
+            report.hints
+        );
+    }
+
+    #[test]
+    fn mcp_install_action_quotes_shell_sensitive_source_id() {
+        assert_eq!(
+            mcp_install_action(Some("team alpha")),
+            "wg mcp-install --target codex --source-id 'team alpha'"
+        );
+        assert_eq!(
+            mcp_install_action(Some("team-alpha")),
+            "wg mcp-install --target codex --source-id team-alpha"
         );
     }
 
