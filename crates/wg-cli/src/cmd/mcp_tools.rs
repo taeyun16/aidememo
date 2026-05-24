@@ -223,10 +223,7 @@ fn tool_search(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String>
         .get("include_archive")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
-    let source_id = args
-        .get("source_id")
-        .and_then(|v| v.as_str())
-        .map(String::from);
+    let source_id = mcp_source_id(args);
 
     let results = wiki
         .hybrid_search(
@@ -574,6 +571,58 @@ fn source_id_matches(f: &wg_core::FactRecord, source_id: Option<&str>) -> bool {
     }
 }
 
+fn source_id_from_value(value: Option<&Value>) -> Option<String> {
+    value
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+}
+
+fn default_mcp_source_id() -> Option<String> {
+    normalise_source_id(std::env::var("WG_SOURCE_ID").ok())
+}
+
+fn normalise_source_id(source_id: Option<String>) -> Option<String> {
+    source_id
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+fn mcp_source_id_with_env(
+    args: &Value,
+    env_source_id: impl FnOnce() -> Option<String>,
+) -> Option<String> {
+    source_id_from_value(args.get("source_id")).or_else(|| normalise_source_id(env_source_id()))
+}
+
+fn mcp_source_id(args: &Value) -> Option<String> {
+    mcp_source_id_with_env(args, default_mcp_source_id)
+}
+
+fn resolve_session_entity(
+    wiki: &WikiGraph,
+    session_id: Option<&str>,
+) -> Result<Option<wg_core::EntityId>, String> {
+    let Some(session_id) = session_id.map(str::trim).filter(|s| !s.is_empty()) else {
+        return Ok(None);
+    };
+    wiki.entity_get(session_id)
+        .map(|entity| Some(entity.id))
+        .map_err(|e| format!("session_id {session_id:?} does not resolve to an entity: {e}"))
+}
+
+fn attach_session_entity(
+    entity_ids: &mut Vec<wg_core::EntityId>,
+    session: Option<wg_core::EntityId>,
+) {
+    if let Some(session_id) = session {
+        if !entity_ids.contains(&session_id) {
+            entity_ids.push(session_id);
+        }
+    }
+}
+
 fn collect_personalisation(
     wiki: &WikiGraph,
     per_type_limit: usize,
@@ -735,10 +784,7 @@ fn tool_fact_list(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, Stri
         Some(name) => Some(wiki.resolve_entity(name).map_err(|e| e.to_string())?),
         None => None,
     };
-    let source_id = args
-        .get("source_id")
-        .and_then(|v| v.as_str())
-        .map(String::from);
+    let source_id = mcp_source_id(args);
     let opts = wg_core::FactListOpts {
         fact_type: None,
         entity_id,
@@ -1536,10 +1582,7 @@ fn tool_query(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String> 
             .get("bm25_only")
             .and_then(|v| v.as_bool())
             .unwrap_or(false),
-        source_id: args
-            .get("source_id")
-            .and_then(|v| v.as_str())
-            .map(String::from),
+        source_id: mcp_source_id(args),
     };
     // Agent UX: format / max_chars budget. Default "full" preserves the
     // existing contract; "compact" truncates each snippet's content to
@@ -2075,10 +2118,8 @@ fn tool_context(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, String
         .and_then(|v| v.as_u64())
         .unwrap_or(7);
     let depth = args.get("depth").and_then(|v| v.as_u64()).unwrap_or(2) as u32;
-    let source_id = args
-        .get("source_id")
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty());
+    let source_id = mcp_source_id(args);
+    let source_id = source_id.as_deref();
 
     // ── Tier 1: always-on context ─────────────────────────────────
     let pinned: Vec<Value> = wiki
@@ -2239,10 +2280,7 @@ fn tool_workflow_start(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult,
         .get("source")
         .and_then(|v| v.as_str())
         .filter(|s| !s.is_empty());
-    let source_id = args
-        .get("source_id")
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty());
+    let source_id = mcp_source_id(args);
     let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(8) as usize;
     let depth = args.get("depth").and_then(|v| v.as_u64()).unwrap_or(2) as u32;
     let recent_limit = args
@@ -2256,7 +2294,7 @@ fn tool_workflow_start(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult,
             WorkflowStartOpts {
                 body: body.map(str::to_string),
                 source: source.map(str::to_string),
-                source_id: source_id.map(str::to_string),
+                source_id,
                 limit,
                 depth,
                 recent_limit,
@@ -2558,14 +2596,14 @@ fn tool_fact_add(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, Strin
         .unwrap_or_default();
 
     let resolved = resolve_or_create_entities(wiki, &entity_names)?;
-    let entity_ids = resolved.ids;
+    let mut entity_ids = resolved.ids;
     let auto_created = resolved.created;
     let alternatives = resolved.alternatives;
+    let session_id_arg = args.get("session_id").and_then(|v| v.as_str());
+    let session_entity_id = resolve_session_entity(wiki, session_id_arg)?;
+    attach_session_entity(&mut entity_ids, session_entity_id);
     let fact_type = parse_fact_type_arg(args.get("fact_type"))?;
-    let source_id = args
-        .get("source_id")
-        .and_then(|v| v.as_str())
-        .map(String::from);
+    let source_id = mcp_source_id(args);
 
     // Pre-add similarity check (non-blocking). BM25-only so we don't
     // pay the embedding-model load on every add — the goal is just to
@@ -2669,6 +2707,9 @@ fn tool_fact_add_many(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, 
     let mut per_item_entity_names: Vec<Vec<String>> = Vec::with_capacity(items.len());
     let mut auto_created_total: Vec<String> = Vec::new();
     let mut alternatives_total: Vec<EntityNameAlternative> = Vec::new();
+    let default_session_id = args.get("session_id").and_then(|v| v.as_str());
+    let default_session_entity_id = resolve_session_entity(wiki, default_session_id)?;
+    let default_source_id = mcp_source_id(args);
     for (i, item) in items.iter().enumerate() {
         let obj = item
             .as_object()
@@ -2678,7 +2719,7 @@ fn tool_fact_add_many(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, 
             .and_then(|v| v.as_str())
             .ok_or_else(|| format!("items[{i}].content is required"))?
             .to_string();
-        let names: Vec<String> = obj
+        let mut names: Vec<String> = obj
             .get("entities")
             .and_then(|v| v.as_array())
             .map(|arr| {
@@ -2688,7 +2729,22 @@ fn tool_fact_add_many(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, 
             })
             .unwrap_or_default();
         let resolved = resolve_or_create_entities(wiki, &names)?;
-        let entity_ids_vec = resolved.ids;
+        let mut entity_ids_vec = resolved.ids;
+        let item_session_id = obj
+            .get("session_id")
+            .and_then(|v| v.as_str())
+            .or(default_session_id);
+        let session_entity_id = if obj.get("session_id").is_some() {
+            resolve_session_entity(wiki, item_session_id)?
+        } else {
+            default_session_entity_id
+        };
+        attach_session_entity(&mut entity_ids_vec, session_entity_id);
+        if let Some(session_name) = item_session_id.map(str::trim).filter(|s| !s.is_empty()) {
+            if !names.iter().any(|name| name == session_name) {
+                names.push(session_name.to_string());
+            }
+        }
         // Dedup auto-created across items in case the same new entity
         // is referenced by multiple facts in this batch.
         for name in resolved.created {
@@ -2721,10 +2777,8 @@ fn tool_fact_add_many(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, 
             .filter(|v| !v.is_empty());
         let fact_type = parse_fact_type_arg(obj.get("fact_type"))
             .map_err(|e| format!("items[{i}].fact_type: {e}"))?;
-        let source_id = obj
-            .get("source_id")
-            .and_then(|v| v.as_str())
-            .map(String::from);
+        let source_id =
+            source_id_from_value(obj.get("source_id")).or_else(|| default_source_id.clone());
         inputs.push(wg_core::types::FactInput {
             content,
             fact_type,
@@ -2973,7 +3027,7 @@ pub fn list_tools() -> Vec<Tool> {
                     },
                     "source_id": {
                         "type": "string",
-                        "description": "Restrict to facts from this source namespace / tenant / upstream id."
+                        "description": "Restrict to facts from this source namespace / tenant / upstream id. If omitted, MCP falls back to WG_SOURCE_ID when set."
                     },
                     "min_confidence": {
                         "type": "number",
@@ -3081,7 +3135,7 @@ pub fn list_tools() -> Vec<Tool> {
                 "type": "object",
                 "properties": {
                     "entity": {"type": "string", "description": "Filter by entity name/alias"},
-                    "source_id": {"type": "string", "description": "Filter by source namespace / tenant / upstream id"},
+                    "source_id": {"type": "string", "description": "Filter by source namespace / tenant / upstream id. If omitted, MCP falls back to WG_SOURCE_ID when set."},
                     "limit":  {"type": "number", "default": 20},
                     "offset": {"type": "number", "default": 0, "description": "Skip the first N facts. Combined with `limit`, paginate through the full result. Response includes `next_offset` (null when the page is the last)."},
                     "current_only": {"type": "boolean", "default": true, "description": "Exclude superseded facts. Pass false to include historical timeline."}
@@ -3201,7 +3255,7 @@ pub fn list_tools() -> Vec<Tool> {
                     "recent_limit": {"type": "number", "default": 10},
                     "recent_days": {"type": "number", "default": 7},
                     "depth": {"type": "number", "default": 2, "description": "Traverse depth if topic resolves to an entity"},
-                    "source_id": {"type": "string", "description": "Restrict pinned, personalisation, recent, and topic context to this source namespace / tenant / upstream id."},
+                    "source_id": {"type": "string", "description": "Restrict pinned, personalisation, recent, and topic context to this source namespace / tenant / upstream id. If omitted, MCP falls back to WG_SOURCE_ID when set."},
                     "format": {"type": "string", "enum": ["full", "text"], "default": "full", "description": "full = JSON envelope (4 sections, full metadata). text = sectioned markdown summary (~3-4× smaller, drops timestamps + entity metadata, keeps last-6 ULID for follow-up wg_fact_get). Use text for opening-turn prompt injection, full for downstream parsing."},
                     "preview_chars": {"type": "number", "default": 160, "description": "Per-fact content cap when format=text."},
                     "max_chars": {"type": "number", "description": "Hard cap on text output. When set, trims sections back-to-front (topic > recent > personalisation > pinned). Only honoured for format=text."}
@@ -3210,15 +3264,18 @@ pub fn list_tools() -> Vec<Tool> {
         },
         Tool {
             name: "wg_workflow_start".into(),
-            description: "Start an issue/PR/ticket-driven coding workflow. Creates a tracked session entity, stores the incoming ticket as a question fact, and returns a context pack with relevant search hits, decisions, lessons, and errors. Use this when an automation trigger has only a short title/body and the agent needs project memory before acting."
-                .into(),
+            description: concat!(
+                "Start an issue/PR/ticket-driven coding workflow. Creates a tracked session entity, stores the incoming ticket as a question fact, and returns a context pack with relevant search hits, decisions, lessons, and errors. Use this when an automation trigger has only a short title/body and the agent needs project memory before acting. ",
+                "Pass the returned session_id to wg_fact_add or wg_fact_add_many for facts learned during the workflow so later session-level queries can reconstruct the task thread."
+            )
+            .into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "title": {"type": "string", "description": "Issue / PR / ticket title or short workflow trigger text."},
                     "body": {"type": "string", "description": "Optional issue / PR / ticket body."},
                     "source": {"type": "string", "description": "Optional upstream source id, e.g. github:org/repo#123 or linear:ENG-42."},
-                    "source_id": {"type": "string", "description": "Optional source namespace / tenant / agent id for shared-store scoping."},
+                    "source_id": {"type": "string", "description": "Optional source namespace / tenant / agent id for shared-store scoping. If omitted, MCP falls back to WG_SOURCE_ID when set."},
                     "limit": {"type": "number", "default": 8, "description": "Max context search hits."},
                     "depth": {"type": "number", "default": 2, "description": "Graph traversal depth for the topic query."},
                     "recent_limit": {"type": "number", "default": 5, "description": "Recent facts attached to the resolved entity."}
@@ -3239,7 +3296,7 @@ pub fn list_tools() -> Vec<Tool> {
                     "recent_limit": {"type": "number", "default": 10, "description": "Max recent facts"},
                     "mode": {"type": "string", "enum": ["naive", "local", "hybrid", "global"], "default": "hybrid"},
                     "current_only": {"type": "boolean", "default": true, "description": "Exclude superseded facts. Pass false for historical / timeline queries."},
-                    "source_id": {"type": "string", "description": "Restrict search and recent facts to this source namespace / tenant / upstream id."},
+                    "source_id": {"type": "string", "description": "Restrict search and recent facts to this source namespace / tenant / upstream id. If omitted, MCP falls back to WG_SOURCE_ID when set."},
                     "format": {"type": "string", "enum": ["full", "compact", "text"], "default": "full", "description": "full = JSON with all metadata. compact = JSON with truncated snippet content (drops bytes ~10%). text = markdown bullet summary, drops JSON envelope (~5× smaller, drops timestamps & entity metadata, keeps last-6 ULID suffix for follow-up wg_fact_get). Use text for agent prompt injection."},
                     "level": {"type": "string", "enum": ["fact", "entity", "session"], "default": "fact", "description": "Granularity of returned hits. fact = flat snippet list (best for pinpoint lookups: SS-user, abstention). entity = grouped per primary entity, mirroring the bench's session-level pattern that lifted multi-session +20pt and temporal +20pt. session = roll up per tracked-session entity (\"session:\" prefix; auto-created by `wg session new`) and emit each session's FULL fact list as one chronological block — restores dialog coherence for cross-turn questions (KU/temporal/SS-pref +10-20pt in our 60q MiniMax measurement). Storage cost: 0 (computed on read via fact_list per unique session entity). Currently only honoured by format=text — format=full / compact stay snippet-flat for stable JSON schema."},
                     "preview_chars": {"type": "number", "default": 200, "description": "Per-snippet content preview length when format=compact. Agent can drill in via wg_fact_get for any rank."},
@@ -3297,7 +3354,8 @@ pub fn list_tools() -> Vec<Tool> {
                     "content": {"type": "string"},
                     "entities": {"type": "array", "items": {"type": "string"}, "description": "Entity names or aliases. Unknown names are auto-created."},
                     "tags": {"type": "array", "items": {"type": "string"}},
-                    "source_id": {"type": "string", "description": "Optional source namespace / tenant / upstream id. Use with wg_search/wg_query source_id filters to isolate shared-store reads."},
+                    "source_id": {"type": "string", "description": "Optional source namespace / tenant / upstream id. Use with wg_search/wg_query source_id filters to isolate shared-store reads. If omitted, MCP falls back to WG_SOURCE_ID when set."},
+                    "session_id": {"type": "string", "description": "Optional workflow session id returned by wg_workflow_start. When set, the fact is attached to that session entity so later level:\"session\" queries can reconstruct the task thread."},
                     "fact_type": {
                         "type": "string",
                         "enum": ["decision", "pattern", "convention", "claim", "note", "question", "preference", "lesson", "error", "unknown"],
@@ -3314,7 +3372,7 @@ pub fn list_tools() -> Vec<Tool> {
         },
         Tool {
             name: "wg_fact_add_many".into(),
-            description: "Add many facts in a single transaction. Dramatically faster than many sequential wg_fact_add calls because the disk fsync cost is paid once per batch. Each item has the same shape as wg_fact_add's args. Returns {count, facts:[{id, entity_names}], auto_created_entities} — the dedup'd auto-created list lets you confirm new entities at a glance."
+            description: "Add many facts in a single transaction. Dramatically faster than many sequential wg_fact_add calls because the disk fsync cost is paid once per batch. Each item has the same shape as wg_fact_add's args. Classify each item yourself before calling (decision / lesson / error / preference / convention / claim / note) so wg's type-aware ranking can surface the right memories later. Pass top-level session_id from wg_workflow_start to attach every item to the current workflow, or item.session_id to override per fact. Returns {count, facts:[{id, entity_names}], auto_created_entities} — the dedup'd auto-created list lets you confirm new entities at a glance."
                 .into(),
             input_schema: json!({
                 "type": "object",
@@ -3327,7 +3385,8 @@ pub fn list_tools() -> Vec<Tool> {
                                 "content": {"type": "string"},
                                 "entities": {"type": "array", "items": {"type": "string"}},
                                 "tags": {"type": "array", "items": {"type": "string"}},
-                                "source_id": {"type": "string", "description": "Optional source namespace / tenant / upstream id"},
+                                "source_id": {"type": "string", "description": "Optional source namespace / tenant / upstream id. Overrides top-level source_id / WG_SOURCE_ID for this item."},
+                                "session_id": {"type": "string", "description": "Optional workflow session id returned by wg_workflow_start. Overrides top-level session_id for this item."},
                                 "fact_type": {
                                     "type": "string",
                                     "enum": ["decision", "pattern", "convention", "claim", "note", "question", "preference", "lesson", "error", "unknown"]
@@ -3335,7 +3394,9 @@ pub fn list_tools() -> Vec<Tool> {
                             },
                             "required": ["content"]
                         }
-                    }
+                    },
+                    "session_id": {"type": "string", "description": "Optional workflow session id returned by wg_workflow_start. Applies to every item unless item.session_id is set."},
+                    "source_id": {"type": "string", "description": "Optional source namespace / tenant / upstream id. Applies to every item unless item.source_id is set. If omitted, MCP falls back to WG_SOURCE_ID when set."}
                 },
                 "required": ["items"]
             }),
@@ -3748,6 +3809,27 @@ mod tests {
     }
 
     #[test]
+    fn mcp_source_id_uses_env_default_when_argument_is_missing() {
+        let source_id = mcp_source_id_with_env(&json!({}), || Some(" agent-env ".to_string()));
+        assert_eq!(source_id.as_deref(), Some("agent-env"));
+    }
+
+    #[test]
+    fn mcp_source_id_argument_overrides_env_default() {
+        let source_id = mcp_source_id_with_env(&json!({"source_id": "explicit-agent"}), || {
+            Some("agent-env".to_string())
+        });
+        assert_eq!(source_id.as_deref(), Some("explicit-agent"));
+    }
+
+    #[test]
+    fn mcp_source_id_ignores_empty_argument_and_empty_env() {
+        let source_id =
+            mcp_source_id_with_env(&json!({"source_id": "   "}), || Some("  ".to_string()));
+        assert_eq!(source_id, None);
+    }
+
+    #[test]
     fn context_respects_source_id_scope() {
         let (_dir, wiki) = open_temp_wiki();
 
@@ -3859,6 +3941,28 @@ mod tests {
                 .starts_with("session-")
         );
         assert!(payload["ticket_fact_id"].as_str().is_some());
+        let session_id = payload["session_id"].as_str().unwrap();
+        tool_fact_add(
+            &json!({
+                "content": "Implementation note: keep Redis timeout logging on the Worker session thread",
+                "entities": ["Redis", "Worker"],
+                "session_id": session_id,
+                "source_id": "alpha",
+                "fact_type": "lesson",
+                "dedup_check": false
+            }),
+            &wiki,
+        )
+        .unwrap();
+        let session_facts =
+            tool_fact_list(&json!({"entity": session_id, "limit": 10}), &wiki).unwrap();
+        let session_payload: Value =
+            serde_json::from_str(session_facts.content[0].text.as_deref().unwrap()).unwrap();
+        assert!(
+            serde_json::to_string(&session_payload)
+                .unwrap()
+                .contains("Redis timeout logging")
+        );
         let serialized = serde_json::to_string(&payload).unwrap();
         assert!(serialized.contains("job wrapper"));
         assert!(serialized.contains("DNS"));
@@ -3934,6 +4038,46 @@ mod tests {
             .collect();
         created.sort();
         assert_eq!(created, vec!["MySQL", "Postgres"]);
+    }
+
+    #[test]
+    fn fact_add_many_attaches_top_level_session_id_to_each_item() {
+        let (_dir, wiki) = open_temp_wiki();
+        wiki.entity_add(EntityInput {
+            name: "session-test".to_string(),
+            entity_type: Some(wg_core::EntityType::parse("session")),
+            ..Default::default()
+        })
+        .unwrap();
+
+        let result = tool_fact_add_many(
+            &json!({
+                "session_id": "session-test",
+                "items": [
+                    {"content": "Decision: use advisory locks for invoice export", "entities": ["BillingExport"], "fact_type": "decision"},
+                    {"content": "Lesson: retries duplicate exports without idempotency keys", "entities": ["BillingExport"], "fact_type": "lesson"}
+                ]
+            }),
+            &wiki,
+        )
+        .unwrap();
+        let text = result.content[0].text.as_deref().unwrap();
+        let payload: Value = serde_json::from_str(text).unwrap();
+        let facts = payload["facts"].as_array().unwrap();
+        assert_eq!(facts.len(), 2);
+        assert!(facts.iter().all(|fact| {
+            fact["entity_names"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|name| name.as_str() == Some("session-test"))
+        }));
+
+        let session_facts =
+            tool_fact_list(&json!({"entity": "session-test", "limit": 10}), &wiki).unwrap();
+        let serialized = session_facts.content[0].text.as_deref().unwrap();
+        assert!(serialized.contains("advisory locks"));
+        assert!(serialized.contains("idempotency keys"));
     }
 
     #[test]

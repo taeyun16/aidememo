@@ -97,6 +97,12 @@ If `wg` is registered as an MCP server (`.mcp.json` at the repo root, or
 `wg mcp-install --target <agent>`), use the MCP tools instead of shelling
 out. They return structured JSON.
 
+When a shared store needs per-agent / per-project isolation, set
+`WG_SOURCE_ID` in the MCP server environment. `wg_search`, `wg_query`,
+`wg_context`, `wg_workflow_start`, `wg_fact_add`, `wg_fact_add_many`, and
+`wg_fact_list` use it as the default source namespace unless the tool call
+passes an explicit `source_id`.
+
 | Tool | Use for |
 |---|---|
 | **`wg_workflow_start`** ⭐ | **Issue/PR/ticket automation entry point** — tracked session + ticket fact + context pack with relevant decisions, lessons, errors, and hits |
@@ -122,7 +128,7 @@ out. They return structured JSON.
 
 ### Recommended agent flow
 
-1. **Workflow trigger / sparse ticket** → `wg_workflow_start(title, body?, source?)` — creates a tracked session, records the incoming ticket, and returns the project-memory context pack.
+1. **Workflow trigger / sparse ticket** → `wg_workflow_start(title, body?, source?)` — creates a tracked session, records the incoming ticket, and returns the project-memory context pack. Pass its `session_id` to later `wg_fact_add` / `wg_fact_add_many` calls so facts learned during the task stay attached to the workflow thread.
 2. **Top of turn** → `wg_context(topic?: <user's intent or relevant entity>)` — one call, gets you pinned facts, user preferences, lessons, errors, recent activity, and (if topic resolves) deep retrieval + topic-specific lessons.
 3. **Need more on a sub-topic** → `wg_query(topic)` for entity + neighbors, or `wg_search(query)` for pure search.
 4. **About to record something** → pick the right `fact_type`:

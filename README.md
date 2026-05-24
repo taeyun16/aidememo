@@ -142,6 +142,10 @@ commands. Its CLI fallback retries short redb lock collisions for 5 seconds by
 default, so two local Hermes agents can share a store without asking the user
 to start a server.
 
+For MCP agents, set `WG_SOURCE_ID` once in the MCP server environment to make
+that namespace the default for reads and writes. Explicit `source_id` tool
+arguments still override the environment value.
+
 ### Start from a sparse issue or ticket
 
 ```bash
@@ -158,6 +162,11 @@ search hits so an automation-triggered agent can start with project memory
 instead of only the issue body. `--bm25-only` keeps demos and hooks
 deterministic by skipping embedding-model load; omit it when semantic recall is
 worth the warm model cost.
+
+MCP agents should pass the returned `session_id` to `wg_fact_add` or
+`wg_fact_add_many` for facts learned during the task. That keeps follow-up
+decisions, lessons, and errors attached to the workflow thread for later
+`level:"session"` recall.
 
 ### Share a warm store when concurrency matters
 

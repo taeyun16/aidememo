@@ -86,13 +86,18 @@ def run(
     cmd: list[str],
     *,
     input_text: str | None = None,
+    env: dict[str, str] | None = None,
     timeout: int = 30,
 ) -> subprocess.CompletedProcess:
+    child_env = os.environ.copy()
+    if env:
+        child_env.update(env)
     proc = subprocess.run(
         cmd,
         input=input_text,
         capture_output=True,
         text=True,
+        env=child_env,
         timeout=timeout,
     )
     if proc.returncode != 0:
@@ -114,7 +119,12 @@ def reset_store() -> None:
                 sibling.unlink()
 
 
-def mcp_tool_call(name: str, args: dict[str, Any]) -> dict[str, Any]:
+def mcp_tool_call(
+    name: str,
+    args: dict[str, Any],
+    *,
+    env: dict[str, str] | None = None,
+) -> dict[str, Any]:
     calls = [
         {
             "jsonrpc": "2.0",
@@ -132,8 +142,11 @@ def mcp_tool_call(name: str, args: dict[str, Any]) -> dict[str, Any]:
     proc = run(
         [WG, "--store", STORE, "mcp"],
         input_text="".join(json.dumps(call) + "\n" for call in calls),
+        env=env,
     )
-    responses = [json.loads(line) for line in proc.stdout.splitlines() if line.strip().startswith("{")]
+    responses = [
+        json.loads(line) for line in proc.stdout.splitlines() if line.strip().startswith("{")
+    ]
     by_id = {response.get("id"): response for response in responses}
     response = by_id.get(2) or {}
     if "error" in response:
@@ -249,9 +262,28 @@ def main() -> int:
     add_start = time.perf_counter_ns()
     add_payload = mcp_tool_call("wg_fact_add_many", {"items": SELF_EXTRACTED_FACTS})
     add_latency_ms = (time.perf_counter_ns() - add_start) / 1e6
+    env_default_payload = mcp_tool_call(
+        "wg_fact_add_many",
+        {
+            "items": [
+                {
+                    "content": "Decision: source defaults smoke uses WG_SOURCE_ID for MCP scoping.",
+                    "fact_type": "decision",
+                    "entities": ["SourceDefaults"],
+                }
+            ]
+        },
+        env={"WG_SOURCE_ID": "agent-env"},
+    )
+    env_search_payload = mcp_tool_call(
+        "wg_search",
+        {"query": "source defaults MCP scoping", "bm25_only": True, "limit": 5},
+        env={"WG_SOURCE_ID": "agent-env"},
+    )
 
     alpha_facts = fact_list("agent-alpha")
     beta_facts = fact_list("agent-beta")
+    env_facts = fact_list("agent-env")
     alpha_type_counts = Counter(fact.get("fact_type") for fact in alpha_facts)
     beta_type_counts = Counter(fact.get("fact_type") for fact in beta_facts)
 
@@ -283,6 +315,11 @@ def main() -> int:
             "convention": 1,
         },
         "beta_type_counts": dict(beta_type_counts) == {"decision": 1, "lesson": 1},
+        "env_default_source_id_scopes_batch": env_default_payload.get("count") == 1
+        and contains(env_facts, "WG_SOURCE_ID for MCP scoping"),
+        "env_default_source_id_scopes_search": contains(
+            env_search_payload.get("results", []), "WG_SOURCE_ID for MCP scoping"
+        ),
         "billing_workflow_has_session": billing_summary["session_id_present"]
         and billing_summary["ticket_fact_id_present"],
         "billing_workflow_recovers_typed_priors": all(
@@ -305,10 +342,13 @@ def main() -> int:
         "insert": {
             "latency_ms": round(add_latency_ms, 2),
             "payload": add_payload,
+            "env_default_payload": env_default_payload,
+            "env_search_payload": env_search_payload,
         },
         "fact_type_counts": {
             "agent-alpha": dict(alpha_type_counts),
             "agent-beta": dict(beta_type_counts),
+            "agent-env": dict(Counter(fact.get("fact_type") for fact in env_facts)),
         },
         "workflow": {
             "agent-alpha": billing_summary,
