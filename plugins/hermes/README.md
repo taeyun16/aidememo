@@ -8,7 +8,7 @@ lifecycle hooks.
 
 | Surface | What it does |
 |---|---|
-| **8 tools** | `wg_workflow_start`, `wg_query`, `wg_search`, `wg_recent`, `wg_entity_list`, `wg_traverse`, `wg_fact_add`, `wg_lint` — same surface as the wg MCP server, but called in-process (no JSON-RPC overhead). `wg_workflow_start`, `wg_query`, `wg_search`, and `wg_fact_add` accept `source_id` for shared-store scoping. |
+| **8 tools** | `wg_workflow_start`, `wg_query`, `wg_search`, `wg_recent`, `wg_entity_list`, `wg_traverse`, `wg_fact_add`, `wg_lint` — same surface as the wg MCP server, but called in-process (no JSON-RPC overhead). `wg_workflow_start`, `wg_query`, `wg_search`, and `wg_fact_add` accept `source_id` for shared-store scoping and fall back to `plugins.wg.source_id` / `WG_SOURCE_ID` when omitted. |
 | **5 slash commands** | `/wg-start <title>` (issue/ticket workflow context), `/wg <topic>` (one-shot context), `/wg-add <content>` (record a fact), `/wg-recent` (last 7 days), `/wg-pending` (review/commit dry-run captures). `/wg-start`, `/wg`, and `/wg-add` accept `--source-id ID`. |
 | **`pre_llm_call` hook** | Auto-injects recent facts into the first turn so the model has wg context before it answers. |
 | **`post_llm_call` hook** | Scans each turn for decision-style phrasings and auto-records them as wg facts. |
@@ -30,6 +30,7 @@ plugins:
     - wg
   wg:
     store_path: ~/.wg/wiki.redb     # optional; uses wg config default otherwise
+    source_id: team-a               # optional default namespace for reads/writes
     recent_window: 7d               # session_start auto-context window
     recent_limit: 10
     auto_record: true               # session_end fact auto-recorder
@@ -69,6 +70,7 @@ floor, modest 7-day window, auto-record on).
 | Key | Default | Notes |
 |---|---|---|
 | `store_path` | wg's resolution | Override the redb store location. |
+| `source_id` | unset | Default namespace for scoped tool reads/writes. Explicit tool `source_id` values override it; `WG_SOURCE_ID` is also honored when config is unset. |
 | `recent_window` | `7d` | How far back the session-start preamble looks. |
 | `recent_limit` | `10` | Max facts in the preamble. |
 | `auto_record` | `true` | Toggle the `on_session_end` recorder. |

@@ -13,9 +13,9 @@ prompt, then inspects both:
 
 Expected agents:
 
-  - Claude Code via a temporary project ``.mcp.json``
-  - Codex CLI via the user's configured ``mcp_servers.wg`` store
-  - Hermes via the wg plugin, explicit ``wg`` toolset, and ``WG_STORE`` override
+  - Claude Code via a temporary project ``.mcp.json`` with WG_SOURCE_ID
+  - Codex CLI via an isolated ``wg mcp-install --source-id`` config
+  - Hermes via the wg plugin, explicit ``wg`` toolset, and WG_SOURCE_ID override
 
 This burns model tokens. Do not put it in default CI.
 """
@@ -44,6 +44,7 @@ AGENT_FILTER = {
     for name in os.environ.get("WG_E2E_AGENTS", "").split(",")
     if name.strip()
 }
+SETUP_ONLY = os.environ.get("WG_E2E_SETUP_ONLY") == "1"
 
 SOURCE_ID = "workflow-alpha"
 FORBIDDEN_SOURCE_ID = "workflow-beta"
@@ -93,9 +94,10 @@ out against Redis.
 
 Before making a plan, call the wg workflow-start tool for this ticket
 (`wg_workflow_start` in MCP/Hermes, not a shell command).
-Pass the tool argument named source_id exactly as "{SOURCE_ID}" so
-neighbouring project memory does not leak in. Do not put this value in
-the source field.
+Do not pass a source_id argument; the wg MCP server / Hermes plugin is
+already configured with the project source namespace. The resulting
+workflow context should still be scoped so neighbouring project memory
+does not leak in.
 Then answer with a concise plan that explicitly cites the relevant prior
 decision, lesson, and error if they exist. Do not guess prior context.
 """.strip()
@@ -112,6 +114,23 @@ class AgentSpec:
 
 def run(cmd: list[str], *, timeout: int = 20) -> subprocess.CompletedProcess:
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"{cmd!r} exited {proc.returncode}\nstdout={proc.stdout[:500]}\nstderr={proc.stderr[:1000]}"
+        )
+    return proc
+
+
+def run_with_env(
+    cmd: list[str],
+    *,
+    env: dict[str, str] | None = None,
+    timeout: int = 20,
+) -> subprocess.CompletedProcess:
+    child_env = os.environ.copy()
+    if env:
+        child_env.update(env)
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=child_env)
     if proc.returncode != 0:
         raise RuntimeError(
             f"{cmd!r} exited {proc.returncode}\nstdout={proc.stdout[:500]}\nstderr={proc.stderr[:1000]}"
@@ -173,6 +192,7 @@ def write_claude_project(tmpdir: Path) -> None:
                         "type": "stdio",
                         "command": WG,
                         "args": ["--store", STORE, "mcp"],
+                        "env": {"WG_SOURCE_ID": SOURCE_ID},
                     }
                 }
             },
@@ -205,6 +225,11 @@ def prepare_hermes_home(tmpdir: Path) -> Path:
     (home / "config.yaml").write_text(
         "\n".join(
             [
+                "plugins:",
+                "  wg:",
+                f"    store_path: {STORE}",
+                f"    source_id: {SOURCE_ID}",
+                "",
                 "mcp_servers:",
                 "  wg:",
                 f"    command: {WG}",
@@ -212,6 +237,8 @@ def prepare_hermes_home(tmpdir: Path) -> Path:
                 "      - --store",
                 f"      - {STORE}",
                 "      - mcp",
+                "    env:",
+                f"      WG_SOURCE_ID: {SOURCE_ID}",
                 "    enabled: true",
                 "",
             ]
@@ -220,16 +247,17 @@ def prepare_hermes_home(tmpdir: Path) -> Path:
     return home
 
 
-def prepare_codex_home(tmpdir: Path) -> Path:
+def prepare_codex_home(tmpdir: Path) -> tuple[Path, Path, dict[str, Any]]:
     home = tmpdir / "codex-home"
-    home.mkdir(parents=True, exist_ok=True)
+    codex_home = home / ".codex"
+    codex_home.mkdir(parents=True, exist_ok=True)
 
     real_home = Path.home() / ".codex"
     auth = real_home / "auth.json"
     if auth.exists():
-        shutil.copy(auth, home / "auth.json")
+        shutil.copy(auth, codex_home / "auth.json")
 
-    (home / "config.toml").write_text(
+    (codex_home / "config.toml").write_text(
         "\n".join(
             [
                 'model = "gpt-5.5"',
@@ -243,14 +271,59 @@ def prepare_codex_home(tmpdir: Path) -> Path:
                 f'[projects."{tmpdir}"]',
                 'trust_level = "trusted"',
                 "",
-                "[mcp_servers.wg]",
-                f'command = "{WG}"',
-                f'args = ["--store", "{STORE}", "mcp"]',
-                "",
             ]
         )
     )
-    return home
+    report = json.loads(
+        run_with_env(
+            [
+                WG,
+                "--json",
+                "mcp-install",
+                "--target",
+                "codex",
+                "--source-id",
+                SOURCE_ID,
+                "--force",
+                "--no-verify",
+            ],
+            env={"HOME": str(home)},
+        ).stdout
+    )
+    run_with_env(
+        [WG, "config", "set", "store.path", STORE],
+        env={"HOME": str(home)},
+    )
+    return home, codex_home, report
+
+
+def setup_summary(
+    project_dir: Path,
+    codex_home: Path,
+    hermes_home: Path,
+    codex_install: dict[str, Any],
+) -> dict[str, Any]:
+    claude = json.loads((project_dir / ".mcp.json").read_text())
+    codex_config = (codex_home / "config.toml").read_text()
+    hermes_config = (hermes_home / "config.yaml").read_text()
+    invariants = {
+        "claude_project_mcp_has_source_env": claude["mcpServers"]["wg"]["env"]["WG_SOURCE_ID"]
+        == SOURCE_ID,
+        "codex_install_report_has_source_id": codex_install.get("source_id") == SOURCE_ID,
+        "codex_config_has_source_env": "WG_SOURCE_ID" in codex_config
+        and SOURCE_ID in codex_config,
+        "hermes_plugin_config_has_source_id": f"source_id: {SOURCE_ID}" in hermes_config,
+        "hermes_mcp_config_has_source_env": "WG_SOURCE_ID" in hermes_config
+        and SOURCE_ID in hermes_config,
+    }
+    return {
+        "codex_mcp_install": codex_install,
+        "invariants": invariants,
+        "summary": {
+            "passed": sum(1 for ok in invariants.values() if ok),
+            "total": len(invariants),
+        },
+    }
 
 
 def run_agent(spec: AgentSpec) -> dict[str, Any]:
@@ -316,8 +389,22 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="wg-e2e-h-claude-") as td:
         td_path = Path(td)
         write_claude_project(td_path)
-        codex_home = prepare_codex_home(td_path)
+        codex_home_root, codex_home, codex_install = prepare_codex_home(td_path)
         hermes_home = prepare_hermes_home(td_path)
+        setup = setup_summary(td_path, codex_home, hermes_home, codex_install)
+
+        if SETUP_ONLY:
+            out = {
+                "scenario": "H setup — source-default natural prompt config",
+                "store": STORE,
+                "source_id": SOURCE_ID,
+                "setup": setup,
+            }
+            out_path = Path("bench/multi-agent/results/scenario_h_setup.json")
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            out_path.write_text(json.dumps(out, indent=2, ensure_ascii=False))
+            print(json.dumps(out, indent=2, ensure_ascii=False))
+            return 0 if setup["summary"]["passed"] == setup["summary"]["total"] else 1
 
         agents = [
             AgentSpec(
@@ -340,7 +427,7 @@ def main() -> int:
                     "--skip-git-repo-check",
                     "--dangerously-bypass-approvals-and-sandbox",
                 ],
-                extra_env={"CODEX_HOME": str(codex_home)},
+                extra_env={"HOME": str(codex_home_root), "CODEX_HOME": str(codex_home)},
             ),
             AgentSpec(
                 name="hermes",
@@ -357,6 +444,7 @@ def main() -> int:
                 extra_env={
                     "HERMES_HOME": str(hermes_home),
                     "WG_STORE": STORE,
+                    "WG_SOURCE_ID": SOURCE_ID,
                 },
             ),
         ]
@@ -394,6 +482,7 @@ def main() -> int:
         "prompt": PROMPT,
         "source_id": SOURCE_ID,
         "forbidden_source_id": FORBIDDEN_SOURCE_ID,
+        "setup": setup,
         "seeded_by_agent": seeded_by_agent,
         "agents": runs,
         "invariants": invariants,

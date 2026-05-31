@@ -112,6 +112,44 @@ def test_source_id_is_exposed_on_relevant_tool_schemas(fake_ctx: FakeCtx) -> Non
     assert "source_id" in schemas["wg_query"]
     assert "source_id" in schemas["wg_search"]
     assert "source_id" in schemas["wg_fact_add"]
+    assert "WG_SOURCE_ID" in schemas["wg_workflow_start"]["source_id"]["description"]
+
+
+def test_register_passes_configured_source_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, Any] = {}
+
+    def fake_init(self, *args, **kwargs):
+        captured.update(kwargs)
+        self.store_path = kwargs.get("store_path")
+        self.default_source_id = kwargs.get("source_id")
+        self._py = None
+
+    monkeypatch.setattr(WgClient, "__init__", fake_init)
+    monkeypatch.setattr(WgClient, "recent", lambda self, **kw: [])
+    monkeypatch.setattr(WgClient, "search", lambda self, *a, **kw: [])
+    monkeypatch.setattr(WgClient, "query", lambda self, *a, **kw: {})
+    monkeypatch.setattr(WgClient, "workflow_start", lambda self, *a, **kw: {})
+    monkeypatch.setattr(WgClient, "fact_add", lambda self, *a, **kw: "fact")
+    monkeypatch.setattr(WgClient, "lint", lambda self: [])
+    monkeypatch.setattr(WgClient, "stats", lambda self: {})
+    monkeypatch.setattr(WgClient, "entity_list", lambda self, **kw: [])
+    monkeypatch.setattr(WgClient, "traverse", lambda self, *a, **kw: {})
+
+    ctx = FakeCtx()
+    ctx.config = {
+        "plugins": {
+            "wg": {
+                "store_path": "/tmp/wiki.redb",
+                "source_id": "team-alpha",
+                "lock_retry_ms": 123,
+            }
+        }
+    }
+    register(ctx)
+
+    assert captured["store_path"] == "/tmp/wiki.redb"
+    assert captured["source_id"] == "team-alpha"
+    assert captured["lock_retry_ms"] == 123
 
 
 def test_registers_five_slash_commands(fake_ctx: FakeCtx) -> None:

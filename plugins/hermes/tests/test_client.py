@@ -186,6 +186,37 @@ def test_source_id_is_forwarded_to_cli_filters(monkeypatch: pytest.MonkeyPatch) 
     assert calls[2][-2:] == ["--source-id", "team-a"]
 
 
+def test_default_source_id_is_used_for_cli_calls(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("hermes_wg.client.WgClient._has_cli", staticmethod(lambda: True))
+    monkeypatch.setattr("hermes_wg.client.WgClient._try_load_pyo3", lambda self: None)
+    client = WgClient(source_id=" team-default ")
+
+    payloads = [
+        json.dumps({"topic": "Redis", "search": []}),
+        json.dumps([]),
+        json.dumps({"id": "01KQ6RT4RXQFF14MBYTB40M4N3"}),
+        json.dumps({
+            "session_id": "session-01KQ6RT4RXQFF14MBYTB40M4N4",
+            "ticket_fact_id": "01KQ6RT4RXQFF14MBYTB40M4N5",
+        }),
+    ]
+    completed = [
+        type("P", (), {"returncode": 0, "stdout": p, "stderr": ""})()
+        for p in payloads
+    ]
+    with patch("subprocess.run", side_effect=completed) as run:
+        client.query("Redis")
+        client.search("Redis")
+        client.fact_add("Redis policy", entities=["Redis"])
+        client.workflow_start("Fix Redis timeout")
+
+    calls = [call.args[0] for call in run.call_args_list]
+    assert calls[0][-2:] == ["--source-id", "team-default"]
+    assert calls[1][-2:] == ["--source-id", "team-default"]
+    assert calls[2][-2:] == ["--source-id", "team-default"]
+    assert calls[3][-2:] == ["--source-id", "team-default"]
+
+
 def test_workflow_start_dispatches_to_cli(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("hermes_wg.client.WgClient._has_cli", staticmethod(lambda: True))
     monkeypatch.setattr("hermes_wg.client.WgClient._try_load_pyo3", lambda self: None)
@@ -259,6 +290,32 @@ def test_workflow_start_prefers_pyo3(monkeypatch: pytest.MonkeyPatch) -> None:
     assert len(out["relevant_decisions"]) == 1
     assert len(out["prior_lessons"]) == 1
     assert len(out["prior_errors"]) == 1
+
+
+def test_default_source_id_is_used_for_pyo3_workflow(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakePy:
+        def entity_add(self, name, **kwargs):
+            return "entity-session"
+
+        def fact_add(self, content, **kwargs):
+            assert kwargs["source_id"] == "team-default"
+            return "01KQ6RT4RXQFF14MBYTB40M4N4"
+
+        def query(self, topic, **kwargs):
+            assert kwargs["source_id"] == "team-default"
+            return {"topic": topic, "search": []}
+
+        def search(self, query, **kwargs):
+            assert kwargs["source_id"] == "team-default"
+            return []
+
+    monkeypatch.setattr("hermes_wg.client.WgClient._try_load_pyo3", lambda self: FakePy())
+    monkeypatch.setattr("hermes_wg.client.WgClient._has_cli", staticmethod(lambda: False))
+    client = WgClient(store_path="/tmp/wiki.redb", source_id="team-default")
+
+    out = client.workflow_start("Fix Redis timeout")
+
+    assert out["source_id"] == "team-default"
 
 
 def test_fact_add_falls_back_to_human_output(monkeypatch: pytest.MonkeyPatch) -> None:

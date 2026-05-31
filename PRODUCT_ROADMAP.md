@@ -81,10 +81,11 @@ or benchmark-specific `RESULTS.md` files; keep user-facing product work here.
 | P3.38 | done | `WG_SOURCE_ID` default scoping still required manual agent config edits after install | `wg mcp-install --source-id <namespace>` injects `WG_SOURCE_ID` into Claude / Hermes / OpenClaw shell registrations and Codex / Cursor / OpenCode config files | `cargo test -p wg-cli --bin wg mcp_install`: 10/10 tests passed; `wg mcp-install --target codex --source-id agent-alpha --print --json` reports `source_id=agent-alpha` and `env.WG_SOURCE_ID` detail |
 | P3.39 | done | Setup diagnostics still suggested an unscoped MCP install even when recent workflow tickets already showed the project namespace | `wg doctor` reuses the most recent workflow ticket `source_id` in its no-MCP action, and `wg skill install` follow-up text points to `wg mcp-install --source-id <namespace>` for shared stores | `cargo test -p wg-cli --bin wg`: 120 passed, 1 ignored; temp `wg skill install --target opencode --dest ...` output includes `wg mcp-install --target opencode` and `--source-id <namespace>` |
 | P3.40 | done | MCP source-default install had unit coverage but no product-boundary regression showing generated configs feed actual MCP calls | Scenario M installs Codex / Cursor / OpenCode configs into an isolated HOME, checks Claude / Hermes / OpenClaw print commands, then runs MCP write/search with the installed `WG_SOURCE_ID` env and no explicit `source_id` args | `scripts/bench-agent-ux.sh`: Scenario M 12/12 invariants; 323.97ms; scoped MCP write/search returned `agent-alpha` |
+| P3.41 | done | Scenario H still instructed agents to pass `source_id` on each workflow tool call, so natural-prompt validation did not exercise the smooth source-default path | Scenario H now configures source defaults per runtime, Codex via isolated `wg mcp-install --source-id`; Hermes plugin honors `plugins.wg.source_id` / `WG_SOURCE_ID` for omitted tool args | `WG_E2E_SETUP_ONLY=1 python3 bench/multi-agent/scenario_h_workflow_natural_prompt.py`: 5/5 setup invariants; `python3 -m pytest plugins/hermes/tests -q`: 62 passed |
 
 ## Current Sprint
 
-All planned P0-P3.40 roadmap items are closed. Scenario H now isolates each
+All planned P0-P3.41 roadmap items are closed. Scenario H now isolates each
 agent's integration path: Claude project MCP, Codex temp `CODEX_HOME` MCP, and
 Hermes MCP-only profile to avoid redb lock contention with the in-process
 plugin. `wg doctor --json` now exposes workflow readiness, recent workflow
@@ -153,6 +154,10 @@ Scenario M now locks the full source-default install contract at the product
 boundary: generated agent configs carry `WG_SOURCE_ID`, shell targets print the
 right env-bearing command, and MCP calls consume that env without per-call
 `source_id`.
+Scenario H now follows the same smooth path for natural prompts: its prompt no
+longer asks agents to pass `source_id` per call, setup injects the namespace
+through MCP/plugin config, and Hermes's native plugin consumes the same default
+source namespace as MCP.
 
 Next measurement candidates:
 1. Reserve/configure the PyPI `wg-python` trusted publisher, then run `.github/workflows/wg-python-publish.yml` with `dry_run=false`.

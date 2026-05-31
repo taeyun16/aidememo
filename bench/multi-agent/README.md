@@ -12,7 +12,7 @@ agents installed on this machine: Claude Code, Codex, and Hermes.
 | `scenario_e_http_shared.py` | One `wg mcp-serve` + 4 HTTP clients × 25 inserts; the recommended shared-write pattern. | 0 |
 | `scenario_f_workflow_triggers.py` | Starts multiple unrelated sparse tickets through CLI, MCP, and Hermes plugin paths; verifies unique sessions, ticket facts, topical priors, and `source_id` isolation. | 0 |
 | `scenario_g_hermes_binding.py` | Compares Hermes workflow-start CLI fallback vs `wg-python` in-process path for shape parity, leakage, and latency. Requires local `wg-python` install. | 0 |
-| `scenario_h_workflow_natural_prompt.py` | Sends sparse-ticket chat prompts to Claude, Codex, and Hermes; verifies workflow-start side effects, prior-memory reflection, and forbidden-source leakage with isolated MCP config per runtime. | token-burning |
+| `scenario_h_workflow_natural_prompt.py` | Sends sparse-ticket chat prompts to Claude, Codex, and Hermes; verifies workflow-start side effects, prior-memory reflection, and forbidden-source leakage with source defaults configured per runtime. | token-burning |
 | `scenario_i_workflow_doctor.py` | Starts workflow tickets through CLI, MCP, and Hermes, then validates `wg doctor --json` readiness, recent ticket count, summaries, and setup hints from an isolated HOME. | 0 |
 | `scenario_j_lock_retry_sweep.py` | Sweeps 1/2/4/8 serverless CLI writers with `store.lock_retry_ms=0` vs `5000` to find when retry remains smooth and when users should switch to a shared daemon. | 0 |
 | `scenario_k_sdk_workflow_parity.py` | Compares `workflow_start` shape parity across CLI, `wg-python`, and `wg-napi`; verifies scoped priors, unique sessions/tickets, and forbidden-source leakage. | 0 |
@@ -49,6 +49,9 @@ scripts/bench-agent-ux.sh
 # token-burning scenario (one-shot demo / opt-in regression)
 python3 bench/multi-agent/scenario_c_natural_prompt.py
 python3 bench/multi-agent/scenario_h_workflow_natural_prompt.py
+
+# Scenario H setup-only source-default check (no model calls)
+WG_E2E_SETUP_ONLY=1 python3 bench/multi-agent/scenario_h_workflow_natural_prompt.py
 
 # debug one agent in Scenario H
 WG_E2E_AGENTS=hermes python3 bench/multi-agent/scenario_h_workflow_natural_prompt.py

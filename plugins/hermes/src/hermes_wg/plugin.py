@@ -81,18 +81,28 @@ def register(ctx: Any) -> None:
     config = _load_config(ctx)
 
     store_path = config.get("store_path") or os.environ.get("WG_STORE")
+    source_id = config.get("source_id") or os.environ.get("WG_SOURCE_ID")
     try:
         lock_retry_ms = int(config.get("lock_retry_ms", 5000))
     except (TypeError, ValueError):
         log.warning("invalid wg lock_retry_ms=%r; using 5000", config.get("lock_retry_ms"))
         lock_retry_ms = 5000
     try:
-        client = WgClient(store_path=store_path, lock_retry_ms=lock_retry_ms)
+        client = WgClient(
+            store_path=store_path,
+            lock_retry_ms=lock_retry_ms,
+            source_id=source_id,
+        )
     except WgUnavailable as exc:
         log.error("wg plugin disabled: %s", exc)
         return
 
-    log.info("hermes_wg: backend=%s store=%s", client.backend, store_path or "<default>")
+    log.info(
+        "hermes_wg: backend=%s store=%s source_id=%s",
+        client.backend,
+        store_path or "<default>",
+        source_id or "<none>",
+    )
 
     tools.register_all(ctx, client)
     slash.register_all(ctx, client)

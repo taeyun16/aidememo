@@ -68,9 +68,11 @@ class WgClient:
         self,
         store_path: str | os.PathLike | None = None,
         lock_retry_ms: int | None = None,
+        source_id: str | None = None,
     ) -> None:
         self.store_path = str(store_path) if store_path else None
         self.lock_retry_ms = 5000 if lock_retry_ms is None else max(0, int(lock_retry_ms))
+        self.default_source_id = _normalise_source_id(source_id or os.environ.get("WG_SOURCE_ID"))
         self._py = self._try_load_pyo3()
         if self._py is None and not self._has_cli():
             raise WgUnavailable(
@@ -113,6 +115,7 @@ class WgClient:
         recent_limit: int = 5,
         source_id: str | None = None,
     ) -> dict:
+        source_id = self._source_id(source_id)
         if self._py is not None:
             kwargs = {"limit": limit, "depth": depth, "recent_limit": recent_limit}
             if source_id is not None:
@@ -124,6 +127,7 @@ class WgClient:
         return self._cli_json(args)
 
     def search(self, query: str, limit: int = 10, source_id: str | None = None) -> list[dict]:
+        source_id = self._source_id(source_id)
         if self._py is not None:
             kwargs = {"limit": limit}
             if source_id is not None:
@@ -181,6 +185,7 @@ class WgClient:
         `wg` process and fight its own file lock. The CLI path remains
         the universal fallback when the binding is not installed.
         """
+        source_id = self._source_id(source_id)
         if self._py is not None:
             return self._workflow_start_pyo3(
                 title,
@@ -303,6 +308,7 @@ class WgClient:
         confidence: float | None = None,
         source_id: str | None = None,
     ) -> str:
+        source_id = self._source_id(source_id)
         if self._py is not None:
             entity_ids = [self._py.resolve_entity(e) for e in (entities or [])]
             kwargs: dict = {
@@ -355,18 +361,20 @@ class WgClient:
         correctness — operators who care about the speedup should
         install the ``wg_python`` wheel.
         """
+        default_source_id = self._source_id(None)
         if self._py is not None:
             py_items = []
             for item in items:
                 names = item.get("entities") or []
                 entity_ids = [self._py.resolve_entity(n) for n in names]
+                source_id = _normalise_source_id(item.get("source_id")) or default_source_id
                 py_items.append({
                     "content": item["content"],
                     "entity_ids": entity_ids,
                     "fact_type": item.get("fact_type", "note"),
                     "tags": item.get("tags") or [],
                     "confidence": item.get("confidence"),
-                    "source_id": item.get("source_id"),
+                    "source_id": source_id,
                 })
             return list(self._py.fact_add_many(py_items))
         # CLI fallback — no `wg fact add-many` command yet, so loop.
@@ -377,10 +385,13 @@ class WgClient:
                 fact_type=item.get("fact_type", "note"),
                 tags=item.get("tags"),
                 confidence=item.get("confidence"),
-                source_id=item.get("source_id"),
+                source_id=_normalise_source_id(item.get("source_id")) or default_source_id,
             )
             for item in items
         ]
+
+    def _source_id(self, source_id: str | None) -> str | None:
+        return _normalise_source_id(source_id) or self.default_source_id
 
     def _fact_add_legacy(self, args: list[str]) -> str:
         """Legacy fallback for `wg` binaries that pre-date the
@@ -440,6 +451,13 @@ class WgClient:
 def default_skills_path() -> Path:
     """Where the bundled SKILL.md lives inside the installed wheel."""
     return Path(__file__).parent / "skills" / "wg"
+
+
+def _normalise_source_id(source_id: Any) -> str | None:
+    if source_id is None:
+        return None
+    source_id = str(source_id).strip()
+    return source_id or None
 
 
 # Crockford's ULID alphabet: 26 chars, [0-9A-HJKMNP-TV-Z] (no I, L, O,
