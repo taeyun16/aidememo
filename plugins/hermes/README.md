@@ -8,8 +8,9 @@ lifecycle hooks.
 
 | Surface | What it does |
 |---|---|
-| **8 tools** | `wg_workflow_start`, `wg_query`, `wg_search`, `wg_recent`, `wg_entity_list`, `wg_traverse`, `wg_fact_add`, `wg_lint` — same surface as the wg MCP server, but called in-process (no JSON-RPC overhead). `wg_workflow_start`, `wg_query`, `wg_search`, and `wg_fact_add` accept `source_id` for shared-store scoping and fall back to `plugins.wg.source_id` / `WG_SOURCE_ID` when omitted. |
-| **5 slash commands** | `/wg-start <title>` (issue/ticket workflow context), `/wg <topic>` (one-shot context), `/wg-add <content>` (record a fact), `/wg-recent` (last 7 days), `/wg-pending` (review/commit dry-run captures). `/wg-start`, `/wg`, and `/wg-add` accept `--source-id ID`. |
+| **12 tools** | `wg_workflow_start`, `wg_context`, `wg_query`, `wg_search`, `wg_recent`, `wg_aggregate`, `wg_entity_list`, `wg_traverse`, `wg_fact_add`, `wg_fact_add_many`, `wg_doctor`, `wg_lint` — the Hermes-native surface now covers the MCP core tools plus the legacy raw lint helper. `wg_context`, retrieval/write tools, and `wg_aggregate` accept `source_id` for shared-store scoping and fall back to `plugins.wg.source_id` / `WG_SOURCE_ID` when omitted. |
+| **8 slash commands** | `/wg-start <title>` (issue/ticket workflow context), `/wg-context [topic]` (top-of-turn context), `/wg <topic>` (topic query), `/wg-aggregate <query>` (exact count/sum/timeline), `/wg-add <content>` (record a fact), `/wg-recent` (last 7 days), `/wg-doctor` (setup/sharing diagnostics), `/wg-pending` (review/commit dry-run captures). Source-scoped commands accept `--source-id ID`. |
+| **Python SDK** | `WgMemorySDK` wraps `WgClient` with code-first primitives: `search_many`, `query_many`, `aggregate_many`, `flatten_hits`, `dedupe_by_fact`, `coverage_by`, `group_by_entity`, and `to_fact_batch`. Use it when a Hermes task needs fanout, coverage checks, or deterministic intermediate-state handling. |
 | **`pre_llm_call` hook** | Auto-injects recent facts into the first turn so the model has wg context before it answers. |
 | **`post_llm_call` hook** | Scans each turn for decision-style phrasings and auto-records them as wg facts. |
 | **`hermes wg ...` CLI** | `hermes wg query` / `search` / `recent` / `add` / `stats` / `lint`. |
@@ -58,9 +59,52 @@ capabilities that MCP can't reach:
   structured wiki, with no manual `wg fact add`.
 - **Slash commands.** `/wg redis` is one keypress vs the model picking
   to call `wg_query`.
-- **No IPC overhead.** When `wg-python` is installed, every tool call is
-  a direct Python function call — no JSON encode/decode, no subprocess
-  spawn.
+- **Low IPC overhead.** When `wg-python` is installed, common hot-path calls
+  (`wg_workflow_start`, `wg_query`, `wg_context`, `wg_search`, recent reads,
+  and fact writes) run through direct Python bindings. MCP-only structured
+  aggregate operations still use the CLI/MCP path until the binding exposes
+  those slots.
+
+## Hermes-fit usage profiles
+
+`wg` is strongest when the Hermes task shape selects the memory behaviour,
+not when every turn uses the same generic retrieval call.
+
+| Profile | Use it for | Primary surface | Memory behaviour |
+|---|---|---|---|
+| `coding` | PRs, issues, sparse automation triggers | `wg_workflow_start`, `/wg-start`, `pre_llm_call` workflow auto-start | Creates a tracked session, stores the trigger, and injects prior decisions / lessons / errors before planning. |
+| `long-session` | Multi-hour implementation or debugging sessions | `wg_context`, `/wg-context`, `post_llm_call` capture | Loads recent + personalisation + topic context up front, then records decisions before the session drifts. |
+| `research` | Experiments, ablations, metric interpretation | `wg_fact_add_many`, `wg_aggregate`, `/wg-aggregate` | Stores classified experiment observations in batches and answers exact count / timeline / total questions without in-head arithmetic. |
+| `team` | Multiple local Hermes agents sharing one store | `source_id`, `lock_retry_ms`, `/wg-doctor` | Keeps each agent/source isolated; use retry for small same-host teams and daemon/MCP for heavier write concurrency. |
+| `safe-capture` | First rollout on a noisy chat/workflow | `dry_run: true`, `/wg-pending` | Audits auto-detected facts before committing them to the graph. |
+
+### Memory-as-Code SDK
+
+Use the SDK when a Hermes task needs more than one retrieval call and the
+intermediate candidate set should stay in Python objects instead of model
+tokens.
+
+```python
+from hermes_wg import WgClient, WgMemorySDK
+
+sdk = WgMemorySDK(WgClient(source_id="research-alpha"))
+
+fanout = sdk.search_many([
+    {"query": "Hermes top1_mass support gate", "tool": "search_query"},
+    {"query": "Hermes patch browser_vision negative prior", "tool": "patch"},
+])
+rows = sdk.dedupe_by_fact(sdk.flatten_hits(fanout))
+coverage = sdk.coverage_by(rows, ["tool", "fact_type"])
+
+items = sdk.to_fact_batch([
+    {
+        "content": "Lesson: support-gated retrieval beats fixed prior residual on Hermes traces.",
+        "fact_type": "lesson",
+        "entities": ["Hermes", "SupportGate"],
+    }
+])
+sdk.commit_fact_batch(items)
+```
 
 ## Configuration
 
@@ -89,8 +133,11 @@ few sessions, then audit and selectively commit captures.
 
 ```text
 /wg-start "Fix Redis timeout in worker" --body "Worker jobs time out" --source github:org/repo#123
+/wg-context redis --source-id team-a    → broad opening context for a normal turn
 /wg redis --source-id team-a       → query only team-a facts in a shared store
+/wg-aggregate "Redis timeout decisions" --op count --type decision --source-id team-a
 /wg-add "Redis cache policy is LRU" --entities Redis --source-id team-a
+/wg-doctor                      → setup, source-scope, and shared-store diagnostics
 /wg-pending                     → list every detection (numbered)
 /wg-pending commit 3            → commit only entry #3
 /wg-pending commit all          → commit all and clear the log
@@ -118,9 +165,13 @@ cd plugins/hermes
 python -m venv .venv
 .venv/bin/pip install -e ".[test]"
 .venv/bin/pytest
+cd ../..
+scripts/hermes-wg-pack-smoke.sh
 ```
 
-Tests use a fake `ctx` so they run without a Hermes install.
+Tests use a fake `ctx` so they run without a Hermes install. The pack smoke
+builds the wheel, installs it into a temp venv, and verifies the SDK export,
+Hermes plugin entry point, `plugin.yaml`, and bundled `SKILL.md`.
 
 ## License
 

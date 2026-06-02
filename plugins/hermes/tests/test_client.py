@@ -37,6 +37,57 @@ def test_cli_fallback_dispatch(monkeypatch: pytest.MonkeyPatch) -> None:
         assert "14d" in cmd
 
 
+def test_mcp_only_context_uses_stdio_tool_call(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("hermes_wg.client.WgClient._has_cli", staticmethod(lambda: True))
+    monkeypatch.setattr("hermes_wg.client.WgClient._try_load_pyo3", lambda self: None)
+    client = WgClient(source_id="team-a")
+
+    stdout = "\n".join([
+        json.dumps({"jsonrpc": "2.0", "id": 0, "result": {}}),
+        json.dumps({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+                "content": [{"type": "text", "text": json.dumps({"recent": [], "source_id": "team-a"})}]
+            },
+        }),
+    ])
+    completed = type("P", (), {"returncode": 0, "stdout": stdout, "stderr": ""})()
+    with patch("subprocess.run", return_value=completed) as run:
+        out = client.context(topic="Redis", source_id=None)
+
+    assert out["source_id"] == "team-a"
+    cmd = run.call_args.args[0]
+    assert cmd == ["wg", "mcp"]
+    payload = run.call_args.kwargs["input"]
+    assert '"name": "wg_context"' in payload
+    assert '"source_id": "team-a"' in payload
+
+
+def test_aggregate_forwards_source_id_to_mcp(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("hermes_wg.client.WgClient._has_cli", staticmethod(lambda: True))
+    monkeypatch.setattr("hermes_wg.client.WgClient._try_load_pyo3", lambda self: None)
+    client = WgClient()
+
+    stdout = "\n".join([
+        json.dumps({"jsonrpc": "2.0", "id": 0, "result": {}}),
+        json.dumps({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+                "content": [{"type": "text", "text": json.dumps({"op": "count", "matched": 1})}]
+            },
+        }),
+    ])
+    completed = type("P", (), {"returncode": 0, "stdout": stdout, "stderr": ""})()
+    with patch("subprocess.run", return_value=completed) as run:
+        out = client.aggregate("Redis", source_id="team-a")
+
+    assert out["matched"] == 1
+    assert '"name": "wg_aggregate"' in run.call_args.kwargs["input"]
+    assert '"source_id": "team-a"' in run.call_args.kwargs["input"]
+
+
 def test_cli_fallback_propagates_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("hermes_wg.client.WgClient._has_cli", staticmethod(lambda: True))
     monkeypatch.setattr("hermes_wg.client.WgClient._try_load_pyo3", lambda self: None)
@@ -144,6 +195,42 @@ def test_fact_add_many_with_source_id_uses_pyo3(monkeypatch: pytest.MonkeyPatch)
     ])
 
     assert ids == ["fact-1", "fact-2"]
+
+
+def test_fact_add_many_cli_uses_mcp_batch_with_session_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("hermes_wg.client.WgClient._has_cli", staticmethod(lambda: True))
+    monkeypatch.setattr("hermes_wg.client.WgClient._try_load_pyo3", lambda self: None)
+    client = WgClient()
+
+    stdout = "\n".join([
+        json.dumps({"jsonrpc": "2.0", "id": 0, "result": {}}),
+        json.dumps({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+                "content": [{
+                    "type": "text",
+                    "text": json.dumps({"count": 1, "facts": [{"id": "fact-1"}]}),
+                }]
+            },
+        }),
+    ])
+    completed = type("P", (), {"returncode": 0, "stdout": stdout, "stderr": ""})()
+    with patch("subprocess.run", return_value=completed) as run:
+        ids = client.fact_add_many([
+            {
+                "content": "Redis decision",
+                "entities": ["Redis"],
+                "source_id": "team-a",
+                "session_id": "session-1",
+            }
+        ])
+
+    assert ids == ["fact-1"]
+    payload = run.call_args.kwargs["input"]
+    assert '"name": "wg_fact_add_many"' in payload
+    assert '"source_id": "team-a"' in payload
+    assert '"session_id": "session-1"' in payload
 
 
 def test_fact_add_prefers_json(monkeypatch: pytest.MonkeyPatch) -> None:

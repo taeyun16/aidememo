@@ -140,6 +140,76 @@ passes an explicit `source_id`.
    - Project convention → `convention`
 5. **Long task** → `eval "$(wg session new '<topic>')"` once; every `wg fact add` thereafter auto-attaches the session entity. Pull the thread later with `wg fact list --entity $WG_SESSION_ID`.
 
+## Hermes composition recipes
+
+Hermes can use the plugin as tools, slash commands, hooks, or Python code. Pick
+the workflow profile first, then compose the smallest primitives that fit.
+
+### coding profile
+
+Use for PRs, issues, and sparse automation triggers.
+
+1. Call `wg_workflow_start(title, body, source?)` before planning.
+2. Use the returned decisions / lessons / errors as constraints in the plan.
+3. Pass `session_id` into `wg_fact_add` / `wg_fact_add_many` for facts learned
+   during the task.
+
+### long-session profile
+
+Use for multi-hour debugging or implementation sessions.
+
+1. Start with `wg_context(topic, format:"text", max_chars:<budget>)`.
+2. Follow up with `wg_query` only for narrower subtopics.
+3. Record durable decisions, lessons, and recurring errors; avoid storing
+   ordinary progress chatter.
+
+### research profile
+
+Use for experiments, ablations, metric interpretation, or broad evidence
+collection. Prefer Python SDK composition when the workflow needs fanout,
+coverage checks, dedupe, or batch writes.
+
+```python
+from hermes_wg import WgClient, WgMemorySDK
+
+sdk = WgMemorySDK(WgClient(source_id="research-alpha"))
+fanout = sdk.search_many([
+    {"query": "Hermes top1_mass gate", "tool": "search_query"},
+    {"query": "Hermes patch negative prior", "tool": "patch"},
+])
+rows = sdk.dedupe_by_fact(sdk.flatten_hits(fanout))
+coverage = sdk.coverage_by(rows, ["tool", "fact_type"])
+items = sdk.to_fact_batch([
+    {
+        "content": "Lesson: top1_mass support gate is the current strongest Hermes signal.",
+        "fact_type": "lesson",
+        "entities": ["Hermes", "SupportGate"],
+    }
+])
+sdk.commit_fact_batch(items)
+```
+
+Keep intermediate rows in Python objects or explicit files; do not paste large
+candidate lists into the model context. Render only compact coverage tables,
+final evidence rows, or the fact batch that will be written.
+
+### team profile
+
+Use when multiple Hermes agents share one store.
+
+1. Configure `plugins.wg.source_id` or `WG_SOURCE_ID` once.
+2. Let `wg_context`, `wg_query`, `wg_search`, `wg_aggregate`, and writes inherit
+   that source scope unless a task explicitly needs cross-source reads.
+3. Run `/wg-doctor` when lock contention or source leakage is suspected.
+
+### safe-capture profile
+
+Use for a new repository or noisy transcript.
+
+1. Set `dry_run: true`.
+2. Inspect `/wg-pending`.
+3. Commit only high-confidence decisions / lessons / errors.
+
 `wg_search` / `wg_query` / `wg_fact_list` default `current_only=true` — the
 result set is "what we know now". Pass `current_only:false` for historical
 or timeline queries. `wg_search` also accepts `since` / `until` / `as_of`

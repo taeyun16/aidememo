@@ -60,6 +60,22 @@ def _make_handlers(client: WgClient) -> list[tuple[str, dict, Callable[..., Any]
             )
         )
 
+    def _context(args: dict, **_: Any) -> str:
+        return _serialize(
+            client.context(
+                topic=args.get("topic"),
+                limit=int(args.get("limit") or 10),
+                pinned_limit=int(args.get("pinned_limit") or 10),
+                recent_limit=int(args.get("recent_limit") or 10),
+                recent_days=int(args.get("recent_days") or 7),
+                depth=int(args.get("depth") or 2),
+                source_id=args.get("source_id"),
+                format=str(args.get("format") or "full"),
+                preview_chars=int(args.get("preview_chars") or 160),
+                max_chars=int(args["max_chars"]) if args.get("max_chars") is not None else None,
+            )
+        )
+
     def _search(args: dict, **_: Any) -> str:
         return _serialize(
             client.search(
@@ -87,6 +103,26 @@ def _make_handlers(client: WgClient) -> list[tuple[str, dict, Callable[..., Any]
                 limit=int(args.get("limit") or 8),
                 depth=int(args.get("depth") or 2),
                 recent_limit=int(args.get("recent_limit") or 5),
+            )
+        )
+
+    def _aggregate(args: dict, **_: Any) -> str:
+        return _serialize(
+            client.aggregate(
+                str(args.get("query") or ""),
+                op=str(args.get("op") or "count"),
+                limit=int(args.get("limit") or 50),
+                fact_type=args.get("fact_type"),
+                entity=args.get("entity"),
+                since=args.get("since"),
+                source_id=args.get("source_id"),
+                current_only=bool(args.get("current_only", True)),
+                preview_chars=int(args.get("preview_chars") or 120),
+                relevance_threshold=(
+                    float(args["relevance_threshold"])
+                    if args.get("relevance_threshold") is not None
+                    else None
+                ),
             )
         )
 
@@ -120,6 +156,28 @@ def _make_handlers(client: WgClient) -> list[tuple[str, dict, Callable[..., Any]
             }
         )
 
+    def _fact_add_many(args: dict, **_: Any) -> str:
+        items = args.get("items") or []
+        if not isinstance(items, list):
+            items = []
+        source_id = args.get("source_id")
+        session_id = args.get("session_id")
+        normalised = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            row = dict(item)
+            if source_id is not None and not row.get("source_id"):
+                row["source_id"] = source_id
+            if session_id is not None and not row.get("session_id"):
+                row["session_id"] = session_id
+            normalised.append(row)
+        ids = client.fact_add_many(normalised)
+        return _serialize({"count": len(ids), "ids": ids})
+
+    def _doctor(args: dict, **_: Any) -> str:
+        return _serialize(client.doctor())
+
     def _lint(args: dict, **_: Any) -> str:
         return _serialize(client.lint())
 
@@ -149,6 +207,30 @@ def _make_handlers(client: WgClient) -> list[tuple[str, dict, Callable[..., Any]
             _workflow_start,
             "Start a ticket/issue workflow and return the project-memory context pack.",
             "🚦",
+        ),
+        (
+            "wg_context",
+            _schema(
+                "wg_context",
+                "Top-of-turn context envelope: pinned facts, personalisation, recent activity, and optional topic search/lessons/errors. Use as Hermes' broad opening read before planning a normal coding/research turn.",
+                {
+                    "type": "object",
+                    "properties": {
+                        "topic": {"type": "string", "description": "Optional topic for focused context."},
+                        "limit": {"type": "integer", "description": "Topic search hit limit (default 10)."},
+                        "pinned_limit": {"type": "integer", "description": "Pinned fact limit (default 10)."},
+                        "recent_limit": {"type": "integer", "description": "Recent fact limit (default 10)."},
+                        "recent_days": {"type": "integer", "description": "Recent window in days (default 7)."},
+                        "depth": {"type": "integer", "description": "Graph traversal depth for topic context (default 2)."},
+                        "format": {"type": "string", "description": "full JSON or text summary. Default full."},
+                        "max_chars": {"type": "integer", "description": "Optional hard cap for text output."},
+                        "source_id": {"type": "string", "description": "Optional source namespace / tenant / upstream id filter. If omitted, Hermes falls back to plugins.wg.source_id or WG_SOURCE_ID when set."},
+                    },
+                },
+            ),
+            _context,
+            "Top-of-turn context envelope for Hermes: pinned, personalisation, recent, and optional topic context.",
+            "🧭",
         ),
         (
             "wg_query",
@@ -208,6 +290,31 @@ def _make_handlers(client: WgClient) -> list[tuple[str, dict, Callable[..., Any]
             "🕒",
         ),
         (
+            "wg_aggregate",
+            _schema(
+                "wg_aggregate",
+                "Deterministic count/sum/timeline over matching facts. Call for 'how many', 'how much total', 'distinct days', or chronological event questions; do not call for simple recall.",
+                {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "Fact search query to aggregate over."},
+                        "op": {"type": "string", "description": "count | enumerate | by_entity | sum_currency | sum_duration | count_distinct_dates | timeline. Default count."},
+                        "limit": {"type": "integer", "description": "Max facts considered (default 50)."},
+                        "fact_type": {"type": "string", "description": "Optional fact type filter, e.g. decision or lesson."},
+                        "entity": {"type": "string", "description": "Optional entity name filter."},
+                        "since": {"type": "string", "description": "Optional lower time bound (YYYY-MM-DD or RFC3339)."},
+                        "source_id": {"type": "string", "description": "Optional source namespace / tenant / upstream id filter. If omitted, Hermes falls back to plugins.wg.source_id or WG_SOURCE_ID when set."},
+                        "current_only": {"type": "boolean", "description": "Exclude superseded facts by default."},
+                        "relevance_threshold": {"type": "number", "description": "Optional semantic relevance cutoff for structured value ops."},
+                    },
+                    "required": ["query"],
+                },
+            ),
+            _aggregate,
+            "Exact aggregation over wg facts for counts, sums, dates, and timelines.",
+            "🧮",
+        ),
+        (
             "wg_entity_list",
             _schema(
                 "wg_entity_list",
@@ -263,14 +370,59 @@ def _make_handlers(client: WgClient) -> list[tuple[str, dict, Callable[..., Any]
             "📝",
         ),
         (
+            "wg_fact_add_many",
+            _schema(
+                "wg_fact_add_many",
+                "Append many already-classified facts in one batch. Use after Hermes self-extracts decisions, lessons, errors, preferences, or experiment observations from a turn.",
+                {
+                    "type": "object",
+                    "properties": {
+                        "items": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "content": {"type": "string"},
+                                    "entities": {"type": "array", "items": {"type": "string"}},
+                                    "fact_type": {"type": "string"},
+                                    "tags": {"type": "array", "items": {"type": "string"}},
+                                    "confidence": {"type": "number"},
+                                    "source_id": {"type": "string"},
+                                    "session_id": {"type": "string"},
+                                },
+                                "required": ["content"],
+                            },
+                        },
+                        "source_id": {"type": "string", "description": "Default source namespace for items that omit source_id."},
+                        "session_id": {"type": "string", "description": "Workflow session id returned by wg_workflow_start; applies to items that omit session_id."},
+                    },
+                    "required": ["items"],
+                },
+            ),
+            _fact_add_many,
+            "Batch append classified facts from Hermes self-extraction.",
+            "📦",
+        ),
+        (
+            "wg_doctor",
+            _schema(
+                "wg_doctor",
+                "Health and setup diagnostics for the wg store and Hermes integration. Use when memory reads/writes fail, source scoping looks wrong, or shared-store lock contention appears.",
+                {"type": "object", "properties": {}},
+            ),
+            _doctor,
+            "Health and setup diagnostics for wg/Hermes.",
+            "🩺",
+        ),
+        (
             "wg_lint",
             _schema(
                 "wg_lint",
-                "Graph health check - orphan facts, missing entities, broken links.",
+                "Deprecated raw graph lint. Prefer wg_doctor for setup, sharing, and graph health guidance.",
                 {"type": "object", "properties": {}},
             ),
             _lint,
-            "Graph health check - orphan facts, missing entities, broken links.",
+            "Deprecated raw graph lint. Prefer wg_doctor.",
             "🩺",
         ),
     ]

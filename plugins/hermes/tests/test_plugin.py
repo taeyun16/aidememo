@@ -63,6 +63,9 @@ def fake_ctx(monkeypatch: pytest.MonkeyPatch) -> FakeCtx:
     stub.fact_add.return_value = "01HZ-FAKE-FACT-ID"
     stub.search.return_value = []
     stub.query.return_value = {"topic": "test", "entity": None, "search": [], "related": [], "recent_facts": []}
+    stub.context.return_value = {"recent": [], "personalisation": [], "pinned": []}
+    stub.aggregate.return_value = {"op": "count", "query": "test", "matched": 2}
+    stub.doctor.return_value = {"issues": [], "stats": {"facts": 0}}
     stub.workflow_start.return_value = {
         "session_id": "session-01HZ-FAKE",
         "ticket_fact_id": "01HZ-FAKE-TICKET",
@@ -79,8 +82,12 @@ def fake_ctx(monkeypatch: pytest.MonkeyPatch) -> FakeCtx:
     monkeypatch.setattr(WgClient, "recent", lambda self, **kw: stub.recent(**kw))
     monkeypatch.setattr(WgClient, "search", lambda self, *a, **kw: stub.search(*a, **kw))
     monkeypatch.setattr(WgClient, "query", lambda self, *a, **kw: stub.query(*a, **kw))
+    monkeypatch.setattr(WgClient, "context", lambda self, *a, **kw: stub.context(*a, **kw))
+    monkeypatch.setattr(WgClient, "aggregate", lambda self, *a, **kw: stub.aggregate(*a, **kw))
+    monkeypatch.setattr(WgClient, "doctor", lambda self: stub.doctor())
     monkeypatch.setattr(WgClient, "workflow_start", lambda self, *a, **kw: stub.workflow_start(*a, **kw))
     monkeypatch.setattr(WgClient, "fact_add", lambda self, *a, **kw: stub.fact_add(*a, **kw))
+    monkeypatch.setattr(WgClient, "fact_add_many", lambda self, *a, **kw: ["fact-1", "fact-2"])
     monkeypatch.setattr(WgClient, "lint", lambda self: [])
     monkeypatch.setattr(WgClient, "stats", lambda self: {"facts": 0, "entities": 0})
     monkeypatch.setattr(WgClient, "entity_list", lambda self, **kw: [])
@@ -92,16 +99,20 @@ def fake_ctx(monkeypatch: pytest.MonkeyPatch) -> FakeCtx:
     return ctx
 
 
-def test_registers_all_eight_tools(fake_ctx: FakeCtx) -> None:
+def test_registers_core_hermes_tools(fake_ctx: FakeCtx) -> None:
     names = {t["name"] for t in fake_ctx.tools}
     assert names == {
         "wg_workflow_start",
+        "wg_context",
         "wg_query",
         "wg_search",
         "wg_recent",
+        "wg_aggregate",
         "wg_entity_list",
         "wg_traverse",
         "wg_fact_add",
+        "wg_fact_add_many",
+        "wg_doctor",
         "wg_lint",
     }
 
@@ -110,7 +121,9 @@ def test_source_id_is_exposed_on_relevant_tool_schemas(fake_ctx: FakeCtx) -> Non
     schemas = {t["name"]: t["schema"]["parameters"]["properties"] for t in fake_ctx.tools}
     assert "source_id" in schemas["wg_workflow_start"]
     assert "source_id" in schemas["wg_query"]
+    assert "source_id" in schemas["wg_context"]
     assert "source_id" in schemas["wg_search"]
+    assert "source_id" in schemas["wg_aggregate"]
     assert "source_id" in schemas["wg_fact_add"]
     assert "WG_SOURCE_ID" in schemas["wg_workflow_start"]["source_id"]["description"]
 
@@ -128,8 +141,12 @@ def test_register_passes_configured_source_id(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr(WgClient, "recent", lambda self, **kw: [])
     monkeypatch.setattr(WgClient, "search", lambda self, *a, **kw: [])
     monkeypatch.setattr(WgClient, "query", lambda self, *a, **kw: {})
+    monkeypatch.setattr(WgClient, "context", lambda self, *a, **kw: {})
+    monkeypatch.setattr(WgClient, "aggregate", lambda self, *a, **kw: {})
+    monkeypatch.setattr(WgClient, "doctor", lambda self: {})
     monkeypatch.setattr(WgClient, "workflow_start", lambda self, *a, **kw: {})
     monkeypatch.setattr(WgClient, "fact_add", lambda self, *a, **kw: "fact")
+    monkeypatch.setattr(WgClient, "fact_add_many", lambda self, *a, **kw: [])
     monkeypatch.setattr(WgClient, "lint", lambda self: [])
     monkeypatch.setattr(WgClient, "stats", lambda self: {})
     monkeypatch.setattr(WgClient, "entity_list", lambda self, **kw: [])
@@ -152,9 +169,18 @@ def test_register_passes_configured_source_id(monkeypatch: pytest.MonkeyPatch) -
     assert captured["lock_retry_ms"] == 123
 
 
-def test_registers_five_slash_commands(fake_ctx: FakeCtx) -> None:
+def test_registers_hermes_slash_commands(fake_ctx: FakeCtx) -> None:
     names = {c["name"] for c in fake_ctx.commands}
-    assert names == {"wg", "wg-start", "wg-add", "wg-recent", "wg-pending"}
+    assert names == {
+        "wg",
+        "wg-context",
+        "wg-aggregate",
+        "wg-start",
+        "wg-add",
+        "wg-recent",
+        "wg-doctor",
+        "wg-pending",
+    }
 
 
 def test_registers_llm_call_hooks(fake_ctx: FakeCtx) -> None:
@@ -225,6 +251,24 @@ def test_slash_wg_handler_returns_pretty_json(fake_ctx: FakeCtx) -> None:
     handler = next(c for c in fake_ctx.commands if c["name"] == "wg")["handler"]
     out = handler("Redis")
     assert "topic" in out  # rendered JSON includes the topic key
+
+
+def test_slash_wg_context_returns_context(fake_ctx: FakeCtx) -> None:
+    handler = next(c for c in fake_ctx.commands if c["name"] == "wg-context")["handler"]
+    out = handler("Redis --source-id team-a")
+    assert "recent" in out
+
+
+def test_slash_wg_aggregate_returns_count(fake_ctx: FakeCtx) -> None:
+    handler = next(c for c in fake_ctx.commands if c["name"] == "wg-aggregate")["handler"]
+    out = handler("Redis decisions --op count --type decision --source-id team-a")
+    assert '"matched": 2' in out
+
+
+def test_slash_wg_doctor_returns_diagnostics(fake_ctx: FakeCtx) -> None:
+    handler = next(c for c in fake_ctx.commands if c["name"] == "wg-doctor")["handler"]
+    out = handler("")
+    assert "issues" in out
 
 
 def test_slash_wg_start_returns_context_pack(fake_ctx: FakeCtx) -> None:

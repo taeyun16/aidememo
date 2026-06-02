@@ -19,6 +19,7 @@ adding scratch note files.
 | `wg-release-version.sh` | Verify or update the release version across Cargo, Python, npm, and Elixir/NIF packages. |
 | `wg-python-version.sh` | Verify or update `wg-python` package version pins across the Rust workspace version and Python `pyproject.toml`. |
 | `wg-python-pack-smoke.sh` | Build a `wg-python` wheel, install it into a temp venv, run the Python binding smoke, verify wheel metadata matches `wg_python.__version__`, and write a timed summary. |
+| `hermes-wg-pack-smoke.sh` | Build a `hermes-wg` wheel, install it into a temp venv, verify `WgMemorySDK`, the Hermes plugin entry point, `plugin.yaml`, and bundled `SKILL.md`, and write a timed summary. |
 | `wg-python-publish-dry-run.sh` | Build `wg-python` wheel + sdist publish payloads, validate their metadata/file contents without uploading to PyPI, and write a timed summary. |
 | `.github/workflows/wg-python-publish.yml` | Trusted-publisher release path: build/validate distributions first, then publish through PyPA's OIDC action only when `dry_run=false`. |
 | `wg-napi-version.sh` | Verify or update every `wg-napi` npm package version: root package, platform packages, and root `optionalDependencies`. |

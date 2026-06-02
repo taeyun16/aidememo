@@ -10,12 +10,16 @@ kind: standalone
 requires_env: []
 provides_tools:
   - wg_workflow_start
+  - wg_context
   - wg_query
   - wg_search
   - wg_recent
+  - wg_aggregate
   - wg_entity_list
   - wg_traverse
   - wg_fact_add
+  - wg_fact_add_many
+  - wg_doctor
   - wg_lint
 provides_hooks:
   - pre_llm_call

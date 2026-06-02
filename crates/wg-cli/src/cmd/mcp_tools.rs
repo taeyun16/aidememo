@@ -1263,6 +1263,7 @@ fn tool_aggregate(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, Stri
         .get("current_only")
         .and_then(|v| v.as_bool())
         .unwrap_or(true);
+    let source_id = mcp_source_id(args);
 
     let hits = wiki
         .hybrid_search(
@@ -1273,6 +1274,7 @@ fn tool_aggregate(args: &Value, wiki: &WikiGraph) -> Result<ToolCallResult, Stri
                 current_only,
                 since,
                 entity_filter,
+                source_id,
                 ..Default::default()
             },
         )
@@ -3885,6 +3887,45 @@ mod tests {
         assert!(serialized.contains("Alpha Redis lesson"));
         assert!(!serialized.contains("Beta Redis convention"));
         assert!(!serialized.contains("Beta Redis lesson"));
+    }
+
+    #[test]
+    fn aggregate_respects_source_id_scope() {
+        let (_dir, wiki) = open_temp_wiki();
+
+        for (content, source_id) in [
+            ("Alpha Redis decision uses LRU cache policy", "alpha"),
+            ("Beta Redis decision uses LFU cache policy", "beta"),
+        ] {
+            tool_fact_add(
+                &json!({
+                    "content": content,
+                    "entities": ["Redis"],
+                    "source_id": source_id,
+                    "fact_type": "decision",
+                    "dedup_check": false
+                }),
+                &wiki,
+            )
+            .unwrap();
+        }
+
+        let result = tool_aggregate(
+            &json!({
+                "query": "Redis cache policy decision",
+                "op": "enumerate",
+                "source_id": "alpha",
+                "limit": 10
+            }),
+            &wiki,
+        )
+        .unwrap();
+        let payload: Value =
+            serde_json::from_str(result.content[0].text.as_deref().unwrap()).unwrap();
+        let serialized = serde_json::to_string(&payload).unwrap();
+
+        assert!(serialized.contains("Alpha Redis decision"));
+        assert!(!serialized.contains("Beta Redis decision"));
     }
 
     #[test]

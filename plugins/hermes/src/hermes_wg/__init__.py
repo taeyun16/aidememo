@@ -10,6 +10,7 @@ installed) or a subprocess to the ``wg`` CLI binary.
 
 from .client import WgClient
 from .plugin import register
+from .sdk import WgMemorySDK
 
-__all__ = ["WgClient", "register"]
+__all__ = ["WgClient", "WgMemorySDK", "register"]
 __version__ = "1.0.0"

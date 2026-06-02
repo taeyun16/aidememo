@@ -82,15 +82,30 @@ or benchmark-specific `RESULTS.md` files; keep user-facing product work here.
 | P3.39 | done | Setup diagnostics still suggested an unscoped MCP install even when recent workflow tickets already showed the project namespace | `wg doctor` reuses the most recent workflow ticket `source_id` in its no-MCP action, and `wg skill install` follow-up text points to `wg mcp-install --source-id <namespace>` for shared stores | `cargo test -p wg-cli --bin wg`: 120 passed, 1 ignored; temp `wg skill install --target opencode --dest ...` output includes `wg mcp-install --target opencode` and `--source-id <namespace>` |
 | P3.40 | done | MCP source-default install had unit coverage but no product-boundary regression showing generated configs feed actual MCP calls | Scenario M installs Codex / Cursor / OpenCode configs into an isolated HOME, checks Claude / Hermes / OpenClaw print commands, then runs MCP write/search with the installed `WG_SOURCE_ID` env and no explicit `source_id` args | `scripts/bench-agent-ux.sh`: Scenario M 12/12 invariants; 323.97ms; scoped MCP write/search returned `agent-alpha` |
 | P3.41 | done | Scenario H still instructed agents to pass `source_id` on each workflow tool call, so natural-prompt validation did not exercise the smooth source-default path | Scenario H now configures source defaults per runtime, Codex via isolated `wg mcp-install --source-id`; Hermes plugin honors `plugins.wg.source_id` / `WG_SOURCE_ID` for omitted tool args | `WG_E2E_SETUP_ONLY=1 python3 bench/multi-agent/scenario_h_workflow_natural_prompt.py`: 5/5 setup invariants; `python3 -m pytest plugins/hermes/tests -q`: 62 passed |
+| P3.42 | done | Hermes positioning was workflow-only even though real Hermes sessions need broader context, aggregation, batch capture, and diagnostics | Hermes native plugin now exposes `wg_context`, `wg_aggregate`, `wg_fact_add_many`, and `wg_doctor` alongside the existing workflow/query/search tools; slash commands add `/wg-context`, `/wg-aggregate`, and `/wg-doctor` | `python3 -m pytest plugins/hermes/tests -q`; `cargo test -p wg-cli --bin wg mcp_tools::` |
+| P3.43 | done | `wg_aggregate` did not respect shared-store source scoping, weakening Hermes team/multi-agent profiles | MCP aggregate now falls back to `WG_SOURCE_ID` / explicit `source_id` and Hermes forwards source scope through native tools and slash commands | `python3 -m pytest plugins/hermes/tests/test_client.py plugins/hermes/tests/test_plugin.py -q`; `cargo test -p wg-cli --bin wg mcp_tools::` |
+| P3.44 | done | Hermes docs listed plugin surfaces but did not map them to concrete Hermes usage modes | `plugins/hermes/README.md` now documents coding, long-session, research, team, and safe-capture profiles with the matching wg surfaces and example slash commands | `rg -n "Hermes-fit usage profiles|wg_context|wg_aggregate|wg_doctor" plugins/hermes/README.md` |
+| P3.45 | done | Hermes research workflows still had to chain tool calls through model-visible turns instead of composing memory primitives in code | `hermes_wg.WgMemorySDK` exposes `search_many`, `query_many`, `aggregate_many`, `flatten_hits`, `dedupe_by_fact`, `coverage_by`, `group_by_entity`, `to_fact_batch`, and `commit_fact_batch` for code-first memory orchestration | `python3 -m pytest plugins/hermes/tests/test_sdk.py -q` |
+| P3.46 | done | The bundled wg skill taught tool availability but not profile-specific Hermes composition patterns | `wg-skill/SKILL.md` now includes Hermes coding, long-session, research, team, and safe-capture recipes plus a Memory-as-Code SDK example under 2k-token-style guidance | `rg -n "Hermes composition recipes|Memory-as-Code|WgMemorySDK" wg-skill/SKILL.md` |
+| P3.47 | done | Hermes Memory-as-Code had no measured product-boundary regression | Scenario N seeds scoped research memory, fans out SDK searches, dedupes hits, computes coverage, writes derived observations in a batch, aggregates scoped facts, and checks beta-source exclusion | `python3 bench/multi-agent/scenario_n_hermes_memory_as_code.py`; `python3 -m pytest plugins/hermes/tests -q` |
+| P3.48 | done | Hermes engine/SDK positioning still relied on editable checkout assumptions | `scripts/hermes-wg-pack-smoke.sh` builds a real `hermes-wg` wheel, installs it into a temp venv, and verifies SDK exports, Hermes plugin entry point, `plugin.yaml`, and bundled skill payload | `scripts/hermes-wg-pack-smoke.sh`: installed `hermes-wg 1.0.0`, verified `WgClient`, `WgMemorySDK`, `hermes.plugins`, `plugin.yaml`, and `SKILL.md`; total 4.87s |
 
 ## Current Sprint
 
-All planned P0-P3.41 roadmap items are closed. Scenario H now isolates each
+All planned P0-P3.48 roadmap items are closed. Scenario H now isolates each
 agent's integration path: Claude project MCP, Codex temp `CODEX_HOME` MCP, and
 Hermes MCP-only profile to avoid redb lock contention with the in-process
-plugin. `wg doctor --json` now exposes workflow readiness, recent workflow
-tickets, and actionable setup hints for sparse ticket automation. Scenario I
-now validates that doctor view against actual CLI/MCP/Hermes workflow traces.
+plugin. Hermes plugin work now follows usage profiles rather than a generic
+integration checklist: coding workflows use `wg_workflow_start`, long sessions
+use `wg_context`, research loops use `wg_fact_add_many` + `wg_aggregate`, and
+team setups use `source_id` + `/wg-doctor`. The research profile now also has a
+Memory-as-Code SDK and Scenario N, so Hermes can keep fanout/dedupe/coverage
+state in Python instead of model tokens. That SDK is now protected by a real
+wheel install smoke, so the Hermes engine/SDK path is package-installable
+rather than checkout-only. `wg doctor --json` now exposes workflow readiness,
+recent workflow tickets, and actionable setup hints for sparse ticket
+automation. Scenario I now validates that doctor view against actual
+CLI/MCP/Hermes workflow traces.
 Scenario J defines the serverless shared-store envelope: `lock_retry_ms=5000`
 is smooth through four concurrent local writers, while eight writers should use
 the shared daemon path if every write matters. `wg doctor --json` now surfaces

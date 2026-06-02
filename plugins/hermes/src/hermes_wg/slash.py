@@ -1,9 +1,12 @@
 """Slash commands exposed to chat sessions.
 
 ``/wg <topic>`` — one-shot context fetch (search + traverse + recent).
+``/wg-context [topic]`` — full top-of-turn context envelope.
+``/wg-aggregate <query>`` — exact count / sum / timeline over matching facts.
 ``/wg-start <title>`` — start an issue/ticket workflow and return context.
 ``/wg-add <content>`` — append a quick fact (defaults to type=note).
 ``/wg-recent`` — last 7 days of facts.
+``/wg-doctor`` — setup / sharing / graph health diagnostics.
 ``/wg-pending`` — review or commit the dry-run pending log.
 
 Handlers receive the raw argument string (everything after the command
@@ -31,6 +34,42 @@ def _wg_handler(client: WgClient):
         except CLIENT_ERRORS as exc:
             return f"wg_query failed: {exc}"
         return to_pretty_json(ctx)
+
+    return handle
+
+
+def _wg_context_handler(client: WgClient):
+    def handle(raw_args: str) -> str:
+        topic, source_id = _parse_topic_args(raw_args)
+        try:
+            ctx = client.context(
+                topic=topic or None,
+                limit=8,
+                recent_limit=8,
+                source_id=source_id,
+                format="text",
+                max_chars=6000,
+            )
+        except CLIENT_ERRORS as exc:
+            return f"wg_context failed: {exc}"
+        return ctx if isinstance(ctx, str) else to_pretty_json(ctx)
+
+    return handle
+
+
+def _wg_aggregate_handler(client: WgClient):
+    def handle(raw_args: str) -> str:
+        query, op, fact_type, entity, source_id = _parse_aggregate_args(raw_args)
+        if not query:
+            return (
+                "Usage: /wg-aggregate <query> [--op count|enumerate|by_entity|sum_currency|sum_duration|count_distinct_dates|timeline] "
+                "[--type decision] [--entity Redis] [--source-id ID]"
+            )
+        try:
+            result = client.aggregate(query, op=op, fact_type=fact_type, entity=entity, source_id=source_id)
+        except CLIENT_ERRORS as exc:
+            return f"wg_aggregate failed: {exc}"
+        return to_pretty_json(result)
 
     return handle
 
@@ -100,6 +139,16 @@ def _wg_recent_handler(client: WgClient):
     return handle
 
 
+def _wg_doctor_handler(client: WgClient):
+    def handle(raw_args: str) -> str:
+        try:
+            return to_pretty_json(client.doctor())
+        except CLIENT_ERRORS as exc:
+            return f"wg_doctor failed: {exc}"
+
+    return handle
+
+
 def _parse_topic_args(raw: str) -> tuple[str, str | None]:
     try:
         tokens = shlex.split(raw)
@@ -157,6 +206,40 @@ def _parse_add_args(raw: str) -> tuple[str, list[str] | None, str, list[str], st
         i += 1
     content = " ".join(content_parts).strip()
     return content, entities, fact_type, tags, source_id
+
+
+def _parse_aggregate_args(raw: str) -> tuple[str, str, str | None, str | None, str | None]:
+    try:
+        tokens = shlex.split(raw)
+    except ValueError:
+        tokens = raw.split()
+    query_parts: list[str] = []
+    op = "count"
+    fact_type: str | None = None
+    entity: str | None = None
+    source_id: str | None = None
+    i = 0
+    while i < len(tokens):
+        t = tokens[i]
+        if t == "--op" and i + 1 < len(tokens):
+            op = tokens[i + 1]
+            i += 2
+            continue
+        if t == "--type" and i + 1 < len(tokens):
+            fact_type = tokens[i + 1]
+            i += 2
+            continue
+        if t == "--entity" and i + 1 < len(tokens):
+            entity = tokens[i + 1]
+            i += 2
+            continue
+        if t == "--source-id" and i + 1 < len(tokens):
+            source_id = tokens[i + 1]
+            i += 2
+            continue
+        query_parts.append(t)
+        i += 1
+    return " ".join(query_parts).strip(), op, fact_type, entity, source_id
 
 
 def _parse_start_args(raw: str) -> tuple[str, str | None, str | None, str | None]:
@@ -276,6 +359,18 @@ def register_all(ctx: Any, client: WgClient) -> None:
         args_hint="<topic> [--source-id ID]",
     )
     ctx.register_command(
+        name="wg-context",
+        handler=_wg_context_handler(client),
+        description="Top-of-turn wg context envelope (pinned + personalisation + recent + optional topic).",
+        args_hint="[topic] [--source-id ID]",
+    )
+    ctx.register_command(
+        name="wg-aggregate",
+        handler=_wg_aggregate_handler(client),
+        description="Exact count / sum / timeline over matching wg facts.",
+        args_hint="<query> [--op count] [--type decision] [--entity Redis]",
+    )
+    ctx.register_command(
         name="wg-start",
         handler=_wg_start_handler(client),
         description="Start an issue/ticket workflow and return wg project context.",
@@ -292,6 +387,12 @@ def register_all(ctx: Any, client: WgClient) -> None:
         handler=_wg_recent_handler(client),
         description="Show recent wg facts (default last 7 days).",
         args_hint="[7d|24h|30d]",
+    )
+    ctx.register_command(
+        name="wg-doctor",
+        handler=_wg_doctor_handler(client),
+        description="Show wg/Hermes setup, sharing, and graph diagnostics.",
+        args_hint="",
     )
     ctx.register_command(
         name="wg-pending",

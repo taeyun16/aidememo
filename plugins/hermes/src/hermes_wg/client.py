@@ -126,6 +126,71 @@ class WgClient:
             args += ["--source-id", source_id]
         return self._cli_json(args)
 
+    def context(
+        self,
+        topic: str | None = None,
+        limit: int = 10,
+        pinned_limit: int = 10,
+        recent_limit: int = 10,
+        recent_days: int = 7,
+        depth: int = 2,
+        source_id: str | None = None,
+        format: str = "full",
+        preview_chars: int = 160,
+        max_chars: int | None = None,
+    ) -> dict | str:
+        source_id = self._source_id(source_id)
+        args: dict[str, Any] = {
+            "limit": limit,
+            "pinned_limit": pinned_limit,
+            "recent_limit": recent_limit,
+            "recent_days": recent_days,
+            "depth": depth,
+            "format": format,
+            "preview_chars": preview_chars,
+        }
+        if topic:
+            args["topic"] = topic
+        if source_id:
+            args["source_id"] = source_id
+        if max_chars is not None:
+            args["max_chars"] = max_chars
+        if self._py is None:
+            return self._mcp_tool("wg_context", args)
+
+        recent = self.recent(last=f"{recent_days}d", limit=recent_limit)
+        payload: dict[str, Any] = {
+            "pinned": [],
+            "personalisation": [
+                f
+                for f in recent
+                if str(f.get("fact_type") or "").lower() in {"preference", "lesson", "error"}
+            ][:limit],
+            "recent": recent,
+            "backend_note": (
+                "Hermes is using wg-python; pinned facts are not exposed by the binding yet, "
+                "so this context is composed from query/search/recent."
+            ),
+        }
+        if topic:
+            query_result = self.query(
+                topic,
+                limit=limit,
+                depth=depth,
+                recent_limit=min(5, recent_limit),
+                source_id=source_id,
+            )
+            typed_hits = self.search(topic, limit=max(limit, 30), source_id=source_id)
+            payload["topic"] = {
+                "topic": topic,
+                "query_result": query_result,
+                "topic_lessons": _take_fact_type(typed_hits, "lesson", 5),
+                "topic_errors": _take_fact_type(typed_hits, "error", 5),
+            }
+        if format == "text":
+            return _context_to_text(payload, preview_chars=preview_chars, max_chars=max_chars)
+        return payload
+
     def search(self, query: str, limit: int = 10, source_id: str | None = None) -> list[dict]:
         source_id = self._source_id(source_id)
         if self._py is not None:
@@ -157,6 +222,94 @@ class WgClient:
         if self._py is not None:
             return self._py.traverse(entity, depth=depth, direction="both")
         return self._cli_json(["traverse", entity, "-d", str(depth)])
+
+    def aggregate(
+        self,
+        query: str,
+        op: str = "count",
+        limit: int = 50,
+        fact_type: str | None = None,
+        entity: str | None = None,
+        since: str | None = None,
+        source_id: str | None = None,
+        current_only: bool = True,
+        preview_chars: int = 120,
+        relevance_threshold: float | None = None,
+    ) -> dict:
+        source_id = self._source_id(source_id)
+        args: dict[str, Any] = {
+            "query": query,
+            "op": op,
+            "limit": limit,
+            "current_only": current_only,
+            "preview_chars": preview_chars,
+        }
+        if fact_type:
+            args["fact_type"] = fact_type
+        if entity:
+            args["entity"] = entity
+        if since:
+            args["since"] = since
+        if source_id:
+            args["source_id"] = source_id
+        if relevance_threshold is not None:
+            args["relevance_threshold"] = relevance_threshold
+        if self._py is None:
+            return self._mcp_tool("wg_aggregate", args)
+
+        if op not in {"count", "enumerate", "by_entity"}:
+            raise WgUnavailable(
+                f"wg_aggregate op={op!r} requires the MCP/CLI backend; "
+                "wg-python does not expose structured aggregate slots yet."
+            )
+        hits = self.search(query, limit=limit, source_id=source_id)
+        if fact_type:
+            wanted = fact_type.lower()
+            hits = [h for h in hits if str(h.get("fact_type") or "").lower() == wanted]
+        if entity:
+            hits = [h for h in hits if entity in (h.get("entity_names") or h.get("entities") or [])]
+        if op == "count":
+            return {"op": "count", "query": query, "matched": len(hits), "facts_considered": len(hits)}
+        if op == "enumerate":
+            return {
+                "op": "enumerate",
+                "query": query,
+                "matched": len(hits),
+                "items": [_aggregate_item(h, preview_chars) for h in hits],
+            }
+
+        groups: dict[str, dict[str, Any]] = {}
+        for hit in hits:
+            entities = hit.get("entity_names") or hit.get("entities") or ["(no entity)"]
+            key = str(entities[0])
+            group = groups.setdefault(key, {"entity": key, "count": 0, "fact_types": set(), "max_score": 0.0})
+            group["count"] += 1
+            group["fact_types"].add(str(hit.get("fact_type") or "note").lower())
+            group["max_score"] = max(float(group["max_score"]), float(hit.get("score") or 0.0))
+        return {
+            "op": "by_entity",
+            "query": query,
+            "matched": len(hits),
+            "groups": [
+                {**g, "fact_types": sorted(g["fact_types"])}
+                for g in sorted(groups.values(), key=lambda row: row["max_score"], reverse=True)
+            ],
+        }
+
+    def doctor(self) -> dict:
+        if self._py is None:
+            return self._mcp_tool("wg_doctor", {})
+        return {
+            "backend": self.backend,
+            "stats": self.stats(),
+            "issues": self.lint(),
+            "sharing": {
+                "mode": "in_process_binding",
+                "lock_retry_ms": self.lock_retry_ms,
+                "source_id": self.default_source_id,
+                "hint": "wg-python owns the redb handle inside Hermes; use daemon/MCP for high-concurrency shared writes.",
+            },
+        }
 
     def lint(self) -> list[dict]:
         if self._py is not None:
@@ -356,12 +509,26 @@ class WgClient:
 
         On the PyO3 path the batch lands in a single redb write
         transaction (one fsync, ~70× faster per fact than sequential
-        ``fact_add`` at typical batch sizes). On the CLI fallback there's
-        no equivalent subcommand, so we loop ``fact_add`` to preserve
-        correctness — operators who care about the speedup should
-        install the ``wg_python`` wheel.
+        ``fact_add`` at typical batch sizes). On the CLI fallback we call
+        the MCP ``wg_fact_add_many`` tool so source/session semantics match
+        agent tool calls instead of degrading to sequential CLI inserts.
         """
         default_source_id = self._source_id(None)
+        if self._py is None:
+            args: dict[str, Any] = {"items": items}
+            if default_source_id:
+                args["source_id"] = default_source_id
+            payload = self._mcp_tool("wg_fact_add_many", args)
+            facts = payload.get("facts") if isinstance(payload, dict) else None
+            if isinstance(facts, list):
+                return [str(f.get("id")) for f in facts if isinstance(f, dict) and f.get("id")]
+            return []
+
+        if any(item.get("session_id") for item in items):
+            raise WgUnavailable(
+                "fact_add_many with session_id requires the MCP/CLI backend; "
+                "wg-python does not expose session attachment yet."
+            )
         if self._py is not None:
             py_items = []
             for item in items:
@@ -377,18 +544,7 @@ class WgClient:
                     "source_id": source_id,
                 })
             return list(self._py.fact_add_many(py_items))
-        # CLI fallback — no `wg fact add-many` command yet, so loop.
-        return [
-            self.fact_add(
-                content=item["content"],
-                entities=item.get("entities"),
-                fact_type=item.get("fact_type", "note"),
-                tags=item.get("tags"),
-                confidence=item.get("confidence"),
-                source_id=_normalise_source_id(item.get("source_id")) or default_source_id,
-            )
-            for item in items
-        ]
+        return []
 
     def _source_id(self, source_id: str | None) -> str | None:
         return _normalise_source_id(source_id) or self.default_source_id
@@ -409,7 +565,7 @@ class WgClient:
     # CLI plumbing
     # ------------------------------------------------------------------
 
-    def _cli(self, args: list[str]) -> str:
+    def _cli(self, args: list[str], input_text: str | None = None) -> str:
         cmd = ["wg"]
         if self.store_path:
             cmd += ["--store", self.store_path]
@@ -419,7 +575,13 @@ class WgClient:
         last = None
         while True:
             attempts += 1
-            completed = subprocess.run(cmd, capture_output=True, text=True, check=False)
+            completed = subprocess.run(
+                cmd,
+                input=input_text,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
             if completed.returncode == 0:
                 return completed.stdout
             last = completed
@@ -446,6 +608,38 @@ class WgClient:
             raise WgUnavailable(
                 f"non-JSON output from `wg {' '.join(args)}`: {out[:200]!r}"
             ) from exc
+
+    def _mcp_tool(self, name: str, arguments: dict[str, Any]) -> Any:
+        init = {
+            "jsonrpc": "2.0",
+            "id": 0,
+            "method": "initialize",
+            "params": {"clientInfo": {"name": "hermes-wg", "version": "1.0.0"}},
+        }
+        call = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"name": name, "arguments": arguments},
+        }
+        out = self._cli(["mcp"], input_text=f"{json.dumps(init)}\n{json.dumps(call)}\n")
+        responses = [json.loads(line) for line in out.splitlines() if line.strip()]
+        response = next((r for r in responses if r.get("id") == 1), None)
+        if response is None:
+            raise WgUnavailable(f"wg mcp returned no response for {name}")
+        if response.get("error"):
+            raise WgUnavailable(f"wg mcp {name} failed: {response['error']}")
+        result = response.get("result") or {}
+        if result.get("isError"):
+            text = _mcp_text(result)
+            raise WgUnavailable(text or f"wg mcp {name} returned isError")
+        text = _mcp_text(result)
+        if not text:
+            return result
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            return text
 
 
 def default_skills_path() -> Path:
@@ -497,6 +691,66 @@ def _take_fact_type(hits: list[dict], fact_type: str, limit: int) -> list[dict]:
         if len(out) >= limit:
             break
     return out
+
+
+def _mcp_text(result: dict) -> str:
+    parts: list[str] = []
+    for block in result.get("content") or []:
+        if isinstance(block, dict) and block.get("type") == "text":
+            parts.append(str(block.get("text") or ""))
+    return "\n".join(p for p in parts if p).strip()
+
+
+def _aggregate_item(hit: dict, preview_chars: int) -> dict:
+    content = str(hit.get("content") or "")
+    if len(content) > preview_chars:
+        content = content[: max(0, preview_chars - 1)].rstrip() + "..."
+    return {
+        "id": hit.get("fact_id") or hit.get("id"),
+        "content": content,
+        "fact_type": hit.get("fact_type") or "note",
+        "score": hit.get("score"),
+        "entities": hit.get("entity_names") or hit.get("entities") or [],
+    }
+
+
+def _context_to_text(payload: dict, preview_chars: int = 160, max_chars: int | None = None) -> str:
+    lines: list[str] = ["# wg context"]
+    for title, key in [
+        ("Pinned", "pinned"),
+        ("Personalisation", "personalisation"),
+        ("Recent", "recent"),
+    ]:
+        rows = payload.get(key) or []
+        if not rows:
+            continue
+        lines.extend(["", f"## {title}"])
+        for row in rows:
+            lines.append(f"- {_fact_preview(row, preview_chars)}")
+    topic = payload.get("topic")
+    if isinstance(topic, dict):
+        lines.extend(["", f"## Topic: {topic.get('topic') or ''}".rstrip()])
+        query_result = topic.get("query_result") or {}
+        for hit in query_result.get("search") or []:
+            lines.append(f"- {_fact_preview(hit, preview_chars)}")
+        for label, key in [("Lessons", "topic_lessons"), ("Errors", "topic_errors")]:
+            rows = topic.get(key) or []
+            if rows:
+                lines.extend(["", f"### {label}"])
+                for row in rows:
+                    lines.append(f"- {_fact_preview(row, preview_chars)}")
+    text = "\n".join(lines)
+    if max_chars is not None and len(text) > max_chars:
+        return text[: max(0, max_chars - 3)].rstrip() + "..."
+    return text
+
+
+def _fact_preview(row: dict, preview_chars: int) -> str:
+    content = str(row.get("content") or row.get("preview") or "").strip()
+    if len(content) > preview_chars:
+        content = content[: max(0, preview_chars - 1)].rstrip() + "..."
+    ftype = row.get("fact_type") or "note"
+    return f"({ftype}) {content}" if content else f"({ftype})"
 
 
 def _new_ulid() -> str:
