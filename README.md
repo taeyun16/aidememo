@@ -261,6 +261,7 @@ parallel.
 | Hermes Memory-as-Code Scenario N | 9/9 invariants; SDK fanout/dedupe/coverage/aggregate excluded beta-source rows |
 | `wg-agent-sdk` pack smoke | wheel install + `Memory` / `WgClient` / `WgMemorySDK` first-use checks passed in `3.20s` |
 | SkillOpt-lite profile gate | validates candidate memory-profile tokens, `wg skill check`, workflow demo, and SDK promotion gate |
+| SkillOpt-lite periodic cycle | records accepted / rejected skill-profile candidates under `target/skillopt-lite`; applies only with `--apply` |
 | `wg-napi` package split | root JS/types package + current-platform optional package install smoke passed |
 | `wg-napi` version gate | root/platform package versions and optionalDependency pins verified together |
 | `wg-napi` publish workflow | trusted-publisher workflow defaults to dry-run and gates real publish on exact version input |

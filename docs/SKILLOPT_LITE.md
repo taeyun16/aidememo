@@ -75,6 +75,43 @@ The optional scenario gate runs:
 - Scenario M: `wg mcp-install --source-id` -> scoped MCP write/search;
 - Scenario N: `wg_agent.Memory` fanout/dedupe/coverage/aggregate path.
 
+## Periodic Cycle
+
+Use the cycle runner for weekly or nightly profile maintenance:
+
+```bash
+scripts/skillopt-lite-cycle.sh
+```
+
+With no queued candidates, it checks the current `wg-skill/SKILL.md` and writes
+health/run records under `target/skillopt-lite/`. To validate a proposed
+candidate without applying it:
+
+```bash
+scripts/skillopt-lite-cycle.sh --candidate /tmp/SKILL.md
+```
+
+To accept a passing candidate and replace the source profile:
+
+```bash
+scripts/skillopt-lite-cycle.sh --candidate /tmp/SKILL.md --apply
+```
+
+For a periodic queue, drop `*.md` candidates into
+`target/skillopt-lite/candidates/` and run:
+
+```bash
+WG_SKILLOPT_MAX_CYCLES=0 scripts/skillopt-lite-cycle.sh
+```
+
+Useful state files:
+
+- `target/skillopt-lite/runs.jsonl` records accepted dry-runs and applied
+  candidates;
+- `target/skillopt-lite/rejected_edits.jsonl` records failed candidates and the
+  gate log path;
+- `target/skillopt-lite/logs/*.log` contains full validation output.
+
 ## Rejected Edit Buffer
 
 Rejected candidates should be retained as negative evidence. A simple local
