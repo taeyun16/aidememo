@@ -249,6 +249,7 @@ fn build_store_for_conv(conv: &Conversation, hybrid: bool) -> Result<Conversatio
                     format!("session:{}", session_label),
                 ]),
                 source: Some("raw-chat".into()),
+                source_id: None,
                 source_confidence: None,
                 observed_at,
             });

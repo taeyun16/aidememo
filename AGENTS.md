@@ -5,7 +5,7 @@ Codex, Cursor, Aider, Jules, and any agent that follows the
 [agents.md](https://agents.md) spec. Claude Code imports this via
 `CLAUDE.md`.
 
-> Working directory: `/Users/mixlink/dev/aidememo`. Edition 2024, Rust 1.85+ (CI/tooling currently validated on Rust 1.95.0).
+> Working directory: `/Users/mixlink/dev/aidememo`. Edition 2024, Rust 1.85+ (CI/tooling currently validated on Rust 1.96.0).
 
 ## What this project is
 

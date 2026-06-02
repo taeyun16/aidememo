@@ -641,6 +641,7 @@ fn build_store_for_question(
                         q.haystack_session_ids[sess_idx]
                     )]),
                     source: Some("session".into()),
+                    source_id: None,
                     source_confidence: None,
                     observed_at,
                 });
@@ -665,6 +666,7 @@ fn build_store_for_question(
                         // '[distilled fact]' so the reader knows which
                         // snippet preserves verbatim detail.
                         source: Some("raw-chat".into()),
+                        source_id: None,
                         source_confidence: None,
                         observed_at,
                     });
@@ -756,6 +758,7 @@ fn build_store_for_question(
                             q.haystack_session_ids[sess_idx]
                         )]),
                         source: Some("llm-extract".into()),
+                        source_id: None,
                         source_confidence: Some(c.confidence),
                         observed_at,
                     });

@@ -1249,14 +1249,14 @@ impl AideMemo {
             // (use_cold_tier=true).
             let mut supersede_losers = Vec::new();
             let mut archive_losers = Vec::new();
-            for i in 0..m {
+            for (i, &member_idx) in members.iter().enumerate().take(m) {
                 if survivors.contains(&i) {
                     continue;
                 }
                 if opts.use_cold_tier {
-                    archive_losers.push(members[i]);
+                    archive_losers.push(member_idx);
                 } else {
-                    supersede_losers.push(members[i]);
+                    supersede_losers.push(member_idx);
                 }
             }
             decisions.push(ClusterDecision {

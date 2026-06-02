@@ -7,9 +7,9 @@ minimal — fast iteration over heavy process.
 
 ```bash
 # Required
-rustup toolchain install 1.95.0 --component rustfmt --component clippy
+rustup toolchain install 1.96.0 --component rustfmt --component clippy
 # Or let rustup auto-install from rust-toolchain.toml on first cargo run.
-# Workspace MSRV remains 1.85, but CI parity is pinned to 1.95.0.
+# Workspace MSRV remains 1.85, but CI parity is pinned to 1.96.0.
 
 # Recommended
 brew install lefthook                    # or `npm i -g lefthook`

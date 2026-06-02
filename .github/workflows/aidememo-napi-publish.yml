@@ -50,7 +50,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.95.0
+          toolchain: 1.96.0
 
       - name: publish current platform package
         shell: bash
@@ -75,7 +75,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.95.0
+          toolchain: 1.96.0
 
       - name: publish root wrapper package
         shell: bash

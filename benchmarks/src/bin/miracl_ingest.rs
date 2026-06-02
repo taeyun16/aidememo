@@ -66,6 +66,7 @@ fn main() {
             } else {
                 Some(row.source)
             },
+            source_id: None,
             source_confidence: row.source_confidence,
             observed_at: None,
         });

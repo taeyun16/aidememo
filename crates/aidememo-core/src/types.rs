@@ -720,13 +720,12 @@ pub struct GacOpts {
     /// the most-distant members per the paper's "spread regime"
     /// guidance. Default 0 — medoid carries the cluster.
     pub spread_residual_budget: usize,
-    /// When true, non-representative members (tight non-newest
-    /// + spread non-medoid-non-budget) move to the cold-tier
-    /// archive (`<store>.cold.redb`) instead of being marked
-    /// superseded. Cold preserves FactId so aidememo_fact_get still
-    /// resolves. When false, supersede semantics — same as
-    /// `consolidate_semantic`, just cluster-routed instead of
-    /// pairwise. Default false (supersede).
+    /// When true, non-representative members move to the cold-tier
+    /// archive (`<store>.cold.redb`) instead of being marked superseded.
+    /// Cold preserves FactId so aidememo_fact_get still resolves.
+    /// When false, supersede semantics match `consolidate_semantic`,
+    /// just cluster-routed instead of pairwise. Default false
+    /// (supersede).
     pub use_cold_tier: bool,
     /// Fact types to skip clustering. Facts of these types are
     /// excluded from cluster formation entirely — they pass through

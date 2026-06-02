@@ -48,6 +48,7 @@ fn seed_retrieval_store(store: &mut Store) {
             entity_ids: Some(vec![redis_id]),
             tags: Some(vec!["ha".to_string()]),
             source: Some("entities/redis.md#high-availability".to_string()),
+            source_id: None,
             source_confidence: Some(0.9),
             observed_at: None,
         })
@@ -60,6 +61,7 @@ fn seed_retrieval_store(store: &mut Store) {
             entity_ids: Some(vec![redis_id]),
             tags: Some(vec!["scaling".to_string()]),
             source: Some("entities/redis.md#scaling".to_string()),
+            source_id: None,
             source_confidence: Some(0.9),
             observed_at: None,
         })
@@ -72,6 +74,7 @@ fn seed_retrieval_store(store: &mut Store) {
             entity_ids: Some(vec![postgres_id]),
             tags: Some(vec!["storage".to_string()]),
             source: Some("entities/postgres.md#durability".to_string()),
+            source_id: None,
             source_confidence: Some(0.9),
             observed_at: None,
         })
@@ -84,6 +87,7 @@ fn seed_retrieval_store(store: &mut Store) {
             entity_ids: Some(vec![cache_id]),
             tags: Some(vec!["performance".to_string()]),
             source: Some("concepts/cache.md#latency".to_string()),
+            source_id: None,
             source_confidence: Some(0.9),
             observed_at: None,
         })

@@ -6,6 +6,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 AIDEMEMO_BIN="${AIDEMEMO_BIN:-$ROOT_DIR/target/debug/aidememo}"
 BASE="${AIDEMEMO_RELEASE_SMOKE_BASE:-$(mktemp -d "${TMPDIR:-/tmp}/aidememo-release-smoke.XXXXXX")}"
 SUMMARY_TSV="$BASE/workflow-release-smoke-timings.tsv"
+PYTHONPATH_LOCAL="$ROOT_DIR/packages/aidememo-agent-sdk/src:$ROOT_DIR/plugins/hermes/src${PYTHONPATH:+:$PYTHONPATH}"
 
 run() {
     local label start end status elapsed
@@ -101,11 +102,13 @@ run env \
 run env \
     AIDEMEMO_BIN="$AIDEMEMO_BIN" \
     AIDEMEMO_E2E_STORE="$BASE/scenario-f/workflow.redb" \
+    PYTHONPATH="$PYTHONPATH_LOCAL" \
     python3 bench/multi-agent/scenario_f_workflow_triggers.py
 
 run env \
     AIDEMEMO_BIN="$AIDEMEMO_BIN" \
     AIDEMEMO_E2E_BASE="$BASE/scenario-i" \
+    PYTHONPATH="$PYTHONPATH_LOCAL" \
     python3 bench/multi-agent/scenario_i_workflow_doctor.py
 
 FIXTURE_STORE="$BASE/doctor-fixture/wiki.redb"

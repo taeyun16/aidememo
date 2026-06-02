@@ -1154,13 +1154,15 @@ fn handle_workflow(
                 let pack = workflow_start_pack(
                     &wiki,
                     &title,
-                    body.as_deref(),
-                    source.as_deref(),
-                    source_id.as_deref(),
-                    limit.unwrap_or(8),
-                    depth.unwrap_or(2),
-                    recent_limit.unwrap_or(5),
-                    bm25_only,
+                    WorkflowStartOpts {
+                        body,
+                        source,
+                        source_id,
+                        limit: limit.unwrap_or(8),
+                        depth: depth.unwrap_or(2),
+                        recent_limit: recent_limit.unwrap_or(5),
+                        bm25_only,
+                    },
                 )?;
                 if json {
                     return serde_json::to_string_pretty(&pack).map_err(|e| {
@@ -1210,26 +1212,9 @@ fn read_workflow_body(
 fn workflow_start_pack(
     wiki: &AideMemo,
     title: &str,
-    body: Option<&str>,
-    source: Option<&str>,
-    source_id: Option<&str>,
-    limit: usize,
-    depth: u32,
-    recent_limit: usize,
-    bm25_only: bool,
+    opts: WorkflowStartOpts,
 ) -> Result<serde_json::Value, AideMemoError> {
-    let pack = wiki.workflow_start(
-        title,
-        WorkflowStartOpts {
-            body: body.map(str::to_string),
-            source: source.map(str::to_string),
-            source_id: source_id.map(str::to_string),
-            limit,
-            depth,
-            recent_limit,
-            bm25_only,
-        },
-    )?;
+    let pack = wiki.workflow_start(title, opts)?;
     serde_json::to_value(pack).map_err(|e| AideMemoError::Serialize {
         context: "workflow start pack".into(),
         source: e,
@@ -2467,6 +2452,7 @@ fn handle_sync(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_sync_pull(
     store_path: &Path,
     config: Config,
@@ -2584,12 +2570,6 @@ fn drain_pull(
             + stats.relations_inserted
             + stats.relations_skipped;
 
-        // Decide whether to advance the cursor. Either a new high-water
-        // value was emitted, or we should at least bump last_pulled_at.
-        let advanced = stats.new_cursor.entity.is_some()
-            || stats.new_cursor.fact.is_some()
-            || stats.new_cursor.entity_updated_at.is_some()
-            || stats.new_cursor.fact_updated_at.is_some();
         let entry = StoredCursor {
             entity: stats
                 .new_cursor
@@ -2631,7 +2611,7 @@ fn drain_pull(
         //  - Upstream returned nothing (steady state — fully drained)
         //  - Server didn't move any cursor AND emitted no records
         //    (upstream has nothing newer than what we sent)
-        if cycle_records == 0 || (!advanced && cycle_records == 0) {
+        if cycle_records == 0 {
             break;
         }
         // If the upstream returned strictly fewer records than the

@@ -207,6 +207,7 @@ fn build_store(
                 entity_ids: Some(vec![entity_id]),
                 tags: doc.source.as_ref().map(|s| vec![format!("source:{s}")]),
                 source: doc.source.clone(),
+                source_id: None,
                 source_confidence: None,
                 observed_at,
             });

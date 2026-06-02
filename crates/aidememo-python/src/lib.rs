@@ -422,6 +422,7 @@ impl PyAideMemo {
     // === Fact CRUD ===
 
     /// Add a fact. `entity_ids` are ULIDs (use `resolve_entity` to convert names).
+    #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (content, entity_ids=None, fact_type=None, tags=None, source=None, confidence=None, source_id=None))]
     fn fact_add(
         &self,

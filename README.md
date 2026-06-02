@@ -71,7 +71,7 @@ cargo install --path crates/aidememo-cli
 ```
 
 The binary is `aidememo`. Add `~/.cargo/bin` to your `PATH` if needed. CI currently
-validates with Rust `1.95.0`; the workspace MSRV is `1.85`.
+validates with Rust `1.96.0`; the workspace MSRV is `1.85`.
 
 ## 60-Second Quickstart
 
