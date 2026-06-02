@@ -111,6 +111,7 @@ passes an explicit `source_id`.
 | `wg_query` | Topic-only retrieval (search + entity + traverse + recent). Lighter than wg_context — use for follow-up topic dives |
 | `wg_overview` | First-impression snapshot of an unfamiliar wiki — call once at session start |
 | `wg_search` | Pure hybrid search, no graph |
+| `wg_aggregate` | Exact counts, sums, distinct dates, and timelines across facts. Do not use for simple recall or simple retrieval; answer those from `wg_context`, `wg_query`, or `wg_search` snippets |
 | `wg_recent` | Last N days of facts |
 | `wg_entity_list` / `wg_entity_get` | Browse entities / fetch one by name or alias |
 | `wg_fact_list` / `wg_fact_get` | List facts (filterable; `fact_type:"lesson"` etc) / fetch one by ULID |

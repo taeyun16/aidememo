@@ -26,6 +26,7 @@ python3 bench/multi-agent/scenario_m_mcp_install_source_defaults.py
 python3 bench/multi-agent/scenario_n_hermes_memory_as_code.py
 scripts/wg-agent-sdk-pack-smoke.sh
 scripts/hermes-wg-pack-smoke.sh
+scripts/skillopt-lite-check.sh
 scripts/demo-workflow.sh
 scripts/ci-local.sh demo
 scripts/sdk-promotion-check.sh
@@ -62,6 +63,7 @@ with current scorecards in
 | Hermes Memory-as-Code Scenario N | `python3 bench/multi-agent/scenario_n_hermes_memory_as_code.py`: 9/9 invariants; fanout search + dedupe + coverage + derived batch + aggregate completed with beta source excluded from scoped rows | The Hermes research profile now has a zero-token, code-first regression through the shared `wg_agent.Memory` API: intermediate candidate sets stay in Python and only compact coverage/aggregate artifacts need to reach model context. |
 | wg-agent-sdk wheel install smoke | `scripts/wg-agent-sdk-pack-smoke.sh`: built `wg_agent_sdk-0.1.0-py3-none-any.whl`, installed it into a temp venv, verified `Memory`, `WgClient`, `WgMemorySDK`, and first-use methods; total 3.20s | The code-first SDK path is installable independently of Hermes, so Codex / Claude Code / CI scripts do not need the Hermes plugin package. |
 | hermes-wg wheel install smoke | `scripts/hermes-wg-pack-smoke.sh`: built `wg_agent_sdk-0.1.0-py3-none-any.whl` + `hermes_wg-1.0.0-py3-none-any.whl`, installed both into a temp venv, verified `hermes_wg.WgMemorySDK` re-exports `wg_agent.Memory`, `hermes.plugins` entry point, `plugin.yaml`, and bundled `SKILL.md`; total 4.36s | The Hermes plugin remains pip-installable while delegating the code-first SDK layer to the shared package. |
+| SkillOpt-lite profile gate | `scripts/skillopt-lite-check.sh` validates the bundled `wg-skill/SKILL.md` as the current trainable memory profile candidate, then runs `wg skill check`, `git diff --check`, `cargo check -p wg-cli`, `scripts/demo-workflow.sh`, and `scripts/sdk-promotion-check.sh`; optional Scenario L/M/N gates run with `WG_SKILLOPT_RUN_SCENARIOS=1` | This turns SkillOpt's useful discipline into a local `wg` product boundary: memory skill edits are bounded, auditable, and accepted only after zero-token workflow / SDK gates pass. |
 
 ## Agentic Loop Calibration
 

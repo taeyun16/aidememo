@@ -126,6 +126,11 @@ question shape requires it:
 | Exact totals, counts, date sets, or timelines | `wg_aggregate` | Deterministic arithmetic over matching facts; use it as insurance for cross-fact counting, not for simple recall. |
 | Learned a durable fact | `wg_fact_add` / `wg_fact_add_many` | Store typed memory explicitly; pass the `session_id` returned by `wg_workflow_start` to keep follow-up facts on the workflow thread. |
 
+The agent-facing memory profile itself is treated as an auditable artifact.
+[`docs/SKILLOPT_LITE.md`](docs/SKILLOPT_LITE.md) describes the
+SkillOpt-inspired loop, and `scripts/skillopt-lite-check.sh` gates candidate
+`SKILL.md` / memory-profile edits before they are accepted.
+
 ## Common Workflows
 
 ### Search and recall
@@ -255,6 +260,7 @@ parallel.
 | MCP source-default install Scenario M | 12/12 invariants; installed `WG_SOURCE_ID` scoped MCP write/search in `323.97ms` |
 | Hermes Memory-as-Code Scenario N | 9/9 invariants; SDK fanout/dedupe/coverage/aggregate excluded beta-source rows |
 | `wg-agent-sdk` pack smoke | wheel install + `Memory` / `WgClient` / `WgMemorySDK` first-use checks passed in `3.20s` |
+| SkillOpt-lite profile gate | validates candidate memory-profile tokens, `wg skill check`, workflow demo, and SDK promotion gate |
 | `wg-napi` package split | root JS/types package + current-platform optional package install smoke passed |
 | `wg-napi` version gate | root/platform package versions and optionalDependency pins verified together |
 | `wg-napi` publish workflow | trusted-publisher workflow defaults to dry-run and gates real publish on exact version input |

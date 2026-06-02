@@ -91,6 +91,7 @@ or benchmark-specific `RESULTS.md` files; keep user-facing product work here.
 | P3.48 | done | Hermes engine/SDK positioning still relied on editable checkout assumptions | `scripts/hermes-wg-pack-smoke.sh` builds real `wg-agent-sdk` + `hermes-wg` wheels, installs them into a temp venv, and verifies SDK re-export, Hermes plugin entry point, `plugin.yaml`, and bundled skill payload | `scripts/hermes-wg-pack-smoke.sh`: installed `wg-agent-sdk 0.1.0` + `hermes-wg 1.0.0`, verified `hermes_wg.WgMemorySDK` re-exports `wg_agent.Memory`, `hermes.plugins`, `plugin.yaml`, and `SKILL.md`; total 4.36s |
 | P3.49 | done | The Hermes SDK first-use path still exposed too many helper steps for routine research tasks | `Memory.open`, `search_rows`, and `remember` now cover the natural install-to-first-script path while keeping lower-level helpers available for custom pipelines | `python3 -m pytest plugins/hermes/tests/test_sdk.py -q`; `python3 bench/multi-agent/scenario_n_hermes_memory_as_code.py` |
 | P3.50 | done | Code-first memory composition was still packaged as Hermes-specific even though Codex and Claude Code can use the same Python path | `packages/wg-agent-sdk` now owns the shared `wg_agent.Memory` / `WgMemorySDK` client+composition layer; `hermes_wg` re-exports it for compatibility, and pack smokes verify both packages | `python3 -m pytest packages/wg-agent-sdk/tests -q`: 7 passed; `python3 -m pytest plugins/hermes/tests -q`: 75 passed; `scripts/wg-agent-sdk-pack-smoke.sh`: 3.20s; `scripts/hermes-wg-pack-smoke.sh`: 4.36s |
+| P3.51 | done | SDK-memory positioning needs a safe way to evolve agent memory skills without runtime self-modification | SkillOpt-lite defines the trainable memory profile artifact, bounded edit discipline, rejected-edit buffer, and validation gate; `scripts/skillopt-lite-check.sh` accepts a candidate only after skill/profile token checks plus local workflow / SDK gates pass | `scripts/skillopt-lite-check.sh`; optional `WG_SKILLOPT_RUN_SCENARIOS=1 scripts/skillopt-lite-check.sh` for Scenario L/M/N |
 
 ## Current Sprint
 
@@ -108,7 +109,11 @@ rather than checkout-only. The first-use SDK path now starts with
 `wg_agent.Memory.open(...)`, collects evidence with `search_rows(...)`, and stores
 observations with `remember(...)`, so common Hermes, Codex, and Claude Code
 research scripts do not need to manually chain setup, flattening, dedupe, and
-batch conversion.
+batch conversion. SkillOpt-lite now gives that agent-facing memory profile an
+offline improvement loop: bounded skill edits are validated by
+`scripts/skillopt-lite-check.sh` before they are accepted, and optional Scenario
+L/M/N gates cover typed self-extraction, source-default install, and
+Memory-as-Code composition.
 `wg doctor --json` now exposes workflow readiness,
 recent workflow tickets, and actionable setup hints for sparse ticket
 automation. Scenario I now validates that doctor view against actual
