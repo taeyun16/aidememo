@@ -250,6 +250,7 @@ wg config set model.name bge-small-en-v1.5
 |---|---|
 | `wg-core` | redb store, ingest, BM25, semantic search, graph, lint, lifecycle |
 | `wg-cli` | `wg` binary: CLI, stdio MCP, HTTP/SSE MCP |
+| `wg-agent-sdk` | Python composition layer for code-executing agents (Codex, Claude Code, Hermes, CI); uses `wg-python` or CLI fallback |
 | `wg-python` | PyO3 bindings |
 | `wg-napi` | Node.js bindings |
 | `wg-nif` | Elixir/Erlang bindings |
@@ -275,6 +276,7 @@ Full comparison: [`COMPARE.md`](COMPARE.md). Product positioning:
 
 ```text
 crates/       Rust workspace crates
+packages/     Python agent SDK packages
 plugins/      Agent integrations, including Hermes
 wg-skill/     Agent-facing skill and setup docs
 bench/        Scenario benchmarks and multi-agent checks

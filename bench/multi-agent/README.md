@@ -18,7 +18,7 @@ agents installed on this machine: Claude Code, Codex, and Hermes.
 | `scenario_k_sdk_workflow_parity.py` | Compares `workflow_start` shape parity across CLI, `wg-python`, and `wg-napi`; verifies scoped priors, unique sessions/tickets, and forbidden-source leakage. | 0 |
 | `scenario_l_self_extraction.py` | Simulates an agent-classified `wg_fact_add_many` batch, then verifies typed facts drive sparse-ticket workflow context and `source_id` isolation. | 0 |
 | `scenario_m_mcp_install_source_defaults.py` | Installs MCP configs into an isolated HOME, verifies `WG_SOURCE_ID` is written for file targets / printed for shell targets, then proves the installed env scopes MCP write/search calls. | 0 |
-| `scenario_n_hermes_memory_as_code.py` | Exercises the Hermes `WgMemorySDK` research profile: fanout search, flatten/dedupe, coverage, batch write, aggregate, and source isolation. | 0 |
+| `scenario_n_hermes_memory_as_code.py` | Exercises the shared `wg_agent.Memory` research profile for Hermes/Codex/Claude-style code execution: fanout row collection, dedupe, coverage, `remember` batch write, aggregate, and source isolation. | 0 |
 
 ## Running locally
 

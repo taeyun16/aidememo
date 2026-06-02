@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from hermes_wg.sdk import WgMemorySDK
+from wg_agent.sdk import WgMemorySDK
 
 
 class FakeClient:

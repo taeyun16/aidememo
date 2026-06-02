@@ -10,6 +10,7 @@ and semantic-version guarantees.
 
 | Package | Current label | Why |
 |---|---|---|
+| `wg-agent-sdk` | Agent SDK candidate | Pure-Python composition layer for agents that can execute code. It owns the code-first memory workflow (`Memory.open`, `search_rows`, `coverage_by`, `remember`) and can run through either `wg-python` or the `wg` CLI fallback, making it usable from Codex, Claude Code, Hermes, CI, and local scripts. The remaining blocker is public PyPI install and release preflight coverage. |
 | `wg-python` | SDK candidate | Hermes already gets the largest measured lift from in-process Python: Scenario G showed p50 `1795.71ms` CLI vs `13.14ms` binding with shape parity. Scenario K keeps Python shape parity with CLI across sparse tickets. Python now exposes `workflow_start` and typed exceptions, so the remaining blocker is public PyPI install. |
 | `wg-napi` | SDK candidate | Node has platform package split, npm pack/install smoke, dry-run publish gates, a native adapter path that was `1.66x` faster than daemon BrainBench on the same checkout, a `workflowStart` API, package README examples, stable `[wg_code]` error messages, and Scenario K parity with CLI. The remaining blocker is public npm install. |
 | `wg-nif` | Binding | Useful for Elixir/Erlang systems, but the package is still a thin NIF wrapper over the Rust core. Keep it low-level until Hex packaging, examples, and supervision-friendly lifecycle docs exist. |
@@ -45,11 +46,14 @@ until public PyPI/npm installs are verified.
 
 ## Recommended Sequence
 
-1. Promote `wg-python` first after the PyPI trusted-publisher release succeeds.
+1. Promote `wg-agent-sdk` first after the PyPI trusted-publisher release
+   succeeds. It is the broadest Codex / Claude Code / Hermes-facing API and
+   can still use `wg-python` underneath when the native binding is available.
+2. Promote `wg-python` after the PyPI trusted-publisher release succeeds.
    It already has the clearest workflow evidence through Hermes and typed
    exceptions.
-2. Promote `wg-napi` after npm trusted publishing succeeds.
-3. Keep `wg-nif` and `wg-ffi` as bindings until packaging and lifecycle
+3. Promote `wg-napi` after npm trusted publishing succeeds.
+4. Keep `wg-nif` and `wg-ffi` as bindings until packaging and lifecycle
    expectations are stronger.
 
 README wording should remain conservative for now: "native bindings" in the

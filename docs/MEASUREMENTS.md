@@ -24,6 +24,7 @@ python3 bench/multi-agent/scenario_k_sdk_workflow_parity.py
 python3 bench/multi-agent/scenario_l_self_extraction.py
 python3 bench/multi-agent/scenario_m_mcp_install_source_defaults.py
 python3 bench/multi-agent/scenario_n_hermes_memory_as_code.py
+scripts/wg-agent-sdk-pack-smoke.sh
 scripts/hermes-wg-pack-smoke.sh
 scripts/demo-workflow.sh
 scripts/ci-local.sh demo
@@ -58,8 +59,9 @@ with current scorecards in
 | Zero-token workflow demo | decision + lesson + error surfaced; search hits 4; workflow latency 128ms | `scripts/demo-workflow.sh` demonstrates the product position without an agent, model call, or persistent store. It uses CLI `workflow start --bm25-only` for deterministic first-run behaviour. `scripts/ci-local.sh demo` wraps the same smoke for daily local checks in about 0.91s warm. |
 | Natural workflow adoption Scenario H, 3 agents | 4/4 invariants; 3/3 agents passed; each created 1 scoped workflow fact; prior reflection Claude 3/3, Codex 2/3, Hermes 3/3; forbidden leakage 0 | Sparse-ticket prompts can drive the workflow entry point across Claude, Codex, and Hermes when each runtime gets an isolated, deterministic MCP config. Hermes uses MCP-only here to avoid redb lock contention with the in-process plugin. |
 | Hermes native core parity | `python3 -m pytest plugins/hermes/tests -q`; `cargo test -p wg-cli --bin wg mcp_tools::` | Hermes now exposes `wg_context`, `wg_aggregate`, `wg_fact_add_many`, and `wg_doctor` through native tools/slash commands, and source-scoped aggregate calls honor explicit `source_id` / `WG_SOURCE_ID` instead of mixing shared-store facts. |
-| Hermes Memory-as-Code Scenario N | `python3 bench/multi-agent/scenario_n_hermes_memory_as_code.py`: 9/9 invariants; fanout search + dedupe + coverage + derived batch + aggregate completed with beta source excluded from scoped rows | The Hermes research profile now has a zero-token, code-first regression: intermediate candidate sets stay in Python via `WgMemorySDK` and only compact coverage/aggregate artifacts need to reach model context. |
-| hermes-wg wheel install smoke | `scripts/hermes-wg-pack-smoke.sh`: built `hermes_wg-1.0.0-py3-none-any.whl`, installed it into a temp venv, verified `WgClient`, `WgMemorySDK`, `hermes.plugins` entry point, `plugin.yaml`, and bundled `SKILL.md`; total 4.87s | The Hermes engine/SDK path is pip-installable as a real wheel, not only importable from the repo checkout. |
+| Hermes Memory-as-Code Scenario N | `python3 bench/multi-agent/scenario_n_hermes_memory_as_code.py`: 9/9 invariants; fanout search + dedupe + coverage + derived batch + aggregate completed with beta source excluded from scoped rows | The Hermes research profile now has a zero-token, code-first regression through the shared `wg_agent.Memory` API: intermediate candidate sets stay in Python and only compact coverage/aggregate artifacts need to reach model context. |
+| wg-agent-sdk wheel install smoke | `scripts/wg-agent-sdk-pack-smoke.sh`: built `wg_agent_sdk-0.1.0-py3-none-any.whl`, installed it into a temp venv, verified `Memory`, `WgClient`, `WgMemorySDK`, and first-use methods; total 3.20s | The code-first SDK path is installable independently of Hermes, so Codex / Claude Code / CI scripts do not need the Hermes plugin package. |
+| hermes-wg wheel install smoke | `scripts/hermes-wg-pack-smoke.sh`: built `wg_agent_sdk-0.1.0-py3-none-any.whl` + `hermes_wg-1.0.0-py3-none-any.whl`, installed both into a temp venv, verified `hermes_wg.WgMemorySDK` re-exports `wg_agent.Memory`, `hermes.plugins` entry point, `plugin.yaml`, and bundled `SKILL.md`; total 4.36s | The Hermes plugin remains pip-installable while delegating the code-first SDK layer to the shared package. |
 
 ## gbrain-evals Adapter
 

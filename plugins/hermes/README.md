@@ -10,7 +10,7 @@ lifecycle hooks.
 |---|---|
 | **12 tools** | `wg_workflow_start`, `wg_context`, `wg_query`, `wg_search`, `wg_recent`, `wg_aggregate`, `wg_entity_list`, `wg_traverse`, `wg_fact_add`, `wg_fact_add_many`, `wg_doctor`, `wg_lint` — the Hermes-native surface now covers the MCP core tools plus the legacy raw lint helper. `wg_context`, retrieval/write tools, and `wg_aggregate` accept `source_id` for shared-store scoping and fall back to `plugins.wg.source_id` / `WG_SOURCE_ID` when omitted. |
 | **8 slash commands** | `/wg-start <title>` (issue/ticket workflow context), `/wg-context [topic]` (top-of-turn context), `/wg <topic>` (topic query), `/wg-aggregate <query>` (exact count/sum/timeline), `/wg-add <content>` (record a fact), `/wg-recent` (last 7 days), `/wg-doctor` (setup/sharing diagnostics), `/wg-pending` (review/commit dry-run captures). Source-scoped commands accept `--source-id ID`. |
-| **Python SDK** | `WgMemorySDK` wraps `WgClient` with code-first primitives: `search_many`, `query_many`, `aggregate_many`, `flatten_hits`, `dedupe_by_fact`, `coverage_by`, `group_by_entity`, and `to_fact_batch`. Use it when a Hermes task needs fanout, coverage checks, or deterministic intermediate-state handling. |
+| **Python SDK** | Re-exports `wg_agent.Memory` / `WgMemorySDK` with code-first primitives: `open`, `search_rows`, `search_many`, `query_many`, `aggregate_many`, `coverage_by`, `group_by_entity`, and `remember`. Use it when a Hermes task needs fanout, coverage checks, or deterministic intermediate-state handling. The same `wg-agent-sdk` package also works from Codex, Claude Code, CI, and local scripts. |
 | **`pre_llm_call` hook** | Auto-injects recent facts into the first turn so the model has wg context before it answers. |
 | **`post_llm_call` hook** | Scans each turn for decision-style phrasings and auto-records them as wg facts. |
 | **`hermes wg ...` CLI** | `hermes wg query` / `search` / `recent` / `add` / `stats` / `lint`. |
@@ -21,6 +21,7 @@ lifecycle hooks.
 ```bash
 pip install hermes-wg                    # CLI fallback (universal)
 pip install "hermes-wg[binding]"         # adds wg-python (~100× faster)
+pip install wg-agent-sdk                 # common SDK for Codex / Claude Code / scripts
 ```
 
 Then enable it in `~/.hermes/config.yaml`:
@@ -82,28 +83,26 @@ not when every turn uses the same generic retrieval call.
 
 Use the SDK when a Hermes task needs more than one retrieval call and the
 intermediate candidate set should stay in Python objects instead of model
-tokens.
+tokens. For non-Hermes agents, import the same API from `wg_agent`.
 
 ```python
-from hermes_wg import WgClient, WgMemorySDK
+from wg_agent import Memory
 
-sdk = WgMemorySDK(WgClient(source_id="research-alpha"))
+sdk = Memory.open(source_id="research-alpha")
 
-fanout = sdk.search_many([
+rows = sdk.search_rows([
     {"query": "Hermes top1_mass support gate", "tool": "search_query"},
     {"query": "Hermes patch browser_vision negative prior", "tool": "patch"},
 ])
-rows = sdk.dedupe_by_fact(sdk.flatten_hits(fanout))
 coverage = sdk.coverage_by(rows, ["tool", "fact_type"])
 
-items = sdk.to_fact_batch([
+sdk.remember([
     {
         "content": "Lesson: support-gated retrieval beats fixed prior residual on Hermes traces.",
         "fact_type": "lesson",
         "entities": ["Hermes", "SupportGate"],
     }
 ])
-sdk.commit_fact_batch(items)
 ```
 
 ## Configuration

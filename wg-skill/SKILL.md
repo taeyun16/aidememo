@@ -142,8 +142,10 @@ passes an explicit `source_id`.
 
 ## Hermes composition recipes
 
-Hermes can use the plugin as tools, slash commands, hooks, or Python code. Pick
-the workflow profile first, then compose the smallest primitives that fit.
+Hermes can use the plugin as tools, slash commands, hooks, or Python code.
+Codex, Claude Code, CI jobs, and local scripts can use the same code-first
+surface through `wg-agent-sdk`. Pick the workflow profile first, then compose
+the smallest primitives that fit.
 
 ### coding profile
 
@@ -170,23 +172,21 @@ collection. Prefer Python SDK composition when the workflow needs fanout,
 coverage checks, dedupe, or batch writes.
 
 ```python
-from hermes_wg import WgClient, WgMemorySDK
+from wg_agent import Memory
 
-sdk = WgMemorySDK(WgClient(source_id="research-alpha"))
-fanout = sdk.search_many([
+sdk = Memory.open(source_id="research-alpha")
+rows = sdk.search_rows([
     {"query": "Hermes top1_mass gate", "tool": "search_query"},
     {"query": "Hermes patch negative prior", "tool": "patch"},
 ])
-rows = sdk.dedupe_by_fact(sdk.flatten_hits(fanout))
 coverage = sdk.coverage_by(rows, ["tool", "fact_type"])
-items = sdk.to_fact_batch([
+sdk.remember([
     {
         "content": "Lesson: top1_mass support gate is the current strongest Hermes signal.",
         "fact_type": "lesson",
         "entities": ["Hermes", "SupportGate"],
     }
 ])
-sdk.commit_fact_batch(items)
 ```
 
 Keep intermediate rows in Python objects or explicit files; do not paste large

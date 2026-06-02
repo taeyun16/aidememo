@@ -19,6 +19,7 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
+    "wg-agent-sdk>=0.1",
     # Tools and hooks shell out to the `wg` CLI by default. wg-python
     # is optional — when installed, the plugin uses the in-process
     # PyO3 bindings instead of subprocess for ~100× lower latency.

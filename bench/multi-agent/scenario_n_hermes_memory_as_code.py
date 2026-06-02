@@ -6,12 +6,12 @@ Hermes: expose local memory as programmable primitives so the agent can fan out,
 dedupe, check coverage, aggregate, and persist findings in one code path instead
 of pushing intermediate candidate sets through token space.
 
-The script uses the Hermes plugin SDK directly:
+The script uses the shared wg agent SDK directly:
 
   1. Seed source-scoped research facts for two neighbouring projects.
   2. Fan out search requests across tool/dataset hypotheses.
-  3. Flatten + dedupe hits and compute coverage by tool/fact_type.
-  4. Persist derived research observations with one fact_add_many batch.
+  3. Collect deduped search rows and compute coverage by tool/fact_type.
+  4. Persist derived research observations with one SDK remember call.
   5. Use aggregate_many to count scoped decisions/lessons without beta leakage.
 """
 
@@ -33,14 +33,14 @@ STORE = os.environ.get(
     "WG_E2E_STORE",
     str(Path(tempfile.gettempdir()) / "wg-e2e-n" / "hermes-memory-as-code.redb"),
 )
-PLUGIN_SRC = REPO / "plugins" / "hermes" / "src"
+AGENT_SDK_SRC = REPO / "packages" / "wg-agent-sdk" / "src"
 SOURCE_ID = "hermes-research-alpha"
 NEIGHBOUR_SOURCE_ID = "hermes-research-beta"
 
-sys.path.insert(0, str(PLUGIN_SRC))
+sys.path.insert(0, str(AGENT_SDK_SRC))
 os.environ["PATH"] = f"{Path(WG).parent}{os.pathsep}{os.environ.get('PATH', '')}"
 
-from hermes_wg import WgClient, WgMemorySDK  # noqa: E402
+from wg_agent import Memory, WgClient  # noqa: E402
 
 
 SEED_FACTS: list[dict[str, Any]] = [
@@ -107,7 +107,7 @@ def main() -> int:
     # Force the CLI backend even when wg-python is installed so batch writes
     # auto-create entities and aggregate calls exercise source-scoped MCP tools.
     client._py = None
-    sdk = WgMemorySDK(client)
+    sdk = Memory(client)
 
     seed_start = time.perf_counter_ns()
     seed_ids = client.fact_add_many(SEED_FACTS)
@@ -120,31 +120,31 @@ def main() -> int:
         {"query": "Hermes URL query-shape gating", "tool": "url", "source_id": NEIGHBOUR_SOURCE_ID},
     ]
     fanout_start = time.perf_counter_ns()
-    fanout = sdk.search_many(fanout_queries, limit_per_query=6, concurrency=4)
-    rows = sdk.dedupe_by_fact(sdk.flatten_hits(fanout))
+    raw_rows = sdk.search_rows(fanout_queries, limit_per_query=6, concurrency=4, dedupe=False)
+    rows = sdk.dedupe_by_fact(raw_rows)
     scoped_rows = sdk.filter_by_source(rows, SOURCE_ID)
     coverage = sdk.coverage_by(scoped_rows, ["tool", "fact_type"])
     groups = sdk.group_by_entity(scoped_rows)
     fanout_ms = (time.perf_counter_ns() - fanout_start) / 1e6
 
-    derived_items = sdk.to_fact_batch(
-        [
-            {
-                "content": "Lesson: Hermes Memory-as-Code profile should fan out retrieval, dedupe hits, then check coverage before writing conclusions.",
-                "fact_type": "lesson",
-                "entities": ["Hermes", "MemoryAsCode"],
-            },
-            {
-                "content": "Decision: Hermes research loops store derived observations with fact_add_many after coverage checks.",
-                "fact_type": "decision",
-                "entities": ["Hermes", "MemoryAsCode"],
-            },
-        ],
+    derived_observations = [
+        {
+            "content": "Lesson: Hermes Memory-as-Code profile should fan out retrieval, dedupe hits, then check coverage before writing conclusions.",
+            "fact_type": "lesson",
+            "entities": ["Hermes", "MemoryAsCode"],
+        },
+        {
+            "content": "Decision: Hermes research loops store derived observations with fact_add_many after coverage checks.",
+            "fact_type": "decision",
+            "entities": ["Hermes", "MemoryAsCode"],
+        },
+    ]
+    derived_start = time.perf_counter_ns()
+    derived_ids = sdk.remember(
+        derived_observations,
         source_id=SOURCE_ID,
         tags=["scenario-n", "memory-as-code"],
     )
-    derived_start = time.perf_counter_ns()
-    derived_ids = sdk.commit_fact_batch(derived_items)
     derived_ms = (time.perf_counter_ns() - derived_start) / 1e6
 
     aggregates = sdk.aggregate_many(
@@ -161,10 +161,10 @@ def main() -> int:
     all_text = json.dumps(rows, ensure_ascii=False)
     invariants = {
         "seed_batch_inserted": len(seed_ids) == len(SEED_FACTS),
-        "fanout_query_count": len(fanout) == len(fanout_queries),
-        "dedupe_reduced_or_equal": len(scoped_rows) <= sum(len(batch.get("hits") or []) for batch in fanout),
+        "fanout_query_count": len({row.get("query") for row in raw_rows}) == len(fanout_queries),
+        "dedupe_reduced_or_equal": len(rows) <= len(raw_rows),
         "coverage_has_support_gate": "SupportGate" in json.dumps(groups, ensure_ascii=False),
-        "derived_batch_inserted": len(derived_ids) == len(derived_items),
+        "derived_batch_inserted": len(derived_ids) == len(derived_observations),
         "aggregate_counted_scoped_rows": all((row.get("result") or {}).get("matched", 0) >= 1 for row in aggregates),
         "scoped_rows_no_beta_url": "URL query-shape gating" not in scoped_text,
         "all_rows_include_beta_probe": "URL query-shape gating" in all_text,
@@ -177,8 +177,8 @@ def main() -> int:
         "backend": client.backend,
         "counts": {
             "seed_ids": len(seed_ids),
-            "fanout_queries": len(fanout),
-            "raw_hits": sum(len(batch.get("hits") or []) for batch in fanout),
+            "fanout_queries": len(fanout_queries),
+            "raw_hits": len(raw_rows),
             "deduped_rows": len(rows),
             "scoped_rows": len(scoped_rows),
             "derived_ids": len(derived_ids),
