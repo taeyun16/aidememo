@@ -4,11 +4,11 @@ This page lays out where `wg` sits in the 2026 agent-memory landscape
 and what it's meaningfully better (or worse) at than its neighbours.
 The category is crowded — pick the right tool.
 
-> **Bottom line:** `wg` is the lightest agent-memory backend that
-> still gives you a temporal knowledge graph + hybrid retrieval. One
-> Rust binary, one redb file, MCP-native on stdio + HTTP. If you want
-> a hosted service, vendor lock-in, or default LLM extraction from raw
-> chat, look elsewhere.
+> **Bottom line:** `wg` is an SDK-first agent-memory system with a
+> lightweight temporal knowledge graph underneath. One Rust binary, one redb
+> file, `wg-agent-sdk` for code-executing agents, and MCP-native tools on
+> stdio + HTTP. If you want a hosted service, vendor lock-in, or default LLM
+> extraction from raw chat, look elsewhere.
 
 ## Category map
 
@@ -114,28 +114,33 @@ that slice carries the smallest footprint.
    done — no Python, no Postgres, no Qdrant, no Neo4j. Most "local"
    alternatives in 2026 still want at least three services.
 
-2. **MCP-native on both transports.** stdio (`wg mcp`) for in-editor
+2. **SDK-first for code-executing agents.** `wg-agent-sdk` gives agents a
+   programmable memory working set: `Memory.open`, `search_rows`,
+   `coverage_by`, `aggregate_many`, and `remember`. MCP remains the
+   model-visible tool path when the agent should call tools directly.
+
+3. **MCP-native on both transports.** stdio (`wg mcp`) for in-editor
    agents, HTTP/SSE (`wg mcp-serve`) for shared / remote clients —
    same 25-tool surface served by the same dispatcher in-process Rust.
 
-3. **Polyglot in-process bindings.** Python · Node · Elixir · C all
+4. **Polyglot in-process bindings.** Python · Node · Elixir · C all
    call the same `WikiGraph` API directly without IPC. Lets editor
    plugins, IDE extensions, and CLI tools share the wiki without a
    service intermediary.
 
-4. **Hybrid retrieval without an external vector DB.** BM25 + HNSW,
+5. **Hybrid retrieval without an external vector DB.** BM25 + HNSW,
    type-aware ranking, optional in-process cross-encoder rerank, and a
    per-fact adapter are all available locally. The TEI integration adds
    remote embedding / rerank services as an opt-in layer.
 
-5. **Validity windows.** `wg fact supersede` + `--as-of <date>` reproduces past state. Graphiti has this; mem0 / Letta don't.
+6. **Validity windows.** `wg fact supersede` + `--as-of <date>` reproduces past state. Graphiti has this; mem0 / Letta don't.
 
-6. **Agent guardrails inline.** `wg_fact_add` returns `existing_similar`
+7. **Agent guardrails inline.** `wg_fact_add` returns `existing_similar`
    (BM25 dedup hint) and `entity_name_alternatives` (typo warning) in
    the same response — observable side effects that cloud SaaS
    provides only through a UI.
 
-7. **Single-machine performance.** ~339× faster bulk write than beads
+8. **Single-machine performance.** ~339× faster bulk write than beads
    on 10k inserts ([source](bench/beads-vs-wg/results)). Daemon
    hot-path search ~9 ms BM25 / ~45 ms HNSW.
 

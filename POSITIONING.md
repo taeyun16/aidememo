@@ -1,22 +1,28 @@
 # wg Positioning
 
-`wg` is best positioned as a **local-first temporal memory graph for coding agents**.
+`wg` is best positioned as an **agent-friendly SDK memory system for coding
+agents**.
 
 Not a hosted memory product. Not a full agent runtime. Not a generic vector DB.
 
 It sits underneath Claude Code, Codex, Cursor, Hermes, and similar tools as a
-portable memory/retrieval substrate: one binary, one store, one MCP surface.
+portable memory/retrieval substrate: one binary, one store, one agent SDK, and
+one MCP surface. When the agent can execute Python, `wg-agent-sdk` is the
+primary product path: fanout retrieval, dedupe, coverage, aggregation, and
+batch fact writes stay in code instead of consuming model context. MCP remains
+the model-visible tool surface for agents that cannot or should not run code.
 
 ## One-line Position
 
-**`wg` gives coding agents repo-adjacent memory with temporal facts, graph
-traversal, and hybrid retrieval, without requiring a Python service stack or a
-hosted memory vendor.**
+**`wg` gives coding agents an SDK-first local memory system: typed facts,
+temporal history, graph traversal, and hybrid retrieval without a hosted memory
+vendor or service stack.**
 
 ## Category
 
 `wg` fits in:
 
+- Agent SDK memory system
 - Local MCP server
 - Temporal knowledge graph
 - Agent memory substrate
@@ -33,6 +39,8 @@ Best-fit users:
 
 - Individual developers who want durable agent memory next to their codebase
 - Small teams that want one shared local or self-hosted memory daemon
+- Code-executing agents that need memory fanout, dedupe, aggregation, and batch
+  capture without pushing every intermediate row through tokens
 - Tool builders who need an embeddable Rust-backed memory layer with native bindings
 - Agent workflows that need explicit facts, history, and graph traversal rather than only embedding recall
 
@@ -47,10 +55,15 @@ Poor-fit users:
 
 The strongest wedge is not "best benchmark score." The strongest wedge is:
 
-**Graphiti-like temporal memory semantics in a much lighter deployment model.**
+**SDK-first agent memory workflows on top of a lightweight temporal graph.**
 
 Concretely:
 
+- `wg-agent-sdk` gives code-executing agents a memory programming interface:
+  `Memory.open`, `search_rows`, `coverage_by`, `aggregate_many`, and
+  `remember`.
+- MCP tools expose the same memory system when the model needs visible tool
+  calls rather than hidden code execution.
 - `wg` keeps temporal memory primitives like `supersede`, `current_only`, `as_of`, and archive/cold-tier behavior.
 - It ships as a Rust binary with built-in stdio/HTTP MCP instead of a Python + DB + graph-service stack.
 - It can be embedded directly via Python, Node, Elixir, and C bindings instead of forcing everything through one server runtime.
@@ -59,7 +72,20 @@ That makes `wg` compelling anywhere operational simplicity matters as much as ra
 
 ## Why It Wins
 
-### 1. Deployment simplicity
+### 1. Agent-friendly SDK workflow
+
+`wg` is strongest when agents can treat memory as a programmable substrate:
+
+- open a source-scoped memory client once
+- fan out many searches without model-visible tool chatter
+- dedupe and group retrieved rows in code
+- use exact aggregation for counts, totals, and timelines
+- write learned decisions, lessons, errors, and preferences in batches
+
+That is the clearest product distinction from tools that only expose a chat
+memory endpoint or a raw vector-search API.
+
+### 2. Deployment simplicity
 
 `wg` is unusually small for its category:
 
@@ -70,7 +96,7 @@ That makes `wg` compelling anywhere operational simplicity matters as much as ra
 
 This is the clearest advantage over Graphiti, Letta, and self-hosted mem0-style stacks.
 
-### 2. Better memory model than "just vector search"
+### 3. Better memory model than "just vector search"
 
 `wg` is stronger than lightweight memory tools that stop at embeddings because it has:
 
@@ -83,7 +109,7 @@ This is the clearest advantage over Graphiti, Letta, and self-hosted mem0-style 
 That gives it a better answer to "what is true now?", "what was true then?", and
 "how do these things connect?" than a plain retrieval cache.
 
-### 3. Agent-native interface design
+### 4. Agent-native interface design
 
 The MCP surface is a product asset, not just an integration detail. Tools like:
 
@@ -93,8 +119,12 @@ The MCP surface is a product asset, not just an integration detail. Tools like:
 - `wg_fact_add`
 
 show a clear opinion about how agents should retrieve, count, and write memory.
+The Python composition layer carries the same opinion into code-executing
+agents: `Memory.open`, `search_rows`, `coverage_by`, `aggregate_many`, and
+`remember` are for workflows where intermediate retrieval sets should stay in
+program state rather than model context.
 
-### 4. Good economics for high-ingest workflows
+### 5. Good economics for high-ingest workflows
 
 The default path does not force an LLM call on every insert. That matters when:
 
@@ -176,11 +206,12 @@ Mem0 wins on:
 
 `wg` should position against Letta as:
 
-**memory substrate, not memory OS.**
+**SDK memory substrate, not memory OS.**
 
 Letta wins when buyers want one system to own the entire agent runtime.
 
-`wg` wins when buyers already have agents and only need a portable memory layer.
+`wg` wins when buyers already have agents and need a portable SDK/tool memory
+layer underneath them.
 
 ### Versus Graphiti / Zep
 
@@ -211,7 +242,8 @@ Instead:
 
 **OMEGA is the "highest-performance local memory workflow."**
 
-**`wg` is the "most portable and operationally light temporal memory layer."**
+**`wg` is the "agent-friendly SDK memory system with the lightest serious
+temporal graph underneath."**
 
 That is a cleaner, more durable split.
 
@@ -219,11 +251,12 @@ That is a cleaner, more durable split.
 
 Recommended order:
 
-1. Local-first temporal memory for coding agents
-2. One binary, one store, built-in MCP
-3. Facts + graph + history, not just embeddings
-4. Bring your own agent; `wg` plugs underneath
-5. Native bindings for tool builders
+1. Agent-friendly SDK memory for coding agents
+2. Code-first composition when the agent can run Python
+3. MCP for model-visible memory tools
+4. One binary, one store, local-first by default
+5. Facts + graph + history, not just embeddings
+6. Native bindings for tool builders
 
 Avoid leading with:
 
@@ -234,6 +267,7 @@ Avoid leading with:
 ## Claims To Make
 
 - "Local-first"
+- "SDK-first agent memory"
 - "Temporal memory graph"
 - "Built for coding agents"
 - "One binary, built-in MCP"
@@ -250,35 +284,37 @@ Avoid leading with:
 
 ## Suggested Taglines
 
-- `wg`: local-first temporal memory for coding agents
+- `wg`: SDK-first memory for coding agents
+- Agent-friendly memory SDK with a local temporal graph underneath
 - A repo-adjacent memory graph for Claude Code, Codex, and beyond
 - Temporal agent memory without the service stack
 - Bring-your-own-agent memory substrate with graph + history
 
 ## Short Pitch
 
-`wg` is a local-first memory layer for coding agents. It stores facts,
+`wg` is an SDK-first memory system for coding agents. It stores facts,
 entities, relations, and temporal history in a single embedded store, exposes
-them through CLI, MCP, and native bindings, and gives agents a better memory
-model than plain vector retrieval without forcing users into a hosted service
-or a heavy Python infrastructure stack.
+them through `wg-agent-sdk`, MCP, CLI, and native bindings, and gives agents a
+better memory model than plain vector retrieval without forcing users into a
+hosted service or a heavy Python infrastructure stack.
 
 ## Strategic Focus
 
 If the project wants a sharper market position, the best path is:
 
-1. Double down on the "coding-agent memory substrate" identity
-2. Keep temporal/history semantics as the differentiator
-3. Treat deployment simplicity as a first-class product feature
-4. Improve ingestion quality without giving up the local-first default
-5. Avoid drifting into "generic memory platform for everything"
+1. Double down on the "agent-friendly SDK memory system" identity
+2. Keep code-first memory composition as the primary workflow
+3. Keep temporal/history semantics as the structural differentiator
+4. Treat deployment simplicity as a first-class product feature
+5. Improve ingestion quality without giving up the local-first default
+6. Avoid drifting into "generic memory platform for everything"
 
 ## Bottom Line
 
 `wg` is strongest when presented as:
 
-**the lightest serious temporal memory graph you can drop under a coding
-agent.**
+**the agent-friendly SDK memory system with a serious local temporal graph
+underneath.**
 
 That is sharper than "local RAG," more practical than "memory OS," and more
 defensible than trying to win a general AI-memory category on benchmark score

@@ -1,8 +1,8 @@
 <div align="center">
   <h1 align="center">wg</h1>
-  <p><strong>Local-first temporal memory for coding agents.</strong></p>
+  <p><strong>Agent-friendly SDK memory for coding agents.</strong></p>
   <p>
-    One Rust binary. One redb store. CLI, MCP, and native bindings for agents that need memory with facts, graph traversal, and history.
+    One Rust binary. One redb store. A code-first SDK, MCP tools, CLI, and native bindings for agents that need memory with facts, graph traversal, and history.
   </p>
   <p>
     <a href="https://github.com/taeyun16/wg/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/taeyun16/wg/ci.yml?branch=main&label=ci&style=flat-square"></a>
@@ -11,8 +11,9 @@
     <a href="#install"><img alt="Install with Cargo" src="https://img.shields.io/badge/install-cargo%20install-2563eb?style=flat-square"></a>
   </p>
   <p>
+    <a href="./packages/wg-agent-sdk/README.md"><img alt="Agent SDK: Python" src="https://img.shields.io/badge/agent%20SDK-Python-0891b2?style=flat-square"></a>
     <a href="./AGENTS.md"><img alt="MCP stdio + HTTP" src="https://img.shields.io/badge/MCP-stdio%20%2B%20HTTP-7c3aed?style=flat-square"></a>
-    <a href="#architecture"><img alt="Bindings: Python Node Elixir C" src="https://img.shields.io/badge/bindings-Python%20%7C%20Node%20%7C%20Elixir%20%7C%20C-0891b2?style=flat-square"></a>
+    <a href="#architecture"><img alt="Bindings: Python Node Elixir C" src="https://img.shields.io/badge/native%20bindings-Python%20%7C%20Node%20%7C%20Elixir%20%7C%20C-0f766e?style=flat-square"></a>
     <a href="#why-wg"><img alt="Local-first" src="https://img.shields.io/badge/local--first-one%20binary%20%2B%20one%20store-16a34a?style=flat-square"></a>
     <a href="./docs/MEASUREMENTS.md"><img alt="Measured agent UX and retrieval" src="https://img.shields.io/badge/measured-agent%20UX%20%2B%20retrieval-ca8a04?style=flat-square"></a>
     <a href="./COMPARE.md"><img alt="Compare with mem0 Graphiti Letta" src="https://img.shields.io/badge/compare-mem0%20%7C%20Graphiti%20%7C%20Letta-475569?style=flat-square"></a>
@@ -21,20 +22,24 @@
 
 ---
 
-`wg` is a memory layer for Claude Code, Codex, Cursor, Hermes, and other
-coding agents. It stores project knowledge as typed facts connected to
-entities and relations, keeps temporal history with validity windows, and
-exposes the same store through a CLI, MCP server, and in-process bindings.
+`wg` is an agent-friendly SDK memory system for Claude Code, Codex, Cursor,
+Hermes, and other coding agents. It stores project knowledge as typed facts
+connected to entities and relations, keeps temporal history with validity
+windows, and exposes the same store through a Python agent SDK, MCP tools, CLI,
+and in-process bindings.
 
-It is deliberately not a hosted memory SaaS, a full agent runtime, or a
-vector database you have to operate. The default path is local and serverless;
-a warm daemon is available when multiple agents need a faster shared endpoint.
+It is deliberately not a hosted memory SaaS, a full agent runtime, or a vector
+database you have to operate. The default path is local and serverless: agents
+can either call MCP tools directly or use `wg-agent-sdk` when they can execute
+Python and need to keep intermediate memory state in code.
 
 ```mermaid
 flowchart LR
-    Agent["Claude / Codex / Hermes"] --> MCP["wg mcp / wg mcp-serve"]
+    Agent["Claude / Codex / Hermes"] --> SDK["wg-agent-sdk"]
+    Agent --> MCP["wg mcp / wg mcp-serve"]
     Human["CLI user"] --> CLI["wg query / search / fact add"]
     Plugin["Python / Node / Elixir / C"] --> API["WikiGraph API"]
+    SDK --> Core["wg-core"]
     MCP --> Core["wg-core"]
     CLI --> Core
     API --> Core
@@ -45,9 +50,10 @@ flowchart LR
 
 | Need | What wg gives you |
 |---|---|
+| Agent-friendly SDK memory | `wg-agent-sdk` gives code-executing agents `Memory.open`, `search_rows`, `coverage_by`, `aggregate_many`, and `remember`. |
 | Local agent memory | Single binary + single embedded store. No Postgres, Qdrant, Neo4j, or hosted vendor. |
 | More than vector recall | Typed facts, entities, relations, graph traversal, temporal validity, aggregation. |
-| Agent-native access | Built-in MCP over stdio and HTTP, plus a compact CLI for humans. |
+| Agent-native access | SDK for code-first composition, MCP over stdio/HTTP for model-visible tools, plus a compact CLI for humans. |
 | Shared team/project memory | Optional `source_id` scoping, multi-project stores, and a daemon path for shared writes. |
 | Tool-builder embedding | Python, Node, Elixir, and C bindings call the same Rust core in process. |
 
@@ -96,6 +102,7 @@ Register it with an agent:
 
 ```bash
 wg init --agent codex ./my-wiki
+wg mcp-install --target codex --source-id my-project
 
 # Claude Code
 claude mcp add wg -- wg mcp
@@ -105,6 +112,19 @@ claude mcp add wg -- wg mcp
 command = "wg"
 args = ["mcp"]
 ```
+
+## Agent Entry Points
+
+Most agent turns should start with one memory read and only branch when the
+question shape requires it:
+
+| Task shape | Use | Why |
+|---|---|---|
+| New issue, ticket, PR, or automation trigger | `wg_workflow_start` / `wg workflow start` | Creates a tracked session, stores the trigger, and returns decisions, lessons, errors, recent facts, and search hits. |
+| Opening a normal interactive turn | `wg_context` | One MCP round-trip for pinned facts, personalisation, recent activity, and topic context. |
+| Follow-up topic dive | `wg_query` | Lighter topic retrieval when pinned/recent context is already loaded. |
+| Exact totals, counts, date sets, or timelines | `wg_aggregate` | Deterministic arithmetic over matching facts; use it as insurance for cross-fact counting, not for simple recall. |
+| Learned a durable fact | `wg_fact_add` / `wg_fact_add_many` | Store typed memory explicitly; pass the `session_id` returned by `wg_workflow_start` to keep follow-up facts on the workflow thread. |
 
 ## Common Workflows
 
@@ -148,6 +168,36 @@ explicit `source_id` tool arguments still override it.
 
 ```bash
 wg mcp-install --target codex --source-id agent-a
+```
+
+### Compose memory in Python when the agent can run code
+
+Use MCP tools for one-off, model-visible calls. Use `wg-agent-sdk` when a task
+needs fanout retrieval, dedupe, coverage checks, aggregation, or batch writes
+without routing every intermediate row through the LLM context.
+
+```bash
+pip install wg-agent-sdk
+pip install "wg-agent-sdk[binding]"   # optional fast path via wg-python
+```
+
+```python
+from wg_agent import Memory
+
+mem = Memory.open(source_id="research-alpha")
+rows = mem.search_rows([
+    "release preflight decisions",
+    {"query": "lock retry lessons", "topic": "Shared store"},
+])
+coverage = mem.coverage_by(rows, ["fact_type"])
+
+mem.remember([
+    {
+        "content": "Lesson: source-scoped fanout keeps multi-agent memory checks isolated.",
+        "fact_type": "lesson",
+        "entities": ["wg", "Agents"],
+    }
+])
 ```
 
 ### Start from a sparse issue or ticket
@@ -202,6 +252,9 @@ parallel.
 | Serverless lock-retry sweep, retry `5000` | smooth through 4 writers; 8 writers persisted 79/80 |
 | HTTP shared `mcp-serve`, 2 clients x 10 writes | p50 `18.4ms`, p95 `41.8ms`, 20/20 persisted |
 | Zero-token workflow demo | decision + lesson + error surfaced in `128ms` |
+| MCP source-default install Scenario M | 12/12 invariants; installed `WG_SOURCE_ID` scoped MCP write/search in `323.97ms` |
+| Hermes Memory-as-Code Scenario N | 9/9 invariants; SDK fanout/dedupe/coverage/aggregate excluded beta-source rows |
+| `wg-agent-sdk` pack smoke | wheel install + `Memory` / `WgClient` / `WgMemorySDK` first-use checks passed in `3.20s` |
 | `wg-napi` package split | root JS/types package + current-platform optional package install smoke passed |
 | `wg-napi` version gate | root/platform package versions and optionalDependency pins verified together |
 | `wg-napi` publish workflow | trusted-publisher workflow defaults to dry-run and gates real publish on exact version input |
@@ -221,6 +274,7 @@ and temporal memory semantics, not a SOTA benchmark claim.
 | Capture | `wg_extract`, pending review queue, `wg pending list/stats/approve/reject` |
 | Ops | `doctor` / MCP `wg_doctor`, `overview`, `bench`, `vector-rebuild`, `consolidate`, `auto-relate` |
 | Sharing | `source_id`, multi-project stores, stdio MCP, HTTP/SSE MCP, daemon discovery |
+| Code-first composition | `wg-agent-sdk` with `Memory.open`, `search_rows`, `coverage_by`, `aggregate_many`, `remember` |
 | Bindings | Python, Node, Elixir, C |
 
 ## CLI Reference

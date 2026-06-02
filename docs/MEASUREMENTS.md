@@ -63,6 +63,33 @@ with current scorecards in
 | wg-agent-sdk wheel install smoke | `scripts/wg-agent-sdk-pack-smoke.sh`: built `wg_agent_sdk-0.1.0-py3-none-any.whl`, installed it into a temp venv, verified `Memory`, `WgClient`, `WgMemorySDK`, and first-use methods; total 3.20s | The code-first SDK path is installable independently of Hermes, so Codex / Claude Code / CI scripts do not need the Hermes plugin package. |
 | hermes-wg wheel install smoke | `scripts/hermes-wg-pack-smoke.sh`: built `wg_agent_sdk-0.1.0-py3-none-any.whl` + `hermes_wg-1.0.0-py3-none-any.whl`, installed both into a temp venv, verified `hermes_wg.WgMemorySDK` re-exports `wg_agent.Memory`, `hermes.plugins` entry point, `plugin.yaml`, and bundled `SKILL.md`; total 4.36s | The Hermes plugin remains pip-installable while delegating the code-first SDK layer to the shared package. |
 
+## Agentic Loop Calibration
+
+`wg_aggregate` should be described as a deterministic arithmetic primitive, not
+as a general accuracy lever. The stable product rule is:
+
+| Question shape | Recommended path |
+|---|---|
+| "What did I say about X?" / "When did I last do Y?" / "What's my preference for Z?" | Answer from `wg_context`, `wg_query`, or `wg_search` snippets. |
+| "How much total did I spend on X?" | `wg_aggregate(op=sum_currency)` |
+| "How many hours/days total?" | `wg_aggregate(op=sum_duration)` |
+| "How many distinct days had event X?" | `wg_aggregate(op=count_distinct_dates)` |
+| "Timeline of all X events" | `wg_aggregate(op=timeline)` |
+| "How many times did I decide/try X?" | `wg_aggregate(op=count)` or `op=enumerate` |
+
+The earlier 60-question focused run showed a large multi-session gain when the
+agent used aggregation. A later balanced LongMemEval-style run with 240
+questions, MiniMax temperature 0, and a 3-run mean put the agentic-loop variant
+within reader noise of the single-call baseline: roughly `-1.9pt` versus the
+mean with `sigma ~= 1.1pt`. Forced agentic-loop dispatch also caused
+single-fact SS-pref / temporal regressions because extra JSON tool-call
+structure can disturb simple recall.
+
+A single-shot "does this need aggregation?" classifier netted to baseline at
+240 questions (`+0pt` mean, around 40% precision). The practical conclusion is
+to expose `wg_aggregate` in reader prompts as insurance for counting, summing,
+and timelines, while keeping normal recall on `wg_context` / `wg_query`.
+
 ## gbrain-evals Adapter
 
 Fresh-checkout validation against `garrytan/gbrain-evals` commit `ef7794f`
@@ -276,7 +303,7 @@ Packaging readiness:
 | `scripts/wg-napi-publish-dry-run.sh` | Wrapper around the publish engine with `WG_NAPI_PUBLISH_MODE=dry-run`. Local macOS arm64: root payload `wg-napi@0.1.0`, 4 files, 4.18 KB packed, README included, no `.node`; platform payload `wg-napi-darwin-arm64@0.1.0`, 2 files, 2.79 MB packed; payload validators passed for both. |
 | `scripts/wg-nif-version.sh` | Version gate for the Elixir package. With no args, verifies `Cargo.toml` workspace version equals `crates/wg-nif/mix.exs`; with a semver arg, updates both. Latest run: `0.1.0` pinned. |
 | `scripts/bindings-release-smoke.sh` | Cross-binding readiness smoke with a timed Markdown summary. Runs `cargo check -p wg-python -p wg-napi -p wg-nif -p wg-ffi`, npm version/pack/install smoke, and reports Python/Elixir/C optional package smokes based on local tools. Local macOS arm64 warm default path: cargo check 0.22s, npm version gate 0.05s, npm pack/install smoke 3.05s, total 3.37s; child pack-smoke summaries remain in stdout, but `$GITHUB_STEP_SUMMARY` contains only the one top-level `bindings-release-smoke` table (`rg -n '^## ' "$summary_file"` returns one heading). With `WG_BINDINGS_SMOKE_NPM=0 WG_BINDINGS_SMOKE_OPTIONAL=1`, the Python wheel build, Elixir `mix compile.cargo --force && mix test`, and C FFI smoke all passed. |
-| `scripts/sdk-promotion-check.sh` | SDK wording gate for `wg-python` and `wg-napi`. Default local run: ok=6, ready=3, blocked=2, fail=0, `local_ready=true`, `sdk_promotable=false` because public PyPI/npm installs are not verified. With `WG_SDK_PROMOTION_RUN_SCENARIO_K=1`: ok=7, ready=2, blocked=2, fail=0 and Scenario K reports 8/8 invariants with p50 CLI 1882.33ms, Python 19.97ms, Node 20.0ms. Release preflight runs this gate by default; CI gets the same table in `$GITHUB_STEP_SUMMARY`; set `WG_RELEASE_PREFLIGHT_SDK_PROMOTION=0` only for focused debugging. |
+| `scripts/sdk-promotion-check.sh` | Package-SDK wording gate for `wg-python` and `wg-napi`. Default local run: ok=6, ready=3, blocked=2, fail=0, `local_ready=true`, `sdk_promotable=false` because public PyPI/npm installs are not verified. This does not block positioning `wg-agent-sdk` as the agent-facing SDK path. With `WG_SDK_PROMOTION_RUN_SCENARIO_K=1`: ok=7, ready=2, blocked=2, fail=0 and Scenario K reports 8/8 invariants with p50 CLI 1882.33ms, Python 19.97ms, Node 20.0ms. Release preflight runs this gate by default; CI gets the same table in `$GITHUB_STEP_SUMMARY`; set `WG_RELEASE_PREFLIGHT_SDK_PROMOTION=0` only for focused debugging. |
 | `.github/workflows/wg-napi-artifacts.yml` | Manual/tag workflow builds, tests, packs, and uploads root + platform `wg-napi` artifacts on Ubuntu, macOS, and Windows. |
 | `.github/workflows/wg-python-publish-dry-run.yml` | Manual/tag workflow builds and validates `wg-python` PyPI payloads on Ubuntu without uploading. |
 | `.github/workflows/wg-python-publish.yml` | Manual trusted-publisher workflow. It builds and validates distributions without PyPI permissions, uploads them as artifacts, then publishes via `pypa/gh-action-pypi-publish@release/v1` only when `dry_run=false`. Default `dry_run=true`; real publish requires a PyPI trusted publisher for this workflow and the `pypi-publish` environment. Local artifact-mode check: `WG_PYTHON_DIST_DIR=$(mktemp -d) scripts/wg-python-publish-dry-run.sh` produced wheel 2.8M + sdist 349K. |

@@ -122,15 +122,16 @@ to retry/daemon guidance through the tool surface they already call. Release
 version bumps are now one measured gate: `scripts/wg-release-version.sh
 [VERSION]` verifies Cargo, Python, npm, and NIF package versions together while
 leaving C FFI on Cargo metadata. `scripts/release-preflight.sh` now wraps the
-release gates into a timed local/full preflight. SDK naming stays conservative:
-Python and Node now have workflow-level sparse-ticket APIs, package docs, and
-stable error handling. Scenario K now validates their workflow contract against
-the CLI. `scripts/sdk-promotion-check.sh` now turns the SDK promotion rule into
+release gates into a timed local/full preflight. SDK naming now distinguishes
+the product layer from the low-level package layer: `wg-agent-sdk` is the
+agent-facing SDK path, while `wg-python` and `wg-napi` remain SDK candidates
+until public registry releases succeed. Python and Node now have
+workflow-level sparse-ticket APIs, package docs, and stable error handling.
+Scenario K validates their workflow contract against the CLI.
+`scripts/sdk-promotion-check.sh` keeps the low-level package promotion rule as
 a local gate, `ci-local.sh all` runs it, release preflight runs it by default,
-and CI now exposes it as a dedicated fast check with a GitHub summary table:
-local criteria pass, but public registry installs still block actual SDK
-wording. They remain SDK candidates until public registry releases succeed.
-Elixir and C remain low-level bindings. First-run onboarding now starts with a
+and CI exposes it as a dedicated fast check with a GitHub summary table. Elixir
+and C remain low-level bindings. First-run onboarding now starts with a
 zero-token workflow demo that shows the sparse-ticket memory loop directly, and
 release smoke plus local CI protect that demo. Local CI now prints the same
 kind of timed summary used by release smoke and preflight scripts, and workflow
@@ -184,7 +185,7 @@ source namespace as MCP.
 Next measurement candidates:
 1. Reserve/configure the PyPI `wg-python` trusted publisher, then run `.github/workflows/wg-python-publish.yml` with `dry_run=false`.
 2. Configure npm trusted publishers for `wg-napi*` package names, then run `.github/workflows/wg-napi-publish.yml` with `dry_run=false`.
-3. Promote `wg-python` from binding to SDK only after the PyPI release succeeds.
+3. Promote `wg-python` from binding / SDK candidate to package SDK only after the PyPI release succeeds.
 4. Prototype daemon auto-discovery only if a future scenario needs more than four concurrent local writers without user-visible setup.
 
 ## Positioning Guardrails
