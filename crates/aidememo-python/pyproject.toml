@@ -1,0 +1,37 @@
+[build-system]
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "aidememo-python"
+version = "0.1.0"
+description = "Python bindings for AideMemo (aidememo) — local knowledge graph for LLM agents"
+readme = "README.md"
+license = { text = "MIT OR Apache-2.0" }
+requires-python = ">=3.9"
+authors = [{ name = "AideMemo Team" }]
+keywords = ["knowledge-graph", "wiki", "search", "bm25", "semantic", "mcp", "llm"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Rust",
+    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: Apache Software License",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Text Processing :: Indexing",
+]
+
+[project.urls]
+Repository = "https://github.com/taeyun16/aidememo"
+
+[tool.maturin]
+module-name = "aidememo_python"
+features = ["pyo3/extension-module"]
+strip = true
+include = [
+    { path = "vendor/tokenizers/Cargo.toml", format = "sdist" },
+    { path = "vendor/tokenizers/src/**/*", format = "sdist" },
+]

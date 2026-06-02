@@ -1,10 +1,10 @@
-//! Phase breakdown for `WikiGraph::hybrid_search` on the
+//! Phase breakdown for `AideMemo::hybrid_search` on the
 //! BM25-prefilter path (semantic_index = "naive"), where the perf
 //! bench shows search_hybrid sitting at ~5-10 ms p95 — within 2× of
 //! PLAN.md's target. The HNSW path already passes; this profiler is
 //! about understanding the remaining miss on the fallback path.
 //!
-//! Sets `WG_SEARCH_PROFILE=1` so each phase
+//! Sets `AIDEMEMO_SEARCH_PROFILE=1` so each phase
 //! (bm25_search, graph_prefilter, semantic_search, rrf_fusion) prints
 //! its elapsed time per call.
 //!
@@ -13,13 +13,13 @@
 
 use std::time::Instant;
 
+use aidememo_core::{AideMemo, Config, EntityInput, EntityType, FactInput, FactType, SearchOpts};
 use tempfile::TempDir;
-use wg_core::{Config, EntityInput, EntityType, FactInput, FactType, SearchOpts, WikiGraph};
 
 fn main() {
     // SAFETY: setting an env var at startup before any threads spawn.
     unsafe {
-        std::env::set_var("WG_SEARCH_PROFILE", "1");
+        std::env::set_var("AIDEMEMO_SEARCH_PROFILE", "1");
     }
 
     const SCALE: usize = 10_000;
@@ -31,7 +31,7 @@ fn main() {
     let mut config = Config::default();
     config.store.path = store_path.to_string_lossy().into_owned();
     config.search.semantic_index = "naive".into();
-    let wiki = WikiGraph::open(&store_path, config).expect("open");
+    let wiki = AideMemo::open(&store_path, config).expect("open");
 
     eprintln!("=== search profile, scale = {SCALE} (semantic_index=naive) ===");
 

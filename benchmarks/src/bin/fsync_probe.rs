@@ -6,7 +6,7 @@
 //! confirms it by inserting the same payload N times into a fresh
 //! redb file under each durability level and printing p50 / p95.
 //!
-//! No WikiGraph involvement — we want the rawest possible measurement
+//! No AideMemo involvement — we want the rawest possible measurement
 //! of the storage layer.
 //!
 //! Run:

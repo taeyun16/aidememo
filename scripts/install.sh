@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# wg installer — builds & installs the `wg` CLI from source via cargo.
+# aidememo installer — builds & installs the `aidememo` CLI from source via cargo.
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/taeyun16/wg/main/scripts/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/taeyun16/aidememo/main/scripts/install.sh | bash
 #
 # Requirements: cargo (Rust 1.85+).
 
 set -euo pipefail
 
-REPO_URL="${WG_REPO_URL:-https://github.com/taeyun16/wg}"
-BIN_NAME="wg"
+REPO_URL="${AIDEMEMO_REPO_URL:-https://github.com/taeyun16/aidememo}"
+BIN_NAME="aidememo"
 
 if ! command -v cargo >/dev/null 2>&1; then
     cat >&2 <<EOF
@@ -23,7 +23,7 @@ EOF
 fi
 
 echo "→ Installing $BIN_NAME from $REPO_URL (this may take a few minutes)…"
-cargo install --git "$REPO_URL" --bin "$BIN_NAME" wg-cli
+cargo install --git "$REPO_URL" --bin "$BIN_NAME" aidememo-cli
 
 CARGO_BIN="${CARGO_HOME:-$HOME/.cargo}/bin"
 
@@ -45,4 +45,4 @@ echo "  $BIN_NAME init ./my-wiki"
 echo "  $BIN_NAME query \"some topic\""
 echo
 echo "Register as MCP for Claude Code:"
-echo "  claude mcp add wg -- $BIN_NAME mcp"
+echo "  claude mcp add aidememo -- $BIN_NAME mcp"

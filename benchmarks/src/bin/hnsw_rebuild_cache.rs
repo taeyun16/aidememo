@@ -4,20 +4,20 @@
 //! Calls rebuild once with a cold sidecar (full re-embed) and a
 //! second time with the in-memory + on-disk cache populated. The
 //! delta is the lower bound on the win operators see when they
-//! call `wg ingest` on a corpus where most facts are unchanged.
+//! call `aidememo ingest` on a corpus where most facts are unchanged.
 
+use aidememo_core::AideMemo;
 use std::path::Path;
 use std::time::Instant;
-use wg_core::WikiGraph;
 
 fn main() {
     let store_path = std::env::args()
         .nth(1)
-        .unwrap_or_else(|| "/tmp/wg-bench-miracl/_meta/wiki.redb".to_string());
+        .unwrap_or_else(|| "/tmp/aidememo-bench-miracl/_meta/wiki.redb".to_string());
     println!("store: {store_path}");
 
-    let config = wg_core::Config::default();
-    let wiki = WikiGraph::open(Path::new(&store_path), config).expect("open");
+    let config = aidememo_core::Config::default();
+    let wiki = AideMemo::open(Path::new(&store_path), config).expect("open");
 
     // Drop any existing sidecar so the first rebuild is genuinely cold.
     let sidecar = Path::new(&store_path).with_extension("hnsw.bin");
@@ -35,8 +35,8 @@ fn main() {
 
     // Force the cache to come from disk by re-opening the store.
     drop(wiki);
-    let config = wg_core::Config::default();
-    let wiki = WikiGraph::open(Path::new(&store_path), config).expect("reopen");
+    let config = aidememo_core::Config::default();
+    let wiki = AideMemo::open(Path::new(&store_path), config).expect("reopen");
 
     let t = Instant::now();
     let n = wiki.vector_index_rebuild().expect("disk-warm rebuild");

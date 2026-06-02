@@ -3,30 +3,30 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SOURCE="${WG_SKILLOPT_SOURCE:-$ROOT_DIR/wg-skill/SKILL.md}"
-STATE_DIR="${WG_SKILLOPT_STATE_DIR:-$ROOT_DIR/target/skillopt-lite}"
-QUEUE_DIR="${WG_SKILLOPT_QUEUE_DIR:-$STATE_DIR/candidates}"
-CHECK_SCRIPT="${WG_SKILLOPT_CHECK_SCRIPT:-$ROOT_DIR/scripts/skillopt-lite-check.sh}"
-INTERVAL_SECONDS="${WG_SKILLOPT_INTERVAL_SECONDS:-86400}"
-MAX_CYCLES="${WG_SKILLOPT_MAX_CYCLES:-1}"
-APPLY="${WG_SKILLOPT_APPLY:-0}"
-FAIL_ON_REJECT="${WG_SKILLOPT_FAIL_ON_REJECT:-0}"
-RUN_SCENARIOS="${WG_SKILLOPT_RUN_SCENARIOS:-0}"
+SOURCE="${AIDEMEMO_SKILLOPT_SOURCE:-$ROOT_DIR/aidememo-skill/SKILL.md}"
+STATE_DIR="${AIDEMEMO_SKILLOPT_STATE_DIR:-$ROOT_DIR/target/skillopt-lite}"
+QUEUE_DIR="${AIDEMEMO_SKILLOPT_QUEUE_DIR:-$STATE_DIR/candidates}"
+CHECK_SCRIPT="${AIDEMEMO_SKILLOPT_CHECK_SCRIPT:-$ROOT_DIR/scripts/skillopt-lite-check.sh}"
+INTERVAL_SECONDS="${AIDEMEMO_SKILLOPT_INTERVAL_SECONDS:-86400}"
+MAX_CYCLES="${AIDEMEMO_SKILLOPT_MAX_CYCLES:-1}"
+APPLY="${AIDEMEMO_SKILLOPT_APPLY:-0}"
+FAIL_ON_REJECT="${AIDEMEMO_SKILLOPT_FAIL_ON_REJECT:-0}"
+RUN_SCENARIOS="${AIDEMEMO_SKILLOPT_RUN_SCENARIOS:-0}"
 
 usage() {
     cat <<'EOF'
 usage: scripts/skillopt-lite-cycle.sh [--candidate PATH] [--apply] [--interval SECONDS] [--max-cycles N]
 
-Periodic SkillOpt-lite runner for wg memory skill/profile candidates.
+Periodic SkillOpt-lite runner for aidememo memory skill/profile candidates.
 
 Environment:
-  WG_SKILLOPT_SOURCE             Source skill/profile to replace on accepted apply.
-  WG_SKILLOPT_STATE_DIR          State directory (default: target/skillopt-lite).
-  WG_SKILLOPT_QUEUE_DIR          Candidate queue directory (default: $STATE_DIR/candidates).
-  WG_SKILLOPT_APPLY=1            Copy accepted candidate over $WG_SKILLOPT_SOURCE.
-  WG_SKILLOPT_RUN_SCENARIOS=1    Include Scenario L/M/N in the gate.
-  WG_SKILLOPT_MAX_CYCLES=0       Run forever.
-  WG_SKILLOPT_FAIL_ON_REJECT=1   Return nonzero when any candidate is rejected.
+  AIDEMEMO_SKILLOPT_SOURCE             Source skill/profile to replace on accepted apply.
+  AIDEMEMO_SKILLOPT_STATE_DIR          State directory (default: target/skillopt-lite).
+  AIDEMEMO_SKILLOPT_QUEUE_DIR          Candidate queue directory (default: $STATE_DIR/candidates).
+  AIDEMEMO_SKILLOPT_APPLY=1            Copy accepted candidate over $AIDEMEMO_SKILLOPT_SOURCE.
+  AIDEMEMO_SKILLOPT_RUN_SCENARIOS=1    Include Scenario L/M/N in the gate.
+  AIDEMEMO_SKILLOPT_MAX_CYCLES=0       Run forever.
+  AIDEMEMO_SKILLOPT_FAIL_ON_REJECT=1   Return nonzero when any candidate is rejected.
 EOF
 }
 
@@ -114,8 +114,8 @@ run_candidate() {
 
     echo "==> checking candidate $candidate"
     set +e
-    WG_SKILLOPT_CANDIDATE="$candidate" \
-        WG_SKILLOPT_RUN_SCENARIOS="$RUN_SCENARIOS" \
+    AIDEMEMO_SKILLOPT_CANDIDATE="$candidate" \
+        AIDEMEMO_SKILLOPT_RUN_SCENARIOS="$RUN_SCENARIOS" \
         "$CHECK_SCRIPT" >"$log_path" 2>&1
     status="$?"
     set -e

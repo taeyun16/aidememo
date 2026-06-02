@@ -1,6 +1,6 @@
 //! HNSW ROI prototype on MIRACL/ko 5503-doc corpus.
 //!
-//! Loads the wg store at /tmp/wg-bench-miracl, embeds every fact once
+//! Loads the aidememo store at /tmp/aidememo-bench-miracl, embeds every fact once
 //! with the configured model2vec model, builds an in-memory HNSW
 //! index, then runs the 213 dev queries against:
 //!
@@ -8,7 +8,7 @@
 //!   - HNSW (ef=20, 50, 100): ANN top-10 via instant-distance
 //!
 //! Reports P@10, R@10, build time, query time. We compare to the
-//! P@10=0.175 / R@10=0.706 numbers the in-tree wg bench already
+//! P@10=0.175 / R@10=0.706 numbers the in-tree aidememo bench already
 //! reported with the BM25→cosine pipeline.
 
 use std::path::Path;
@@ -18,17 +18,17 @@ use instant_distance::{Builder, Point as IDPoint, Search};
 use serde::Deserialize;
 use simsimd::SpatialSimilarity;
 
-use wg_core::Config;
-use wg_core::FactListOpts;
-use wg_core::WikiGraph;
-use wg_core::embedding::load_provider;
+use aidememo_core::AideMemo;
+use aidememo_core::Config;
+use aidememo_core::FactListOpts;
+use aidememo_core::embedding::load_provider;
 
-const STORE: &str = "/tmp/wg-bench-miracl/_meta/wiki.redb";
+const STORE: &str = "/tmp/aidememo-bench-miracl/_meta/wiki.redb";
 const GOLDEN: &str = "/tmp/bench_miracl_ko.jsonl";
 
 /// L2-normalized vector with cosine distance for instant-distance.
 /// Pre-normalize at insert time so distance is `1 - dot(a, b)` —
-/// matches the cosine metric every other layer of wg uses.
+/// matches the cosine metric every other layer of aidememo uses.
 #[derive(Clone, Debug)]
 struct Vec256(Vec<f32>);
 
@@ -59,7 +59,7 @@ struct GoldenRow {
 
 fn main() {
     let config = Config::default();
-    let wiki = WikiGraph::open(Path::new(STORE), config.clone()).expect("open store");
+    let wiki = AideMemo::open(Path::new(STORE), config.clone()).expect("open store");
 
     println!("loading facts…");
     let facts = wiki

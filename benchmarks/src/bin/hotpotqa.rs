@@ -1,7 +1,7 @@
-//! HotpotQA distractor-setting retrieval baseline for `wg`.
+//! HotpotQA distractor-setting retrieval baseline for `aidememo`.
 //!
 //! Loads `hotpot_dev_distractor_v1.json` (7,405 multi-hop QA pairs)
-//! and benchmarks `wg`'s hybrid search per question. Each question
+//! and benchmarks `aidememo`'s hybrid search per question. Each question
 //! comes with 10 candidate paragraphs (2-3 gold + 7-8 distractors)
 //! laid out as `context: [[title, [sentences]]]`. We ingest each
 //! paragraph as facts (one fact per sentence so supporting-facts
@@ -18,9 +18,9 @@
 //!
 //! ```bash
 //! HOTPOTQA=/tmp/hotpotqa/dev_distractor.json \
-//!   cargo run --release -p wg-benchmarks --bin hotpotqa -- \
+//!   cargo run --release -p aidememo-benchmarks --bin hotpotqa -- \
 //!     --hybrid --top-k 5 \
-//!     --emit-retrievals /tmp/wg_hotpotqa.jsonl
+//!     --emit-retrievals /tmp/aidememo_hotpotqa.jsonl
 //! ```
 
 use std::collections::HashMap;
@@ -28,10 +28,10 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Instant;
 
+use aidememo_core::types::{FactInput, FactType};
+use aidememo_core::{AideMemo, Config, EntityInput, EntityType, SearchOpts};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use wg_core::types::{FactInput, FactType};
-use wg_core::{Config, EntityInput, EntityType, SearchOpts, WikiGraph};
 
 #[derive(Debug, Deserialize)]
 struct Question {
@@ -71,8 +71,8 @@ struct Hit {
 type SentenceMeta = (String, usize);
 type QuestionStore = (
     tempfile::TempDir,
-    WikiGraph,
-    HashMap<wg_core::types::FactId, SentenceMeta>,
+    AideMemo,
+    HashMap<aidememo_core::types::FactId, SentenceMeta>,
 );
 
 struct Args {
@@ -151,7 +151,7 @@ fn build_store_for_question(
             config.model.provider = "model2vec".into();
         }
     }
-    let wiki = WikiGraph::open(&path, config).map_err(|e| e.to_string())?;
+    let wiki = AideMemo::open(&path, config).map_err(|e| e.to_string())?;
 
     let mut inputs = Vec::new();
     let mut sentence_lookup: Vec<(String, usize)> = Vec::new();

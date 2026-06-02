@@ -1,0 +1,26 @@
+name: aidememo
+version: "1.0.0"
+description: |
+  AideMemo integration for Hermes Agent. Wraps the local aidememo knowledge
+  graph as native tools, slash commands, and lifecycle hooks: every new
+  session is auto-pre-loaded with recent facts, and decisions detected
+  during the session can be auto-recorded back to aidememo on close.
+author: Taeyun Jang <taeyun16@pm.me>
+kind: standalone
+requires_env: []
+provides_tools:
+  - aidememo_workflow_start
+  - aidememo_context
+  - aidememo_query
+  - aidememo_search
+  - aidememo_recent
+  - aidememo_aggregate
+  - aidememo_entity_list
+  - aidememo_traverse
+  - aidememo_fact_add
+  - aidememo_fact_add_many
+  - aidememo_doctor
+  - aidememo_lint
+provides_hooks:
+  - pre_llm_call
+  - post_llm_call

@@ -10,13 +10,13 @@ abstention as CORRECT when gold expects abstention, etc.
 Usage:
   set -a; source ~/.hermes/.env; set +a
   python3 scripts/agent_eval_judge.py \
-      --transcripts /tmp/wg_agent_eval/claude.jsonl \
+      --transcripts /tmp/aidememo_agent_eval/claude.jsonl \
       --scenarios scripts/agent_eval_scenarios.json \
       --judge MiniMax-M2.7-highspeed \
       --judge-base-url https://api.minimax.io/v1 \
       --judge-api-key-env MINIMAX_API_KEY \
       --workers 6 \
-      --out /tmp/wg_agent_eval/claude.judged.jsonl
+      --out /tmp/aidememo_agent_eval/claude.judged.jsonl
 """
 from __future__ import annotations
 
@@ -35,8 +35,8 @@ from longmemeval_omega_style import _call_openai, _extract_text  # noqa: E402
 
 
 JUDGE_PROMPT = """\
-You are grading an agent's answer to a question about the wg \
-(Wiki-Graph) codebase. The agent had access to the wiki via MCP \
+You are grading an agent's answer to a question about the aidememo \
+(AideMemo) codebase. The agent had access to the wiki via MCP \
 tools.
 
 Question: {prompt}

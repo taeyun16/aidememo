@@ -15,10 +15,10 @@
 #
 # Usage:
 #   set -a; source .env; set +a
-#   ./scripts/longmemeval_e2e_batch.sh /tmp/wg_retrievals_500_bge_rerank_wide.jsonl
+#   ./scripts/longmemeval_e2e_batch.sh /tmp/aidememo_retrievals_500_bge_rerank_wide.jsonl
 #
 # Each tier writes hypotheses + judgements under
-# /tmp/wg_e2e_batch_<reader>/. Fail-soft: if one reader's API key
+# /tmp/aidememo_e2e_batch_<reader>/. Fail-soft: if one reader's API key
 # tier doesn't allow it, the script logs and moves on.
 
 set -euo pipefail
@@ -28,7 +28,7 @@ if [[ -z "${OPENAI_API_KEY:-}" ]]; then
   exit 2
 fi
 
-RETRIEVALS="${1:-/tmp/wg_retrievals_500_bge_rerank_wide.jsonl}"
+RETRIEVALS="${1:-/tmp/aidememo_retrievals_500_bge_rerank_wide.jsonl}"
 GOLD="${LONGMEMEVAL_DATA:-/tmp/longmemeval/longmemeval_s_cleaned.json}"
 JUDGE="${JUDGE:-gpt-4o}"
 
@@ -59,7 +59,7 @@ echo
 declare -a PIDS=()
 declare -a LOGS=()
 for r in "${READERS[@]}"; do
-  outdir="/tmp/wg_e2e_batch_${r}"
+  outdir="/tmp/aidememo_e2e_batch_${r}"
   log="/tmp/e2e_batch_${r}.log"
   LOGS+=("$log")
   echo "[launch] reader=$r outdir=$outdir log=$log"

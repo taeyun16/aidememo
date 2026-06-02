@@ -1,5 +1,5 @@
-"""WgClient tests — focus on the subprocess fallback path since the
-PyO3 binding is exercised by the wg-python smoke tests upstream."""
+"""AideMemoClient tests — focus on the subprocess fallback path since the
+PyO3 binding is exercised by the aidememo-python smoke tests upstream."""
 
 from __future__ import annotations
 
@@ -8,20 +8,20 @@ from unittest.mock import patch
 
 import pytest
 
-from hermes_wg.client import WgClient, WgUnavailable, parse_window_ms
+from hermes_aidememo.client import AideMemoClient, AideMemoUnavailable, parse_window_ms
 
 
 def test_raises_when_neither_backend_available(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("hermes_wg.client.WgClient._has_cli", staticmethod(lambda: False))
-    monkeypatch.setattr("hermes_wg.client.WgClient._try_load_pyo3", lambda self: None)
-    with pytest.raises(WgUnavailable):
-        WgClient()
+    monkeypatch.setattr("hermes_aidememo.client.AideMemoClient._has_cli", staticmethod(lambda: False))
+    monkeypatch.setattr("hermes_aidememo.client.AideMemoClient._try_load_pyo3", lambda self: None)
+    with pytest.raises(AideMemoUnavailable):
+        AideMemoClient()
 
 
 def test_cli_fallback_dispatch(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("hermes_wg.client.WgClient._has_cli", staticmethod(lambda: True))
-    monkeypatch.setattr("hermes_wg.client.WgClient._try_load_pyo3", lambda self: None)
-    client = WgClient()
+    monkeypatch.setattr("hermes_aidememo.client.AideMemoClient._has_cli", staticmethod(lambda: True))
+    monkeypatch.setattr("hermes_aidememo.client.AideMemoClient._try_load_pyo3", lambda self: None)
+    client = AideMemoClient()
     assert client.backend == "cli"
 
     fake_payload = json.dumps([{"content": "x", "fact_type": "note"}])
@@ -38,9 +38,9 @@ def test_cli_fallback_dispatch(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_mcp_only_context_uses_stdio_tool_call(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("hermes_wg.client.WgClient._has_cli", staticmethod(lambda: True))
-    monkeypatch.setattr("hermes_wg.client.WgClient._try_load_pyo3", lambda self: None)
-    client = WgClient(source_id="team-a")
+    monkeypatch.setattr("hermes_aidememo.client.AideMemoClient._has_cli", staticmethod(lambda: True))
+    monkeypatch.setattr("hermes_aidememo.client.AideMemoClient._try_load_pyo3", lambda self: None)
+    client = AideMemoClient(source_id="team-a")
 
     stdout = "\n".join([
         json.dumps({"jsonrpc": "2.0", "id": 0, "result": {}}),
@@ -58,16 +58,16 @@ def test_mcp_only_context_uses_stdio_tool_call(monkeypatch: pytest.MonkeyPatch) 
 
     assert out["source_id"] == "team-a"
     cmd = run.call_args.args[0]
-    assert cmd == ["wg", "mcp"]
+    assert cmd == ["aidememo", "mcp"]
     payload = run.call_args.kwargs["input"]
-    assert '"name": "wg_context"' in payload
+    assert '"name": "aidememo_context"' in payload
     assert '"source_id": "team-a"' in payload
 
 
 def test_aggregate_forwards_source_id_to_mcp(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("hermes_wg.client.WgClient._has_cli", staticmethod(lambda: True))
-    monkeypatch.setattr("hermes_wg.client.WgClient._try_load_pyo3", lambda self: None)
-    client = WgClient()
+    monkeypatch.setattr("hermes_aidememo.client.AideMemoClient._has_cli", staticmethod(lambda: True))
+    monkeypatch.setattr("hermes_aidememo.client.AideMemoClient._try_load_pyo3", lambda self: None)
+    client = AideMemoClient()
 
     stdout = "\n".join([
         json.dumps({"jsonrpc": "2.0", "id": 0, "result": {}}),
@@ -84,27 +84,27 @@ def test_aggregate_forwards_source_id_to_mcp(monkeypatch: pytest.MonkeyPatch) ->
         out = client.aggregate("Redis", source_id="team-a")
 
     assert out["matched"] == 1
-    assert '"name": "wg_aggregate"' in run.call_args.kwargs["input"]
+    assert '"name": "aidememo_aggregate"' in run.call_args.kwargs["input"]
     assert '"source_id": "team-a"' in run.call_args.kwargs["input"]
 
 
 def test_cli_fallback_propagates_failure(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("hermes_wg.client.WgClient._has_cli", staticmethod(lambda: True))
-    monkeypatch.setattr("hermes_wg.client.WgClient._try_load_pyo3", lambda self: None)
-    client = WgClient()
+    monkeypatch.setattr("hermes_aidememo.client.AideMemoClient._has_cli", staticmethod(lambda: True))
+    monkeypatch.setattr("hermes_aidememo.client.AideMemoClient._try_load_pyo3", lambda self: None)
+    client = AideMemoClient()
 
     completed = type(
         "P", (), {"returncode": 1, "stdout": "", "stderr": "boom"}
     )()
     with patch("subprocess.run", return_value=completed):
-        with pytest.raises(WgUnavailable, match="exited 1"):
+        with pytest.raises(AideMemoUnavailable, match="exited 1"):
             client.recent()
 
 
 def test_cli_fallback_retries_short_lock_contention(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("hermes_wg.client.WgClient._has_cli", staticmethod(lambda: True))
-    monkeypatch.setattr("hermes_wg.client.WgClient._try_load_pyo3", lambda self: None)
-    client = WgClient(lock_retry_ms=500)
+    monkeypatch.setattr("hermes_aidememo.client.AideMemoClient._has_cli", staticmethod(lambda: True))
+    monkeypatch.setattr("hermes_aidememo.client.AideMemoClient._try_load_pyo3", lambda self: None)
+    client = AideMemoClient(lock_retry_ms=500)
 
     locked = type(
         "P",
@@ -123,9 +123,9 @@ def test_cli_fallback_retries_short_lock_contention(monkeypatch: pytest.MonkeyPa
 
 
 def test_cli_fallback_lock_retry_zero_fails_fast(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("hermes_wg.client.WgClient._has_cli", staticmethod(lambda: True))
-    monkeypatch.setattr("hermes_wg.client.WgClient._try_load_pyo3", lambda self: None)
-    client = WgClient(lock_retry_ms=0)
+    monkeypatch.setattr("hermes_aidememo.client.AideMemoClient._has_cli", staticmethod(lambda: True))
+    monkeypatch.setattr("hermes_aidememo.client.AideMemoClient._try_load_pyo3", lambda self: None)
+    client = AideMemoClient(lock_retry_ms=0)
 
     locked = type(
         "P",
@@ -137,7 +137,7 @@ def test_cli_fallback_lock_retry_zero_fails_fast(monkeypatch: pytest.MonkeyPatch
         },
     )()
     with patch("subprocess.run", return_value=locked) as run:
-        with pytest.raises(WgUnavailable, match="Cannot acquire lock"):
+        with pytest.raises(AideMemoUnavailable, match="Cannot acquire lock"):
             client.recent()
         assert run.call_count == 1
 
@@ -167,9 +167,9 @@ def test_recent_uses_pyo3_without_cli(monkeypatch: pytest.MonkeyPatch) -> None:
             assert kwargs["since_epoch_ms"] > 0
             return [{"content": "recent"}]
 
-    monkeypatch.setattr("hermes_wg.client.WgClient._try_load_pyo3", lambda self: FakePy())
-    monkeypatch.setattr("hermes_wg.client.WgClient._has_cli", staticmethod(lambda: False))
-    client = WgClient(store_path="/tmp/wiki.redb")
+    monkeypatch.setattr("hermes_aidememo.client.AideMemoClient._try_load_pyo3", lambda self: FakePy())
+    monkeypatch.setattr("hermes_aidememo.client.AideMemoClient._has_cli", staticmethod(lambda: False))
+    client = AideMemoClient(store_path="/tmp/wiki.redb")
 
     assert client.recent(last="14d", limit=3) == [{"content": "recent"}]
 
@@ -185,9 +185,9 @@ def test_fact_add_many_with_source_id_uses_pyo3(monkeypatch: pytest.MonkeyPatch)
             assert items[0]["entity_ids"] == ["id-Redis"]
             return ["fact-1", "fact-2"]
 
-    monkeypatch.setattr("hermes_wg.client.WgClient._try_load_pyo3", lambda self: FakePy())
-    monkeypatch.setattr("hermes_wg.client.WgClient._has_cli", staticmethod(lambda: True))
-    client = WgClient(store_path="/tmp/wiki.redb")
+    monkeypatch.setattr("hermes_aidememo.client.AideMemoClient._try_load_pyo3", lambda self: FakePy())
+    monkeypatch.setattr("hermes_aidememo.client.AideMemoClient._has_cli", staticmethod(lambda: True))
+    client = AideMemoClient(store_path="/tmp/wiki.redb")
 
     ids = client.fact_add_many([
         {"content": "alpha", "entities": ["Redis"], "source_id": "agent-a"},
@@ -198,9 +198,9 @@ def test_fact_add_many_with_source_id_uses_pyo3(monkeypatch: pytest.MonkeyPatch)
 
 
 def test_fact_add_many_cli_uses_mcp_batch_with_session_id(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("hermes_wg.client.WgClient._has_cli", staticmethod(lambda: True))
-    monkeypatch.setattr("hermes_wg.client.WgClient._try_load_pyo3", lambda self: None)
-    client = WgClient()
+    monkeypatch.setattr("hermes_aidememo.client.AideMemoClient._has_cli", staticmethod(lambda: True))
+    monkeypatch.setattr("hermes_aidememo.client.AideMemoClient._try_load_pyo3", lambda self: None)
+    client = AideMemoClient()
 
     stdout = "\n".join([
         json.dumps({"jsonrpc": "2.0", "id": 0, "result": {}}),
@@ -228,15 +228,15 @@ def test_fact_add_many_cli_uses_mcp_batch_with_session_id(monkeypatch: pytest.Mo
 
     assert ids == ["fact-1"]
     payload = run.call_args.kwargs["input"]
-    assert '"name": "wg_fact_add_many"' in payload
+    assert '"name": "aidememo_fact_add_many"' in payload
     assert '"source_id": "team-a"' in payload
     assert '"session_id": "session-1"' in payload
 
 
 def test_fact_add_prefers_json(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("hermes_wg.client.WgClient._has_cli", staticmethod(lambda: True))
-    monkeypatch.setattr("hermes_wg.client.WgClient._try_load_pyo3", lambda self: None)
-    client = WgClient()
+    monkeypatch.setattr("hermes_aidememo.client.AideMemoClient._has_cli", staticmethod(lambda: True))
+    monkeypatch.setattr("hermes_aidememo.client.AideMemoClient._try_load_pyo3", lambda self: None)
+    client = AideMemoClient()
     payload = json.dumps({"id": "01HZ-TEST-FACT-ID-12345678", "auto_created_entities": ["foo"]})
     completed = type("P", (), {"returncode": 0, "stdout": payload, "stderr": ""})()
     with patch("subprocess.run", return_value=completed) as run:
@@ -249,9 +249,9 @@ def test_fact_add_prefers_json(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_source_id_is_forwarded_to_cli_filters(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("hermes_wg.client.WgClient._has_cli", staticmethod(lambda: True))
-    monkeypatch.setattr("hermes_wg.client.WgClient._try_load_pyo3", lambda self: None)
-    client = WgClient()
+    monkeypatch.setattr("hermes_aidememo.client.AideMemoClient._has_cli", staticmethod(lambda: True))
+    monkeypatch.setattr("hermes_aidememo.client.AideMemoClient._try_load_pyo3", lambda self: None)
+    client = AideMemoClient()
 
     payloads = [
         json.dumps({"topic": "Redis", "search": []}),
@@ -274,9 +274,9 @@ def test_source_id_is_forwarded_to_cli_filters(monkeypatch: pytest.MonkeyPatch) 
 
 
 def test_default_source_id_is_used_for_cli_calls(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("hermes_wg.client.WgClient._has_cli", staticmethod(lambda: True))
-    monkeypatch.setattr("hermes_wg.client.WgClient._try_load_pyo3", lambda self: None)
-    client = WgClient(source_id=" team-default ")
+    monkeypatch.setattr("hermes_aidememo.client.AideMemoClient._has_cli", staticmethod(lambda: True))
+    monkeypatch.setattr("hermes_aidememo.client.AideMemoClient._try_load_pyo3", lambda self: None)
+    client = AideMemoClient(source_id=" team-default ")
 
     payloads = [
         json.dumps({"topic": "Redis", "search": []}),
@@ -305,9 +305,9 @@ def test_default_source_id_is_used_for_cli_calls(monkeypatch: pytest.MonkeyPatch
 
 
 def test_workflow_start_dispatches_to_cli(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("hermes_wg.client.WgClient._has_cli", staticmethod(lambda: True))
-    monkeypatch.setattr("hermes_wg.client.WgClient._try_load_pyo3", lambda self: None)
-    client = WgClient()
+    monkeypatch.setattr("hermes_aidememo.client.AideMemoClient._has_cli", staticmethod(lambda: True))
+    monkeypatch.setattr("hermes_aidememo.client.AideMemoClient._try_load_pyo3", lambda self: None)
+    client = AideMemoClient()
 
     payload = json.dumps({
         "session_id": "session-01KQ6RT4RXQFF14MBYTB40M4N3",
@@ -324,7 +324,7 @@ def test_workflow_start_dispatches_to_cli(monkeypatch: pytest.MonkeyPatch) -> No
 
     assert out["session_id"].startswith("session-")
     cmd = run.call_args.args[0]
-    assert cmd[:3] == ["wg", "--json", "workflow"]
+    assert cmd[:3] == ["aidememo", "--json", "workflow"]
     assert "start" in cmd
     assert "Fix Redis timeout" in cmd
     assert cmd[-2:] == ["--source-id", "team-a"]
@@ -361,9 +361,9 @@ def test_workflow_start_prefers_pyo3(monkeypatch: pytest.MonkeyPatch) -> None:
                 {"fact_type": "error", "content": "Error: pool"},
             ]
 
-    monkeypatch.setattr("hermes_wg.client.WgClient._try_load_pyo3", lambda self: FakePy())
-    monkeypatch.setattr("hermes_wg.client.WgClient._has_cli", staticmethod(lambda: False))
-    client = WgClient(store_path="/tmp/wiki.redb")
+    monkeypatch.setattr("hermes_aidememo.client.AideMemoClient._try_load_pyo3", lambda self: FakePy())
+    monkeypatch.setattr("hermes_aidememo.client.AideMemoClient._has_cli", staticmethod(lambda: False))
+    client = AideMemoClient(store_path="/tmp/wiki.redb")
 
     out = client.workflow_start(
         "Fix Redis timeout",
@@ -396,9 +396,9 @@ def test_default_source_id_is_used_for_pyo3_workflow(monkeypatch: pytest.MonkeyP
             assert kwargs["source_id"] == "team-default"
             return []
 
-    monkeypatch.setattr("hermes_wg.client.WgClient._try_load_pyo3", lambda self: FakePy())
-    monkeypatch.setattr("hermes_wg.client.WgClient._has_cli", staticmethod(lambda: False))
-    client = WgClient(store_path="/tmp/wiki.redb", source_id="team-default")
+    monkeypatch.setattr("hermes_aidememo.client.AideMemoClient._try_load_pyo3", lambda self: FakePy())
+    monkeypatch.setattr("hermes_aidememo.client.AideMemoClient._has_cli", staticmethod(lambda: False))
+    client = AideMemoClient(store_path="/tmp/wiki.redb", source_id="team-default")
 
     out = client.workflow_start("Fix Redis timeout")
 
@@ -406,12 +406,12 @@ def test_default_source_id_is_used_for_pyo3_workflow(monkeypatch: pytest.MonkeyP
 
 
 def test_fact_add_falls_back_to_human_output(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Older wg binaries silently dropped the global `--json` flag for
+    """Older aidememo binaries silently dropped the global `--json` flag for
     `fact add`, returning the human prose. The legacy path should
     still pluck the ULID from that text."""
-    monkeypatch.setattr("hermes_wg.client.WgClient._has_cli", staticmethod(lambda: True))
-    monkeypatch.setattr("hermes_wg.client.WgClient._try_load_pyo3", lambda self: None)
-    client = WgClient()
+    monkeypatch.setattr("hermes_aidememo.client.AideMemoClient._has_cli", staticmethod(lambda: True))
+    monkeypatch.setattr("hermes_aidememo.client.AideMemoClient._try_load_pyo3", lambda self: None)
+    client = AideMemoClient()
     legacy = "Added fact with ID 01KQ6RT4RXQFF14MBYTB40M4N3\n  auto-created entity: foo"
     # First subprocess.run is the JSON attempt and returns prose (no
     # JSON parse). Second is the legacy fallback — we feed both with

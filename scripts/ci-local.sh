@@ -3,8 +3,8 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TOOLCHAIN="${WG_CI_TOOLCHAIN:-$(sed -n 's/^channel = "\(.*\)"/\1/p' "$ROOT_DIR/rust-toolchain.toml" | head -n1)}"
-BASE="${WG_CI_LOCAL_BASE:-$(mktemp -d "${TMPDIR:-/tmp}/wg-ci-local.XXXXXX")}"
+TOOLCHAIN="${AIDEMEMO_CI_TOOLCHAIN:-$(sed -n 's/^channel = "\(.*\)"/\1/p' "$ROOT_DIR/rust-toolchain.toml" | head -n1)}"
+BASE="${AIDEMEMO_CI_LOCAL_BASE:-$(mktemp -d "${TMPDIR:-/tmp}/aidememo-ci-local.XXXXXX")}"
 SUMMARY_TSV="$BASE/ci-local.tsv"
 
 cargo_cmd=(cargo)
@@ -112,8 +112,8 @@ lint() {
 
 tests() {
     run "${cargo_cmd[@]}" test --workspace --no-default-features
-    run "${cargo_cmd[@]}" test -p wg-core --features semantic
-    run "${cargo_cmd[@]}" test -p wg-cli --bin wg
+    run "${cargo_cmd[@]}" test -p aidememo-core --features semantic
+    run "${cargo_cmd[@]}" test -p aidememo-cli --bin aidememo
 }
 
 sdk() {

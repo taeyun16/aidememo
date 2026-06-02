@@ -3,7 +3,7 @@
 single comparison table — overall accuracy + per-category — for the
 README / docs write-up.
 
-Walks /tmp/wg_e2e_500_*/judgements_*.jsonl by default; each judgement
+Walks /tmp/aidememo_e2e_500_*/judgements_*.jsonl by default; each judgement
 filename encodes the reader + judge model so the output table can label
 rows correctly.
 
@@ -26,7 +26,7 @@ def main() -> None:
     args = ap.parse_args()
 
     rows: list[tuple[str, str, dict]] = []  # (reader, judge, category-counts)
-    for path in sorted(args.root.glob("wg_e2e_*/judgements_*.jsonl")):
+    for path in sorted(args.root.glob("aidememo_e2e_*/judgements_*.jsonl")):
         m = re.match(r"judgements_(.+)_judge_(.+)\.jsonl$", path.name)
         if not m:
             continue

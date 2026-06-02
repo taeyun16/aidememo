@@ -6,9 +6,9 @@ Scenario G validates Hermes' Python binding path against the CLI fallback.
 Scenario K is the SDK-specific counterpart: it runs the same sparse tickets
 through:
 
-  - CLI:        wg --json workflow start ...
-  - Python SDK: wg_python.WikiGraph.workflow_start(...)
-  - Node SDK:   new WgStore(...).workflowStart(...)
+  - CLI:        aidememo --json workflow start ...
+  - Python SDK: aidememo_python.AideMemo.workflow_start(...)
+  - Node SDK:   new AideMemoStore(...).workflowStart(...)
 
 The comparison is shape parity, not byte-for-byte equality. Session and ticket
 IDs are expected to differ per store. The pass condition is that all drivers
@@ -30,8 +30,8 @@ from pathlib import Path
 from typing import Any, Callable
 
 REPO = Path(__file__).resolve().parents[2]
-WG = os.environ.get("WG_BIN", str(REPO / "target" / "debug" / "wg"))
-BASE = Path(os.environ.get("WG_E2E_BASE", str(Path(tempfile.gettempdir()) / "wg-e2e-k")))
+WG = os.environ.get("AIDEMEMO_BIN", str(REPO / "target" / "debug" / "aidememo"))
+BASE = Path(os.environ.get("AIDEMEMO_E2E_BASE", str(Path(tempfile.gettempdir()) / "aidememo-e2e-k")))
 STORES = {
     "cli": str(BASE / "workflow-cli.redb"),
     "python": str(BASE / "workflow-python.redb"),
@@ -39,9 +39,9 @@ STORES = {
 }
 
 NODE_SCRIPT = r"""
-const payload = JSON.parse(process.env.WG_NODE_WORKFLOW_PAYLOAD);
-const { WgStore } = require(process.env.WG_NAPI_DIR);
-const g = new WgStore(payload.store);
+const payload = JSON.parse(process.env.AIDEMEMO_NODE_WORKFLOW_PAYLOAD);
+const { AideMemoStore } = require(process.env.AIDEMEMO_NAPI_DIR);
+const g = new AideMemoStore(payload.store);
 const rows = payload.tickets.map((ticket) => {
   const start = process.hrtime.bigint();
   const out = g.workflowStart(ticket.title, {
@@ -210,8 +210,8 @@ def workflow_python(client: Any, ticket: Ticket) -> dict[str, Any]:
 
 def workflow_node_all(store: str, tickets: list[Ticket]) -> list[tuple[dict[str, Any], float]]:
     env = os.environ.copy()
-    env["WG_NAPI_DIR"] = str(REPO / "crates" / "wg-napi")
-    env["WG_NODE_WORKFLOW_PAYLOAD"] = json.dumps(
+    env["AIDEMEMO_NAPI_DIR"] = str(REPO / "crates" / "aidememo-napi")
+    env["AIDEMEMO_NODE_WORKFLOW_PAYLOAD"] = json.dumps(
         {"store": store, "tickets": [ticket.__dict__ for ticket in tickets]},
         ensure_ascii=False,
     )
@@ -303,18 +303,18 @@ def parity_against_cli(cli_rows: list[dict[str, Any]], other_rows: list[dict[str
 
 def main() -> int:
     try:
-        import wg_python
+        import aidememo_python
     except Exception as exc:
         print(
-            "wg_python is not importable; run `scripts/wg-python-pack-smoke.sh` or maturin develop first.",
+            "aidememo_python is not importable; run `scripts/aidememo-python-pack-smoke.sh` or maturin develop first.",
             file=sys.stderr,
         )
         print(f"import error: {exc}", file=sys.stderr)
         return 2
-    if not hasattr(wg_python.WikiGraph, "workflow_start"):
+    if not hasattr(aidememo_python.AideMemo, "workflow_start"):
         print(
-            "wg_python is importable but lacks workflow_start; run "
-            "`cd crates/wg-python && maturin develop` for this checkout.",
+            "aidememo_python is importable but lacks workflow_start; run "
+            "`cd crates/aidememo-python && maturin develop` for this checkout.",
             file=sys.stderr,
         )
         return 2
@@ -330,7 +330,7 @@ def main() -> int:
         cli_rows.append(normalize(ticket, payload, elapsed))
     rows["cli"] = cli_rows
 
-    python_client = wg_python.WikiGraph(STORES["python"])
+    python_client = aidememo_python.AideMemo(STORES["python"])
     python_rows = []
     for ticket in TICKETS:
         payload, elapsed = timed(lambda ticket=ticket: workflow_python(python_client, ticket))

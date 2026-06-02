@@ -1,7 +1,7 @@
-//! MultiHop-RAG retrieval baseline for `wg`.
+//! MultiHop-RAG retrieval baseline for `aidememo`.
 //!
 //! Loads the COLM-2024 dataset (yixuantt/MultiHopRAG on HuggingFace)
-//! and benchmarks `wg`'s hybrid search across 2556 multi-document
+//! and benchmarks `aidememo`'s hybrid search across 2556 multi-document
 //! queries spread over a 609-article news corpus.
 //!
 //! Unlike LongMemEval (one isolated store per question), MultiHop-RAG's
@@ -13,9 +13,9 @@
 //!
 //! ```bash
 //! MULTIHOP_DIR=/tmp/multihop_rag \
-//!   cargo run --release -p wg-benchmarks --bin multihop_rag -- \
+//!   cargo run --release -p aidememo-benchmarks --bin multihop_rag -- \
 //!     --hybrid --top-k 10 \
-//!     --emit-retrievals /tmp/wg_multihop_retrievals.jsonl
+//!     --emit-retrievals /tmp/aidememo_multihop_retrievals.jsonl
 //! ```
 //!
 //! Outputs (when --emit-retrievals is set): one JSON line per query
@@ -30,10 +30,10 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Instant;
 
+use aidememo_core::types::{FactInput, FactType};
+use aidememo_core::{AideMemo, Config, EntityInput, EntityType, SearchOpts};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use wg_core::types::{FactInput, FactType};
-use wg_core::{Config, EntityInput, EntityType, SearchOpts, WikiGraph};
 
 #[allow(dead_code)]
 #[derive(Debug, Deserialize)]
@@ -163,13 +163,13 @@ fn build_store(
     corpus: &[Doc],
     hybrid: bool,
     embed_model: Option<&str>,
-) -> Result<(tempfile::TempDir, WikiGraph), String> {
+) -> Result<(tempfile::TempDir, AideMemo), String> {
     let dir = tempfile::tempdir().map_err(|e| e.to_string())?;
     let path = dir.path().join("multihop.redb");
     let mut config = Config::default();
     config.store.path = path.to_string_lossy().into_owned();
     if hybrid {
-        // Leave config.search.semantic_index at the wg-core default
+        // Leave config.search.semantic_index at the aidememo-core default
         // ("hnsw"). The previous "hybrid" override silently disabled
         // the HNSW path, which made the bench identical for any
         // embed-model — including BGE, which had given a +1.8pt R@5
@@ -182,7 +182,7 @@ fn build_store(
             config.model.provider = "model2vec".into();
         }
     }
-    let wiki = WikiGraph::open(&path, config).map_err(|e| e.to_string())?;
+    let wiki = AideMemo::open(&path, config).map_err(|e| e.to_string())?;
 
     // Ingest each doc as one fact, with the doc title as an entity so
     // multi-doc questions can graph-traverse "X mentioned in N docs".
@@ -302,7 +302,7 @@ fn main() -> ExitCode {
         // Find first hit whose doc title is in evidence_list.
         let mut first_evidence_rank: Option<usize> = None;
         let mut hits = Vec::new();
-        let mut ent_cache: HashMap<wg_core::types::FactId, String> = HashMap::new();
+        let mut ent_cache: HashMap<aidememo_core::types::FactId, String> = HashMap::new();
         for (rank, r) in results.iter().enumerate() {
             let rank = rank + 1;
             // Doc title is the primary entity attached to the fact.

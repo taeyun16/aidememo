@@ -9,7 +9,7 @@ SAME natural-language prompt to each agent's non-interactive CLI:
   - hermes   →  hermes chat -q ... -Q           (uses ~/.hermes/config.yaml)
 
 The prompt explicitly forbids guessing — if the agent doesn't call
-wg, it cannot answer. We capture wall time + stdout, then a human
+aidememo, it cannot answer. We capture wall time + stdout, then a human
 inspects the per-agent output to judge correctness.
 
 This burns model tokens (one prompt × 3 agents). It is the smallest
@@ -28,14 +28,14 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-STORE = os.environ.get("WG_E2E_STORE", "/Users/mixlink/.wg-e2e/wiki.redb")
-WG = os.environ.get("WG_BIN", "/Users/mixlink/.local/bin/wg")
+STORE = os.environ.get("AIDEMEMO_E2E_STORE", "/Users/mixlink/.aidememo-e2e/wiki.redb")
+WG = os.environ.get("AIDEMEMO_BIN", "/Users/mixlink/.local/bin/aidememo")
 CLAUDE_BIN = os.environ.get("CLAUDE_BIN", "/Users/mixlink/.local/bin/claude")
 CODEX_BIN = os.environ.get("CODEX_BIN", "/opt/homebrew/bin/codex")
 HERMES_BIN = os.environ.get("HERMES_BIN", "/Users/mixlink/.local/bin/hermes")
 
 # Seed facts — short and unambiguous so we can tell whether the agent
-# actually used wg vs hallucinated.
+# actually used aidememo vs hallucinated.
 SEED = [
     ("Redis", "Redis 7.0 introduces functions, replacing Lua scripts for shared logic"),
     ("Redis", "Redis Sentinel provides high availability with automatic failover"),
@@ -45,10 +45,10 @@ SEED = [
 ]
 
 PROMPT = (
-    "Use the wg knowledge graph (wg_query / wg_search / wg_recent tools) "
-    "to fetch every fact about 'Redis' that wg knows, then summarise them "
+    "Use the aidememo knowledge graph (aidememo_query / aidememo_search / aidememo_recent tools) "
+    "to fetch every fact about 'Redis' that aidememo knows, then summarise them "
     "as a numbered list. Quote each fact's content verbatim and include "
-    "its fact id. Do NOT invent or paraphrase — if wg returns nothing, "
+    "its fact id. Do NOT invent or paraphrase — if aidememo returns nothing, "
     "say so explicitly. Keep the answer under 200 words."
 )
 
@@ -106,11 +106,11 @@ def run_agent(spec: AgentRun, prompt: str, timeout_s: int = 180) -> dict:
 
 
 def write_claude_mcp_config(tmpdir: Path) -> Path:
-    """Claude Code auto-loads project .mcp.json; we want our e2e wg.
-    Write a sandbox dir with only the e2e wg server defined."""
+    """Claude Code auto-loads project .mcp.json; we want our e2e aidememo.
+    Write a sandbox dir with only the e2e aidememo server defined."""
     cfg = {
         "mcpServers": {
-            "wg": {
+            "aidememo": {
                 "type": "stdio",
                 "command": WG,
                 "args": ["mcp", STORE],
@@ -125,7 +125,7 @@ def write_claude_mcp_config(tmpdir: Path) -> Path:
     settings.write_text(json.dumps({
         "enableAllProjectMcpServers": True,
         "permissions": {
-            "allow": ["mcp__wg"],
+            "allow": ["mcp__aidememo"],
         }
     }))
     return path
@@ -135,7 +135,7 @@ def main() -> int:
     seeded = reset_and_seed()
     print(f"# seeded {len(seeded)} facts: {seeded}", file=sys.stderr)
 
-    with tempfile.TemporaryDirectory(prefix="wg-e2e-claude-") as td:
+    with tempfile.TemporaryDirectory(prefix="aidememo-e2e-claude-") as td:
         td_path = Path(td)
         write_claude_mcp_config(td_path)
 
@@ -177,7 +177,7 @@ def main() -> int:
     #                      string. Long natural-language strings are
     #                      LLM-friendly to transcribe verbatim, so this
     #                      is the primary signal for "did the agent
-    #                      actually call wg and use the data?"
+    #                      actually call aidememo and use the data?"
     #   - ids_mentioned  : agent included the 26-char ULID. Bonus
     #                      metric — useful but flaky because LLMs
     #                      occasionally drop a character when they
@@ -195,11 +195,11 @@ def main() -> int:
 
     redis_total = sum(1 for entity, _ in SEED if entity == "Redis")
     invariants = {
-        # Every agent must have actually used wg — i.e. quoted at
+        # Every agent must have actually used aidememo — i.e. quoted at
         # least one Redis fact verbatim. (Otherwise it hallucinated
         # or said "no facts found".)
-        "all_agents_used_wg": all(r["facts_quoted_count"] >= 1 for r in runs),
-        # Every agent must have surfaced ALL Redis facts wg knows.
+        "all_agents_used_aidememo": all(r["facts_quoted_count"] >= 1 for r in runs),
+        # Every agent must have surfaced ALL Redis facts aidememo knows.
         # Content matching tolerates LLM ULID-transcription wobbles.
         "all_agents_returned_complete_set": all(
             r["facts_quoted_count"] == redis_total for r in runs

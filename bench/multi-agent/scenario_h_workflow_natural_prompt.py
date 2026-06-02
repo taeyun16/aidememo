@@ -13,9 +13,9 @@ prompt, then inspects both:
 
 Expected agents:
 
-  - Claude Code via a temporary project ``.mcp.json`` with WG_SOURCE_ID
-  - Codex CLI via an isolated ``wg mcp-install --source-id`` config
-  - Hermes via the wg plugin, explicit ``wg`` toolset, and WG_SOURCE_ID override
+  - Claude Code via a temporary project ``.mcp.json`` with AIDEMEMO_SOURCE_ID
+  - Codex CLI via an isolated ``aidememo mcp-install --source-id`` config
+  - Hermes via the aidememo plugin, explicit ``aidememo`` toolset, and AIDEMEMO_SOURCE_ID override
 
 This burns model tokens. Do not put it in default CI.
 """
@@ -33,18 +33,18 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-STORE = os.environ.get("WG_E2E_STORE", "/Users/mixlink/.wg-e2e/wiki.redb")
-WG = os.environ.get("WG_BIN", "/Users/mixlink/dev/wg/target/debug/wg")
+STORE = os.environ.get("AIDEMEMO_E2E_STORE", "/Users/mixlink/.aidememo-e2e/wiki.redb")
+WG = os.environ.get("AIDEMEMO_BIN", "/Users/mixlink/dev/aidememo/target/debug/aidememo")
 CLAUDE_BIN = os.environ.get("CLAUDE_BIN", "/Users/mixlink/.local/bin/claude")
 CODEX_BIN = os.environ.get("CODEX_BIN", "/opt/homebrew/bin/codex")
 HERMES_BIN = os.environ.get("HERMES_BIN", "/Users/mixlink/.local/bin/hermes")
-TIMEOUT_S = int(os.environ.get("WG_E2E_AGENT_TIMEOUT", "240"))
+TIMEOUT_S = int(os.environ.get("AIDEMEMO_E2E_AGENT_TIMEOUT", "240"))
 AGENT_FILTER = {
     name.strip()
-    for name in os.environ.get("WG_E2E_AGENTS", "").split(",")
+    for name in os.environ.get("AIDEMEMO_E2E_AGENTS", "").split(",")
     if name.strip()
 }
-SETUP_ONLY = os.environ.get("WG_E2E_SETUP_ONLY") == "1"
+SETUP_ONLY = os.environ.get("AIDEMEMO_E2E_SETUP_ONLY") == "1"
 
 SOURCE_ID = "workflow-alpha"
 FORBIDDEN_SOURCE_ID = "workflow-beta"
@@ -92,9 +92,9 @@ Issue #123: Fix Redis timeout in worker.
 The issue body is intentionally sparse: worker jobs intermittently time
 out against Redis.
 
-Before making a plan, call the wg workflow-start tool for this ticket
-(`wg_workflow_start` in MCP/Hermes, not a shell command).
-Do not pass a source_id argument; the wg MCP server / Hermes plugin is
+Before making a plan, call the aidememo workflow-start tool for this ticket
+(`aidememo_workflow_start` in MCP/Hermes, not a shell command).
+Do not pass a source_id argument; the aidememo MCP server / Hermes plugin is
 already configured with the project source namespace. The resulting
 workflow context should still be scoped so neighbouring project memory
 does not leak in.
@@ -188,11 +188,11 @@ def write_claude_project(tmpdir: Path) -> None:
         json.dumps(
             {
                 "mcpServers": {
-                    "wg": {
+                    "aidememo": {
                         "type": "stdio",
                         "command": WG,
                         "args": ["--store", STORE, "mcp"],
-                        "env": {"WG_SOURCE_ID": SOURCE_ID},
+                        "env": {"AIDEMEMO_SOURCE_ID": SOURCE_ID},
                     }
                 }
             },
@@ -205,7 +205,7 @@ def write_claude_project(tmpdir: Path) -> None:
         json.dumps(
             {
                 "enableAllProjectMcpServers": True,
-                "permissions": {"allow": ["mcp__wg"]},
+                "permissions": {"allow": ["mcp__aidememo"]},
             },
             indent=2,
         )
@@ -226,19 +226,19 @@ def prepare_hermes_home(tmpdir: Path) -> Path:
         "\n".join(
             [
                 "plugins:",
-                "  wg:",
+                "  aidememo:",
                 f"    store_path: {STORE}",
                 f"    source_id: {SOURCE_ID}",
                 "",
                 "mcp_servers:",
-                "  wg:",
+                "  aidememo:",
                 f"    command: {WG}",
                 "    args:",
                 "      - --store",
                 f"      - {STORE}",
                 "      - mcp",
                 "    env:",
-                f"      WG_SOURCE_ID: {SOURCE_ID}",
+                f"      AIDEMEMO_SOURCE_ID: {SOURCE_ID}",
                 "    enabled: true",
                 "",
             ]
@@ -307,13 +307,13 @@ def setup_summary(
     codex_config = (codex_home / "config.toml").read_text()
     hermes_config = (hermes_home / "config.yaml").read_text()
     invariants = {
-        "claude_project_mcp_has_source_env": claude["mcpServers"]["wg"]["env"]["WG_SOURCE_ID"]
+        "claude_project_mcp_has_source_env": claude["mcpServers"]["aidememo"]["env"]["AIDEMEMO_SOURCE_ID"]
         == SOURCE_ID,
         "codex_install_report_has_source_id": codex_install.get("source_id") == SOURCE_ID,
-        "codex_config_has_source_env": "WG_SOURCE_ID" in codex_config
+        "codex_config_has_source_env": "AIDEMEMO_SOURCE_ID" in codex_config
         and SOURCE_ID in codex_config,
         "hermes_plugin_config_has_source_id": f"source_id: {SOURCE_ID}" in hermes_config,
-        "hermes_mcp_config_has_source_env": "WG_SOURCE_ID" in hermes_config
+        "hermes_mcp_config_has_source_env": "AIDEMEMO_SOURCE_ID" in hermes_config
         and SOURCE_ID in hermes_config,
     }
     return {
@@ -386,7 +386,7 @@ def evaluate_run(raw: dict[str, Any]) -> dict[str, Any]:
 
 
 def main() -> int:
-    with tempfile.TemporaryDirectory(prefix="wg-e2e-h-claude-") as td:
+    with tempfile.TemporaryDirectory(prefix="aidememo-e2e-h-claude-") as td:
         td_path = Path(td)
         write_claude_project(td_path)
         codex_home_root, codex_home, codex_install = prepare_codex_home(td_path)
@@ -443,8 +443,8 @@ def main() -> int:
                 cwd=str(td_path),
                 extra_env={
                     "HERMES_HOME": str(hermes_home),
-                    "WG_STORE": STORE,
-                    "WG_SOURCE_ID": SOURCE_ID,
+                    "AIDEMEMO_STORE": STORE,
+                    "AIDEMEMO_SOURCE_ID": SOURCE_ID,
                 },
             ),
         ]

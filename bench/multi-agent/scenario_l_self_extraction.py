@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 """Scenario L - self-extracted facts drive workflow memory.
 
-wg deliberately keeps LLM extraction outside the storage layer: the calling
-agent should classify facts, then persist them through wg_fact_add_many. This
+aidememo deliberately keeps LLM extraction outside the storage layer: the calling
+agent should classify facts, then persist them through aidememo_fact_add_many. This
 zero-token scenario validates that contract without calling an LLM:
 
   1. Simulate an agent's classified output from a short project transcript.
-  2. Insert the batch through MCP wg_fact_add_many in one transaction.
+  2. Insert the batch through MCP aidememo_fact_add_many in one transaction.
   3. Verify fact_type/source_id persistence.
   4. Start sparse tickets and check decisions / lessons / errors surface while
      neighbouring source_id facts do not leak.
 
 The scenario is not a classifier benchmark. It proves that if the agent follows
-the self-extraction prompt table, wg stores and retrieves the typed memory in
+the self-extraction prompt table, aidememo stores and retrieves the typed memory in
 the workflow shape coding agents consume.
 """
 
@@ -30,10 +30,10 @@ from pathlib import Path
 from typing import Any
 
 REPO = Path(__file__).resolve().parents[2]
-WG = os.environ.get("WG_BIN", str(REPO / "target" / "debug" / "wg"))
+WG = os.environ.get("AIDEMEMO_BIN", str(REPO / "target" / "debug" / "aidememo"))
 STORE = os.environ.get(
-    "WG_E2E_STORE",
-    str(Path(tempfile.gettempdir()) / "wg-e2e-l" / "self-extraction.redb"),
+    "AIDEMEMO_E2E_STORE",
+    str(Path(tempfile.gettempdir()) / "aidememo-e2e-l" / "self-extraction.redb"),
 )
 
 SELF_EXTRACTED_FACTS: list[dict[str, Any]] = [
@@ -260,25 +260,25 @@ def main() -> int:
     reset_store()
 
     add_start = time.perf_counter_ns()
-    add_payload = mcp_tool_call("wg_fact_add_many", {"items": SELF_EXTRACTED_FACTS})
+    add_payload = mcp_tool_call("aidememo_fact_add_many", {"items": SELF_EXTRACTED_FACTS})
     add_latency_ms = (time.perf_counter_ns() - add_start) / 1e6
     env_default_payload = mcp_tool_call(
-        "wg_fact_add_many",
+        "aidememo_fact_add_many",
         {
             "items": [
                 {
-                    "content": "Decision: source defaults smoke uses WG_SOURCE_ID for MCP scoping.",
+                    "content": "Decision: source defaults smoke uses AIDEMEMO_SOURCE_ID for MCP scoping.",
                     "fact_type": "decision",
                     "entities": ["SourceDefaults"],
                 }
             ]
         },
-        env={"WG_SOURCE_ID": "agent-env"},
+        env={"AIDEMEMO_SOURCE_ID": "agent-env"},
     )
     env_search_payload = mcp_tool_call(
-        "wg_search",
+        "aidememo_search",
         {"query": "source defaults MCP scoping", "bm25_only": True, "limit": 5},
-        env={"WG_SOURCE_ID": "agent-env"},
+        env={"AIDEMEMO_SOURCE_ID": "agent-env"},
     )
 
     alpha_facts = fact_list("agent-alpha")
@@ -316,9 +316,9 @@ def main() -> int:
         },
         "beta_type_counts": dict(beta_type_counts) == {"decision": 1, "lesson": 1},
         "env_default_source_id_scopes_batch": env_default_payload.get("count") == 1
-        and contains(env_facts, "WG_SOURCE_ID for MCP scoping"),
+        and contains(env_facts, "AIDEMEMO_SOURCE_ID for MCP scoping"),
         "env_default_source_id_scopes_search": contains(
-            env_search_payload.get("results", []), "WG_SOURCE_ID for MCP scoping"
+            env_search_payload.get("results", []), "AIDEMEMO_SOURCE_ID for MCP scoping"
         ),
         "billing_workflow_has_session": billing_summary["session_id_present"]
         and billing_summary["ticket_fact_id_present"],

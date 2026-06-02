@@ -2,19 +2,19 @@
 """Scenario A — MCP protocol smoke for each registered client.
 
 For every (client, command, args) triple we:
-  1. Spawn the wg mcp server exactly the way the client would.
-  2. Send: initialize → tools/list → tools/call wg_query topic=Redis
+  1. Spawn the aidememo mcp server exactly the way the client would.
+  2. Send: initialize → tools/list → tools/call aidememo_query topic=Redis
   3. Verify: handshake OK, tool count, query result is JSON-shaped.
 
 This is a protocol-level smoke. It does NOT run the agent itself —
-it runs the same wg invocation the agent's MCP layer would issue, so
-that if a config is broken the agent has no way to ever reach wg.
+it runs the same aidememo invocation the agent's MCP layer would issue, so
+that if a config is broken the agent has no way to ever reach aidememo.
 
 Invariants
 ----------
 - Server prints exactly one initialize response with protocolVersion.
 - tools/list returns the 13 tools enumerated in cmd/mcp_tools.rs.
-- tools/call wg_query returns a result with topic/entity/related/recent_facts.
+- tools/call aidememo_query returns a result with topic/entity/related/recent_facts.
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-STORE = "/Users/mixlink/.wg-e2e/wiki.redb"
+STORE = "/Users/mixlink/.aidememo-e2e/wiki.redb"
 
 
 @dataclass
@@ -39,9 +39,9 @@ class ClientConfig:
 
 
 def claude_code_config() -> ClientConfig:
-    # Project-level .mcp.json controls Claude Code's wg invocation.
+    # Project-level .mcp.json controls Claude Code's aidememo invocation.
     cfg = json.loads(Path(".mcp.json").read_text())
-    entry = cfg["mcpServers"]["wg"]
+    entry = cfg["mcpServers"]["aidememo"]
     cmd = [entry["command"], *entry.get("args", [])]
     return ClientConfig(
         name="claude-code",
@@ -52,26 +52,26 @@ def claude_code_config() -> ClientConfig:
 
 def codex_config() -> ClientConfig:
     # Codex reads ~/.codex/config.toml.
-    # We've registered wg there as command="/Users/mixlink/.local/bin/wg",
+    # We've registered aidememo there as command="/Users/mixlink/.local/bin/aidememo",
     # args=["mcp", STORE]. Hard-code that mirror — running codex itself
     # to introspect would couple this smoke to Codex's CLI surface.
-    cmd = ["/Users/mixlink/.local/bin/wg", "mcp", STORE]
+    cmd = ["/Users/mixlink/.local/bin/aidememo", "mcp", STORE]
     return ClientConfig(
         name="codex",
         command=cmd,
-        config_origin="~/.codex/config.toml [mcp_servers.wg]",
+        config_origin="~/.codex/config.toml [mcp_servers.aidememo]",
     )
 
 
 def hermes_config() -> ClientConfig:
-    # The hermes-wg plugin shells out to `wg` (PATH lookup) by default.
+    # The hermes-aidememo plugin shells out to `aidememo` (PATH lookup) by default.
     # Mirror its CLI form so the smoke fails the same way Hermes would
-    # if PATH didn't have wg.
-    cmd = ["/Users/mixlink/.local/bin/wg", "mcp", STORE]
+    # if PATH didn't have aidememo.
+    cmd = ["/Users/mixlink/.local/bin/aidememo", "mcp", STORE]
     return ClientConfig(
         name="hermes",
         command=cmd,
-        config_origin="plugins/hermes/src/hermes_wg/client.py (CLI fallback)",
+        config_origin="plugins/hermes/src/hermes_aidememo/client.py (CLI fallback)",
     )
 
 
@@ -151,7 +151,7 @@ def smoke_one(cfg: ClientConfig) -> Result:
             "id": 3,
             "method": "tools/call",
             "params": {
-                "name": "wg_query",
+                "name": "aidememo_query",
                 "arguments": {"topic": "Redis", "limit": 5, "depth": 1},
             },
         },
@@ -200,7 +200,7 @@ def smoke_one(cfg: ClientConfig) -> Result:
         else:
             res.error = f"query content empty: {query['result']}"
     else:
-        res.error = f"wg_query failed: {query}"
+        res.error = f"aidememo_query failed: {query}"
     return res
 
 

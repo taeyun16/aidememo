@@ -7,7 +7,7 @@
 //!
 //! Run:
 //!   cargo run --release --bin performance
-//!   WG_BENCH_LARGE=1 cargo run --release --bin performance   # +50K
+//!   AIDEMEMO_BENCH_LARGE=1 cargo run --release --bin performance   # +50K
 //!
 //! v1 scope:
 //! * Tier 2 (warm, no semantic): traverse_d3, search_bm25, fact_add, lint
@@ -19,12 +19,12 @@ use std::io::Write;
 use std::path::Path;
 use std::time::Instant;
 
+use aidememo_core::{
+    AideMemo, Config, EntityInput, EntityType, FactInput, FactType, SearchOpts, TraverseDirection,
+    TraverseOpts,
+};
 use serde::Serialize;
 use tempfile::TempDir;
-use wg_core::{
-    Config, EntityInput, EntityType, FactInput, FactType, SearchOpts, TraverseDirection,
-    TraverseOpts, WikiGraph,
-};
 
 #[derive(Serialize)]
 struct Stats {
@@ -77,14 +77,14 @@ fn time_n<F: FnMut()>(n: usize, mut f: F) -> Vec<f64> {
     times
 }
 
-fn build_wiki(path: &Path, scale: usize) -> WikiGraph {
+fn build_wiki(path: &Path, scale: usize) -> AideMemo {
     let mut config = Config::default();
     config.store.path = path.to_string_lossy().into_owned();
     // Force the BM25-prefilter path so we benchmark BM25 search alone
     // — switching off the HNSW lookup also silences the per-call
     // "no sidecar" warning that otherwise drowns out timing output.
     config.search.semantic_index = "naive".into();
-    let wiki = WikiGraph::open(path, config).expect("open store");
+    let wiki = AideMemo::open(path, config).expect("open store");
 
     // ~20 facts per entity → entity_count = scale / 20, min 10.
     // Lint's duplicate detector is O(entities²) with trigram similarity,
@@ -197,7 +197,7 @@ fn run_scale(scale: usize, rows: &mut Vec<Row>) {
 
     eprint!("  search_bm25... ");
     let op_t0 = Instant::now();
-    // search_bm25 (warm) — pure BM25 via WikiGraph::search. No
+    // search_bm25 (warm) — pure BM25 via AideMemo::search. No
     // embedding work, so this is the apples-to-apples view of the
     // BM25 inverted-index lookup against PLAN.md's target table.
     let mut idx = 0usize;
@@ -339,7 +339,7 @@ fn run_scale(scale: usize, rows: &mut Vec<Row>) {
         cfg.store.path = store_path.to_string_lossy().into_owned();
         cfg.search.semantic_index = "naive".into();
         let t0 = Instant::now();
-        let w = WikiGraph::open(&store_path, cfg).expect("reopen");
+        let w = AideMemo::open(&store_path, cfg).expect("reopen");
         let _ = w.traverse(
             "Entity_0",
             TraverseOpts {
@@ -364,7 +364,7 @@ fn run_scale(scale: usize, rows: &mut Vec<Row>) {
     let op_t0 = Instant::now();
     let mut hnsw_cfg = Config::default(); // semantic_index = "hnsw" by default
     hnsw_cfg.store.path = store_path.to_string_lossy().into_owned();
-    let hnsw_wiki = WikiGraph::open(&store_path, hnsw_cfg).expect("reopen hnsw");
+    let hnsw_wiki = AideMemo::open(&store_path, hnsw_cfg).expect("reopen hnsw");
     let hnsw_build_ms = {
         let t0 = Instant::now();
         let _ = hnsw_wiki.vector_index_rebuild().expect("hnsw build");
@@ -497,10 +497,10 @@ fn print_target_comparison(rows: &[Row]) {
 
 fn main() {
     let mut scales: Vec<usize> = vec![100, 1_000, 10_000];
-    if std::env::var("WG_BENCH_LARGE").is_ok() {
+    if std::env::var("AIDEMEMO_BENCH_LARGE").is_ok() {
         scales.push(50_000);
     }
-    if std::env::var("WG_BENCH_HUGE").is_ok() {
+    if std::env::var("AIDEMEMO_BENCH_HUGE").is_ok() {
         scales.push(100_000);
     }
 

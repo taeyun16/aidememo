@@ -1,0 +1,31 @@
+{
+  "name": "aidememo-napi-linux-arm64-gnu",
+  "version": "0.1.0",
+  "description": "Linux arm64 glibc native binding for aidememo-napi",
+  "main": "aidememo-napi.linux-arm64-gnu.node",
+  "files": [
+    "aidememo-napi.linux-arm64-gnu.node"
+  ],
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "libc": [
+    "glibc"
+  ],
+  "license": "MIT OR Apache-2.0",
+  "homepage": "https://github.com/taeyun16/aidememo#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/taeyun16/aidememo.git",
+    "directory": "crates/aidememo-napi/npm/aidememo-napi-linux-arm64-gnu"
+  },
+  "bugs": {
+    "url": "https://github.com/taeyun16/aidememo/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

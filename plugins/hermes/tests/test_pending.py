@@ -1,6 +1,6 @@
 """Pending-log module tests.
 
-The dry-run recorder writes to a JSONL file; ``/wg-pending`` reads,
+The dry-run recorder writes to a JSONL file; ``/aidememo-pending`` reads,
 commits, and clears entries from the same file. These tests lock
 the round-trip down: append → read → commit / clear → re-read.
 """
@@ -12,9 +12,9 @@ from unittest.mock import patch
 
 import pytest
 
-from hermes_wg import pending
-from hermes_wg.client import WgClient, WgUnavailable
-from hermes_wg.decisions import DetectedFact
+from hermes_aidememo import pending
+from hermes_aidememo.client import AideMemoClient, AideMemoUnavailable
+from hermes_aidememo.decisions import DetectedFact
 
 
 def _entry(idx: int, content: str, fact_type: str = "decision", confidence: float = 0.9) -> pending.PendingEntry:
@@ -29,7 +29,7 @@ def _entry(idx: int, content: str, fact_type: str = "decision", confidence: floa
 
 
 def test_append_creates_directory_and_writes_jsonl(tmp_path: Path) -> None:
-    log = tmp_path / "nested" / "wg-pending.jsonl"
+    log = tmp_path / "nested" / "aidememo-pending.jsonl"
     pending.append(
         [
             DetectedFact(content="Use HNSW", fact_type="decision", confidence=0.95, source_line="Decision: use HNSW"),
@@ -43,7 +43,7 @@ def test_append_creates_directory_and_writes_jsonl(tmp_path: Path) -> None:
 
 
 def test_read_skips_corrupt_lines(tmp_path: Path) -> None:
-    log = tmp_path / "wg-pending.jsonl"
+    log = tmp_path / "aidememo-pending.jsonl"
     log.write_text(
         '{"content": "ok", "fact_type": "decision", "confidence": 0.9, "ts_ms": 1, "source_line": "ok"}\n'
         '{not valid json\n'
@@ -57,7 +57,7 @@ def test_read_skips_corrupt_lines(tmp_path: Path) -> None:
 
 
 def test_clear_one_renumbers_remaining(tmp_path: Path) -> None:
-    log = tmp_path / "wg-pending.jsonl"
+    log = tmp_path / "aidememo-pending.jsonl"
     pending.write([_entry(1, "a"), _entry(2, "b"), _entry(3, "c")], log)
 
     dropped = pending.clear_one(2, log)
@@ -69,7 +69,7 @@ def test_clear_one_renumbers_remaining(tmp_path: Path) -> None:
 
 
 def test_clear_all_truncates(tmp_path: Path) -> None:
-    log = tmp_path / "wg-pending.jsonl"
+    log = tmp_path / "aidememo-pending.jsonl"
     pending.write([_entry(1, "a"), _entry(2, "b")], log)
     n = pending.clear_all(log)
     assert n == 2
@@ -77,14 +77,14 @@ def test_clear_all_truncates(tmp_path: Path) -> None:
 
 
 def test_clear_one_out_of_range_raises(tmp_path: Path) -> None:
-    log = tmp_path / "wg-pending.jsonl"
+    log = tmp_path / "aidememo-pending.jsonl"
     pending.write([_entry(1, "a")], log)
     with pytest.raises(IndexError):
         pending.clear_one(5, log)
 
 
-def test_commit_one_writes_to_wg_and_drops_entry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    log = tmp_path / "wg-pending.jsonl"
+def test_commit_one_writes_to_aidememo_and_drops_entry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    log = tmp_path / "aidememo-pending.jsonl"
     pending.write([_entry(1, "a"), _entry(2, "b")], log)
 
     captured: list[tuple] = []
@@ -93,11 +93,11 @@ def test_commit_one_writes_to_wg_and_drops_entry(tmp_path: Path, monkeypatch: py
         captured.append((content, fact_type, tuple(tags or [])))
         return "STUB-ID"
 
-    monkeypatch.setattr(WgClient, "__init__", lambda self, *_a, **_kw: None)
-    monkeypatch.setattr(WgClient, "fact_add", stub_fact_add)
-    monkeypatch.setattr("hermes_wg.client.WgClient._has_cli", staticmethod(lambda: True))
+    monkeypatch.setattr(AideMemoClient, "__init__", lambda self, *_a, **_kw: None)
+    monkeypatch.setattr(AideMemoClient, "fact_add", stub_fact_add)
+    monkeypatch.setattr("hermes_aidememo.client.AideMemoClient._has_cli", staticmethod(lambda: True))
 
-    entry = pending.commit_one(WgClient(), 1, log)
+    entry = pending.commit_one(AideMemoClient(), 1, log)
     assert entry.content == "a"
     assert captured == [("a", "decision", ("auto-recorded", "hermes-session"))]
 
@@ -107,7 +107,7 @@ def test_commit_one_writes_to_wg_and_drops_entry(tmp_path: Path, monkeypatch: py
 
 
 def test_commit_all_succeeds_and_clears_log(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    log = tmp_path / "wg-pending.jsonl"
+    log = tmp_path / "aidememo-pending.jsonl"
     pending.write([_entry(1, "ok"), _entry(2, "fine")], log)
 
     captured: list[list[dict]] = []
@@ -116,11 +116,11 @@ def test_commit_all_succeeds_and_clears_log(tmp_path: Path, monkeypatch: pytest.
         captured.append(items)
         return ["STUB-1", "STUB-2"]
 
-    monkeypatch.setattr(WgClient, "__init__", lambda self, *_a, **_kw: None)
-    monkeypatch.setattr(WgClient, "fact_add_many", stub_fact_add_many)
-    monkeypatch.setattr("hermes_wg.client.WgClient._has_cli", staticmethod(lambda: True))
+    monkeypatch.setattr(AideMemoClient, "__init__", lambda self, *_a, **_kw: None)
+    monkeypatch.setattr(AideMemoClient, "fact_add_many", stub_fact_add_many)
+    monkeypatch.setattr("hermes_aidememo.client.AideMemoClient._has_cli", staticmethod(lambda: True))
 
-    committed, leftover = pending.commit_all(WgClient(), log)
+    committed, leftover = pending.commit_all(AideMemoClient(), log)
     assert committed == 2
     assert leftover == []
     assert pending.read(log) == [], "log should be cleared on success"
@@ -132,19 +132,19 @@ def test_commit_all_succeeds_and_clears_log(tmp_path: Path, monkeypatch: pytest.
 
 def test_commit_all_failure_keeps_every_entry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """`fact_add_many` is all-or-nothing in redb. If the batch raises
-    (wg unreachable / validation error on any entry), every queued
+    (aidememo unreachable / validation error on any entry), every queued
     entry stays put so the operator can fix and retry."""
-    log = tmp_path / "wg-pending.jsonl"
+    log = tmp_path / "aidememo-pending.jsonl"
     pending.write([_entry(1, "a"), _entry(2, "b"), _entry(3, "c")], log)
 
     def stub_fact_add_many(self, items):
-        raise WgUnavailable("simulated failure")
+        raise AideMemoUnavailable("simulated failure")
 
-    monkeypatch.setattr(WgClient, "__init__", lambda self, *_a, **_kw: None)
-    monkeypatch.setattr(WgClient, "fact_add_many", stub_fact_add_many)
-    monkeypatch.setattr("hermes_wg.client.WgClient._has_cli", staticmethod(lambda: True))
+    monkeypatch.setattr(AideMemoClient, "__init__", lambda self, *_a, **_kw: None)
+    monkeypatch.setattr(AideMemoClient, "fact_add_many", stub_fact_add_many)
+    monkeypatch.setattr("hermes_aidememo.client.AideMemoClient._has_cli", staticmethod(lambda: True))
 
-    committed, leftover = pending.commit_all(WgClient(), log)
+    committed, leftover = pending.commit_all(AideMemoClient(), log)
     assert committed == 0
     assert [e.content for e in leftover] == ["a", "b", "c"]
 
@@ -155,5 +155,5 @@ def test_commit_all_failure_keeps_every_entry(tmp_path: Path, monkeypatch: pytes
 
 def test_pending_log_path_honors_state_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("HERMES_STATE_DIR", str(tmp_path))
-    assert pending.pending_log_path() == tmp_path / "wg-pending.jsonl"
+    assert pending.pending_log_path() == tmp_path / "aidememo-pending.jsonl"
     monkeypatch.delenv("HERMES_STATE_DIR")

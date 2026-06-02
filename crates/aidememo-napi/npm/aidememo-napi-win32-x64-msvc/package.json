@@ -1,0 +1,28 @@
+{
+  "name": "aidememo-napi-win32-x64-msvc",
+  "version": "0.1.0",
+  "description": "Windows x64 MSVC native binding for aidememo-napi",
+  "main": "aidememo-napi.win32-x64-msvc.node",
+  "files": [
+    "aidememo-napi.win32-x64-msvc.node"
+  ],
+  "os": [
+    "win32"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "license": "MIT OR Apache-2.0",
+  "homepage": "https://github.com/taeyun16/aidememo#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/taeyun16/aidememo.git",
+    "directory": "crates/aidememo-napi/npm/aidememo-napi-win32-x64-msvc"
+  },
+  "bugs": {
+    "url": "https://github.com/taeyun16/aidememo/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

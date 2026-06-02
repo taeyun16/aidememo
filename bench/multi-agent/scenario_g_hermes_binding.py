@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Scenario G — Hermes workflow_start CLI fallback vs wg-python path.
+"""Scenario G — Hermes workflow_start CLI fallback vs aidememo-python path.
 
 P3.3 asks whether Hermes should keep shelling out for workflow
-trigger context packs or use the in-process ``wg-python`` binding
+trigger context packs or use the in-process ``aidememo-python`` binding
 when it is installed.  This script seeds two identical stores and
 runs the same four sparse tickets through:
 
-  - CLI baseline: ``wg --json workflow start ...``
-  - Hermes binding path: ``WgClient.workflow_start(...)`` with
-    ``wg_python.WikiGraph`` loaded
+  - CLI baseline: ``aidememo --json workflow start ...``
+  - Hermes binding path: ``AideMemoClient.workflow_start(...)`` with
+    ``aidememo_python.AideMemo`` loaded
 
 The pass condition is shape parity, not byte-for-byte equality:
 session/ticket IDs are expected to differ.  We compare prior counts,
@@ -16,7 +16,7 @@ search-hit counts, required context strings, and forbidden leakage.
 
 Run after installing the local binding, for example:
 
-  (cd crates/wg-python && maturin develop)
+  (cd crates/aidememo-python && maturin develop)
   python3 bench/multi-agent/scenario_g_hermes_binding.py
 """
 
@@ -34,8 +34,8 @@ from pathlib import Path
 from typing import Any
 
 REPO = Path(__file__).resolve().parents[2]
-WG = os.environ.get("WG_BIN", str(REPO / "target" / "debug" / "wg"))
-BASE = Path(os.environ.get("WG_E2E_BASE", str(Path(tempfile.gettempdir()) / "wg-e2e-g")))
+WG = os.environ.get("AIDEMEMO_BIN", str(REPO / "target" / "debug" / "aidememo"))
+BASE = Path(os.environ.get("AIDEMEMO_E2E_BASE", str(Path(tempfile.gettempdir()) / "aidememo-e2e-g")))
 CLI_STORE = str(BASE / "workflow-cli.redb")
 PY_STORE = str(BASE / "workflow-py.redb")
 
@@ -226,10 +226,10 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 def main() -> int:
     try:
-        import wg_python  # noqa: F401
+        import aidememo_python  # noqa: F401
     except Exception as exc:
         print(
-            "wg_python is not importable; run `(cd crates/wg-python && maturin develop)` first.",
+            "aidememo_python is not importable; run `(cd crates/aidememo-python && maturin develop)` first.",
             file=sys.stderr,
         )
         print(f"import error: {exc}", file=sys.stderr)
@@ -237,7 +237,7 @@ def main() -> int:
 
     sys.path.insert(0, str(REPO / "plugins" / "hermes" / "src"))
     os.environ["PATH"] = f"{Path(WG).parent}:{os.environ.get('PATH', '')}"
-    from hermes_wg.client import WgClient
+    from hermes_aidememo.client import AideMemoClient
 
     reset_store(CLI_STORE)
     reset_store(PY_STORE)
@@ -249,9 +249,9 @@ def main() -> int:
         payload, elapsed = timed(workflow_cli, CLI_STORE, ticket)
         cli_rows.append(normalize(ticket, payload, elapsed))
 
-    client = WgClient(store_path=PY_STORE, lock_retry_ms=5000)
-    if client.backend != "wg-python":
-        raise RuntimeError(f"expected wg-python backend, got {client.backend}")
+    client = AideMemoClient(store_path=PY_STORE, lock_retry_ms=5000)
+    if client.backend != "aidememo-python":
+        raise RuntimeError(f"expected aidememo-python backend, got {client.backend}")
 
     py_rows: list[dict[str, Any]] = []
     for ticket in TICKETS:
@@ -288,10 +288,10 @@ def main() -> int:
     }
 
     out = {
-        "scenario": "G — Hermes workflow_start CLI fallback vs wg-python path",
-        "stores": {"cli": CLI_STORE, "wg_python": PY_STORE},
+        "scenario": "G — Hermes workflow_start CLI fallback vs aidememo-python path",
+        "stores": {"cli": CLI_STORE, "aidememo_python": PY_STORE},
         "cli": {"runs": cli_rows, "summary": cli_summary},
-        "wg_python": {"runs": py_rows, "summary": py_summary},
+        "aidememo_python": {"runs": py_rows, "summary": py_summary},
         "speedup_p50": round(speedup, 2),
         "parity": parity,
         "invariants": invariants,

@@ -3,8 +3,8 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-WG_BIN="${WG_BIN:-$ROOT_DIR/target/debug/wg}"
-BASE="${WG_RELEASE_SMOKE_BASE:-$(mktemp -d "${TMPDIR:-/tmp}/wg-release-smoke.XXXXXX")}"
+AIDEMEMO_BIN="${AIDEMEMO_BIN:-$ROOT_DIR/target/debug/aidememo}"
+BASE="${AIDEMEMO_RELEASE_SMOKE_BASE:-$(mktemp -d "${TMPDIR:-/tmp}/aidememo-release-smoke.XXXXXX")}"
 SUMMARY_TSV="$BASE/workflow-release-smoke-timings.tsv"
 
 run() {
@@ -87,37 +87,37 @@ mkdir -p "$BASE"
 : > "$SUMMARY_TSV"
 trap print_summary EXIT
 
-run cargo build -p wg-cli
+run cargo build -p aidememo-cli
 run bash -n scripts/demo-workflow.sh
 run python3 -m py_compile \
     bench/multi-agent/scenario_f_workflow_triggers.py \
     bench/multi-agent/scenario_i_workflow_doctor.py
 
 run env \
-    WG_BIN="$WG_BIN" \
-    WG_DEMO_BASE="$BASE/demo-workflow" \
+    AIDEMEMO_BIN="$AIDEMEMO_BIN" \
+    AIDEMEMO_DEMO_BASE="$BASE/demo-workflow" \
     scripts/demo-workflow.sh
 
 run env \
-    WG_BIN="$WG_BIN" \
-    WG_E2E_STORE="$BASE/scenario-f/workflow.redb" \
+    AIDEMEMO_BIN="$AIDEMEMO_BIN" \
+    AIDEMEMO_E2E_STORE="$BASE/scenario-f/workflow.redb" \
     python3 bench/multi-agent/scenario_f_workflow_triggers.py
 
 run env \
-    WG_BIN="$WG_BIN" \
-    WG_E2E_BASE="$BASE/scenario-i" \
+    AIDEMEMO_BIN="$AIDEMEMO_BIN" \
+    AIDEMEMO_E2E_BASE="$BASE/scenario-i" \
     python3 bench/multi-agent/scenario_i_workflow_doctor.py
 
 FIXTURE_STORE="$BASE/doctor-fixture/wiki.redb"
 FIXTURE_HOME="$BASE/home"
 mkdir -p "$FIXTURE_HOME/.codex"
 cat > "$FIXTURE_HOME/.codex/config.toml" <<EOF
-[mcp_servers.wg]
-command = "$WG_BIN"
+[mcp_servers.aidememo]
+command = "$AIDEMEMO_BIN"
 args = ["--store", "$FIXTURE_STORE", "mcp"]
 EOF
 
-run "$WG_BIN" \
+run "$AIDEMEMO_BIN" \
     --store "$FIXTURE_STORE" \
     --json \
     workflow start \
@@ -130,7 +130,7 @@ run "$WG_BIN" \
 doctor_json="$(
     HOME="$FIXTURE_HOME" \
     PATH="/nonexistent" \
-    "$WG_BIN" --store "$FIXTURE_STORE" --json doctor
+    "$AIDEMEMO_BIN" --store "$FIXTURE_STORE" --json doctor
 )"
 
 json_assert "$doctor_json" <<'PY'

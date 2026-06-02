@@ -1,15 +1,15 @@
 # Measurements
 
-This file is the public measurement ledger for `wg`. Historical scratch-note
+This file is the public measurement ledger for `aidememo`. Historical scratch-note
 files were removed; durable numbers should live here, in
 `benchmarks/*/RESULTS.md`, or in JSON under `bench/**/results`.
 
 ## Re-run Commands
 
 ```bash
-cargo check -p wg-core -p wg-cli
-cargo test -p wg-core --features semantic
-cargo test -p wg-cli --bin wg
+cargo check -p aidememo-core -p aidememo-cli
+cargo test -p aidememo-core --features semantic
+cargo test -p aidememo-cli --bin aidememo
 python3 -m pytest plugins/hermes/tests -q
 
 cargo run --release --bin performance
@@ -18,14 +18,14 @@ python3 bench/multi-agent/scenario_e_http_shared.py
 python3 bench/multi-agent/scenario_f_workflow_triggers.py
 python3 bench/multi-agent/scenario_g_hermes_binding.py
 python3 bench/multi-agent/scenario_h_workflow_natural_prompt.py
-WG_E2E_SETUP_ONLY=1 python3 bench/multi-agent/scenario_h_workflow_natural_prompt.py
+AIDEMEMO_E2E_SETUP_ONLY=1 python3 bench/multi-agent/scenario_h_workflow_natural_prompt.py
 python3 bench/multi-agent/scenario_j_lock_retry_sweep.py
 python3 bench/multi-agent/scenario_k_sdk_workflow_parity.py
 python3 bench/multi-agent/scenario_l_self_extraction.py
 python3 bench/multi-agent/scenario_m_mcp_install_source_defaults.py
 python3 bench/multi-agent/scenario_n_hermes_memory_as_code.py
-scripts/wg-agent-sdk-pack-smoke.sh
-scripts/hermes-wg-pack-smoke.sh
+scripts/aidememo-agent-sdk-pack-smoke.sh
+scripts/hermes-aidememo-pack-smoke.sh
 scripts/skillopt-lite-cycle.sh --max-cycles 1
 scripts/skillopt-lite-check.sh
 scripts/demo-workflow.sh
@@ -48,38 +48,38 @@ with current scorecards in
 | Hermes serverless shared store, retry `0` | 10/20 writes persisted, 10 lock errors | redb's process lock is visible without smoothing. |
 | Hermes serverless shared store, retry `5000` | 20/20 writes persisted, 0 errors; wall 2.16s, p50 98.1ms, max 1.22s | The default plugin path is smooth for ordinary two-agent local sharing. |
 | Scenario J serverless lock-retry sweep, retry `5000` | Smooth until 4 concurrent writers; at 8 writers 79/80 persisted, p95 2.99s | Keep serverless sharing for small same-host teams; switch to daemon when high parallel write volume is normal. |
-| HTTP shared `wg mcp-serve`, 2 clients x 10 writes | 20/20 persisted; p50 18.4ms, p95 41.8ms, wall 251ms | Daemon mode is still the faster high-concurrency path, but it can stay optional. |
+| HTTP shared `aidememo mcp-serve`, 2 clients x 10 writes | 20/20 persisted; p50 18.4ms, p95 41.8ms, wall 251ms | Daemon mode is still the faster high-concurrency path, but it can stay optional. |
 | Workflow trigger Scenario F, 4 sparse tickets | 13/13 invariants; p95 2.48s; max context 3,023 chars; forbidden leakage 0 | CLI, MCP, and Hermes paths create distinct sessions/ticket facts and keep `source_id`-scoped ticket context separated. |
-| Hermes workflow binding Scenario G, 4 sparse tickets | 5/5 invariants; shape parity 4/4; leakage 0; p50 1,795.71ms CLI vs 13.14ms binding | When `wg-python` is installed, Hermes composes workflow packs in process: same context contract, about 137x lower p50 after the first model/index warmup. |
-| SDK workflow parity Scenario K, 4 sparse tickets | 8/8 invariants; Python and Node shape parity 4/4 each; leakage 0; p50 CLI 1,864.55ms, Python 16.19ms, Node 13.69ms | `wg-python` and `wg-napi` expose the same sparse-ticket context contract as CLI while avoiding per-command CLI spawn overhead. |
-| Self-extraction Scenario L, MCP batch + default source | 10/10 invariants; `wg_fact_add_many` inserted 7 classified facts in 295.44ms; alpha sparse-ticket workflow recovered decision=1, lesson=1, error=1 with beta leakage 0; `WG_SOURCE_ID` scoped an env-default MCP write and search | If the calling agent classifies facts before `wg_fact_add_many`, wg preserves typed memory and returns it in the workflow shape agents consume without a built-in LLM extraction pipeline. MCP agents can also set `WG_SOURCE_ID` once instead of repeating `source_id` on every call. |
-| MCP install source defaults | `cargo test -p wg-cli --bin wg mcp_install`: 10/10 tests passed; `wg mcp-install --target codex --source-id agent-alpha --print --json` reports `source_id=agent-alpha` and env detail | `wg mcp-install --source-id` makes the smooth path installable: the MCP server starts with `WG_SOURCE_ID` already set instead of asking users to hand-edit agent config. |
-| Doctor scoped setup hint | `cargo test -p wg-cli --bin wg`: 120 passed, 1 ignored; temp `wg skill install --target opencode --dest ...` output includes `wg mcp-install --target opencode` and `--source-id <namespace>` | Setup diagnostics now preserve project namespace context: a scoped recent workflow ticket turns the no-MCP doctor hint into `wg mcp-install --target codex --source-id <namespace>`, and skill install output points shared-store users at the same flag. |
-| MCP install source defaults Scenario M | 12/12 invariants; elapsed 323.97ms; Codex / Cursor / OpenCode configs all contain `WG_SOURCE_ID=agent-alpha`; Claude / Hermes / OpenClaw print-mode commands include env injection; MCP write/search without explicit `source_id` returned only `agent-alpha` facts | The install story is now end-to-end testable without real agent CLIs: generated configs provide the env value that MCP tools consume for scoped defaults. |
-| Scenario H source-default setup | 5/5 setup invariants; Codex config created through `wg mcp-install --source-id workflow-alpha`; Claude project MCP and Hermes plugin config both carry `WG_SOURCE_ID` / `source_id`; no model calls | The token-burning natural prompt scenario can now run without asking agents to pass `source_id` per tool call; setup itself is zero-cost and regression-testable. |
-| MCP workflow session attachment | `cargo test -p wg-cli --bin wg workflow_start_creates_session_ticket_and_scoped_context` and `cargo test -p wg-cli --bin wg fact_add_many_attaches_top_level_session_id_to_each_item` passed | MCP agents can pass `session_id` from `wg_workflow_start` into `wg_fact_add` / `wg_fact_add_many`, keeping follow-up facts on the workflow thread without relying on CLI-only `WG_SESSION_ID`. |
+| Hermes workflow binding Scenario G, 4 sparse tickets | 5/5 invariants; shape parity 4/4; leakage 0; p50 1,795.71ms CLI vs 13.14ms binding | When `aidememo-python` is installed, Hermes composes workflow packs in process: same context contract, about 137x lower p50 after the first model/index warmup. |
+| SDK workflow parity Scenario K, 4 sparse tickets | 8/8 invariants; Python and Node shape parity 4/4 each; leakage 0; p50 CLI 1,864.55ms, Python 16.19ms, Node 13.69ms | `aidememo-python` and `aidememo-napi` expose the same sparse-ticket context contract as CLI while avoiding per-command CLI spawn overhead. |
+| Self-extraction Scenario L, MCP batch + default source | 10/10 invariants; `aidememo_fact_add_many` inserted 7 classified facts in 295.44ms; alpha sparse-ticket workflow recovered decision=1, lesson=1, error=1 with beta leakage 0; `AIDEMEMO_SOURCE_ID` scoped an env-default MCP write and search | If the calling agent classifies facts before `aidememo_fact_add_many`, aidememo preserves typed memory and returns it in the workflow shape agents consume without a built-in LLM extraction pipeline. MCP agents can also set `AIDEMEMO_SOURCE_ID` once instead of repeating `source_id` on every call. |
+| MCP install source defaults | `cargo test -p aidememo-cli --bin aidememo mcp_install`: 10/10 tests passed; `aidememo mcp-install --target codex --source-id agent-alpha --print --json` reports `source_id=agent-alpha` and env detail | `aidememo mcp-install --source-id` makes the smooth path installable: the MCP server starts with `AIDEMEMO_SOURCE_ID` already set instead of asking users to hand-edit agent config. |
+| Doctor scoped setup hint | `cargo test -p aidememo-cli --bin aidememo`: 120 passed, 1 ignored; temp `aidememo skill install --target opencode --dest ...` output includes `aidememo mcp-install --target opencode` and `--source-id <namespace>` | Setup diagnostics now preserve project namespace context: a scoped recent workflow ticket turns the no-MCP doctor hint into `aidememo mcp-install --target codex --source-id <namespace>`, and skill install output points shared-store users at the same flag. |
+| MCP install source defaults Scenario M | 12/12 invariants; elapsed 323.97ms; Codex / Cursor / OpenCode configs all contain `AIDEMEMO_SOURCE_ID=agent-alpha`; Claude / Hermes / OpenClaw print-mode commands include env injection; MCP write/search without explicit `source_id` returned only `agent-alpha` facts | The install story is now end-to-end testable without real agent CLIs: generated configs provide the env value that MCP tools consume for scoped defaults. |
+| Scenario H source-default setup | 5/5 setup invariants; Codex config created through `aidememo mcp-install --source-id workflow-alpha`; Claude project MCP and Hermes plugin config both carry `AIDEMEMO_SOURCE_ID` / `source_id`; no model calls | The token-burning natural prompt scenario can now run without asking agents to pass `source_id` per tool call; setup itself is zero-cost and regression-testable. |
+| MCP workflow session attachment | `cargo test -p aidememo-cli --bin aidememo workflow_start_creates_session_ticket_and_scoped_context` and `cargo test -p aidememo-cli --bin aidememo fact_add_many_attaches_top_level_session_id_to_each_item` passed | MCP agents can pass `session_id` from `aidememo_workflow_start` into `aidememo_fact_add` / `aidememo_fact_add_many`, keeping follow-up facts on the workflow thread without relying on CLI-only `AIDEMEMO_SESSION_ID`. |
 | Zero-token workflow demo | decision + lesson + error surfaced; search hits 4; workflow latency 128ms | `scripts/demo-workflow.sh` demonstrates the product position without an agent, model call, or persistent store. It uses CLI `workflow start --bm25-only` for deterministic first-run behaviour. `scripts/ci-local.sh demo` wraps the same smoke for daily local checks in about 0.91s warm. |
 | Natural workflow adoption Scenario H, 3 agents | 4/4 invariants; 3/3 agents passed; each created 1 scoped workflow fact; prior reflection Claude 3/3, Codex 2/3, Hermes 3/3; forbidden leakage 0 | Sparse-ticket prompts can drive the workflow entry point across Claude, Codex, and Hermes when each runtime gets an isolated, deterministic MCP config. Hermes uses MCP-only here to avoid redb lock contention with the in-process plugin. |
-| Hermes native core parity | `python3 -m pytest plugins/hermes/tests -q`; `cargo test -p wg-cli --bin wg mcp_tools::` | Hermes now exposes `wg_context`, `wg_aggregate`, `wg_fact_add_many`, and `wg_doctor` through native tools/slash commands, and source-scoped aggregate calls honor explicit `source_id` / `WG_SOURCE_ID` instead of mixing shared-store facts. |
-| Hermes Memory-as-Code Scenario N | `python3 bench/multi-agent/scenario_n_hermes_memory_as_code.py`: 9/9 invariants; fanout search + dedupe + coverage + derived batch + aggregate completed with beta source excluded from scoped rows | The Hermes research profile now has a zero-token, code-first regression through the shared `wg_agent.Memory` API: intermediate candidate sets stay in Python and only compact coverage/aggregate artifacts need to reach model context. |
-| wg-agent-sdk wheel install smoke | `scripts/wg-agent-sdk-pack-smoke.sh`: built `wg_agent_sdk-0.1.0-py3-none-any.whl`, installed it into a temp venv, verified `Memory`, `WgClient`, `WgMemorySDK`, and first-use methods; total 3.20s | The code-first SDK path is installable independently of Hermes, so Codex / Claude Code / CI scripts do not need the Hermes plugin package. |
-| hermes-wg wheel install smoke | `scripts/hermes-wg-pack-smoke.sh`: built `wg_agent_sdk-0.1.0-py3-none-any.whl` + `hermes_wg-1.0.0-py3-none-any.whl`, installed both into a temp venv, verified `hermes_wg.WgMemorySDK` re-exports `wg_agent.Memory`, `hermes.plugins` entry point, `plugin.yaml`, and bundled `SKILL.md`; total 4.36s | The Hermes plugin remains pip-installable while delegating the code-first SDK layer to the shared package. |
-| SkillOpt-lite profile gate | `scripts/skillopt-lite-check.sh` validates the bundled `wg-skill/SKILL.md` as the current trainable memory profile candidate, then runs `wg skill check`, `git diff --check`, `cargo check -p wg-cli`, `scripts/demo-workflow.sh`, and `scripts/sdk-promotion-check.sh`; optional Scenario L/M/N gates run with `WG_SKILLOPT_RUN_SCENARIOS=1` | This turns SkillOpt's useful discipline into a local `wg` product boundary: memory skill edits are bounded, auditable, and accepted only after zero-token workflow / SDK gates pass. |
+| Hermes native core parity | `python3 -m pytest plugins/hermes/tests -q`; `cargo test -p aidememo-cli --bin aidememo mcp_tools::` | Hermes now exposes `aidememo_context`, `aidememo_aggregate`, `aidememo_fact_add_many`, and `aidememo_doctor` through native tools/slash commands, and source-scoped aggregate calls honor explicit `source_id` / `AIDEMEMO_SOURCE_ID` instead of mixing shared-store facts. |
+| Hermes Memory-as-Code Scenario N | `python3 bench/multi-agent/scenario_n_hermes_memory_as_code.py`: 9/9 invariants; fanout search + dedupe + coverage + derived batch + aggregate completed with beta source excluded from scoped rows | The Hermes research profile now has a zero-token, code-first regression through the shared `aidememo_agent.Memory` API: intermediate candidate sets stay in Python and only compact coverage/aggregate artifacts need to reach model context. |
+| aidememo-agent-sdk wheel install smoke | `scripts/aidememo-agent-sdk-pack-smoke.sh`: built `aidememo_agent_sdk-0.1.0-py3-none-any.whl`, installed it into a temp venv, verified `Memory`, `AideMemoClient`, `AideMemoMemorySDK`, and first-use methods; total 3.20s | The code-first SDK path is installable independently of Hermes, so Codex / Claude Code / CI scripts do not need the Hermes plugin package. |
+| hermes-aidememo wheel install smoke | `scripts/hermes-aidememo-pack-smoke.sh`: built `aidememo_agent_sdk-0.1.0-py3-none-any.whl` + `hermes_aidememo-1.0.0-py3-none-any.whl`, installed both into a temp venv, verified `hermes_aidememo.AideMemoMemorySDK` re-exports `aidememo_agent.Memory`, `hermes.plugins` entry point, `plugin.yaml`, and bundled `SKILL.md`; total 4.36s | The Hermes plugin remains pip-installable while delegating the code-first SDK layer to the shared package. |
+| SkillOpt-lite profile gate | `scripts/skillopt-lite-check.sh` validates the bundled `aidememo-skill/SKILL.md` as the current trainable memory profile candidate, then runs `aidememo skill check`, `git diff --check`, `cargo check -p aidememo-cli`, `scripts/demo-workflow.sh`, and `scripts/sdk-promotion-check.sh`; optional Scenario L/M/N gates run with `AIDEMEMO_SKILLOPT_RUN_SCENARIOS=1` | This turns SkillOpt's useful discipline into a local `aidememo` product boundary: memory skill edits are bounded, auditable, and accepted only after zero-token workflow / SDK gates pass. |
 | SkillOpt-lite periodic cycle | `scripts/skillopt-lite-cycle.sh --max-cycles 1` checks the current profile when no candidate is queued, records the accepted dry-run under `target/skillopt-lite/runs.jsonl`, and stores the full gate output in `target/skillopt-lite/logs/`; passing candidates are applied only with `--apply` | Periodic skill/profile improvement can run without dirtying the repo or turning rejected candidates into failures by default; rejected edits are preserved for optimizer feedback. |
 
 ## Agentic Loop Calibration
 
-`wg_aggregate` should be described as a deterministic arithmetic primitive, not
+`aidememo_aggregate` should be described as a deterministic arithmetic primitive, not
 as a general accuracy lever. The stable product rule is:
 
 | Question shape | Recommended path |
 |---|---|
-| "What did I say about X?" / "When did I last do Y?" / "What's my preference for Z?" | Answer from `wg_context`, `wg_query`, or `wg_search` snippets. |
-| "How much total did I spend on X?" | `wg_aggregate(op=sum_currency)` |
-| "How many hours/days total?" | `wg_aggregate(op=sum_duration)` |
-| "How many distinct days had event X?" | `wg_aggregate(op=count_distinct_dates)` |
-| "Timeline of all X events" | `wg_aggregate(op=timeline)` |
-| "How many times did I decide/try X?" | `wg_aggregate(op=count)` or `op=enumerate` |
+| "What did I say about X?" / "When did I last do Y?" / "What's my preference for Z?" | Answer from `aidememo_context`, `aidememo_query`, or `aidememo_search` snippets. |
+| "How much total did I spend on X?" | `aidememo_aggregate(op=sum_currency)` |
+| "How many hours/days total?" | `aidememo_aggregate(op=sum_duration)` |
+| "How many distinct days had event X?" | `aidememo_aggregate(op=count_distinct_dates)` |
+| "Timeline of all X events" | `aidememo_aggregate(op=timeline)` |
+| "How many times did I decide/try X?" | `aidememo_aggregate(op=count)` or `op=enumerate` |
 
 The earlier 60-question focused run showed a large multi-session gain when the
 agent used aggregation. A later balanced LongMemEval-style run with 240
@@ -91,8 +91,8 @@ structure can disturb simple recall.
 
 A single-shot "does this need aggregation?" classifier netted to baseline at
 240 questions (`+0pt` mean, around 40% precision). The practical conclusion is
-to expose `wg_aggregate` in reader prompts as insurance for counting, summing,
-and timelines, while keeping normal recall on `wg_context` / `wg_query`.
+to expose `aidememo_aggregate` in reader prompts as insurance for counting, summing,
+and timelines, while keeping normal recall on `aidememo_context` / `aidememo_query`.
 
 ## gbrain-evals Adapter
 
@@ -101,9 +101,9 @@ on 2026-05-19:
 
 | Adapter | Corpus Pages | Queries | P@5 | R@5 | Correct / Expected | Real Time |
 |---|---:|---:|---:|---:|---:|---:|
-| wg bm25 | 240 | 145 | 17.4% | 64.1% | 125 / 261 | 63.38s |
-| wg bm25 daemon | 240 | 145 | 17.4% | 64.1% | 125 / 261 | 11.04s |
-| wg hybrid daemon | 240 | 145 | 16.7% | 62.5% | 121 / 261 | 45.64s |
+| aidememo bm25 | 240 | 145 | 17.4% | 64.1% | 125 / 261 | 63.38s |
+| aidememo bm25 daemon | 240 | 145 | 17.4% | 64.1% | 125 / 261 | 11.04s |
+| aidememo hybrid daemon | 240 | 145 | 16.7% | 62.5% | 121 / 261 | 45.64s |
 
 Daemon BM25 preserves the score and cuts wall time by `5.7x`. Hybrid is
 slower and slightly worse on this surface-form-heavy BrainBench slice; keep
@@ -116,11 +116,11 @@ benchmark harness:
 
 | Stack | R@1 | R@5 | R@10 | MRR |
 |---|---:|---:|---:|---:|
-| wg BM25-only | 0.866 | 0.952 | 0.974 | 0.902 |
-| wg + time-decay soft bias | 0.858 | 0.958 | 0.978 | 0.898 |
-| wg + bge-small-en-v1.5 | 0.914 | 0.976 | 0.986 | 0.941 |
-| wg + bge + reranker K=10 | 0.938 | 0.984 | 0.986 | 0.957 |
-| wg + bge + two-stage reranker K=20 -> 10 | 0.940 | 0.984 | 0.992 | 0.958 |
+| aidememo BM25-only | 0.866 | 0.952 | 0.974 | 0.902 |
+| aidememo + time-decay soft bias | 0.858 | 0.958 | 0.978 | 0.898 |
+| aidememo + bge-small-en-v1.5 | 0.914 | 0.976 | 0.986 | 0.941 |
+| aidememo + bge + reranker K=10 | 0.938 | 0.984 | 0.986 | 0.957 |
+| aidememo + bge + two-stage reranker K=20 -> 10 | 0.940 | 0.984 | 0.992 | 0.958 |
 
 The retrieval ceiling is high: answer evidence lands in the top-10 set for
 496/500 questions. Remaining E2E errors are mostly reader-side temporal or
@@ -133,17 +133,17 @@ LLM-graded with a `gpt-4o` judge:
 | Stack | Reader | Overall |
 |---|---|---:|
 | Mem0 published baseline | gpt-4o | 49.0% |
-| wg @ model2vec + decay | gpt-4o-mini | 60.0% |
-| wg @ model2vec + decay | gpt-4o | 60.4% |
-| wg @ bge + reranker K=20 -> 10 | gpt-4o-mini | 65.6% |
-| wg @ bge + reranker K=20 -> 10 | gpt-4o | 67.6% |
-| wg @ bge + reranker K=20 -> 10 | gpt-4.1 | 72.6% |
-| wg @ bge + reranker K=20 -> 10 | MiniMax-M2.7-highspeed | 74.0% |
+| aidememo @ model2vec + decay | gpt-4o-mini | 60.0% |
+| aidememo @ model2vec + decay | gpt-4o | 60.4% |
+| aidememo @ bge + reranker K=20 -> 10 | gpt-4o-mini | 65.6% |
+| aidememo @ bge + reranker K=20 -> 10 | gpt-4o | 67.6% |
+| aidememo @ bge + reranker K=20 -> 10 | gpt-4.1 | 72.6% |
+| aidememo @ bge + reranker K=20 -> 10 | MiniMax-M2.7-highspeed | 74.0% |
 | Zep / Graphiti 2026 published | gpt-4o | 71.2% |
 | Mastra published | gpt-4o | 84.2% |
 | OMEGA published local | gpt-4.1 | 95.4% |
 
-Use these numbers carefully. `wg` should lead with deployment and temporal
+Use these numbers carefully. `aidememo` should lead with deployment and temporal
 memory ergonomics, not a SOTA claim.
 
 ## Model And Rerank Trade-offs
@@ -181,14 +181,14 @@ synthetic wiki, p95 latency, default config:
 ## Workflow Doctor Readiness
 
 P3.5 adds a `workflow` block and P2.5 adds a separate `sharing` block to
-`wg doctor --json` so sparse ticket automation and shared-store ergonomics are
+`aidememo doctor --json` so sparse ticket automation and shared-store ergonomics are
 visible without manually inspecting agent configs, fact lists, or benchmark
-notes. P2.6 threads the same `sharing` contract through MCP `wg_doctor`, so
+notes. P2.6 threads the same `sharing` contract through MCP `aidememo_doctor`, so
 agents can see it without shelling out. The stable workflow contract is:
 
 | Field | Meaning |
 |---|---|
-| `workflow.ready` | At least one checked agent has `wg` registered as MCP. |
+| `workflow.ready` | At least one checked agent has `aidememo` registered as MCP. |
 | `workflow.recent_ticket_count` | Current workflow-start ticket facts in the last 30 days. |
 | `workflow.recent_tickets[]` | Up to five recent ticket summaries with `source` / `source_id`. |
 | `workflow.hints[]` | Actionable setup or usage hints with a concrete command in `action`. |
@@ -208,13 +208,13 @@ Validation:
 
 | Command | Result |
 |---|---|
-| `cargo test -p wg-cli doctor` | 25 passed; workflow unit tests cover ready/count/hints, sharing unit tests cover retry advisory behaviour, and integration tests cover the JSON `sharing` contract. |
-| `cargo test -p wg-cli doctor_json_includes_workflow_readiness_hints` | fixture CLI smoke validates JSON `workflow.ready`, `recent_ticket_count`, and actionable hints. |
-| `cargo test -p wg-cli doctor_json_includes_shared_store_guidance` | fixture CLI smoke validates JSON `sharing.lock_retry_ms`, `serverless_recommended_writers=4`, `daemon.state`, `recommended_mode`, and actionable hints. |
-| `cargo test -p wg-cli doctor_groups_by_code_with_action_hints` | MCP `wg_doctor` unit validates lint grouping plus `sharing.serverless_recommended_writers=4`, `recommended_mode=serverless_fail_fast`, and `sharing_retry_disabled`. |
+| `cargo test -p aidememo-cli doctor` | 25 passed; workflow unit tests cover ready/count/hints, sharing unit tests cover retry advisory behaviour, and integration tests cover the JSON `sharing` contract. |
+| `cargo test -p aidememo-cli doctor_json_includes_workflow_readiness_hints` | fixture CLI smoke validates JSON `workflow.ready`, `recent_ticket_count`, and actionable hints. |
+| `cargo test -p aidememo-cli doctor_json_includes_shared_store_guidance` | fixture CLI smoke validates JSON `sharing.lock_retry_ms`, `serverless_recommended_writers=4`, `daemon.state`, `recommended_mode`, and actionable hints. |
+| `cargo test -p aidememo-cli doctor_groups_by_code_with_action_hints` | MCP `aidememo_doctor` unit validates lint grouping plus `sharing.serverless_recommended_writers=4`, `recommended_mode=serverless_fail_fast`, and `sharing_retry_disabled`. |
 | `python3 bench/multi-agent/scenario_i_workflow_doctor.py` | 10/10 invariants; CLI/MCP/Hermes each created a workflow ticket; doctor reported `workflow.ready=true`, `recent_ticket_count=3`, and no false no-MCP/no-recent-ticket hints. |
 | `python3 bench/multi-agent/scenario_j_lock_retry_sweep.py` | 7/7 invariants; `store.lock_retry_ms=5000` stayed smooth through 4 concurrent serverless writers and mostly recovered 8-writer contention. |
-| `scripts/workflow-release-smoke.sh` | Bundles the first-run workflow demo, Scenario F + I, and a fresh fixture `wg doctor --json` assert for release checks. Latest run: demo recovered decision/lesson/error, Scenario F 13/13, Scenario I 10/10, fixture doctor `workflow_ready=true`, `recent_ticket_count=1`, total 13.40s. The timing table includes `ok`/`fail` status and is printed from an EXIT trap so partial failures still leave context; forced `WG_BIN=/bin/false` failure records `fail ... exit 1`. |
+| `scripts/workflow-release-smoke.sh` | Bundles the first-run workflow demo, Scenario F + I, and a fresh fixture `aidememo doctor --json` assert for release checks. Latest run: demo recovered decision/lesson/error, Scenario F 13/13, Scenario I 10/10, fixture doctor `workflow_ready=true`, `recent_ticket_count=1`, total 13.40s. The timing table includes `ok`/`fail` status and is printed from an EXIT trap so partial failures still leave context; forced `AIDEMEMO_BIN=/bin/false` failure records `fail ... exit 1`. |
 | CI `workflow-release-smoke` job | Runs the same script on Ubuntu after lint with Python 3.13 and a 10-minute timeout. |
 | CI `workflow-lint` job | Runs `actionlint@v1.7.1` across `.github/workflows/*.yml` before heavier Rust checks. Local `actionlint .github/workflows/*.yml`: 0 issues. |
 
@@ -222,13 +222,13 @@ Latest local `workflow-release-smoke` timing:
 
 | Status | Step | Seconds |
 |---|---|---:|
-| ok | `cargo build -p wg-cli` | 0.22 |
+| ok | `cargo build -p aidememo-cli` | 0.22 |
 | ok | `bash -n scripts/demo-workflow.sh` | 0.02 |
 | ok | `py_compile` | 0.04 |
 | ok | `scripts/demo-workflow.sh` | 0.65 |
 | ok | Scenario F | 7.17 |
 | ok | Scenario I | 5.10 |
-| ok | Fixture `wg workflow start --bm25-only` | 0.20 |
+| ok | Fixture `aidememo workflow start --bm25-only` | 0.20 |
 | total | | 13.40 |
 
 Scenario I measurement, May 21 2026:
@@ -258,13 +258,13 @@ Scenario J lock-retry sweep, May 21 2026:
 Product read: serverless CLI retry is appropriate for one to four same-host
 writers. At eight concurrent writers it is still much better than fail-fast
 mode, but p95 approaches three seconds and one write can still exhaust the
-5s retry budget; use a shared `wg mcp-serve` daemon when that level of
+5s retry budget; use a shared `aidememo mcp-serve` daemon when that level of
 parallelism is normal.
 
 ## GBrain Adapter Native Backend
 
-The `gbrain-evals` scaffold now supports `WG_ADAPTER_BACKEND=auto|cli|napi`.
-The native path imports `wg-napi` in process and keeps the existing CLI and
+The `gbrain-evals` scaffold now supports `AIDEMEMO_ADAPTER_BACKEND=auto|cli|napi`.
+The native path imports `aidememo-napi` in process and keeps the existing CLI and
 daemon paths as baselines.
 
 Local Bun-shaped fixture, 3 pages, 30 repeated BM25 queries:
@@ -292,33 +292,33 @@ Packaging readiness:
 
 | Command / workflow | Result |
 |---|---|
-| `scripts/release-preflight.sh` | One-command release gate with timed summary rows. `local` profile runs version gate, workflow syntax lint when `actionlint` is available, binding release smoke, workflow release smoke, and SDK promotion check; `full` profile adds optional Python/Elixir/C binding smokes plus Python/npm publish dry-runs. Child scripts still print their own summaries to stdout, but preflight clears child `$GITHUB_STEP_SUMMARY` so CI gets one top-level `release-preflight` table. Binding-only measured path (`WG_RELEASE_PREFLIGHT_WORKFLOW=0 WG_RELEASE_PREFLIGHT_SDK_PROMOTION=0 WG_RELEASE_PREFLIGHT_PUBLISH=0`): total 3.79s; version gate 0.16s; actionlint 0.18s; binding smoke 3.45s; `rg -n '^## ' "$summary_file"` returns one heading. Latest fast path with bindings/workflow/sdk/publish disabled passed version + actionlint in `0.29s`. `WG_RELEASE_PREFLIGHT_SDK_REQUIRE_PUBLIC=1` fails the SDK step with exit 1 while recording the failure row. Forced `WG_RELEASE_PREFLIGHT_PROFILE=full WG_RELEASE_PREFLIGHT_ACTIONLINT_BIN=/nonexistent/actionlint` records `fail | workflow syntax lint | 0.00 | /nonexistent/actionlint not installed`. |
+| `scripts/release-preflight.sh` | One-command release gate with timed summary rows. `local` profile runs version gate, workflow syntax lint when `actionlint` is available, binding release smoke, workflow release smoke, and SDK promotion check; `full` profile adds optional Python/Elixir/C binding smokes plus Python/npm publish dry-runs. Child scripts still print their own summaries to stdout, but preflight clears child `$GITHUB_STEP_SUMMARY` so CI gets one top-level `release-preflight` table. Binding-only measured path (`AIDEMEMO_RELEASE_PREFLIGHT_WORKFLOW=0 AIDEMEMO_RELEASE_PREFLIGHT_SDK_PROMOTION=0 AIDEMEMO_RELEASE_PREFLIGHT_PUBLISH=0`): total 3.79s; version gate 0.16s; actionlint 0.18s; binding smoke 3.45s; `rg -n '^## ' "$summary_file"` returns one heading. Latest fast path with bindings/workflow/sdk/publish disabled passed version + actionlint in `0.29s`. `AIDEMEMO_RELEASE_PREFLIGHT_SDK_REQUIRE_PUBLIC=1` fails the SDK step with exit 1 while recording the failure row. Forced `AIDEMEMO_RELEASE_PREFLIGHT_PROFILE=full AIDEMEMO_RELEASE_PREFLIGHT_ACTIONLINT_BIN=/nonexistent/actionlint` records `fail | workflow syntax lint | 0.00 | /nonexistent/actionlint not installed`. |
 | CI `sdk-promotion-check` job | Runs `scripts/sdk-promotion-check.sh` on Ubuntu after lint with Python 3.13 and Node 22, keeping SDK wording drift visible in PR checks without running package smokes. Local workflow lint: `actionlint .github/workflows/*.yml` 0 issues; local gate: ok=6, ready=3, blocked=2, fail=0. |
 | `scripts/ci-local.sh demo` | Local first-run workflow smoke with a timed Markdown summary. `bash -n scripts/ci-local.sh` passes; `scripts/ci-local.sh demo` recovered decision=1, lesson=1, error=1, search_hits=4, workflow latency 128ms, wall 0.91s. `scripts/ci-local.sh all` now runs this check between lint and SDK promotion. |
 | `scripts/ci-local.sh sdk` | Local CI parity hook for the same SDK wording gate. `bash -n scripts/ci-local.sh` passes; `scripts/ci-local.sh sdk` reports ok=6, ready=3, blocked=2, fail=0. Child SDK details remain in stdout, but `$GITHUB_STEP_SUMMARY` contains only the top-level `ci-local timings` table (`rg -n '^## ' "$summary_file"` returns one heading). Latest local SDK mode total: 0.14s. `scripts/ci-local.sh all` now runs this check between the workflow demo and tests. |
-| SDK promotion GitHub summary | `GITHUB_STEP_SUMMARY=$(mktemp) scripts/sdk-promotion-check.sh` writes a Markdown table with 11 check rows plus metric rows while keeping stdout unchanged. `GITHUB_STEP_SUMMARY=$(mktemp) WG_SDK_PROMOTION_JSON=1 scripts/sdk-promotion-check.sh` still emits valid JSON to stdout. |
-| `scripts/wg-release-version.sh` | Unified release version gate. With no args, verifies Cargo, Python, npm, and NIF package versions together; with a semver arg, updates every managed package version. Latest run: `0.1.0` pinned; temp-copy bump to `0.1.1` updated Cargo workspace, Python `pyproject.toml`, npm root/platform packages plus optionalDependency pins, and `wg-nif` `mix.exs`. |
-| `scripts/wg-python-version.sh` | Version gate for the Python wheel. With no args, verifies `Cargo.toml` workspace version equals `crates/wg-python/pyproject.toml` `project.version`; with a semver arg, updates both. Latest run: `0.1.0` pinned. |
-| `scripts/wg-python-pack-smoke.sh` | Builds a `wg-python` wheel with maturin for a temp venv interpreter, installs that wheel into the venv, runs `crates/wg-python/tests/smoke.py`, verifies installed wheel metadata equals `wg_python.__version__`, and writes timed rows to stdout and `$GITHUB_STEP_SUMMARY`. Local macOS arm64: total 48.38s; version gate 0.05s; venv 1.43s; `maturin build --release` 45.51s; install 0.30s; smoke 1.03s; version check 0.06s. Built `wg_python-0.1.0-cp313-cp313-macosx_11_0_arm64.whl`; smoke passed including `workflow_start(..., bm25_only=True)` and `WgNotFoundError` typed exception handling, installed version `0.1.0`. |
-| `scripts/wg-python-publish-dry-run.sh` | Builds PyPI publish payloads without uploading and writes a timed Markdown summary. Local macOS arm64: version gate 0.05s, venv 1.36s, `maturin build --release --sdist` 59.48s, payload validation 0.05s, total 60.94s; built `wg_python-0.1.0-cp313-cp313-macosx_11_0_arm64.whl` (2.8M) + `wg_python-0.1.0.tar.gz` (349K). The dry-run rebuilds the wheel from the sdist, proving the vendored `tokenizers` patch is present; forced `WG_PYTHON_EXPECT_VERSION=9.9.9` records a `fail | version expectation` summary row. |
-| `scripts/wg-napi-version.sh` | Version gate for root + platform package graph. With no args, verifies all versions and root `optionalDependencies`; with a semver arg, updates every package. Latest run: `0.1.0` pinned across 5 platform packages; temp-copy bump to `0.1.1` updated root, platform packages, and optionalDependency pins. |
-| `scripts/wg-napi-pack-smoke.sh` | Builds release addon, runs `npm test`, packs root `wg-napi`, packs the current platform package, then installs both tarballs into a temp project with offline/no-audit npm flags and verifies `require("wg-napi").version()`. Writes timed rows to stdout and `$GITHUB_STEP_SUMMARY`. Local macOS arm64: total 2.81s; build 0.67s; test 1.00s; root pack 0.22s; platform pack 0.53s; install 0.30s. Payloads: root `wg-napi-0.1.0.tgz` is 4.18 KB / 4 files / includes README + no `.node`; platform `wg-napi-darwin-arm64-0.1.0.tgz` is 2.79 MB / 2 files / includes `wg-napi.darwin-arm64.node`; smoke includes `workflowStart(..., bm25Only:true)` and JS Error `code=InvalidArg` with `[entity_not_found]` prefix. |
-| `scripts/wg-napi-publish.sh` | Shared publish engine with a timed Markdown summary. `WG_NAPI_PUBLISH_MODE=dry-run|publish`, `WG_NAPI_PUBLISH_SCOPE=platform|root|both`, and optional `WG_NAPI_EXPECT_VERSION` gate both local and CI release flows. Local dry-run passed both scopes and wrote stdout + `$GITHUB_STEP_SUMMARY`: total 3.86s, build 0.71s, test 1.13s, platform publish 0.63s, root publish 0.75s. |
-| `scripts/wg-napi-publish-dry-run.sh` | Wrapper around the publish engine with `WG_NAPI_PUBLISH_MODE=dry-run`. Local macOS arm64: root payload `wg-napi@0.1.0`, 4 files, 4.18 KB packed, README included, no `.node`; platform payload `wg-napi-darwin-arm64@0.1.0`, 2 files, 2.79 MB packed; payload validators passed for both. |
-| `scripts/wg-nif-version.sh` | Version gate for the Elixir package. With no args, verifies `Cargo.toml` workspace version equals `crates/wg-nif/mix.exs`; with a semver arg, updates both. Latest run: `0.1.0` pinned. |
-| `scripts/bindings-release-smoke.sh` | Cross-binding readiness smoke with a timed Markdown summary. Runs `cargo check -p wg-python -p wg-napi -p wg-nif -p wg-ffi`, npm version/pack/install smoke, and reports Python/Elixir/C optional package smokes based on local tools. Local macOS arm64 warm default path: cargo check 0.22s, npm version gate 0.05s, npm pack/install smoke 3.05s, total 3.37s; child pack-smoke summaries remain in stdout, but `$GITHUB_STEP_SUMMARY` contains only the one top-level `bindings-release-smoke` table (`rg -n '^## ' "$summary_file"` returns one heading). With `WG_BINDINGS_SMOKE_NPM=0 WG_BINDINGS_SMOKE_OPTIONAL=1`, the Python wheel build, Elixir `mix compile.cargo --force && mix test`, and C FFI smoke all passed. |
-| `scripts/sdk-promotion-check.sh` | Package-SDK wording gate for `wg-python` and `wg-napi`. Default local run: ok=6, ready=3, blocked=2, fail=0, `local_ready=true`, `sdk_promotable=false` because public PyPI/npm installs are not verified. This does not block positioning `wg-agent-sdk` as the agent-facing SDK path. With `WG_SDK_PROMOTION_RUN_SCENARIO_K=1`: ok=7, ready=2, blocked=2, fail=0 and Scenario K reports 8/8 invariants with p50 CLI 1882.33ms, Python 19.97ms, Node 20.0ms. Release preflight runs this gate by default; CI gets the same table in `$GITHUB_STEP_SUMMARY`; set `WG_RELEASE_PREFLIGHT_SDK_PROMOTION=0` only for focused debugging. |
-| `.github/workflows/wg-napi-artifacts.yml` | Manual/tag workflow builds, tests, packs, and uploads root + platform `wg-napi` artifacts on Ubuntu, macOS, and Windows. |
-| `.github/workflows/wg-python-publish-dry-run.yml` | Manual/tag workflow builds and validates `wg-python` PyPI payloads on Ubuntu without uploading. |
-| `.github/workflows/wg-python-publish.yml` | Manual trusted-publisher workflow. It builds and validates distributions without PyPI permissions, uploads them as artifacts, then publishes via `pypa/gh-action-pypi-publish@release/v1` only when `dry_run=false`. Default `dry_run=true`; real publish requires a PyPI trusted publisher for this workflow and the `pypi-publish` environment. Local artifact-mode check: `WG_PYTHON_DIST_DIR=$(mktemp -d) scripts/wg-python-publish-dry-run.sh` produced wheel 2.8M + sdist 349K. |
-| `.github/workflows/wg-napi-publish-dry-run.yml` | Manual/tag workflow runs the publish dry-run on Ubuntu with `id-token: write` reserved for the later trusted-publisher publish path. |
-| `.github/workflows/wg-napi-publish.yml` | Manual trusted-publisher workflow. It publishes current-platform packages first, then the root wrapper. Default `dry_run=true`; real publish requires npm trusted-publisher setup for the exact workflow filename, `dry_run=false`, and `version` matching `package.json`. |
+| SDK promotion GitHub summary | `GITHUB_STEP_SUMMARY=$(mktemp) scripts/sdk-promotion-check.sh` writes a Markdown table with 11 check rows plus metric rows while keeping stdout unchanged. `GITHUB_STEP_SUMMARY=$(mktemp) AIDEMEMO_SDK_PROMOTION_JSON=1 scripts/sdk-promotion-check.sh` still emits valid JSON to stdout. |
+| `scripts/aidememo-release-version.sh` | Unified release version gate. With no args, verifies Cargo, Python, npm, and NIF package versions together; with a semver arg, updates every managed package version. Latest run: `0.1.0` pinned; temp-copy bump to `0.1.1` updated Cargo workspace, Python `pyproject.toml`, npm root/platform packages plus optionalDependency pins, and `aidememo-nif` `mix.exs`. |
+| `scripts/aidememo-python-version.sh` | Version gate for the Python wheel. With no args, verifies `Cargo.toml` workspace version equals `crates/aidememo-python/pyproject.toml` `project.version`; with a semver arg, updates both. Latest run: `0.1.0` pinned. |
+| `scripts/aidememo-python-pack-smoke.sh` | Builds a `aidememo-python` wheel with maturin for a temp venv interpreter, installs that wheel into the venv, runs `crates/aidememo-python/tests/smoke.py`, verifies installed wheel metadata equals `aidememo_python.__version__`, and writes timed rows to stdout and `$GITHUB_STEP_SUMMARY`. Local macOS arm64: total 48.38s; version gate 0.05s; venv 1.43s; `maturin build --release` 45.51s; install 0.30s; smoke 1.03s; version check 0.06s. Built `aidememo_python-0.1.0-cp313-cp313-macosx_11_0_arm64.whl`; smoke passed including `workflow_start(..., bm25_only=True)` and `AideMemoNotFoundError` typed exception handling, installed version `0.1.0`. |
+| `scripts/aidememo-python-publish-dry-run.sh` | Builds PyPI publish payloads without uploading and writes a timed Markdown summary. Local macOS arm64: version gate 0.05s, venv 1.36s, `maturin build --release --sdist` 59.48s, payload validation 0.05s, total 60.94s; built `aidememo_python-0.1.0-cp313-cp313-macosx_11_0_arm64.whl` (2.8M) + `aidememo_python-0.1.0.tar.gz` (349K). The dry-run rebuilds the wheel from the sdist, proving the vendored `tokenizers` patch is present; forced `AIDEMEMO_PYTHON_EXPECT_VERSION=9.9.9` records a `fail | version expectation` summary row. |
+| `scripts/aidememo-napi-version.sh` | Version gate for root + platform package graph. With no args, verifies all versions and root `optionalDependencies`; with a semver arg, updates every package. Latest run: `0.1.0` pinned across 5 platform packages; temp-copy bump to `0.1.1` updated root, platform packages, and optionalDependency pins. |
+| `scripts/aidememo-napi-pack-smoke.sh` | Builds release addon, runs `npm test`, packs root `aidememo-napi`, packs the current platform package, then installs both tarballs into a temp project with offline/no-audit npm flags and verifies `require("aidememo-napi").version()`. Writes timed rows to stdout and `$GITHUB_STEP_SUMMARY`. Local macOS arm64: total 2.81s; build 0.67s; test 1.00s; root pack 0.22s; platform pack 0.53s; install 0.30s. Payloads: root `aidememo-napi-0.1.0.tgz` is 4.18 KB / 4 files / includes README + no `.node`; platform `aidememo-napi-darwin-arm64-0.1.0.tgz` is 2.79 MB / 2 files / includes `aidememo-napi.darwin-arm64.node`; smoke includes `workflowStart(..., bm25Only:true)` and JS Error `code=InvalidArg` with `[entity_not_found]` prefix. |
+| `scripts/aidememo-napi-publish.sh` | Shared publish engine with a timed Markdown summary. `AIDEMEMO_NAPI_PUBLISH_MODE=dry-run|publish`, `AIDEMEMO_NAPI_PUBLISH_SCOPE=platform|root|both`, and optional `AIDEMEMO_NAPI_EXPECT_VERSION` gate both local and CI release flows. Local dry-run passed both scopes and wrote stdout + `$GITHUB_STEP_SUMMARY`: total 3.86s, build 0.71s, test 1.13s, platform publish 0.63s, root publish 0.75s. |
+| `scripts/aidememo-napi-publish-dry-run.sh` | Wrapper around the publish engine with `AIDEMEMO_NAPI_PUBLISH_MODE=dry-run`. Local macOS arm64: root payload `aidememo-napi@0.1.0`, 4 files, 4.18 KB packed, README included, no `.node`; platform payload `aidememo-napi-darwin-arm64@0.1.0`, 2 files, 2.79 MB packed; payload validators passed for both. |
+| `scripts/aidememo-nif-version.sh` | Version gate for the Elixir package. With no args, verifies `Cargo.toml` workspace version equals `crates/aidememo-nif/mix.exs`; with a semver arg, updates both. Latest run: `0.1.0` pinned. |
+| `scripts/bindings-release-smoke.sh` | Cross-binding readiness smoke with a timed Markdown summary. Runs `cargo check -p aidememo-python -p aidememo-napi -p aidememo-nif -p aidememo-ffi`, npm version/pack/install smoke, and reports Python/Elixir/C optional package smokes based on local tools. Local macOS arm64 warm default path: cargo check 0.22s, npm version gate 0.05s, npm pack/install smoke 3.05s, total 3.37s; child pack-smoke summaries remain in stdout, but `$GITHUB_STEP_SUMMARY` contains only the one top-level `bindings-release-smoke` table (`rg -n '^## ' "$summary_file"` returns one heading). With `AIDEMEMO_BINDINGS_SMOKE_NPM=0 AIDEMEMO_BINDINGS_SMOKE_OPTIONAL=1`, the Python wheel build, Elixir `mix compile.cargo --force && mix test`, and C FFI smoke all passed. |
+| `scripts/sdk-promotion-check.sh` | Package-SDK wording gate for `aidememo-python` and `aidememo-napi`. Default local run: ok=6, ready=3, blocked=2, fail=0, `local_ready=true`, `sdk_promotable=false` because public PyPI/npm installs are not verified. This does not block positioning `aidememo-agent-sdk` as the agent-facing SDK path. With `AIDEMEMO_SDK_PROMOTION_RUN_SCENARIO_K=1`: ok=7, ready=2, blocked=2, fail=0 and Scenario K reports 8/8 invariants with p50 CLI 1882.33ms, Python 19.97ms, Node 20.0ms. Release preflight runs this gate by default; CI gets the same table in `$GITHUB_STEP_SUMMARY`; set `AIDEMEMO_RELEASE_PREFLIGHT_SDK_PROMOTION=0` only for focused debugging. |
+| `.github/workflows/aidememo-napi-artifacts.yml` | Manual/tag workflow builds, tests, packs, and uploads root + platform `aidememo-napi` artifacts on Ubuntu, macOS, and Windows. |
+| `.github/workflows/aidememo-python-publish-dry-run.yml` | Manual/tag workflow builds and validates `aidememo-python` PyPI payloads on Ubuntu without uploading. |
+| `.github/workflows/aidememo-python-publish.yml` | Manual trusted-publisher workflow. It builds and validates distributions without PyPI permissions, uploads them as artifacts, then publishes via `pypa/gh-action-pypi-publish@release/v1` only when `dry_run=false`. Default `dry_run=true`; real publish requires a PyPI trusted publisher for this workflow and the `pypi-publish` environment. Local artifact-mode check: `AIDEMEMO_PYTHON_DIST_DIR=$(mktemp -d) scripts/aidememo-python-publish-dry-run.sh` produced wheel 2.8M + sdist 349K. |
+| `.github/workflows/aidememo-napi-publish-dry-run.yml` | Manual/tag workflow runs the publish dry-run on Ubuntu with `id-token: write` reserved for the later trusted-publisher publish path. |
+| `.github/workflows/aidememo-napi-publish.yml` | Manual trusted-publisher workflow. It publishes current-platform packages first, then the root wrapper. Default `dry_run=true`; real publish requires npm trusted-publisher setup for the exact workflow filename, `dry_run=false`, and `version` matching `package.json`. |
 
-Package split: root `wg-napi` now ships the generated JS loader, types, README,
+Package split: root `aidememo-napi` now ships the generated JS loader, types, README,
 and optional dependencies. Platform packages ship exactly one native binary each:
-`wg-napi-darwin-arm64`, `wg-napi-darwin-x64`,
-`wg-napi-linux-arm64-gnu`, `wg-napi-linux-x64-gnu`, and
-`wg-napi-win32-x64-msvc`. This matches the generated NAPI loader fallback names
+`aidememo-napi-darwin-arm64`, `aidememo-napi-darwin-x64`,
+`aidememo-napi-linux-arm64-gnu`, `aidememo-napi-linux-x64-gnu`, and
+`aidememo-napi-win32-x64-msvc`. This matches the generated NAPI loader fallback names
 and avoids publishing one platform's `.node` binary as the whole package.
 
 Trusted-publisher notes: npm's current guidance requires Node 22.14+ and npm

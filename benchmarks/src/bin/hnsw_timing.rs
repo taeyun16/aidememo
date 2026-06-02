@@ -2,23 +2,23 @@
 //!
 //! Calls each stage of the rebuild path manually with timing
 //! instrumentation. Useful for answering "why does ingest take
-//! N seconds?" without sprinkling println!s through wg-core.
+//! N seconds?" without sprinkling println!s through aidememo-core.
 
+use aidememo_core::AideMemo;
+use aidememo_core::FactListOpts;
+use aidememo_core::embedding::load_provider;
+use aidememo_core::vector_index::HnswIndex;
 use std::path::Path;
 use std::time::Instant;
-use wg_core::FactListOpts;
-use wg_core::WikiGraph;
-use wg_core::embedding::load_provider;
-use wg_core::vector_index::HnswIndex;
 
 fn main() {
     let store_path = std::env::args()
         .nth(1)
-        .unwrap_or_else(|| "/tmp/wg-bench-miracl/_meta/wiki.redb".to_string());
+        .unwrap_or_else(|| "/tmp/aidememo-bench-miracl/_meta/wiki.redb".to_string());
     println!("store: {store_path}");
 
-    let config = wg_core::Config::default();
-    let wiki = WikiGraph::open(Path::new(&store_path), config).expect("open");
+    let config = aidememo_core::Config::default();
+    let wiki = AideMemo::open(Path::new(&store_path), config).expect("open");
 
     let t0 = Instant::now();
     let provider = load_provider(wiki.config()).expect("load provider");

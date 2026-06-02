@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""GAC (Geometry-Aware Consolidation) analysis on a wg store.
+"""GAC (Geometry-Aware Consolidation) analysis on a aidememo store.
 
 Stage 1 of the GAC adoption plan from
-docs/MEASUREMENTS.md. Pure measurement — no wg
-state mutation. Pulls fact contents out of a wg store via
-`wg fact list --json`, re-embeds with the same model wg uses
+docs/MEASUREMENTS.md. Pure measurement — no aidememo
+state mutation. Pulls fact contents out of a aidememo store via
+`aidememo fact list --json`, re-embeds with the same model aidememo uses
 (model2vec / potion-multilingual-128M, L2-normalized to match
 the HNSW path), runs hierarchical clustering, and reports for
 each retrieval angle θ:
@@ -14,14 +14,14 @@ each retrieval angle θ:
   * fraction of facts that would collapse under GAC at that θ
   * per-cluster d̄ histogram
 
-The numbers tell us what fraction of a real wg store is
+The numbers tell us what fraction of a real aidememo store is
 GAC-compressible — i.e. how much storage / index-size win is
-on the table before we go build Stage 2 (`wg consolidate
+on the table before we go build Stage 2 (`aidememo consolidate
 --strategy gac`).
 
 Usage:
   python3 scripts/gac_analyze.py \
-      --store /tmp/wg-agent-test/wiki.redb \
+      --store /tmp/aidememo-agent-test/wiki.redb \
       --thetas 0.85 0.90 0.95
 """
 from __future__ import annotations
@@ -37,22 +37,22 @@ import numpy as np
 
 
 def fetch_facts(store_path: str, limit: int = 5000) -> list[dict]:
-    """`wg fact list --json --limit N` → list of {id, content, ...}."""
+    """`aidememo fact list --json --limit N` → list of {id, content, ...}."""
     cmd = [
-        "/Users/mixlink/dev/wg/target/debug/wg",
+        "/Users/mixlink/dev/aidememo/target/debug/aidememo",
         "--store", store_path,
         "fact", "list", "--limit", str(limit), "--json",
     ]
     proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
     if proc.returncode != 0:
-        print(f"error: wg fact list failed: {proc.stderr[:300]}", file=sys.stderr)
+        print(f"error: aidememo fact list failed: {proc.stderr[:300]}", file=sys.stderr)
         sys.exit(2)
     return json.loads(proc.stdout)
 
 
 def embed_contents(contents: list[str], model_name: str) -> np.ndarray:
-    """Re-embed via the same model wg uses. model2vec ships
-    L2-normalized output, matching wg's HNSW insert path."""
+    """Re-embed via the same model aidememo uses. model2vec ships
+    L2-normalized output, matching aidememo's HNSW insert path."""
     from model2vec import StaticModel
     model = StaticModel.from_pretrained(model_name)
     print(f"  loaded {model_name}: dim={model.dim}", file=sys.stderr)
@@ -194,7 +194,7 @@ def main():
     ap.add_argument("--store", required=True, help="Path to wiki.redb")
     ap.add_argument("--thetas", type=float, nargs="+", default=[0.85, 0.90, 0.95])
     ap.add_argument("--model", default="minishlab/potion-multilingual-128M",
-                    help="model2vec model name (must match wg's embed config)")
+                    help="model2vec model name (must match aidememo's embed config)")
     ap.add_argument("--limit", type=int, default=5000,
                     help="Max facts to pull")
     ap.add_argument("--out", type=Path, default=None,

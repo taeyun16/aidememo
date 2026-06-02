@@ -3,12 +3,12 @@
 
 Hypothesis: rolling up turn-level snippets into session blocks at READ
 time gives the same lift as bench-time --hybrid-ingest, without the
-2x storage cost. If true, real wg agents can write granular facts +
+2x storage cost. If true, real aidememo agents can write granular facts +
 read coherent session blocks for free, just by tagging facts with the
-session entity (which wg already does via WG_SESSION_ID).
+session entity (which aidememo already does via AIDEMEMO_SESSION_ID).
 
 Setup:
-  * Input: turn-level retrieval JSONL (wg without --hybrid-ingest).
+  * Input: turn-level retrieval JSONL (aidememo without --hybrid-ingest).
   * For each question, group hits by session_id, concat content
     chronologically into a session block. Each session block becomes
     one "snippet" the reader sees.
@@ -16,12 +16,12 @@ Setup:
       - turn-level flat (baseline, no rollup) ~ 73.3% on 60q MiniMax
       - bench --hybrid-ingest (write-time aggregation) ~ 81.7%
 
-If readtime_rollup ≈ 81.7%, the architectural choice for real wg
+If readtime_rollup ≈ 81.7%, the architectural choice for real aidememo
 deployment becomes: don't pay 2x storage; aggregate at read time.
 
 Usage:
   python3 scripts/longmemeval_readtime_rollup.py \
-      --in-retrievals /tmp/wg_retrievals_60bal_turn.jsonl \
+      --in-retrievals /tmp/aidememo_retrievals_60bal_turn.jsonl \
       --gold /tmp/longmemeval_data/longmemeval_s_cleaned.json \
       --reader MiniMax-M2.7-highspeed --judge MiniMax-M2.7-highspeed \
       --reader-base-url https://api.minimax.io/v1 \
@@ -29,7 +29,7 @@ Usage:
       --judge-base-url https://api.minimax.io/v1 \
       --judge-api-key-env MINIMAX_API_KEY \
       --workers 6 \
-      --out /tmp/wg_readtime_rollup_60bal
+      --out /tmp/aidememo_readtime_rollup_60bal
 """
 from __future__ import annotations
 
@@ -61,7 +61,7 @@ def rollup_to_sessions(
     full_session_lookup: optional dict[session_id -> full session
     content]. When provided, the block content is the FULL session
     (every turn) rather than just matched turns. Lets the script
-    test the upper bound of read-time rollup as if a real wg
+    test the upper bound of read-time rollup as if a real aidememo
     implementation called fact_list on the session entity for
     every hit. Without it, only matched turns are concatenated.
     """
@@ -97,7 +97,7 @@ def rollup_to_sessions(
         else:
             content = "\n".join(t["content"] for t in bucket["turns"])
         # Pick the lowest-rank fact_id of the group so the reader's
-        # follow-up wg_fact_get still resolves to a real fact.
+        # follow-up aidememo_fact_get still resolves to a real fact.
         sample = min(bucket["turns"], key=lambda t: t.get("rank") or 999)
         # Carry over structured values from every contributing turn so
         # the downstream aggregation harness can compute sums/counts
@@ -140,13 +140,13 @@ def rollup_to_sessions(
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--in-retrievals", required=True, type=Path)
-    ap.add_argument("--out-retrievals", default=Path("/tmp/wg_retrievals_60bal_readtime_rollup.jsonl"), type=Path)
+    ap.add_argument("--out-retrievals", default=Path("/tmp/aidememo_retrievals_60bal_readtime_rollup.jsonl"), type=Path)
     ap.add_argument("--max-sessions", type=int, default=20)
     ap.add_argument(
         "--gold-for-full-session",
         type=Path,
         help="LongMemEval JSON. When provided, blocks contain FULL session "
-        "content (every turn) — simulates a real wg fact_list per session "
+        "content (every turn) — simulates a real aidememo fact_list per session "
         "entity. Without it, blocks include only matched turns.",
     )
     args = ap.parse_args()

@@ -55,7 +55,7 @@ VALID_TYPES = {
 }
 
 PROMPT = """\
-Classify each chat turn below into ONE wg fact_type. Return ONE \
+Classify each chat turn below into ONE aidememo fact_type. Return ONE \
 valid JSON object: a flat map from `idx` (the turn's position, \
 0-based) to fact_type string. No explanation, no extra keys.
 

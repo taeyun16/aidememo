@@ -1,8 +1,8 @@
 {
   "mcpServers": {
-    "wg": {
+    "aidememo": {
       "type": "stdio",
-      "command": "./target/debug/wg",
+      "command": "./target/debug/aidememo",
       "args": ["mcp"]
     }
   }

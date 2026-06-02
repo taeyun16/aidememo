@@ -3,7 +3,7 @@
 
 Verbatim port of OMEGA's triple-retrieval-merge pattern from
 `scripts/longmemeval_official.py::retrieve_context`. Each input file is a
-retrieval-emit JSONL produced by `wg-benchmarks longmemeval`. For each
+retrieval-emit JSONL produced by `aidememo-benchmarks longmemeval`. For each
 question_id, retrievals are concatenated in input-file order, dedup'd by
 fact_id (first occurrence wins), then the rank field is renumbered.
 
@@ -16,9 +16,9 @@ Use cases:
 
 Usage:
   python3 scripts/merge_retrievals.py \
-      --in /tmp/wg_retrievals_500_expanded.jsonl \
-      --in /tmp/wg_retrievals_500_omega_pattern.jsonl \
-      --out /tmp/wg_retrievals_500_merged.jsonl
+      --in /tmp/aidememo_retrievals_500_expanded.jsonl \
+      --in /tmp/aidememo_retrievals_500_omega_pattern.jsonl \
+      --out /tmp/aidememo_retrievals_500_merged.jsonl
 """
 from __future__ import annotations
 

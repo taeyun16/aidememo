@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """LongMemEval harness that exposes Layer-1 structured-fact extracts to the reader.
 
-The bench's `wg-benchmarks longmemeval` now emits a `structured` field
+The bench's `aidememo-benchmarks longmemeval` now emits a `structured` field
 per retrieval (currency / duration / event_date / count, deterministically
-parsed from raw text by `wg-core::extract_structured`). This harness
+parsed from raw text by `aidememo-core::extract_structured`). This harness
 turns those typed slots into an aggregation hint block the reader sees
 alongside raw snippets.
 
@@ -21,13 +21,13 @@ Compares against:
 
 Usage:
   python3 scripts/longmemeval_structured.py \
-      --retrievals /tmp/wg_retrievals_60bal_structured.jsonl \
+      --retrievals /tmp/aidememo_retrievals_60bal_structured.jsonl \
       --gold /tmp/longmemeval_data/longmemeval_s_cleaned.json \
       --reader MiniMax-M2.7-highspeed --judge MiniMax-M2.7-highspeed \
       --reader-base-url https://api.minimax.io/v1 --reader-api-key-env MINIMAX_API_KEY \
       --judge-base-url https://api.minimax.io/v1 --judge-api-key-env MINIMAX_API_KEY \
       --workers 16 \
-      --out /tmp/wg_structured_60bal
+      --out /tmp/aidememo_structured_60bal
 """
 from __future__ import annotations
 

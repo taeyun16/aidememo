@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Scenario I — workflow ticket traces surface in `wg doctor --json`.
+"""Scenario I — workflow ticket traces surface in `aidememo doctor --json`.
 
 P3.5 added a doctor workflow-readiness block. This scenario verifies the
 end-to-end user path behind it:
 
   1. Start sparse tickets through three integration paths:
-     CLI, MCP stdio, and Hermes WgClient.
-  2. Run `wg doctor --json` in an isolated HOME with a known Codex MCP
+     CLI, MCP stdio, and Hermes AideMemoClient.
+  2. Run `aidememo doctor --json` in an isolated HOME with a known Codex MCP
      config so `workflow.ready` is deterministic.
   3. Assert doctor reports the created workflow tickets and does not emit
      setup hints that contradict the fixture.
@@ -29,8 +29,8 @@ from pathlib import Path
 from typing import Any
 
 REPO = Path(__file__).resolve().parents[2]
-WG = os.environ.get("WG_BIN", str(REPO / "target" / "debug" / "wg"))
-BASE = Path(os.environ.get("WG_E2E_BASE", str(Path(tempfile.gettempdir()) / "wg-e2e-i")))
+WG = os.environ.get("AIDEMEMO_BIN", str(REPO / "target" / "debug" / "aidememo"))
+BASE = Path(os.environ.get("AIDEMEMO_E2E_BASE", str(Path(tempfile.gettempdir()) / "aidememo-e2e-i")))
 STORE = str(BASE / "workflow-doctor.redb")
 
 
@@ -204,7 +204,7 @@ def mcp_tool_call(name: str, args: dict[str, Any]) -> dict[str, Any]:
 
 def workflow_mcp(ticket: Ticket) -> dict[str, Any]:
     return mcp_tool_call(
-        "wg_workflow_start",
+        "aidememo_workflow_start",
         {
             "title": ticket.title,
             "body": ticket.body,
@@ -220,9 +220,9 @@ def workflow_mcp(ticket: Ticket) -> dict[str, Any]:
 def workflow_hermes(ticket: Ticket) -> dict[str, Any]:
     sys.path.insert(0, str(REPO / "plugins" / "hermes" / "src"))
     os.environ["PATH"] = f"{Path(WG).parent}:{os.environ.get('PATH', '')}"
-    from hermes_wg.client import WgClient
+    from hermes_aidememo.client import AideMemoClient
 
-    client = WgClient(store_path=STORE, lock_retry_ms=5000)
+    client = AideMemoClient(store_path=STORE, lock_retry_ms=5000)
     return client.workflow_start(
         ticket.title,
         body=ticket.body,
@@ -254,7 +254,7 @@ def isolated_home() -> Path:
     (codex / "config.toml").write_text(
         "\n".join(
             [
-                "[mcp_servers.wg]",
+                "[mcp_servers.aidememo]",
                 f'command = "{WG}"',
                 f'args = ["--store", "{STORE}", "mcp"]',
                 "",
@@ -268,7 +268,7 @@ def doctor_json(home: Path) -> dict[str, Any]:
     env = os.environ.copy()
     env["HOME"] = str(home)
     env["PATH"] = "/nonexistent"
-    env.pop("WG_STORE", None)
+    env.pop("AIDEMEMO_STORE", None)
     return json.loads(run([WG, "--json", "--store", STORE, "doctor"], env=env).stdout)
 
 

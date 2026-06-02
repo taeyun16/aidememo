@@ -2,7 +2,7 @@
 """Run multi-agent eval scenarios and record transcripts.
 
 Each scenario is sent to one or more agent CLIs (claude / codex /
-hermes), each with the test wg store wired in via MCP. We capture:
+hermes), each with the test aidememo store wired in via MCP. We capture:
   - hypothesis (the agent's final answer text)
   - tool_calls (parsed from --debug stderr where available)
   - latency
@@ -14,7 +14,7 @@ Usage:
   python3 scripts/agent_eval_run.py \
       --scenarios scripts/agent_eval_scenarios.json \
       --agent claude \
-      --out /tmp/wg_agent_eval/claude.jsonl
+      --out /tmp/aidememo_agent_eval/claude.jsonl
 """
 from __future__ import annotations
 
@@ -34,11 +34,11 @@ def run_claude(prompt: str, mcp_config: str, timeout: int = 120) -> dict:
     --strict-mcp-config keeps the agent isolated from any other MCP
     servers the user has registered (project, user, etc.). --bare is
     NOT used because we want skills/CLAUDE.md inheritance off, but
-    --append-system-prompt nudges the agent toward wg use.
+    --append-system-prompt nudges the agent toward aidememo use.
     """
     sys_prompt = (
-        "You have access to wg MCP tools (server name 'wg-test') over "
-        "the wiki at /tmp/wg-agent-test/wiki.redb. Use those tools to "
+        "You have access to aidememo MCP tools (server name 'aidememo-test') over "
+        "the wiki at /tmp/aidememo-agent-test/wiki.redb. Use those tools to "
         "answer the user's question. Be concise. If the wiki doesn't "
         "have the answer, say so explicitly — do not guess."
     )
@@ -63,10 +63,10 @@ def run_claude(prompt: str, mcp_config: str, timeout: int = 120) -> dict:
             "latency_s": timeout, "exit": "timeout", "stderr_tail": "",
         }
     hypothesis = proc.stdout.strip()
-    # Tool calls: look for "tool_use" or mcp__wg-test__ markers in stderr
+    # Tool calls: look for "tool_use" or mcp__aidememo-test__ markers in stderr
     stderr = proc.stderr
     tool_calls = []
-    for m in re.finditer(r"mcp__wg-test__(\w+)", stderr):
+    for m in re.finditer(r"mcp__aidememo-test__(\w+)", stderr):
         tool_calls.append(m.group(1))
     return {
         "agent": "claude",
@@ -79,14 +79,14 @@ def run_claude(prompt: str, mcp_config: str, timeout: int = 120) -> dict:
 
 
 def run_codex(prompt: str, mcp_config: str, timeout: int = 120) -> dict:
-    """Codex exec — relies on ~/.codex/config.toml carrying the wg-test
+    """Codex exec — relies on ~/.codex/config.toml carrying the aidememo-test
     MCP server. We can't pass --mcp-config inline, so the runner
-    expects the user to have registered wg-test out-of-band (the
+    expects the user to have registered aidememo-test out-of-band (the
     scaffold below logs the registration command on first failure).
     """
     sys_prompt = (
-        "Use the wg MCP tools (server 'wg-test') against the wiki at "
-        "/tmp/wg-agent-test/wiki.redb to answer. Be concise. Don't guess."
+        "Use the aidememo MCP tools (server 'aidememo-test') against the wiki at "
+        "/tmp/aidememo-agent-test/wiki.redb to answer. Be concise. Don't guess."
     )
     full = f"{sys_prompt}\n\nQuestion: {prompt}"
     cmd = [
@@ -114,8 +114,8 @@ def run_codex(prompt: str, mcp_config: str, timeout: int = 120) -> dict:
         final = line.strip()
         break
     hypothesis = final or proc.stdout.strip()
-    # Tool calls: lines like "mcp: wg-test/wg_search started"
-    tool_calls = re.findall(r"mcp: wg-test/(\w+) started", proc.stdout)
+    # Tool calls: lines like "mcp: aidememo-test/aidememo_search started"
+    tool_calls = re.findall(r"mcp: aidememo-test/(\w+) started", proc.stdout)
     return {
         "agent": "codex",
         "hypothesis": hypothesis,
@@ -128,10 +128,10 @@ def run_codex(prompt: str, mcp_config: str, timeout: int = 120) -> dict:
 
 def run_hermes(prompt: str, mcp_config: str, timeout: int = 120) -> dict:
     """Hermes chat in non-interactive mode. Falls back to a friendly
-    message if the wg-test MCP isn't registered with hermes."""
+    message if the aidememo-test MCP isn't registered with hermes."""
     sys_prompt = (
-        "Use the wg MCP tools (server 'wg-test') against the wiki at "
-        "/tmp/wg-agent-test/wiki.redb to answer. Be concise. Don't guess."
+        "Use the aidememo MCP tools (server 'aidememo-test') against the wiki at "
+        "/tmp/aidememo-agent-test/wiki.redb to answer. Be concise. Don't guess."
     )
     full = f"{sys_prompt}\n\nQuestion: {prompt}"
     cmd = ["hermes", "--yolo", "chat", "-Q", "-q", full]
@@ -145,7 +145,7 @@ def run_hermes(prompt: str, mcp_config: str, timeout: int = 120) -> dict:
             "latency_s": timeout, "exit": "timeout", "stderr_tail": "",
         }
     hypothesis = proc.stdout.strip()
-    tool_calls = re.findall(r"wg_(\w+)", proc.stderr + proc.stdout)
+    tool_calls = re.findall(r"aidememo_(\w+)", proc.stderr + proc.stdout)
     return {
         "agent": "hermes",
         "hypothesis": hypothesis,
@@ -171,7 +171,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--scenarios", required=True, type=Path)
     ap.add_argument("--agent", required=True, choices=["claude", "codex", "hermes"])
-    ap.add_argument("--mcp-config", default="/tmp/wg-agent-test/mcp-config.json")
+    ap.add_argument("--mcp-config", default="/tmp/aidememo-agent-test/mcp-config.json")
     ap.add_argument("--out", required=True, type=Path)
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--timeout", type=int, default=180)

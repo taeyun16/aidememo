@@ -68,7 +68,7 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: ubuntu-wg-v2
+          shared-key: ubuntu-aidememo-v2
       - run: cargo fmt --all -- --check
       # `-- -D warnings` denies workspace clippy lints only; transitive
       # deps' new lints don't break us when stable advances.
@@ -100,21 +100,21 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           # ubuntu test reuses lint's cache; macOS gets its own.
-          shared-key: ${{ matrix.os == 'ubuntu-latest' && 'ubuntu-wg-v2' || 'macos-wg-v2' }}
+          shared-key: ${{ matrix.os == 'ubuntu-latest' && 'ubuntu-aidememo-v2' || 'macos-aidememo-v2' }}
           # Only the lint job writes the ubuntu cache; readers don't
           # save to avoid concurrent-write conflicts.
           save-if: ${{ matrix.os != 'ubuntu-latest' }}
       # Tests that download a HuggingFace embedding model are marked
-      # `#[ignore]` (see crates/wg-core/src/{lib,search}.rs). cargo
+      # `#[ignore]` (see crates/aidememo-core/src/{lib,search}.rs). cargo
       # skips them by default; run locally with `--ignored` to cover
       # the full surface.
       - run: cargo test --workspace --no-default-features
-      - run: cargo test -p wg-core --features semantic
-      - run: cargo test -p wg-cli --bin wg
+      - run: cargo test -p aidememo-core --features semantic
+      - run: cargo test -p aidememo-cli --bin aidememo
       # model2vec-native lives in its own repo
       # (https://github.com/taeyun16/model2vec-native) and is pulled in
-      # as a git dep when --features wg-core/semantic is on, so
-      # `cargo test -p wg-core --features semantic` already exercises
+      # as a git dep when --features aidememo-core/semantic is on, so
+      # `cargo test -p aidememo-core --features semantic` already exercises
       # it end-to-end here.
 
   # Upstream-CVE check. Pulls the RustSec advisory DB, parses our
@@ -163,25 +163,25 @@ jobs:
           toolchain: 1.95.0
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: ubuntu-wg-v2
+          shared-key: ubuntu-aidememo-v2
           save-if: false
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-      - run: cargo build -p wg-cli --release
+      - run: cargo build -p aidememo-cli --release
       - name: scenario D
         env:
-          WG_BIN: ${{ github.workspace }}/target/release/wg
-          WG_E2E_STORE: /tmp/wg-e2e/wiki.redb-concurrent
+          AIDEMEMO_BIN: ${{ github.workspace }}/target/release/aidememo
+          AIDEMEMO_E2E_STORE: /tmp/aidememo-e2e/wiki.redb-concurrent
           # Trim the workload a bit for CI runners — still enough to
           # exercise lock contention without burning minutes.
-          WG_E2E_PROCESSES: "3"
-          WG_E2E_N_PER_PROC: "10"
+          AIDEMEMO_E2E_PROCESSES: "3"
+          AIDEMEMO_E2E_N_PER_PROC: "10"
         run: python3 bench/multi-agent/scenario_d_concurrent_writers.py
 
   # Zero-token release smoke for the workflow-memory path. Bundles
   # Scenario F (workflow context quality), Scenario I (doctor readiness
-  # over real workflow traces), and a small fixture `wg doctor --json`
+  # over real workflow traces), and a small fixture `aidememo doctor --json`
   # assertion. This is intentionally separate from the matrix test job
   # so workflow UX regressions are easy to spot in the checks list.
   workflow-release-smoke:
@@ -196,14 +196,14 @@ jobs:
           toolchain: 1.95.0
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: ubuntu-wg-v2
+          shared-key: ubuntu-aidememo-v2
           save-if: false
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
       - name: workflow release smoke
         env:
-          WG_RELEASE_SMOKE_BASE: ${{ runner.temp }}/wg-workflow-release-smoke
+          AIDEMEMO_RELEASE_SMOKE_BASE: ${{ runner.temp }}/aidememo-workflow-release-smoke
         run: scripts/workflow-release-smoke.sh
 
   # Fast SDK wording guard. This catches drift between package docs,
@@ -225,7 +225,7 @@ jobs:
       - name: SDK promotion check
         run: scripts/sdk-promotion-check.sh
 
-  # release-debug profile + dhat-heap feature are how `wg bench` reports
+  # release-debug profile + dhat-heap feature are how `aidememo bench` reports
   # allocation backtraces. Compile-only check to make sure that path
   # doesn't bitrot — no need to run a benchmark in CI.
   dhat-build:
@@ -239,12 +239,12 @@ jobs:
           toolchain: 1.95.0
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: ubuntu-wg-v2
+          shared-key: ubuntu-aidememo-v2
           save-if: false
-      - run: cargo build --profile release-debug -p wg-cli --features wg-core/semantic,dhat-heap
+      - run: cargo build --profile release-debug -p aidememo-cli --features aidememo-core/semantic,dhat-heap
 
   ffi-c-smoke:
-    name: wg-ffi C smoke
+    name: aidememo-ffi C smoke
     needs: lint
     runs-on: ubuntu-latest
     steps:
@@ -254,28 +254,28 @@ jobs:
           toolchain: 1.95.0
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: ubuntu-wg-v2
+          shared-key: ubuntu-aidememo-v2
           save-if: false
-      - run: cargo build -p wg-ffi --release
-      # libwg_ffi.a transitively links native_tls/openssl-sys via
-      # wg-core's HTTP deps, so the cc invocation needs -lssl -lcrypto
+      - run: cargo build -p aidememo-ffi --release
+      # libaidememo_ffi.a transitively links native_tls/openssl-sys via
+      # aidememo-core's HTTP deps, so the cc invocation needs -lssl -lcrypto
       # to satisfy the OpenSSL symbols. Ubuntu runners already ship
       # libssl-dev, so no apt step needed.
       - run: |
-          cc crates/wg-ffi/example/smoke.c \
-             -I crates/wg-ffi/include \
-             target/release/libwg_ffi.a \
+          cc crates/aidememo-ffi/example/smoke.c \
+             -I crates/aidememo-ffi/include \
+             target/release/libaidememo_ffi.a \
              -lpthread -ldl -lm -lssl -lcrypto \
-             -o target/wg-ffi-smoke
-          target/wg-ffi-smoke
+             -o target/aidememo-ffi-smoke
+          target/aidememo-ffi-smoke
 
-  # The plugin is pure Python (the WgClient shells to the wg CLI by
-  # default, with an optional in-process wg-python binding). We build
-  # the wg CLI once and run pytest against both supported Python
+  # The plugin is pure Python (the AideMemoClient shells to the aidememo CLI by
+  # default, with an optional in-process aidememo-python binding). We build
+  # the aidememo CLI once and run pytest against both supported Python
   # versions sequentially in the same job — that's cheaper than two
   # parallel jobs that each redo the cargo build.
   hermes-plugin:
-    name: hermes-wg plugin
+    name: hermes-aidememo plugin
     needs: lint
     runs-on: ubuntu-latest
     steps:
@@ -285,10 +285,10 @@ jobs:
           toolchain: 1.95.0
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: ubuntu-wg-v2
+          shared-key: ubuntu-aidememo-v2
           save-if: false
-      - name: build wg CLI
-        run: cargo build -p wg-cli
+      - name: build aidememo CLI
+        run: cargo build -p aidememo-cli
 
       - uses: actions/setup-python@v5
         with:
@@ -314,23 +314,23 @@ jobs:
           pip install -e ".[test]"
           pytest -q
 
-      - name: e2e smoke against real wg binary
+      - name: e2e smoke against real aidememo binary
         working-directory: plugins/hermes
         env:
           PATH: ${{ github.workspace }}/target/debug:${{ env.PATH }}
         run: |
           python - <<'PY'
           import os, shutil, tempfile
-          from hermes_wg.client import WgClient
-          tmp = tempfile.mkdtemp(prefix="wg-ci-")
+          from hermes_aidememo.client import AideMemoClient
+          tmp = tempfile.mkdtemp(prefix="aidememo-ci-")
           try:
-              c = WgClient(store_path=os.path.join(tmp, "wiki.redb"))
+              c = AideMemoClient(store_path=os.path.join(tmp, "wiki.redb"))
               assert c.backend == "cli", f"expected cli backend, got {c.backend}"
               fid = c.fact_add("CI smoke fact", entities=["ci"], fact_type="note")
               assert len(fid) == 26, f"expected 26-char ULID, got {fid!r}"
               recent = c.recent(last="1h", limit=5)
               assert len(recent) == 1, f"expected 1 recent fact, got {len(recent)}"
-              print("OK: hermes-wg e2e smoke passed")
+              print("OK: hermes-aidememo e2e smoke passed")
           finally:
               shutil.rmtree(tmp, ignore_errors=True)
           PY

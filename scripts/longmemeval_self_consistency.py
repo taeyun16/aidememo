@@ -24,7 +24,7 @@ that's 480 LLM calls — about 5min with workers=16 + jittered backoff.
 
 Usage:
   python3 scripts/longmemeval_self_consistency.py \
-      --retrievals /tmp/wg_retrievals_120bal_full.jsonl \
+      --retrievals /tmp/aidememo_retrievals_120bal_full.jsonl \
       --gold /tmp/longmemeval_data/longmemeval_s_cleaned.json \
       --reader MiniMax-M2.7-highspeed --judge MiniMax-M2.7-highspeed \
       --reader-base-url https://api.minimax.io/v1 \
@@ -32,7 +32,7 @@ Usage:
       --judge-base-url https://api.minimax.io/v1 \
       --judge-api-key-env MINIMAX_API_KEY \
       --workers 16 --n-votes 3 --vote-temperature 0.5 \
-      --out /tmp/wg_self_consistency_120bal
+      --out /tmp/aidememo_self_consistency_120bal
 """
 from __future__ import annotations
 
@@ -113,7 +113,7 @@ def main():
     ap.add_argument("--gold", required=True, type=Path)
     ap.add_argument("--reader", default="MiniMax-M2.7-highspeed")
     ap.add_argument("--judge", default="MiniMax-M2.7-highspeed")
-    ap.add_argument("--out", default=Path("/tmp/wg_self_consistency"), type=Path)
+    ap.add_argument("--out", default=Path("/tmp/aidememo_self_consistency"), type=Path)
     ap.add_argument("--reader-base-url", default="https://api.minimax.io/v1")
     ap.add_argument("--reader-api-key-env", default="MINIMAX_API_KEY")
     ap.add_argument("--judge-base-url", default="https://api.minimax.io/v1")

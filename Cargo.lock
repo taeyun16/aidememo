@@ -41,6 +41,144 @@ dependencies = [
 ]
 
 [[package]]
+name = "aidememo-benchmarks"
+version = "0.1.0"
+dependencies = [
+ "aidememo-core",
+ "chrono",
+ "criterion",
+ "instant-distance",
+ "parking_lot",
+ "rayon",
+ "redb",
+ "serde",
+ "serde_json",
+ "simsimd",
+ "tempfile",
+]
+
+[[package]]
+name = "aidememo-cli"
+version = "0.1.0"
+dependencies = [
+ "aidememo-core",
+ "axum",
+ "bpaf",
+ "chrono",
+ "clap",
+ "comfy-table",
+ "cpu-time",
+ "crossterm",
+ "dhat",
+ "dirs",
+ "libc",
+ "mach2",
+ "memory-stats",
+ "notify",
+ "peak_alloc",
+ "ratatui",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-stream",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
+ "ulid",
+ "ureq 2.12.1",
+ "walkdir",
+]
+
+[[package]]
+name = "aidememo-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "aws-credential-types",
+ "aws-sdk-s3",
+ "bincode",
+ "bm25",
+ "bpaf",
+ "bytes",
+ "chrono",
+ "comfy-table",
+ "fastembed",
+ "fundu",
+ "instant-distance",
+ "interim",
+ "lru",
+ "memchr",
+ "model2vec-native",
+ "once_cell",
+ "oneio",
+ "parking_lot",
+ "proptest",
+ "rayon",
+ "redb",
+ "regex",
+ "rusty-money",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "simsimd",
+ "strsim",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "toml",
+ "tracing",
+ "trigram",
+ "ulid",
+ "ureq 2.12.1",
+ "walkdir",
+ "zstd",
+]
+
+[[package]]
+name = "aidememo-ffi"
+version = "0.1.0"
+dependencies = [
+ "aidememo-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "aidememo-napi"
+version = "0.1.0"
+dependencies = [
+ "aidememo-core",
+ "napi",
+ "napi-build",
+ "napi-derive",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "aidememo-nif"
+version = "0.1.0"
+dependencies = [
+ "aidememo-core",
+ "rustler",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "aidememo-python"
+version = "0.1.0"
+dependencies = [
+ "aidememo-core",
+ "pyo3",
+ "pyo3-build-config",
+ "pythonize",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "aligned"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6479,144 +6617,6 @@ dependencies = [
  "lazy_static",
  "serde",
  "wezterm-dynamic",
-]
-
-[[package]]
-name = "wg-benchmarks"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "criterion",
- "instant-distance",
- "parking_lot",
- "rayon",
- "redb",
- "serde",
- "serde_json",
- "simsimd",
- "tempfile",
- "wg-core",
-]
-
-[[package]]
-name = "wg-cli"
-version = "0.1.0"
-dependencies = [
- "axum",
- "bpaf",
- "chrono",
- "clap",
- "comfy-table",
- "cpu-time",
- "crossterm",
- "dhat",
- "dirs",
- "libc",
- "mach2",
- "memory-stats",
- "notify",
- "peak_alloc",
- "ratatui",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
- "tokio-stream",
- "toml",
- "tracing",
- "tracing-subscriber",
- "ulid",
- "ureq 2.12.1",
- "walkdir",
- "wg-core",
-]
-
-[[package]]
-name = "wg-core"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "aws-credential-types",
- "aws-sdk-s3",
- "bincode",
- "bm25",
- "bpaf",
- "bytes",
- "chrono",
- "comfy-table",
- "fastembed",
- "fundu",
- "instant-distance",
- "interim",
- "lru",
- "memchr",
- "model2vec-native",
- "once_cell",
- "oneio",
- "parking_lot",
- "proptest",
- "rayon",
- "redb",
- "regex",
- "rusty-money",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "simsimd",
- "strsim",
- "tempfile",
- "thiserror 1.0.69",
- "tokio",
- "toml",
- "tracing",
- "trigram",
- "ulid",
- "ureq 2.12.1",
- "walkdir",
- "zstd",
-]
-
-[[package]]
-name = "wg-ffi"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "wg-core",
-]
-
-[[package]]
-name = "wg-napi"
-version = "0.1.0"
-dependencies = [
- "napi",
- "napi-build",
- "napi-derive",
- "serde",
- "serde_json",
- "wg-core",
-]
-
-[[package]]
-name = "wg-nif"
-version = "0.1.0"
-dependencies = [
- "rustler",
- "serde",
- "serde_json",
- "wg-core",
-]
-
-[[package]]
-name = "wg-python"
-version = "0.1.0"
-dependencies = [
- "pyo3",
- "pyo3-build-config",
- "pythonize",
- "serde",
- "serde_json",
- "wg-core",
 ]
 
 [[package]]

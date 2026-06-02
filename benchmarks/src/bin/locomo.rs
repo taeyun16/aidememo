@@ -1,4 +1,4 @@
-//! LoCoMo (Long Conversational Memory) baseline for `wg`.
+//! LoCoMo (Long Conversational Memory) baseline for `aidememo`.
 //!
 //! Loads `locomo10.json` (snap-research/locomo, ICLR 2024) — 10 long
 //! synthetic conversations between speaker_a and speaker_b, each
@@ -6,7 +6,7 @@
 //! conversation comes with ~199 QA pairs whose `evidence` field
 //! cites turns by `Dn:k` (Dialog n turn k).
 //!
-//! Per-conversation fresh wg store mirrors LongMemEval. Each turn
+//! Per-conversation fresh aidememo store mirrors LongMemEval. Each turn
 //! becomes one fact:
 //!   * content      = "{speaker}: {text}"
 //!   * entity_ids   = [speaker_entity, session_entity]
@@ -22,9 +22,9 @@
 //!
 //! ```bash
 //! LOCOMO=/tmp/locomo/locomo10.json \
-//!   cargo run --release -p wg-benchmarks --bin locomo -- \
+//!   cargo run --release -p aidememo-benchmarks --bin locomo -- \
 //!     --hybrid --top-k 10 \
-//!     --emit-retrievals /tmp/wg_locomo.jsonl
+//!     --emit-retrievals /tmp/aidememo_locomo.jsonl
 //! ```
 
 use std::collections::{HashMap, HashSet};
@@ -32,16 +32,16 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Instant;
 
+use aidememo_core::types::{FactInput, FactType};
+use aidememo_core::{AideMemo, Config, EntityInput, EntityType, SearchOpts};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use wg_core::types::{FactInput, FactType};
-use wg_core::{Config, EntityInput, EntityType, SearchOpts, WikiGraph};
 
 type TurnMeta = (String, String, String);
 type ConversationStore = (
     tempfile::TempDir,
-    WikiGraph,
-    HashMap<wg_core::types::FactId, TurnMeta>,
+    AideMemo,
+    HashMap<aidememo_core::types::FactId, TurnMeta>,
 );
 
 #[derive(Debug, Deserialize)]
@@ -174,7 +174,7 @@ fn build_store_for_conv(conv: &Conversation, hybrid: bool) -> Result<Conversatio
         config.search.semantic_index = "hybrid".into();
         config.model.provider = "model2vec".into();
     }
-    let wiki = WikiGraph::open(&path, config).map_err(|e| e.to_string())?;
+    let wiki = AideMemo::open(&path, config).map_err(|e| e.to_string())?;
 
     // Resolve speakers up front — every fact carries one speaker entity.
     let speaker_a = conv
@@ -189,7 +189,7 @@ fn build_store_for_conv(conv: &Conversation, hybrid: bool) -> Result<Conversatio
         .and_then(|v| v.as_str())
         .unwrap_or("speaker_b")
         .to_string();
-    let mut speaker_id: HashMap<String, wg_core::types::EntityId> = HashMap::new();
+    let mut speaker_id: HashMap<String, aidememo_core::types::EntityId> = HashMap::new();
     for name in [&speaker_a, &speaker_b] {
         let id = match wiki.entity_add(EntityInput {
             name: name.clone(),
@@ -260,7 +260,8 @@ fn build_store_for_conv(conv: &Conversation, hybrid: bool) -> Result<Conversatio
         }
     }
     let fact_ids = wiki.fact_add_many(inputs).map_err(|e| e.to_string())?;
-    let mut id_to_meta: HashMap<wg_core::types::FactId, (String, String, String)> = HashMap::new();
+    let mut id_to_meta: HashMap<aidememo_core::types::FactId, (String, String, String)> =
+        HashMap::new();
     for (fid, meta) in fact_ids.into_iter().zip(id_to_meta_seq) {
         id_to_meta.insert(fid, meta);
     }

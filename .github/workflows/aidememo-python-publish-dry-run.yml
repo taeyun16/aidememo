@@ -1,0 +1,47 @@
+name: aidememo-python publish dry-run
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "aidememo-python-v*"
+
+concurrency:
+  group: aidememo-python-publish-dry-run-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  CARGO_NET_RETRY: 10
+  CARGO_NET_GIT_FETCH_WITH_CLI: true
+  RUSTUP_MAX_RETRIES: 10
+
+permissions:
+  contents: read
+
+jobs:
+  dry-run:
+    name: Python publish dry-run
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.95.0
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: aidememo-python-publish-dry-run-v1
+
+      - name: install maturin
+        run: python -m pip install "maturin>=1.7,<2.0"
+
+      - name: publish dry-run
+        run: scripts/aidememo-python-publish-dry-run.sh

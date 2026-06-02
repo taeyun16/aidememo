@@ -12,11 +12,11 @@ of `answer` — gold extraction handled bench-side; we just receive
 
 Usage:
   python3 scripts/locomo_reader.py \
-      --retrievals /tmp/wg_locomo_full.jsonl \
+      --retrievals /tmp/aidememo_locomo_full.jsonl \
       --reader MiniMax-M2.7-highspeed --judge MiniMax-M2.7-highspeed \
       --reader-base-url https://api.minimax.io/v1 --reader-api-key-env MINIMAX_API_KEY \
       --judge-base-url https://api.minimax.io/v1 --judge-api-key-env MINIMAX_API_KEY \
-      --workers 6 --limit 0 --out /tmp/wg_locomo_eval
+      --workers 6 --limit 0 --out /tmp/aidememo_locomo_eval
 """
 from __future__ import annotations
 

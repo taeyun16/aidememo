@@ -6,7 +6,7 @@ matters more than recall — false positives clutter the wiki.
 
 from __future__ import annotations
 
-from hermes_wg.decisions import detect
+from hermes_aidememo.decisions import detect
 
 
 def test_explicit_decision_marker():
@@ -74,8 +74,8 @@ def test_dedupe_collapses_user_assistant_echo_with_formatting():
     plain text, the assistant echoes it back with markdown
     backticks and a trailing period. Only one fact should land."""
     text = (
-        "결정: 한국어 패턴도 auto_record off 모드에서 즉시 wg에 기록한다\n"
-        "결론: 한국어 패턴도 `auto_record off` 모드에서 즉시 wg에 기록한다."
+        "결정: 한국어 패턴도 auto_record off 모드에서 즉시 aidememo에 기록한다\n"
+        "결론: 한국어 패턴도 `auto_record off` 모드에서 즉시 aidememo에 기록한다."
     )
     out = detect(text)
     assert len(out) == 1, [d.content for d in out]

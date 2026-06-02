@@ -10,9 +10,9 @@ Reports:
 Usage:
   python3 scripts/longmemeval_judge_diff.py \\
       --reader gpt-4o \\
-      --hypotheses /tmp/wg_e2e_500_4o_v2/hypotheses_gpt-4o.jsonl \\
-      --judge-a /tmp/wg_e2e_500_4o_v2/judgements_gpt-4o_judge_gpt-4o-mini.jsonl \\
-      --judge-b /tmp/wg_e2e_500_4o_v2_4ojudge/judgements_gpt-4o_judge_gpt-4o.jsonl \\
+      --hypotheses /tmp/aidememo_e2e_500_4o_v2/hypotheses_gpt-4o.jsonl \\
+      --judge-a /tmp/aidememo_e2e_500_4o_v2/judgements_gpt-4o_judge_gpt-4o-mini.jsonl \\
+      --judge-b /tmp/aidememo_e2e_500_4o_v2_4ojudge/judgements_gpt-4o_judge_gpt-4o.jsonl \\
       --gold /tmp/longmemeval/longmemeval_s_cleaned.json \\
       --samples 5
 """

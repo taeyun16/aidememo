@@ -1,13 +1,13 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/wg-core",
-    "crates/wg-cli",
+    "crates/aidememo-core",
+    "crates/aidememo-cli",
     "benchmarks",
-    "crates/wg-napi",
-    "crates/wg-python",
-    "crates/wg-ffi",
-    "crates/wg-nif",
+    "crates/aidememo-napi",
+    "crates/aidememo-python",
+    "crates/aidememo-ffi",
+    "crates/aidememo-nif",
 ]
 exclude = [
     # Local fork of tokenizers; consumed via [patch.crates-io] below.
@@ -20,10 +20,10 @@ exclude = [
 [workspace.package]
 edition = "2024"
 rust-version = "1.85"
-authors = ["WikiGraph Team"]
-description = "Wiki-Graph: Structured index engine for LLM wikis"
+authors = ["AideMemo Team"]
+description = "AideMemo: local-first memory SDK for coding agents"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/taeyun16/wg"
+repository = "https://github.com/taeyun16/aidememo"
 version = "0.1.0"
 
 [workspace.lints.rust]
@@ -49,7 +49,7 @@ opt-level = 0
 debug = false
 
 # Optimized build that keeps debuginfo + symbols. Use this for
-# heap/CPU profiling — `cargo build -p wg-cli --release-debug --features dhat-heap`.
+# heap/CPU profiling — `cargo build -p aidememo-cli --release-debug --features dhat-heap`.
 # dhat needs unstripped frames to attribute allocations correctly.
 [profile.release-debug]
 inherits = "release"

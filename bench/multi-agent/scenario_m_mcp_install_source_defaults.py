@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """Scenario M - installed MCP source defaults are usable.
 
-P3.38/P3.39 made `wg mcp-install --source-id` the smooth path for shared-store
+P3.38/P3.39 made `aidememo mcp-install --source-id` the smooth path for shared-store
 MCP agents. This zero-token scenario validates the install contract at the
 product boundary:
 
   1. Install file-edit MCP targets into an isolated HOME.
-  2. Verify Codex / Cursor / OpenCode configs contain WG_SOURCE_ID.
+  2. Verify Codex / Cursor / OpenCode configs contain AIDEMEMO_SOURCE_ID.
   3. Verify shell-out targets report the env injection in --print mode.
-  4. Feed the installed Codex env into `wg mcp` and prove writes/searches are
+  4. Feed the installed Codex env into `aidememo mcp` and prove writes/searches are
      source-scoped without explicit source_id tool arguments.
 """
 
@@ -31,8 +31,8 @@ except ModuleNotFoundError:  # pragma: no cover - Python < 3.11 fallback.
 
 
 REPO = Path(__file__).resolve().parents[2]
-WG = os.environ.get("WG_BIN", str(REPO / "target" / "debug" / "wg"))
-BASE = Path(os.environ.get("WG_E2E_BASE", str(Path(tempfile.gettempdir()) / "wg-e2e-m")))
+WG = os.environ.get("AIDEMEMO_BIN", str(REPO / "target" / "debug" / "aidememo"))
+BASE = Path(os.environ.get("AIDEMEMO_E2E_BASE", str(Path(tempfile.gettempdir()) / "aidememo-e2e-m")))
 HOME = BASE / "home"
 STORE = str(BASE / "install-source-defaults.redb")
 SOURCE_ID = "agent-alpha"
@@ -98,12 +98,12 @@ def read_codex_source_id() -> str | None:
         return (
             tomllib.loads(text)
             .get("mcp_servers", {})
-            .get("wg", {})
+            .get("aidememo", {})
             .get("env", {})
-            .get("WG_SOURCE_ID")
+            .get("AIDEMEMO_SOURCE_ID")
         )
     for line in text.splitlines():
-        if line.strip().startswith("WG_SOURCE_ID"):
+        if line.strip().startswith("AIDEMEMO_SOURCE_ID"):
             return line.split("=", 1)[1].strip().strip('"')
     return None
 
@@ -159,9 +159,9 @@ def main() -> int:
     cursor = read_json(HOME / ".cursor" / "mcp.json")
     opencode = read_json(HOME / ".config" / "opencode" / "opencode.json")
 
-    env = {"WG_SOURCE_ID": codex_source_id or ""}
+    env = {"AIDEMEMO_SOURCE_ID": codex_source_id or ""}
     add_payload = mcp_tool_call(
-        "wg_fact_add",
+        "aidememo_fact_add",
         {
             "content": "Decision: installed MCP source defaults scope agent writes.",
             "fact_type": "decision",
@@ -170,7 +170,7 @@ def main() -> int:
         env=env,
     )
     search_payload = mcp_tool_call(
-        "wg_search",
+        "aidememo_search",
         {
             "query": "installed MCP source defaults",
             "bm25_only": True,
@@ -187,15 +187,15 @@ def main() -> int:
         "cursor_report_verified": file_reports["cursor"].get("verified") is True,
         "opencode_report_verified": file_reports["opencode"].get("verified") is True,
         "codex_config_has_source_id": codex_source_id == SOURCE_ID,
-        "cursor_config_has_source_id": cursor["mcpServers"]["wg"]["env"]["WG_SOURCE_ID"]
+        "cursor_config_has_source_id": cursor["mcpServers"]["aidememo"]["env"]["AIDEMEMO_SOURCE_ID"]
         == SOURCE_ID,
-        "opencode_config_has_source_id": opencode["mcp"]["wg"]["env"]["WG_SOURCE_ID"]
+        "opencode_config_has_source_id": opencode["mcp"]["aidememo"]["env"]["AIDEMEMO_SOURCE_ID"]
         == SOURCE_ID,
-        "claude_print_has_env": "WG_SOURCE_ID=agent-alpha"
+        "claude_print_has_env": "AIDEMEMO_SOURCE_ID=agent-alpha"
         in shell_reports["claude"].get("detail", ""),
-        "hermes_print_has_env": "--env WG_SOURCE_ID=agent-alpha"
+        "hermes_print_has_env": "--env AIDEMEMO_SOURCE_ID=agent-alpha"
         in shell_reports["hermes"].get("detail", ""),
-        "openclaw_print_has_env": "WG_SOURCE_ID"
+        "openclaw_print_has_env": "AIDEMEMO_SOURCE_ID"
         in shell_reports["openclaw"].get("detail", ""),
         "mcp_write_used_installed_source_id": add_payload.get("source_id") == SOURCE_ID,
         "mcp_search_used_installed_source_id": any(
@@ -213,7 +213,7 @@ def main() -> int:
         "latency_ms": round(elapsed_ms, 2),
         "file_reports": file_reports,
         "shell_reports": shell_reports,
-        "installed_env": {"WG_SOURCE_ID": codex_source_id},
+        "installed_env": {"AIDEMEMO_SOURCE_ID": codex_source_id},
         "mcp": {
             "add_source_id": add_payload.get("source_id"),
             "search_hit_count": len(results),

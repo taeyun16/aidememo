@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""LongMemEval reader+judge harness with OMEGA's published recipe ported to wg.
+"""LongMemEval reader+judge harness with OMEGA's published recipe ported to aidememo.
 
-Reads a `--emit-retrievals` JSONL produced by `wg-benchmarks longmemeval`
+Reads a `--emit-retrievals` JSONL produced by `aidememo-benchmarks longmemeval`
 (top-K=20-30, with `referenced_date` per hit), then applies the same
 prompt-side stack OMEGA's `scripts/longmemeval_official.py` uses to hit
 95.4%:
@@ -17,17 +17,17 @@ prompt-side stack OMEGA's `scripts/longmemeval_official.py` uses to hit
   5. Per-snippet "[Note N | Date: ISO]" / "[End Note N]" formatting,
      OMEGA's Chain-of-Note style.
 
-Skipped (retrieval-side, would need wg-benchmarks rewrite):
+Skipped (retrieval-side, would need aidememo-benchmarks rewrite):
   * Query expansion (regex absolute date / entity / counting cues)
   * Triple retrieval merge (temporal-filtered + unfiltered + original)
   * Temporal range filter (`temporal_range=(start, end)` in store.query)
 
 Usage:
   python3 scripts/longmemeval_omega_style.py \
-      --retrievals /tmp/wg_retrievals_500_omega_style.jsonl \
+      --retrievals /tmp/aidememo_retrievals_500_omega_style.jsonl \
       --gold /tmp/longmemeval_data/longmemeval_s_cleaned.json \
       --reader gpt-4.1 --judge gpt-4o \
-      --out /tmp/wg_omega_style_500
+      --out /tmp/aidememo_omega_style_500
 """
 from __future__ import annotations
 
@@ -379,7 +379,7 @@ _CATEGORY_CONFIG = {
     # 60q balanced (hybrid-ingest, MiniMax) showed the gold evidence
     # landed at rank 14 in 1/2 fails — the 10-cap was filtering it out.
     # OMEGA's tighter cap fits its session-only ingest where evidence
-    # is more concentrated; wg's hybrid pool needs the wider window.
+    # is more concentrated; aidememo's hybrid pool needs the wider window.
     "single-session-preference": {"min_rel": 0.12, "min_res": 3, "max_res": 20, "max_tokens": 2048},
 }
 _DEFAULT_CONFIG = {"min_rel": 0.15, "min_res": 3, "max_res": 10, "max_tokens": 512}
@@ -428,7 +428,7 @@ def _filter_and_sort(retrievals, cfg):
     then sorts by `referenced_date` ascending (oldest first) so the
     "MOST RECENT note wins" prompt instructions work as intended.
     """
-    # OMEGA scores from its own retrieval are 0..1-ish. wg's BM25/RRF
+    # OMEGA scores from its own retrieval are 0..1-ish. aidememo's BM25/RRF
     # scores have a different scale — typically 0.01..30 for BM25 or
     # 0.001..0.06 for RRF. To make min_rel comparable we normalise to
     # the question's max score before applying the filter.
@@ -588,7 +588,7 @@ def main():
     ap.add_argument("--gold", required=True, type=Path)
     ap.add_argument("--reader", default="gpt-4.1")
     ap.add_argument("--judge", default="gpt-4o")
-    ap.add_argument("--out", default=Path("/tmp/wg_omega_style"), type=Path)
+    ap.add_argument("--out", default=Path("/tmp/aidememo_omega_style"), type=Path)
     ap.add_argument("--limit", type=int, default=0, help="0 = all")
     ap.add_argument("--reader-base-url", default="https://api.openai.com/v1")
     ap.add_argument("--reader-api-key-env", default="OPENAI_API_KEY")
@@ -745,7 +745,7 @@ def main():
     ok, bad, unk = _acc(overall)
     total = ok + bad + unk
     print()
-    print(f"Result (OMEGA-style harness on wg retrievals): reader={args.reader}, judge={args.judge}")
+    print(f"Result (OMEGA-style harness on aidememo retrievals): reader={args.reader}, judge={args.judge}")
     print(f"  total: {total}")
     print(f"  CORRECT:    {ok:>4}  ({ok/total:.3f})")
     print(f"  INCORRECT:  {bad:>4}  ({bad/total:.3f})")

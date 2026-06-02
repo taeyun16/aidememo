@@ -1,4 +1,4 @@
-# Pre-commit / pre-push hooks for the wg workspace.
+# Pre-commit / pre-push hooks for the aidememo workspace.
 #
 # Install:
 #   brew install lefthook         # macOS
@@ -26,9 +26,9 @@ pre-commit:
 
     elixir-fmt:
       glob: "{*.ex,*.exs}"
-      root: "crates/wg-nif"
+      root: "crates/aidememo-nif"
       run: mix format --check-formatted {staged_files}
-      fail_text: "run 'cd crates/wg-nif && mix format' to fix"
+      fail_text: "run 'cd crates/aidememo-nif && mix format' to fix"
 
     workspace-deny-unwrap:
       # Quick guard: workspace lints already deny `unwrap_used` and
@@ -49,12 +49,12 @@ pre-push:
       fail_text: "rustdoc warnings fail CI; fix them before pushing"
 
     test-core:
-      run: cargo test -p wg-core --features semantic --quiet
-      fail_text: "wg-core tests failed"
+      run: cargo test -p aidememo-core --features semantic --quiet
+      fail_text: "aidememo-core tests failed"
 
     test-cli:
-      run: cargo test -p wg-cli --bin wg --quiet
-      fail_text: "wg-cli tests failed"
+      run: cargo test -p aidememo-cli --bin aidememo --quiet
+      fail_text: "aidememo-cli tests failed"
 
 # Long-running operations live in pre-push only:
 # - cargo clippy (1st run = slow)

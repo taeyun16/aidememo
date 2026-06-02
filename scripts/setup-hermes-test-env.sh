@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Bootstrap a reusable Hermes Agent test profile for wg plugin
+# Bootstrap a reusable Hermes Agent test profile for aidememo plugin
 # development. Sits between the throwaway-tempdir checks in
 # `test-hermes-e2e.sh` (LLM-free CI smoke) and a fully manual
 # `~/.hermes` setup — gives operators a stable, isolated profile
@@ -14,12 +14,12 @@
 #   ./scripts/setup-hermes-test-env.sh teardown
 #
 # The four subcommands compose:
-#   setup     creates HERMES_HOME, builds wg, symlinks the plugin,
+#   setup     creates HERMES_HOME, builds aidememo, symlinks the plugin,
 #             enables it, and (optionally) wires a provider.
-#   env       prints export lines for HERMES_HOME / PATH / WG_STORE
+#   env       prints export lines for HERMES_HOME / PATH / AIDEMEMO_STORE
 #             so a single eval lights up the shell for chat sessions.
 #   seed      adds a small set of sample facts to the test wiki —
-#             enough material for /wg, /wg-recent, and wg_query to
+#             enough material for /aidememo, /aidememo-recent, and aidememo_query to
 #             return non-empty results.
 #   teardown  removes HERMES_HOME and exits.
 #
@@ -35,10 +35,10 @@
 set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
-TEST_HOME="${WG_HERMES_TEST_HOME:-/tmp/wg-hermes-test}"
-PLUGIN_SRC="$REPO/plugins/hermes/src/hermes_wg"
-WG_BIN="$REPO/target/debug/wg"
-WG_BIN_DIR="$REPO/target/debug"
+TEST_HOME="${AIDEMEMO_HERMES_TEST_HOME:-/tmp/aidememo-hermes-test}"
+PLUGIN_SRC="$REPO/plugins/hermes/src/hermes_aidememo"
+AIDEMEMO_BIN="$REPO/target/debug/aidememo"
+AIDEMEMO_BIN_DIR="$REPO/target/debug"
 HERMES_BIN="${HERMES_BIN:-$(command -v hermes || true)}"
 
 # ----------------------------------------------------------------------
@@ -92,17 +92,17 @@ cmd_setup() {
         exit 1
     fi
 
-    if [[ ! -x "$WG_BIN" ]]; then
-        log "wg binary not found, building (cargo build -p wg-cli)…"
-        (cd "$REPO" && cargo build -p wg-cli)
+    if [[ ! -x "$AIDEMEMO_BIN" ]]; then
+        log "aidememo binary not found, building (cargo build -p aidememo-cli)…"
+        (cd "$REPO" && cargo build -p aidememo-cli)
     fi
-    ok "wg binary at $WG_BIN"
+    ok "aidememo binary at $AIDEMEMO_BIN"
 
     mkdir -p "$TEST_HOME/plugins"
-    if [[ ! -e "$TEST_HOME/plugins/wg" ]]; then
-        ln -s "$PLUGIN_SRC" "$TEST_HOME/plugins/wg"
+    if [[ ! -e "$TEST_HOME/plugins/aidememo" ]]; then
+        ln -s "$PLUGIN_SRC" "$TEST_HOME/plugins/aidememo"
     fi
-    ok "HERMES_HOME=$TEST_HOME (plugin symlinked at plugins/wg)"
+    ok "HERMES_HOME=$TEST_HOME (plugin symlinked at plugins/aidememo)"
 
     if [[ "$inherit_auth" -eq 1 ]]; then
         local src="${HERMES_HOME_REAL:-$HOME/.hermes}"
@@ -118,9 +118,9 @@ cmd_setup() {
         fi
     fi
 
-    HERMES_HOME="$TEST_HOME" PATH="$WG_BIN_DIR:$PATH" "$HERMES_BIN" plugins enable wg \
+    HERMES_HOME="$TEST_HOME" PATH="$AIDEMEMO_BIN_DIR:$PATH" "$HERMES_BIN" plugins enable aidememo \
         > /dev/null 2>&1 || true
-    ok "wg plugin enabled"
+    ok "aidememo plugin enabled"
 
     if [[ -n "$ollama_model" ]]; then
         if ! curl -sf http://localhost:11434/api/tags > /dev/null 2>&1; then
@@ -165,7 +165,7 @@ PY
     cat >&2 <<EOF
 
   Next steps:
-    eval "\$($0 env)"            # export HERMES_HOME / PATH / WG_STORE
+    eval "\$($0 env)"            # export HERMES_HOME / PATH / AIDEMEMO_STORE
     $0 seed                      # add a few sample facts (idempotent)
     hermes chat                  # interactive chat
     hermes chat --tui            # TUI mode
@@ -188,8 +188,8 @@ cmd_env() {
     fi
     cat <<EOF
 export HERMES_HOME="$TEST_HOME"
-export WG_STORE="$TEST_HOME/wiki.redb"
-export PATH="$WG_BIN_DIR:\$PATH"
+export AIDEMEMO_STORE="$TEST_HOME/wiki.redb"
+export PATH="$AIDEMEMO_BIN_DIR:\$PATH"
 EOF
 }
 
@@ -202,28 +202,28 @@ cmd_seed() {
         err "$TEST_HOME doesn't exist — run setup first"
         exit 1
     fi
-    if [[ ! -x "$WG_BIN" ]]; then
-        err "wg binary missing at $WG_BIN — re-run setup"
+    if [[ ! -x "$AIDEMEMO_BIN" ]]; then
+        err "aidememo binary missing at $AIDEMEMO_BIN — re-run setup"
         exit 1
     fi
     log "seeding wiki at $TEST_HOME/wiki.redb"
-    "$WG_BIN" --store "$TEST_HOME/wiki.redb" fact add \
-        "HNSW is the default semantic index in wg" \
-        --entities wg,hnsw --type decision > /dev/null 2>&1 || true
-    "$WG_BIN" --store "$TEST_HOME/wiki.redb" fact add \
+    "$AIDEMEMO_BIN" --store "$TEST_HOME/wiki.redb" fact add \
+        "HNSW is the default semantic index in aidememo" \
+        --entities aidememo,hnsw --type decision > /dev/null 2>&1 || true
+    "$AIDEMEMO_BIN" --store "$TEST_HOME/wiki.redb" fact add \
         "Hermes plugin auto-records decisions on session_end" \
-        --entities wg,hermes --type convention > /dev/null 2>&1 || true
-    "$WG_BIN" --store "$TEST_HOME/wiki.redb" fact add \
+        --entities aidememo,hermes --type convention > /dev/null 2>&1 || true
+    "$AIDEMEMO_BIN" --store "$TEST_HOME/wiki.redb" fact add \
         "Tool handlers must return strings — Hermes slice-checks results" \
-        --entities wg,hermes --type pattern > /dev/null 2>&1 || true
-    "$WG_BIN" --store "$TEST_HOME/wiki.redb" fact add \
+        --entities aidememo,hermes --type pattern > /dev/null 2>&1 || true
+    "$AIDEMEMO_BIN" --store "$TEST_HOME/wiki.redb" fact add \
         "agentskills.io SKILL.md format makes the skill portable across 6 agents" \
-        --entities wg,agentskills --type convention > /dev/null 2>&1 || true
-    "$WG_BIN" --store "$TEST_HOME/wiki.redb" fact add \
-        "wg pending review TUI is the human-driven promotion path" \
-        --entities wg,tui --type pattern > /dev/null 2>&1 || true
+        --entities aidememo,agentskills --type convention > /dev/null 2>&1 || true
+    "$AIDEMEMO_BIN" --store "$TEST_HOME/wiki.redb" fact add \
+        "aidememo pending review TUI is the human-driven promotion path" \
+        --entities aidememo,tui --type pattern > /dev/null 2>&1 || true
     local count
-    count="$("$WG_BIN" --store "$TEST_HOME/wiki.redb" --json stats | grep -o '"fact_count": *[0-9]*' | grep -o '[0-9]*')"
+    count="$("$AIDEMEMO_BIN" --store "$TEST_HOME/wiki.redb" --json stats | grep -o '"fact_count": *[0-9]*' | grep -o '[0-9]*')"
     ok "seeded — wiki now has $count fact(s)"
 }
 

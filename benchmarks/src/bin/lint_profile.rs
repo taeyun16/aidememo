@@ -1,7 +1,7 @@
 //! One-shot lint profiler.
 //!
 //! Builds a 10K-fact synthetic wiki via `fact_add_many` (so the build
-//! itself is fast), then runs `lint()` once with `WG_LINT_PROFILE=1`
+//! itself is fast), then runs `lint()` once with `AIDEMEMO_LINT_PROFILE=1`
 //! so each phase prints its elapsed time. Sole purpose is to identify
 //! the dominant cost inside lint at scale; not a replacement for the
 //! main perf bench.
@@ -11,15 +11,15 @@
 
 use std::time::Instant;
 
+use aidememo_core::{AideMemo, Config, EntityInput, EntityType, FactInput, FactType};
 use tempfile::TempDir;
-use wg_core::{Config, EntityInput, EntityType, FactInput, FactType, WikiGraph};
 
 fn main() {
     // Force the profile env var so every `lint()` run emits its
     // per-phase breakdown.
     // SAFETY: setting an env var at startup before any threads spawn.
     unsafe {
-        std::env::set_var("WG_LINT_PROFILE", "1");
+        std::env::set_var("AIDEMEMO_LINT_PROFILE", "1");
     }
 
     const SCALE: usize = 10_000;
@@ -31,7 +31,7 @@ fn main() {
     let mut config = Config::default();
     config.store.path = store_path.to_string_lossy().into_owned();
     config.search.semantic_index = "naive".into();
-    let wiki = WikiGraph::open(&store_path, config).expect("open");
+    let wiki = AideMemo::open(&store_path, config).expect("open");
 
     eprintln!("=== lint profile, scale = {SCALE} ===");
 

@@ -5,9 +5,9 @@ This is the deterministic counterpart to a real coding-agent prompt
 like "Issue #123 just arrived; start work."  It exercises the entry
 point agents should call at task start:
 
-  - CLI:          wg --json workflow start ...
-  - MCP stdio:    tools/call wg_workflow_start
-  - Hermes path:  WgClient.workflow_start(...)
+  - CLI:          aidememo --json workflow start ...
+  - MCP stdio:    tools/call aidememo_workflow_start
+  - Hermes path:  AideMemoClient.workflow_start(...)
 
 The scenario seeds overlapping project memory, including intentionally
 conflicting Redis facts under different ``source_id`` values, then
@@ -35,10 +35,10 @@ from pathlib import Path
 from typing import Any
 
 REPO = Path(__file__).resolve().parents[2]
-WG = os.environ.get("WG_BIN", str(REPO / "target" / "debug" / "wg"))
+WG = os.environ.get("AIDEMEMO_BIN", str(REPO / "target" / "debug" / "aidememo"))
 STORE = os.environ.get(
-    "WG_E2E_STORE",
-    str(Path(tempfile.gettempdir()) / "wg-e2e-f" / "workflow.redb"),
+    "AIDEMEMO_E2E_STORE",
+    str(Path(tempfile.gettempdir()) / "aidememo-e2e-f" / "workflow.redb"),
 )
 
 
@@ -208,15 +208,15 @@ def workflow_mcp(ticket: Ticket) -> dict[str, Any]:
     }
     if ticket.source_id:
         args["source_id"] = ticket.source_id
-    return mcp_tool_call("wg_workflow_start", args)
+    return mcp_tool_call("aidememo_workflow_start", args)
 
 
 def workflow_hermes(ticket: Ticket) -> dict[str, Any]:
     sys.path.insert(0, str(REPO / "plugins" / "hermes" / "src"))
     os.environ["PATH"] = f"{Path(WG).parent}:{os.environ.get('PATH', '')}"
-    from hermes_wg.client import WgClient
+    from hermes_aidememo.client import AideMemoClient
 
-    client = WgClient(store_path=STORE, lock_retry_ms=5000)
+    client = AideMemoClient(store_path=STORE, lock_retry_ms=5000)
     return client.workflow_start(
         ticket.title,
         body=ticket.body,

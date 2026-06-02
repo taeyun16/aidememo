@@ -22,8 +22,8 @@ Outputs:
 
 Usage:
   python3 scripts/analyze_retrievals.py \
-      --retrievals /tmp/wg_retrievals_240bal_dates_full.jsonl \
-      --judgements /tmp/wg_omega_240dates_run1/judgements_*.jsonl
+      --retrievals /tmp/aidememo_retrievals_240bal_dates_full.jsonl \
+      --judgements /tmp/aidememo_omega_240dates_run1/judgements_*.jsonl
 """
 from __future__ import annotations
 

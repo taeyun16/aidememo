@@ -14,10 +14,10 @@ from pathlib import Path
 
 
 ROOT = Path(sys.argv[1])
-RUN_SMOKE = os.environ.get("WG_SDK_PROMOTION_RUN_SMOKE", "0") == "1"
-RUN_SCENARIO_K = os.environ.get("WG_SDK_PROMOTION_RUN_SCENARIO_K", "0") == "1"
-REQUIRE_PUBLIC = os.environ.get("WG_SDK_PROMOTION_REQUIRE_PUBLIC", "0") == "1"
-JSON_OUT = os.environ.get("WG_SDK_PROMOTION_JSON", "0") == "1"
+RUN_SMOKE = os.environ.get("AIDEMEMO_SDK_PROMOTION_RUN_SMOKE", "0") == "1"
+RUN_SCENARIO_K = os.environ.get("AIDEMEMO_SDK_PROMOTION_RUN_SCENARIO_K", "0") == "1"
+REQUIRE_PUBLIC = os.environ.get("AIDEMEMO_SDK_PROMOTION_REQUIRE_PUBLIC", "0") == "1"
+JSON_OUT = os.environ.get("AIDEMEMO_SDK_PROMOTION_JSON", "0") == "1"
 
 
 @dataclass
@@ -78,7 +78,7 @@ def version_gate(checks: list[Check], package: str, script: str) -> None:
 
 def optional_smoke(checks: list[Check], package: str, script: str, detail: str) -> None:
     if not RUN_SMOKE:
-        checks.append(Check(package, "package install smoke", "ready", f"set WG_SDK_PROMOTION_RUN_SMOKE=1 to run {script}"))
+        checks.append(Check(package, "package install smoke", "ready", f"set AIDEMEMO_SDK_PROMOTION_RUN_SMOKE=1 to run {script}"))
         return
     ok, out = run([str(ROOT / script)], timeout=900)
     last = out.splitlines()[-1] if out else detail
@@ -86,14 +86,14 @@ def optional_smoke(checks: list[Check], package: str, script: str, detail: str) 
 
 
 def optional_scenario_k(checks: list[Check]) -> None:
-    package = "wg-python/wg-napi"
+    package = "aidememo-python/aidememo-napi"
     if not RUN_SCENARIO_K:
         checks.append(
             Check(
                 package,
                 "workflow parity scenario",
                 "ready",
-                "set WG_SDK_PROMOTION_RUN_SCENARIO_K=1 to run Scenario K",
+                "set AIDEMEMO_SDK_PROMOTION_RUN_SCENARIO_K=1 to run Scenario K",
             )
         )
         return
@@ -155,33 +155,33 @@ def markdown_summary(payload: dict) -> str:
 
 checks: list[Check] = []
 
-checks.append(public_install_check("wg-python", "WG_PYTHON_PUBLIC_INSTALL_OK", "PyPI"))
-version_gate(checks, "wg-python", "scripts/wg-python-version.sh")
+checks.append(public_install_check("aidememo-python", "AIDEMEMO_PYTHON_PUBLIC_INSTALL_OK", "PyPI"))
+version_gate(checks, "aidememo-python", "scripts/aidememo-python-version.sh")
 ok, detail = has_tokens(
-    "crates/wg-python/README.md",
-    ["workflow_start", "source_id", "fact_add", "search", "query", "WgNotFoundError"],
+    "crates/aidememo-python/README.md",
+    ["workflow_start", "source_id", "fact_add", "search", "query", "AideMemoNotFoundError"],
 )
-append_status(checks, "wg-python", "workflow docs", ok, detail, detail)
+append_status(checks, "aidememo-python", "workflow docs", ok, detail, detail)
 ok, detail = has_tokens(
-    "crates/wg-python/src/lib.rs",
-    ["create_exception!", "WgNotFoundError", "WgInvalidInputError", "e.code()"],
+    "crates/aidememo-python/src/lib.rs",
+    ["create_exception!", "AideMemoNotFoundError", "AideMemoInvalidInputError", "e.code()"],
 )
-append_status(checks, "wg-python", "idiomatic errors", ok, detail, detail)
-optional_smoke(checks, "wg-python", "scripts/wg-python-pack-smoke.sh", "wheel install smoke")
+append_status(checks, "aidememo-python", "idiomatic errors", ok, detail, detail)
+optional_smoke(checks, "aidememo-python", "scripts/aidememo-python-pack-smoke.sh", "wheel install smoke")
 
-checks.append(public_install_check("wg-napi", "WG_NAPI_PUBLIC_INSTALL_OK", "npm"))
-version_gate(checks, "wg-napi", "scripts/wg-napi-version.sh")
+checks.append(public_install_check("aidememo-napi", "AIDEMEMO_NAPI_PUBLIC_INSTALL_OK", "npm"))
+version_gate(checks, "aidememo-napi", "scripts/aidememo-napi-version.sh")
 ok, detail = has_tokens(
-    "crates/wg-napi/README.md",
+    "crates/aidememo-napi/README.md",
     ["workflowStart", "sourceId", "factAdd", "search", "query", "error.code"],
 )
-append_status(checks, "wg-napi", "workflow docs", ok, detail, detail)
+append_status(checks, "aidememo-napi", "workflow docs", ok, detail, detail)
 ok, detail = has_tokens(
-    "crates/wg-napi/src/lib.rs",
+    "crates/aidememo-napi/src/lib.rs",
     ["Status::InvalidArg", "e.code()", "fn map_err"],
 )
-append_status(checks, "wg-napi", "idiomatic errors", ok, detail, detail)
-optional_smoke(checks, "wg-napi", "scripts/wg-napi-pack-smoke.sh", "npm pack/install smoke")
+append_status(checks, "aidememo-napi", "idiomatic errors", ok, detail, detail)
+optional_smoke(checks, "aidememo-napi", "scripts/aidememo-napi-pack-smoke.sh", "npm pack/install smoke")
 
 optional_scenario_k(checks)
 

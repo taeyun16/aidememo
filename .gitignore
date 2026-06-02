@@ -17,7 +17,7 @@ Thumbs.db
 # Wiki data (user-specific, never commit)
 *.redb
 _meta/
-.wg/
+.aidememo/
 # Top-level model cache only — anchored so it doesn't shadow
 # vendor/tokenizers/src/models/ etc.
 /models/
@@ -28,19 +28,19 @@ _meta/
 __pycache__/
 
 # Node bindings — built artifacts
-crates/wg-napi/node_modules/
-crates/wg-napi/package-lock.json
-crates/wg-napi/*.tgz
-crates/wg-napi/*.node
-crates/wg-napi/npm/**/*.tgz
-crates/wg-napi/npm/**/*.node
-crates/wg-napi/index.js
-crates/wg-napi/index.d.ts
+crates/aidememo-napi/node_modules/
+crates/aidememo-napi/package-lock.json
+crates/aidememo-napi/*.tgz
+crates/aidememo-napi/*.node
+crates/aidememo-napi/npm/**/*.tgz
+crates/aidememo-napi/npm/**/*.node
+crates/aidememo-napi/index.js
+crates/aidememo-napi/index.d.ts
 
 # Python bindings — built artifacts
-crates/wg-python/__pycache__/
-crates/wg-python/*.so
-crates/wg-python/*.egg-info/
+crates/aidememo-python/__pycache__/
+crates/aidememo-python/*.so
+crates/aidememo-python/*.egg-info/
 
 # Hermes plugin Python packaging
 plugins/hermes/.venv/
@@ -50,14 +50,14 @@ plugins/hermes/*.egg-info/
 plugins/hermes/src/*.egg-info/
 
 # Elixir NIF bindings — built artifacts
-crates/wg-nif/_build/
-crates/wg-nif/deps/
-crates/wg-nif/priv/
-crates/wg-nif/mix.lock
+crates/aidememo-nif/_build/
+crates/aidememo-nif/deps/
+crates/aidememo-nif/priv/
+crates/aidememo-nif/mix.lock
 dhat-heap.json
 .env
 .env.local
 
 # Local-only LongMemEval E2E intermediates
-wg_retrievals_*.jsonl
-wg_e2e_*/
+aidememo_retrievals_*.jsonl
+aidememo_e2e_*/

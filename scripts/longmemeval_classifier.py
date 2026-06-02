@@ -3,7 +3,7 @@
 
 Hypothesis: a single LLM call can decide whether the answer requires
 cross-session aggregation (sum / count / timeline across sessions) or
-is a simple retrieval question. If so, wg can dispatch agentic-loop
+is a simple retrieval question. If so, aidememo can dispatch agentic-loop
 mode for "YES" questions and the cheaper omega-style single-call mode
 for "NO" questions, capturing the +2pt selective lift without leaking
 the bench's question_type label.
@@ -18,13 +18,13 @@ Outputs:
 Usage:
   python3 scripts/longmemeval_classifier.py \
       --gold /tmp/longmemeval_data/longmemeval_s_cleaned.json \
-      --qids-from /tmp/wg_retrievals_60bal_relevance_full.jsonl \
+      --qids-from /tmp/aidememo_retrievals_60bal_relevance_full.jsonl \
       --reader MiniMax-M2.7-highspeed \
       --reader-base-url https://api.minimax.io/v1 --reader-api-key-env MINIMAX_API_KEY \
       --workers 8 \
-      --out /tmp/wg_classifier_60bal.jsonl \
-      --agentic-judg /tmp/wg_agentic_60bal_v2/judgements_MiniMax-M2.7-highspeed_judge_MiniMax-M2.7-highspeed.jsonl \
-      --baseline-judg /tmp/wg_omega_60bal_baseline/judgements_MiniMax-M2.7-highspeed_judge_MiniMax-M2.7-highspeed.jsonl
+      --out /tmp/aidememo_classifier_60bal.jsonl \
+      --agentic-judg /tmp/aidememo_agentic_60bal_v2/judgements_MiniMax-M2.7-highspeed_judge_MiniMax-M2.7-highspeed.jsonl \
+      --baseline-judg /tmp/aidememo_omega_60bal_baseline/judgements_MiniMax-M2.7-highspeed_judge_MiniMax-M2.7-highspeed.jsonl
 """
 from __future__ import annotations
 

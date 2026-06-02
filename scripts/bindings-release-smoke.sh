@@ -3,9 +3,9 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-RUN_NPM="${WG_BINDINGS_SMOKE_NPM:-1}"
-RUN_OPTIONAL="${WG_BINDINGS_SMOKE_OPTIONAL:-0}"
-BASE="${WG_BINDINGS_SMOKE_BASE:-$(mktemp -d "${TMPDIR:-/tmp}/wg-bindings-smoke.XXXXXX")}"
+RUN_NPM="${AIDEMEMO_BINDINGS_SMOKE_NPM:-1}"
+RUN_OPTIONAL="${AIDEMEMO_BINDINGS_SMOKE_OPTIONAL:-0}"
+BASE="${AIDEMEMO_BINDINGS_SMOKE_BASE:-$(mktemp -d "${TMPDIR:-/tmp}/aidememo-bindings-smoke.XXXXXX")}"
 SUMMARY_TSV="$BASE/bindings-release-smoke.tsv"
 
 timer_now() {
@@ -132,63 +132,63 @@ echo
 status_line "binding" "status" "detail"
 status_line "-------" "------" "------"
 
-run cargo check -p wg-python -p wg-napi -p wg-nif -p wg-ffi
+run cargo check -p aidememo-python -p aidememo-napi -p aidememo-nif -p aidememo-ffi
 
 if [[ "$RUN_NPM" == "1" ]]; then
-    run scripts/wg-napi-version.sh
-    run_without_child_summary "scripts/wg-napi-pack-smoke.sh" scripts/wg-napi-pack-smoke.sh
-    record_status "wg-napi" "ok" "version gate + root/platform pack/install smoke"
+    run scripts/aidememo-napi-version.sh
+    run_without_child_summary "scripts/aidememo-napi-pack-smoke.sh" scripts/aidememo-napi-pack-smoke.sh
+    record_status "aidememo-napi" "ok" "version gate + root/platform pack/install smoke"
 else
-    record_status "wg-napi" "skip" "set WG_BINDINGS_SMOKE_NPM=1 to run npm pack/install smoke"
+    record_status "aidememo-napi" "skip" "set AIDEMEMO_BINDINGS_SMOKE_NPM=1 to run npm pack/install smoke"
 fi
 
 if have maturin; then
     if [[ "$RUN_OPTIONAL" == "1" ]]; then
-        run_without_child_summary "scripts/wg-python-pack-smoke.sh" scripts/wg-python-pack-smoke.sh
-        record_status "wg-python" "ok" "version gate + wheel install smoke"
+        run_without_child_summary "scripts/aidememo-python-pack-smoke.sh" scripts/aidememo-python-pack-smoke.sh
+        record_status "aidememo-python" "ok" "version gate + wheel install smoke"
     else
-        run scripts/wg-python-version.sh
-        record_status "wg-python" "ready" "maturin found; set WG_BINDINGS_SMOKE_OPTIONAL=1 to run wheel install smoke"
+        run scripts/aidememo-python-version.sh
+        record_status "aidememo-python" "ready" "maturin found; set AIDEMEMO_BINDINGS_SMOKE_OPTIONAL=1 to run wheel install smoke"
     fi
 else
-    record_status "wg-python" "todo" "install maturin, then run scripts/wg-python-pack-smoke.sh"
+    record_status "aidememo-python" "todo" "install maturin, then run scripts/aidememo-python-pack-smoke.sh"
 fi
 
 if have mix; then
     if [[ "$RUN_OPTIONAL" == "1" ]]; then
-        if [[ ! -d crates/wg-nif/deps/jason ]]; then
-            run bash -lc 'cd crates/wg-nif && mix deps.get'
+        if [[ ! -d crates/aidememo-nif/deps/jason ]]; then
+            run bash -lc 'cd crates/aidememo-nif && mix deps.get'
         fi
-        run bash -lc 'cd crates/wg-nif && mix compile.cargo --force && mix test'
-        record_status "wg-nif" "ok" "mix compile.cargo --force && mix test"
+        run bash -lc 'cd crates/aidememo-nif && mix compile.cargo --force && mix test'
+        record_status "aidememo-nif" "ok" "mix compile.cargo --force && mix test"
     else
-        record_status "wg-nif" "ready" "mix found; set WG_BINDINGS_SMOKE_OPTIONAL=1 to run mix test"
+        record_status "aidememo-nif" "ready" "mix found; set AIDEMEMO_BINDINGS_SMOKE_OPTIONAL=1 to run mix test"
     fi
 else
-    record_status "wg-nif" "todo" "install Elixir/Mix, then run: cd crates/wg-nif && mix deps.get && mix compile.cargo --force && mix test"
+    record_status "aidememo-nif" "todo" "install Elixir/Mix, then run: cd crates/aidememo-nif && mix deps.get && mix compile.cargo --force && mix test"
 fi
 
 if have cc; then
     if [[ "$RUN_OPTIONAL" == "1" ]]; then
-        run cargo build -p wg-ffi
-        run cc crates/wg-ffi/example/smoke.c -I crates/wg-ffi/include -L target/debug -lwg_ffi -o target/wg-ffi-smoke
+        run cargo build -p aidememo-ffi
+        run cc crates/aidememo-ffi/example/smoke.c -I crates/aidememo-ffi/include -L target/debug -laidememo_ffi -o target/aidememo-ffi-smoke
         case "$(uname -s)" in
             Darwin)
-                run env DYLD_LIBRARY_PATH="$ROOT_DIR/target/debug:${DYLD_LIBRARY_PATH:-}" target/wg-ffi-smoke
+                run env DYLD_LIBRARY_PATH="$ROOT_DIR/target/debug:${DYLD_LIBRARY_PATH:-}" target/aidememo-ffi-smoke
                 ;;
             Linux)
-                run env LD_LIBRARY_PATH="$ROOT_DIR/target/debug:${LD_LIBRARY_PATH:-}" target/wg-ffi-smoke
+                run env LD_LIBRARY_PATH="$ROOT_DIR/target/debug:${LD_LIBRARY_PATH:-}" target/aidememo-ffi-smoke
                 ;;
             *)
-                run target/wg-ffi-smoke
+                run target/aidememo-ffi-smoke
                 ;;
         esac
-        record_status "wg-ffi" "ok" "C smoke linked against target/debug/libwg_ffi"
+        record_status "aidememo-ffi" "ok" "C smoke linked against target/debug/libaidememo_ffi"
     else
-        record_status "wg-ffi" "ready" "cc found; set WG_BINDINGS_SMOKE_OPTIONAL=1 to run C smoke"
+        record_status "aidememo-ffi" "ready" "cc found; set AIDEMEMO_BINDINGS_SMOKE_OPTIONAL=1 to run C smoke"
     fi
 else
-    record_status "wg-ffi" "todo" "install a C compiler, then run the README smoke"
+    record_status "aidememo-ffi" "todo" "install a C compiler, then run the README smoke"
 fi
 
 echo

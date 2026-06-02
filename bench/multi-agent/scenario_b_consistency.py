@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 """Scenario B — cross-client store consistency.
 
-We spawn three independent `wg mcp` processes pointed at the SAME
+We spawn three independent `aidememo mcp` processes pointed at the SAME
 store, each one shaped like a real agent's invocation:
 
-  - claude-code-shape: ./target/debug/wg mcp <STORE>
-  - codex-shape:       ~/.local/bin/wg mcp <STORE>      (release)
-  - hermes-shape:      Python WgClient(store_path)      (CLI subprocess)
+  - claude-code-shape: ./target/debug/aidememo mcp <STORE>
+  - codex-shape:       ~/.local/bin/aidememo mcp <STORE>      (release)
+  - hermes-shape:      Python AideMemoClient(store_path)      (CLI subprocess)
 
 Test
 ----
 1. Reset the e2e store.
 2. claude-shape inserts an entity ("Redis") and a fact.
 3. codex-shape lists facts → must see the inserted fact.
-4. hermes-shape (via WgClient) lists facts → same.
+4. hermes-shape (via AideMemoClient) lists facts → same.
 5. codex-shape inserts a new fact under "Postgres".
 6. claude-shape and hermes-shape must each see both facts.
 7. Compare normalized fact-id sets across all three reads.
@@ -37,9 +37,9 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-STORE = "/Users/mixlink/.wg-e2e/wiki.redb"
-WG_DEBUG = "/Users/mixlink/dev/wg/target/debug/wg"
-WG_RELEASE = "/Users/mixlink/.local/bin/wg"
+STORE = "/Users/mixlink/.aidememo-e2e/wiki.redb"
+AIDEMEMO_DEBUG = "/Users/mixlink/dev/aidememo/target/debug/aidememo"
+AIDEMEMO_RELEASE = "/Users/mixlink/.local/bin/aidememo"
 
 
 def reset_store() -> None:
@@ -71,13 +71,13 @@ def jsonrpc(cmd: list[str], calls: list[dict]) -> list[dict]:
 def call_tool(cmd: list[str], name: str, args: dict, call_id: int = 1) -> dict:
     """Call an MCP tool and normalize the response.
 
-    wg's tool responses come in two shapes:
+    aidememo's tool responses come in two shapes:
       - JSON object as text  → returned as dict
       - plain string         → returned as {"text": "..."}, with the
                                  special case of "Fact added: <ULID>"
                                  unpacked into {"id": "<ULID>", ...}
-    All write/read tools now return JSON-shaped payloads (`wg_fact_add`
-    returns {"id": "..."}, `wg_recent` returns {"facts": [...]}).
+    All write/read tools now return JSON-shaped payloads (`aidememo_fact_add`
+    returns {"id": "..."}, `aidememo_recent` returns {"facts": [...]}).
     """
     calls = [
         {"jsonrpc": "2.0", "id": 0, "method": "initialize",
@@ -102,31 +102,31 @@ def call_tool(cmd: list[str], name: str, args: dict, call_id: int = 1) -> dict:
 
 
 def claude_shape(name: str, args: dict) -> dict:
-    return call_tool([WG_DEBUG, "mcp", STORE], name, args)
+    return call_tool([AIDEMEMO_DEBUG, "mcp", STORE], name, args)
 
 
 def codex_shape(name: str, args: dict) -> dict:
-    return call_tool([WG_RELEASE, "mcp", STORE], name, args)
+    return call_tool([AIDEMEMO_RELEASE, "mcp", STORE], name, args)
 
 
 def hermes_shape(name: str, args: dict) -> dict:
-    """The hermes-wg plugin's Python WgClient calls the wg CLI directly,
+    """The hermes-aidememo plugin's Python AideMemoClient calls the aidememo CLI directly,
     not via MCP. Use the CLI surface that backs each MCP tool to mirror
     that path faithfully."""
-    if name == "wg_fact_add":
-        cmd = [WG_RELEASE, "--store", STORE, "fact", "add", args["content"]]
+    if name == "aidememo_fact_add":
+        cmd = [AIDEMEMO_RELEASE, "--store", STORE, "fact", "add", args["content"]]
         if args.get("entities"):
             cmd += ["--entities", ",".join(args["entities"])]
         cmd += ["--json"]
         out = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
         return json.loads(out.stdout) if out.stdout.strip() else {}
-    if name == "wg_recent":
-        cmd = [WG_RELEASE, "--store", STORE, "recent", "--last", "1h",
+    if name == "aidememo_recent":
+        cmd = [AIDEMEMO_RELEASE, "--store", STORE, "recent", "--last", "1h",
                "-n", str(args.get("limit", 50)), "--json"]
         out = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
         return {"facts": json.loads(out.stdout) if out.stdout.strip() else []}
-    if name == "wg_query":
-        cmd = [WG_RELEASE, "--store", STORE, "query", args["topic"],
+    if name == "aidememo_query":
+        cmd = [AIDEMEMO_RELEASE, "--store", STORE, "query", args["topic"],
                "-l", str(args.get("limit", 5)), "--json"]
         out = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
         return json.loads(out.stdout) if out.stdout.strip() else {}
@@ -146,7 +146,7 @@ class Step:
 def normalize_fact_ids(payload) -> list[str]:
     """Pull fact IDs from any of the response shapes we use.
 
-    wg_recent returns a bare JSON list; CLI `wg recent` we wrap as
+    aidememo_recent returns a bare JSON list; CLI `aidememo recent` we wrap as
     {"facts": [...]}. Handle both, plus the legacy {"recent_facts": [...]}
     that some tools use.
     """
@@ -164,55 +164,55 @@ def main() -> int:
     steps: list[Step] = []
 
     # 1. claude-shape inserts entity + fact
-    res = claude_shape("wg_fact_add", {
+    res = claude_shape("aidememo_fact_add", {
         "content": "Redis Sentinel provides high availability",
         "entities": ["Redis"],
     })
     fact_a = res.get("id", "")
-    steps.append(Step(1, "claude-shape", "wg_fact_add",
+    steps.append(Step(1, "claude-shape", "aidememo_fact_add",
                       detail=f"id={fact_a}"))
 
     # 2. codex-shape reads recent
     # Use the new `last` DSL surface added by issue #2.
-    res = codex_shape("wg_recent", {"limit": 50, "last": "1h"})
+    res = codex_shape("aidememo_recent", {"limit": 50, "last": "1h"})
     seen_codex_1 = normalize_fact_ids(res)
-    steps.append(Step(2, "codex-shape", "wg_recent",
+    steps.append(Step(2, "codex-shape", "aidememo_recent",
                       detail=f"facts={len(seen_codex_1)}",
                       fact_ids_seen=seen_codex_1))
 
     # 3. hermes-shape reads recent (via CLI)
-    res = hermes_shape("wg_recent", {"limit": 50})
+    res = hermes_shape("aidememo_recent", {"limit": 50})
     seen_hermes_1 = normalize_fact_ids(res)
-    steps.append(Step(3, "hermes-shape", "wg recent",
+    steps.append(Step(3, "hermes-shape", "aidememo recent",
                       detail=f"facts={len(seen_hermes_1)}",
                       fact_ids_seen=seen_hermes_1))
 
     # 4. codex-shape inserts a second fact under Postgres
-    res = codex_shape("wg_fact_add", {
+    res = codex_shape("aidememo_fact_add", {
         "content": "Postgres logical replication shipped to prod",
         "entities": ["Postgres"],
     })
     fact_b = res.get("id", "")
-    steps.append(Step(4, "codex-shape", "wg_fact_add",
+    steps.append(Step(4, "codex-shape", "aidememo_fact_add",
                       detail=f"id={fact_b}"))
 
     # 5. claude-shape reads everything
-    res = claude_shape("wg_recent", {"limit": 50, "last": "1h"})
+    res = claude_shape("aidememo_recent", {"limit": 50, "last": "1h"})
     seen_claude_2 = normalize_fact_ids(res)
-    steps.append(Step(5, "claude-shape", "wg_recent",
+    steps.append(Step(5, "claude-shape", "aidememo_recent",
                       detail=f"facts={len(seen_claude_2)}",
                       fact_ids_seen=seen_claude_2))
 
     # 6. hermes-shape reads everything
-    res = hermes_shape("wg_recent", {"limit": 50})
+    res = hermes_shape("aidememo_recent", {"limit": 50})
     seen_hermes_2 = normalize_fact_ids(res)
-    steps.append(Step(6, "hermes-shape", "wg recent",
+    steps.append(Step(6, "hermes-shape", "aidememo recent",
                       detail=f"facts={len(seen_hermes_2)}",
                       fact_ids_seen=seen_hermes_2))
 
     # 7. cross-client query for Redis must include fact_a
-    res_q_codex = codex_shape("wg_query", {"topic": "Redis", "limit": 5, "depth": 1})
-    res_q_hermes = hermes_shape("wg_query", {"topic": "Redis", "limit": 5})
+    res_q_codex = codex_shape("aidememo_query", {"topic": "Redis", "limit": 5, "depth": 1})
+    res_q_hermes = hermes_shape("aidememo_query", {"topic": "Redis", "limit": 5})
 
     def query_has_fact(payload: dict, fact_id: str) -> bool:
         for key in ("recent_facts", "related"):

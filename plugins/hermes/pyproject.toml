@@ -3,14 +3,14 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "hermes-wg"
+name = "hermes-aidememo"
 version = "1.0.0"
-description = "Wiki-Graph plugin for Hermes Agent — tools, slash commands, and lifecycle hooks for the wg knowledge graph"
+description = "AideMemo plugin for Hermes Agent — tools, slash commands, and lifecycle hooks for the aidememo knowledge graph"
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT OR Apache-2.0" }
 authors = [{ name = "Taeyun Jang", email = "taeyun16@pm.me" }]
-keywords = ["hermes-agent", "wg", "knowledge-graph", "wiki", "agent-plugin"]
+keywords = ["hermes-agent", "aidememo", "knowledge-graph", "wiki", "agent-plugin"]
 classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
@@ -19,30 +19,30 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
-    "wg-agent-sdk>=0.1",
-    # Tools and hooks shell out to the `wg` CLI by default. wg-python
+    "aidememo-agent-sdk>=0.1",
+    # Tools and hooks shell out to the `aidememo` CLI by default. aidememo-python
     # is optional — when installed, the plugin uses the in-process
     # PyO3 bindings instead of subprocess for ~100× lower latency.
     "PyYAML>=6.0",
 ]
 
 [project.optional-dependencies]
-binding = ["wg-python>=0.1"]
+binding = ["aidememo-python>=0.1"]
 test = ["pytest>=8.0"]
 
 [project.urls]
-Homepage = "https://github.com/taeyun16/wg"
-Documentation = "https://github.com/taeyun16/wg/tree/main/plugins/hermes"
-Source = "https://github.com/taeyun16/wg/tree/main/plugins/hermes"
-Issues = "https://github.com/taeyun16/wg/issues"
+Homepage = "https://github.com/taeyun16/aidememo"
+Documentation = "https://github.com/taeyun16/aidememo/tree/main/plugins/hermes"
+Source = "https://github.com/taeyun16/aidememo/tree/main/plugins/hermes"
+Issues = "https://github.com/taeyun16/aidememo/issues"
 
 # Hermes auto-discovers plugins via this entry point group.
 [project.entry-points."hermes.plugins"]
-wg = "hermes_wg.plugin:register"
+aidememo = "hermes_aidememo.plugin:register"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/hermes_wg"]
-# `plugin.yaml` and `skills/` live inside src/hermes_wg/ now (so a
-# filesystem `<HERMES_HOME>/plugins/wg/` symlink to that directory
+packages = ["src/hermes_aidememo"]
+# `plugin.yaml` and `skills/` live inside src/hermes_aidememo/ now (so a
+# filesystem `<HERMES_HOME>/plugins/aidememo/` symlink to that directory
 # is self-contained), and hatchling picks them up automatically as
 # package data — no force-include block needed.

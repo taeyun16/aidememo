@@ -1,4 +1,4 @@
-# Contributing to wg
+# Contributing to aidememo
 
 Thanks for considering a contribution. The workflow is intentionally
 minimal — fast iteration over heavy process.
@@ -29,20 +29,20 @@ the situation calls for it (very rare).
 | pre-commit (Elixir only) | `mix format --check-formatted` | `mix format` |
 | pre-push | `cargo clippy --features semantic -- -D warnings` | fix or `#[allow(…)]` with reason |
 | pre-push | `cargo doc --workspace --no-deps --features semantic` | fix rustdoc warnings |
-| pre-push | `cargo test -p wg-core --features semantic` | fix the test |
-| pre-push | `cargo test -p wg-cli --bin wg` | fix the test |
+| pre-push | `cargo test -p aidememo-core --features semantic` | fix the test |
+| pre-push | `cargo test -p aidememo-cli --bin aidememo` | fix the test |
 | CI | all of the above + `cargo doc -D warnings` + macOS test matrix | — |
 
 Workspace lints (`Cargo.toml`) already deny `unwrap_used`, `panic`,
-`dbg_macro` and `unsafe_code` (the `wg-ffi` and `wg-nif` crates opt out
+`dbg_macro` and `unsafe_code` (the `aidememo-ffi` and `aidememo-nif` crates opt out
 of the `unsafe_code` deny because they intentionally bridge raw pointers).
 
 ## Testing
 
 ```bash
 cargo test --workspace                              # default features
-cargo test -p wg-core --features semantic           # includes hybrid search
-cargo test -p wg-cli --bin wg                       # CLI parsing + helpers
+cargo test -p aidememo-core --features semantic           # includes hybrid search
+cargo test -p aidememo-cli --bin aidememo                       # CLI parsing + helpers
 ./scripts/ci-local.sh lint
 ./scripts/ci-local.sh demo
 ./scripts/ci-local.sh test
@@ -55,21 +55,21 @@ explicitly when touching binding code:
 
 ```bash
 # Python
-( cd crates/wg-python && maturin build --release \
-  && pip install --user --force-reinstall ../../target/wheels/wg_python-*.whl \
+( cd crates/aidememo-python && maturin build --release \
+  && pip install --user --force-reinstall ../../target/wheels/aidememo_python-*.whl \
   && python3 tests/smoke.py )
 
 # Node
-( cd crates/wg-napi && npm install && npm run build && node tests/smoke.js )
+( cd crates/aidememo-napi && npm install && npm run build && node tests/smoke.js )
 
 # Elixir
-( cd crates/wg-nif && mix test )
+( cd crates/aidememo-nif && mix test )
 
 # C-FFI
-cargo build -p wg-ffi --release
-cc crates/wg-ffi/example/smoke.c \
-   -I crates/wg-ffi/include target/release/libwg_ffi.a \
-   $LIBS -o /tmp/wg-ffi-smoke && /tmp/wg-ffi-smoke
+cargo build -p aidememo-ffi --release
+cc crates/aidememo-ffi/example/smoke.c \
+   -I crates/aidememo-ffi/include target/release/libaidememo_ffi.a \
+   $LIBS -o /tmp/aidememo-ffi-smoke && /tmp/aidememo-ffi-smoke
 ```
 
 `$LIBS` on macOS:
@@ -84,8 +84,8 @@ A few preferences captured from the codebase:
   rightmost fields in the struct, and `construct!` argument order must
   match field order. `construct!` doesn't support `field: var` rename
   syntax — name the local variable the same as the field.
-- **`WikiGraph::*` write methods take `&self`** (interior mutability via
-  `RwLock`). This makes `Arc<WikiGraph>` callable from the bindings.
+- **`AideMemo::*` write methods take `&self`** (interior mutability via
+  `RwLock`). This makes `Arc<AideMemo>` callable from the bindings.
 - **All persisted records are JSON, not bincode** — adding
   `#[serde(default)]` fields to types is fully backward-compatible with
   on-disk data. No migration needed.

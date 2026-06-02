@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Per-category retrieval diagnostics on a wg `--emit-retrievals`
+"""Per-category retrieval diagnostics on a aidememo `--emit-retrievals`
 JSONL file. Shows R@K + MRR + the rank distribution of the first
 evidence-session hit so we can see WHERE the weak categories lose
 recall (rank-2-out-of-10 vs rank-9-out-of-10 vs total miss).
 
 Usage:
   python3 scripts/longmemeval_retrieval_diag.py \\
-      --retrievals /tmp/wg_retrievals_500_bge.jsonl \\
-      [--retrievals /tmp/wg_retrievals_500_decay90.jsonl  # compare]
+      --retrievals /tmp/aidememo_retrievals_500_bge.jsonl \\
+      [--retrievals /tmp/aidememo_retrievals_500_decay90.jsonl  # compare]
 """
 from __future__ import annotations
 

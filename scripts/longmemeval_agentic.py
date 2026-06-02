@@ -12,7 +12,7 @@ Architecture per question:
   1. Reader sees question + retrieved session blocks + tool catalogue.
   2. Reader emits either a tool call (JSON) or a final answer.
   3. Tool executes on the retrievals' structured field (currency /
-     duration / event_date pre-extracted by wg_core::extract_structured
+     duration / event_date pre-extracted by aidememo_core::extract_structured
      at bench emit time). Returns deterministic numeric result.
   4. Reader sees tool result, may call again or commit answer.
   5. Loop bounded by max_iterations (default 3).
@@ -27,13 +27,13 @@ Available tools:
 
 Usage:
   python3 scripts/longmemeval_agentic.py \
-      --retrievals /tmp/wg_retrievals_60bal_relevance_full.jsonl \
+      --retrievals /tmp/aidememo_retrievals_60bal_relevance_full.jsonl \
       --gold /tmp/longmemeval_data/longmemeval_s_cleaned.json \
       --reader MiniMax-M2.7-highspeed --judge MiniMax-M2.7-highspeed \
       --reader-base-url https://api.minimax.io/v1 --reader-api-key-env MINIMAX_API_KEY \
       --judge-base-url https://api.minimax.io/v1 --judge-api-key-env MINIMAX_API_KEY \
       --workers 8 --only-multi-session \
-      --out /tmp/wg_agentic_60bal
+      --out /tmp/aidememo_agentic_60bal
 """
 from __future__ import annotations
 

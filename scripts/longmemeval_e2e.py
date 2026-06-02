@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""LongMemEval-S end-to-end LLM evaluator on top of wg's retrieval JSONL.
+"""LongMemEval-S end-to-end LLM evaluator on top of aidememo's retrieval JSONL.
 
 Pipeline:
-  wg `--emit-retrievals` JSONL  →  reader LLM (gpt-4o-mini / gpt-4o / etc)
+  aidememo `--emit-retrievals` JSONL  →  reader LLM (gpt-4o-mini / gpt-4o / etc)
                                 →  hypothesis JSONL
                                 →  judge LLM (gpt-4o-mini default)
                                 →  per-category accuracy
@@ -14,11 +14,11 @@ to disk so a partial run can resume; cost is bounded by the row count.
 
 Usage:
   python3 scripts/longmemeval_e2e.py \\
-      --retrievals /tmp/wg_retrievals_500_decay90.jsonl \\
+      --retrievals /tmp/aidememo_retrievals_500_decay90.jsonl \\
       --gold /tmp/longmemeval/longmemeval_s_cleaned.json \\
       --reader gpt-4o-mini \\
       --judge gpt-4o-mini \\
-      --out /tmp/wg_e2e_results \\
+      --out /tmp/aidememo_e2e_results \\
       --limit 20
 
 Costs (rough, per 500-q full run, top_k=10 retrievals):
@@ -127,7 +127,7 @@ READER_SYSTEM_BASIC = """You are answering a user's question about themselves us
 
 
 # Modeled after OMEGA's published 4 reader-prompt tricks (+5 / +4 / +2 /
-# +2 question lift on LongMemEval, see wg-skill/reader-prompts.md).
+# +2 question lift on LongMemEval, see aidememo-skill/reader-prompts.md).
 # Composes with any reader (gpt-4o / gpt-4.1 / MiniMax / etc.).
 READER_SYSTEM_OMEGA_TRICKS = """You are answering a user's question using snippets retrieved from their knowledge wiki. Apply these rules in order:
 
@@ -221,7 +221,7 @@ def main() -> int:
     ap.add_argument("--gold", required=True, type=Path)
     ap.add_argument("--reader", default="gpt-4o-mini")
     ap.add_argument("--judge", default="gpt-4o-mini")
-    ap.add_argument("--out", default=Path("/tmp/wg_e2e"), type=Path)
+    ap.add_argument("--out", default=Path("/tmp/aidememo_e2e"), type=Path)
     ap.add_argument("--limit", type=int, default=0, help="0 = all")
     ap.add_argument("--reader-max-tokens", type=int, default=200)
     ap.add_argument("--judge-max-tokens", type=int, default=10)
@@ -256,10 +256,10 @@ def main() -> int:
         help=(
             "Reader system prompt style. 'basic' = the legacy "
             "'extract from snippets' prompt that matches every prior "
-            "wg/Mem0/Zep measurement. 'omega-tricks' = the 4-rule "
+            "aidememo/Mem0/Zep measurement. 'omega-tricks' = the 4-rule "
             "personalisation/current-state/temporal/grounding prompt "
             "modeled after OMEGA's published reader trick (+5-10pt "
-            "estimated; see wg-skill/reader-prompts.md)."
+            "estimated; see aidememo-skill/reader-prompts.md)."
         ),
     )
     args = ap.parse_args()

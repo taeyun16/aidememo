@@ -1,13 +1,13 @@
+use aidememo_core::index::Bm25IndexState;
+use aidememo_core::search::SearchEngine;
+use aidememo_core::store::Store;
+use aidememo_core::{AideMemo, Config, EntityInput, EntityType, FactInput, FactType, SearchOpts};
 use criterion::{BatchSize, Criterion};
 use parking_lot::RwLock;
 use std::fs;
 use std::hint::black_box;
 use std::path::Path;
 use tempfile::TempDir;
-use wg_core::index::Bm25IndexState;
-use wg_core::search::SearchEngine;
-use wg_core::store::Store;
-use wg_core::{Config, EntityInput, EntityType, FactInput, FactType, SearchOpts, WikiGraph};
 
 fn seed_retrieval_store(store: &mut Store) {
     let redis_id = store
@@ -92,7 +92,7 @@ fn seed_retrieval_store(store: &mut Store) {
 
 fn create_seeded_store() -> (TempDir, Store, Config) {
     let dir = TempDir::new().expect("create temp dir");
-    let path = dir.path().join("wg.redb");
+    let path = dir.path().join("aidememo.redb");
     let config = Config::default();
     let mut store = Store::open(&path, config.clone()).expect("open store");
     seed_retrieval_store(&mut store);
@@ -161,7 +161,7 @@ pub fn store_open(c: &mut Criterion) {
         b.iter_batched(
             || TempDir::new().expect("tempdir"),
             |dir| {
-                let path = dir.path().join("wg.redb");
+                let path = dir.path().join("aidememo.redb");
                 let store = Store::open(&path, Config::default()).expect("open store");
                 black_box(store);
             },
@@ -180,8 +180,8 @@ pub fn ingest_small(c: &mut Criterion) {
                 (wiki_dir, store_dir)
             },
             |(wiki_dir, store_dir)| {
-                let store_path = store_dir.path().join("wg.redb");
-                let graph = WikiGraph::open(&store_path, Config::default()).expect("open graph");
+                let store_path = store_dir.path().join("aidememo.redb");
+                let graph = AideMemo::open(&store_path, Config::default()).expect("open graph");
                 let stats = graph
                     .ingest(wiki_dir.path(), false)
                     .expect("ingest small wiki");

@@ -1,14 +1,14 @@
 //! Embedding-model sweep on MIRACL/ko.
 //!
-//! Reuses the wg store ingested by `miracl_ingest` (5503 docs).
+//! Reuses the aidememo store ingested by `miracl_ingest` (5503 docs).
 //! For each (provider, endpoint, model-id) tuple in the matrix,
 //! reopens the store with a fresh `Config`, rebuilds the HNSW
 //! sidecar with that embedding model, and runs the 213 dev queries.
 //! Reports R@10, MRR@10, nDCG@10, build time, and search p50/p95.
 //!
 //! Pre-reqs:
-//!   - `/tmp/wg-bench-miracl/_meta/wiki.redb` ingested
-//!   - `/tmp/wg-tei-bench/miracl_ko_golden.jsonl` written
+//!   - `/tmp/aidememo-bench-miracl/_meta/wiki.redb` ingested
+//!   - `/tmp/aidememo-tei-bench/miracl_ko_golden.jsonl` written
 //!   - For each TEI provider in the matrix, a TEI server reachable
 //!     at the configured endpoint with the right model loaded.
 //!
@@ -19,18 +19,18 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::time::Instant;
 
+use aidememo_core::{AideMemo, Config, FactListOpts, SearchOpts};
 use serde::Deserialize;
-use wg_core::{Config, FactListOpts, SearchOpts, WikiGraph};
 
-const DEFAULT_STORE: &str = "/tmp/wg-bench-miracl/_meta/wiki.redb";
-const DEFAULT_GOLDEN: &str = "/tmp/wg-tei-bench/miracl_ko_golden.jsonl";
+const DEFAULT_STORE: &str = "/tmp/aidememo-bench-miracl/_meta/wiki.redb";
+const DEFAULT_GOLDEN: &str = "/tmp/aidememo-tei-bench/miracl_ko_golden.jsonl";
 
 fn store_path() -> String {
-    std::env::var("WG_BENCH_STORE").unwrap_or_else(|_| DEFAULT_STORE.to_string())
+    std::env::var("AIDEMEMO_BENCH_STORE").unwrap_or_else(|_| DEFAULT_STORE.to_string())
 }
 
 fn golden_path() -> String {
-    std::env::var("WG_BENCH_GOLDEN").unwrap_or_else(|_| DEFAULT_GOLDEN.to_string())
+    std::env::var("AIDEMEMO_BENCH_GOLDEN").unwrap_or_else(|_| DEFAULT_GOLDEN.to_string())
 }
 
 /// Each row: (label, provider, endpoint, model_id, dimension_hint).
@@ -70,7 +70,7 @@ fn load_golden() -> Vec<GoldenRow> {
         .collect()
 }
 
-fn build_source_map(wiki: &WikiGraph) -> HashMap<wg_core::FactId, String> {
+fn build_source_map(wiki: &AideMemo) -> HashMap<aidememo_core::FactId, String> {
     let facts = wiki
         .fact_list(FactListOpts {
             limit: Some(usize::MAX),
@@ -147,7 +147,7 @@ fn run_config(
         config.model.dimension = dimension;
     }
 
-    let wiki = WikiGraph::open(Path::new(&store), config).expect("open wiki");
+    let wiki = AideMemo::open(Path::new(&store), config).expect("open wiki");
 
     let t0 = Instant::now();
     let count = match wiki.vector_index_rebuild() {

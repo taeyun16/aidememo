@@ -1,26 +1,26 @@
-# wg Positioning
+# aidememo Positioning
 
-`wg` is best positioned as an **agent-friendly SDK memory system for coding
+`aidememo` is best positioned as an **agent-friendly SDK memory system for coding
 agents**.
 
 Not a hosted memory product. Not a full agent runtime. Not a generic vector DB.
 
 It sits underneath Claude Code, Codex, Cursor, Hermes, and similar tools as a
 portable memory/retrieval substrate: one binary, one store, one agent SDK, and
-one MCP surface. When the agent can execute Python, `wg-agent-sdk` is the
+one MCP surface. When the agent can execute Python, `aidememo-agent-sdk` is the
 primary product path: fanout retrieval, dedupe, coverage, aggregation, and
 batch fact writes stay in code instead of consuming model context. MCP remains
 the model-visible tool surface for agents that cannot or should not run code.
 
 ## One-line Position
 
-**`wg` gives coding agents an SDK-first local memory system: typed facts,
+**`aidememo` gives coding agents an SDK-first local memory system: typed facts,
 temporal history, graph traversal, and hybrid retrieval without a hosted memory
 vendor or service stack.**
 
 ## Category
 
-`wg` fits in:
+`aidememo` fits in:
 
 - Agent SDK memory system
 - Local MCP server
@@ -59,22 +59,22 @@ The strongest wedge is not "best benchmark score." The strongest wedge is:
 
 Concretely:
 
-- `wg-agent-sdk` gives code-executing agents a memory programming interface:
+- `aidememo-agent-sdk` gives code-executing agents a memory programming interface:
   `Memory.open`, `search_rows`, `coverage_by`, `aggregate_many`, and
   `remember`.
 - MCP tools expose the same memory system when the model needs visible tool
   calls rather than hidden code execution.
-- `wg` keeps temporal memory primitives like `supersede`, `current_only`, `as_of`, and archive/cold-tier behavior.
+- `aidememo` keeps temporal memory primitives like `supersede`, `current_only`, `as_of`, and archive/cold-tier behavior.
 - It ships as a Rust binary with built-in stdio/HTTP MCP instead of a Python + DB + graph-service stack.
 - It can be embedded directly via Python, Node, Elixir, and C bindings instead of forcing everything through one server runtime.
 
-That makes `wg` compelling anywhere operational simplicity matters as much as raw memory quality.
+That makes `aidememo` compelling anywhere operational simplicity matters as much as raw memory quality.
 
 ## Why It Wins
 
 ### 1. Agent-friendly SDK workflow
 
-`wg` is strongest when agents can treat memory as a programmable substrate:
+`aidememo` is strongest when agents can treat memory as a programmable substrate:
 
 - open a source-scoped memory client once
 - fan out many searches without model-visible tool chatter
@@ -87,7 +87,7 @@ memory endpoint or a raw vector-search API.
 
 ### 2. Deployment simplicity
 
-`wg` is unusually small for its category:
+`aidememo` is unusually small for its category:
 
 - single binary
 - single `redb` file
@@ -98,7 +98,7 @@ This is the clearest advantage over Graphiti, Letta, and self-hosted mem0-style 
 
 ### 3. Better memory model than "just vector search"
 
-`wg` is stronger than lightweight memory tools that stop at embeddings because it has:
+`aidememo` is stronger than lightweight memory tools that stop at embeddings because it has:
 
 - facts with types
 - entities and relations
@@ -113,10 +113,10 @@ That gives it a better answer to "what is true now?", "what was true then?", and
 
 The MCP surface is a product asset, not just an integration detail. Tools like:
 
-- `wg_context`
-- `wg_query`
-- `wg_aggregate`
-- `wg_fact_add`
+- `aidememo_context`
+- `aidememo_query`
+- `aidememo_aggregate`
+- `aidememo_fact_add`
 
 show a clear opinion about how agents should retrieve, count, and write memory.
 The Python composition layer carries the same opinion into code-executing
@@ -136,13 +136,13 @@ The default path does not force an LLM call on every insert. That matters when:
 
 ### 1. Automatic memory capture is not the default superpower
 
-Compared with Mem0, Mastra, or richer observational-memory systems, `wg` is weaker at:
+Compared with Mem0, Mastra, or richer observational-memory systems, `aidememo` is weaker at:
 
 - auto-extracting useful memory from arbitrary chats
 - curating or rewriting memory with an LLM at insert time
 - turning passive conversation streams into high-quality long-term memory without user/agent discipline
 
-Today `wg` is strongest when the calling agent is explicit and deliberate.
+Today `aidememo` is strongest when the calling agent is explicit and deliberate.
 
 ### 2. Multi-agent shared write is constrained
 
@@ -166,7 +166,7 @@ The codebase already contains many serious capabilities:
 - bindings
 - hooks
 
-The risk is diffusion. If messaging stays too broad, `wg` can read as "many memory features"
+The risk is diffusion. If messaging stays too broad, `aidememo` can read as "many memory features"
 instead of one sharp product.
 
 ### 4. It should not claim SOTA memory performance as its lead message
@@ -185,7 +185,7 @@ That is more defensible than leading with "highest score."
 
 ### Versus Mem0
 
-`wg` should position against Mem0 as:
+`aidememo` should position against Mem0 as:
 
 **more local, more explicit, more structural.**
 
@@ -195,7 +195,7 @@ Mem0 wins on:
 - stronger out-of-the-box auto-extraction
 - easier cloud adoption
 
-`wg` wins on:
+`aidememo` wins on:
 
 - local-first deployment
 - explicit fact/history model
@@ -204,20 +204,20 @@ Mem0 wins on:
 
 ### Versus Letta
 
-`wg` should position against Letta as:
+`aidememo` should position against Letta as:
 
 **SDK memory substrate, not memory OS.**
 
 Letta wins when buyers want one system to own the entire agent runtime.
 
-`wg` wins when buyers already have agents and need a portable SDK/tool memory
+`aidememo` wins when buyers already have agents and need a portable SDK/tool memory
 layer underneath them.
 
 ### Versus Graphiti / Zep
 
 This is the most important comparison.
 
-`wg` should position as:
+`aidememo` should position as:
 
 **the lightweight temporal-graph alternative.**
 
@@ -227,7 +227,7 @@ Graphiti/Zep win on:
 - community / clustering features
 - stronger server-centric architecture
 
-`wg` wins on:
+`aidememo` wins on:
 
 - far lighter deployment
 - lower insertion cost
@@ -236,13 +236,13 @@ Graphiti/Zep win on:
 
 ### Versus OMEGA / high-end local memory systems
 
-`wg` should not try to out-OMEGA OMEGA in messaging.
+`aidememo` should not try to out-OMEGA OMEGA in messaging.
 
 Instead:
 
 **OMEGA is the "highest-performance local memory workflow."**
 
-**`wg` is the "agent-friendly SDK memory system with the lightest serious
+**`aidememo` is the "agent-friendly SDK memory system with the lightest serious
 temporal graph underneath."**
 
 That is a cleaner, more durable split.
@@ -284,7 +284,7 @@ Avoid leading with:
 
 ## Suggested Taglines
 
-- `wg`: SDK-first memory for coding agents
+- `aidememo`: SDK-first memory for coding agents
 - Agent-friendly memory SDK with a local temporal graph underneath
 - A repo-adjacent memory graph for Claude Code, Codex, and beyond
 - Temporal agent memory without the service stack
@@ -292,9 +292,9 @@ Avoid leading with:
 
 ## Short Pitch
 
-`wg` is an SDK-first memory system for coding agents. It stores facts,
+`aidememo` is an SDK-first memory system for coding agents. It stores facts,
 entities, relations, and temporal history in a single embedded store, exposes
-them through `wg-agent-sdk`, MCP, CLI, and native bindings, and gives agents a
+them through `aidememo-agent-sdk`, MCP, CLI, and native bindings, and gives agents a
 better memory model than plain vector retrieval without forcing users into a
 hosted service or a heavy Python infrastructure stack.
 
@@ -311,7 +311,7 @@ If the project wants a sharper market position, the best path is:
 
 ## Bottom Line
 
-`wg` is strongest when presented as:
+`aidememo` is strongest when presented as:
 
 **the agent-friendly SDK memory system with a serious local temporal graph
 underneath.**

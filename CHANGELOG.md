@@ -17,7 +17,7 @@
     see `docs/MEASUREMENTS.md`) candidates are scored by
     `POST /rerank`; the rerank score replaces the per-row score,
     slots beyond top-K stay in RRF order. Reranker errors are
-    non-fatal — wg logs once and serves RRF. Measured impact on
+    non-fatal — aidememo logs once and serves RRF. Measured impact on
     MIRACL/ko (`docs/MEASUREMENTS.md`): MRR@10 +5.8 %,
     nDCG@10 +4.6 %, R@10 unchanged; p50 latency 9 ms → 765 ms (85×).
     Use only when the precision win is worth the latency hit.
@@ -30,34 +30,34 @@
 - **Bulk insert: `fact_add_many`** — single redb write transaction
   amortizes the per-commit fsync across the whole batch. ~70× faster
   per fact at typical batch sizes than sequential `fact_add`. Exposed
-  on `WikiGraph` and surfaced in every binding (Python, Node, Elixir,
-  C) plus the `wg_fact_add_many` MCP tool.
-- **`wg vector-rebuild`** — explicit HNSW reindex command. Use after
+  on `AideMemo` and surfaced in every binding (Python, Node, Elixir,
+  C) plus the `aidememo_fact_add_many` MCP tool.
+- **`aidememo vector-rebuild`** — explicit HNSW reindex command. Use after
   switching embedding models or recovering from a corrupted sidecar.
-- **MCP write tools** — `wg_fact_supersede` and `wg_fact_edit`
-  alongside the existing `wg_fact_add`, closing the validity-window
+- **MCP write tools** — `aidememo_fact_supersede` and `aidememo_fact_edit`
+  alongside the existing `aidememo_fact_add`, closing the validity-window
   CRUD cycle for MCP-only agents. Tool count: 9 → 13.
 - **Fact-store semantics** — search ranking now weights by
   `source_confidence × relevance_score`, applies time-decay
   (configurable τ, default 90 days), and supports `--as-of <date>`
-  historical queries. `wg lint` flags multiple current
+  historical queries. `aidememo lint` flags multiple current
   Decision/Convention/Pattern facts on the same entity as conflicts.
 - **`store.durability` config** — `"immediate"` (default; per-commit
   fsync) or `"eventual"` (queued; ~13× faster commits, survives
   process crash but not power loss). Opt-in only; `Durability::None`
   is intentionally not exposed (redb's docs warn it grows the file
   rapidly).
-- **wg-python ergonomics** — `WikiGraph(path, model=…,
+- **aidememo-python ergonomics** — `AideMemo(path, model=…,
   semantic_index=…, durability=…)` kwargs in the constructor route
   through `Config::set` so validation messages propagate to Python.
   Internal `dict_opt` / `fact_input_from_dict` helpers collapse
   `fact_add_many`'s per-item parsing.
-- **`wg doctor` memory section** — disk + RAM-estimate breakdown
+- **`aidememo doctor` memory section** — disk + RAM-estimate breakdown
   (redb store, hnsw sidecar, bm25 index, fact embed cache, hnsw
   runtime, model load, total). Two new advisories: `model.quantize
-  true` for large models, `wg vector-rebuild` for missing sidecar.
+  true` for large models, `aidememo vector-rebuild` for missing sidecar.
 - **Hermes plugin: detector confidence forwarding** — the
-  detector's per-match confidence (0.6–0.95) now reaches wg's
+  detector's per-match confidence (0.6–0.95) now reaches aidememo's
   `source_confidence` instead of collapsing to the 0.5 default.
 
 ### Performance
@@ -75,7 +75,7 @@ Bench: 10 000-fact synthetic wiki, p95 latency, before → after.
 
 What landed:
 
-- **BM25 inverted-index caching on `WikiGraph`** — the
+- **BM25 inverted-index caching on `AideMemo`** — the
   `hybrid_search` path constructed a fresh `SearchEngine` (and a
   fresh BM25 build) on every call. Now cached + dirty-marked on
   fact / entity mutations, like the HNSW index already was.
@@ -98,7 +98,7 @@ What landed:
 
 ### Tooling
 
-- **Profile env vars** — `WG_LINT_PROFILE` and `WG_SEARCH_PROFILE`
+- **Profile env vars** — `AIDEMEMO_LINT_PROFILE` and `AIDEMEMO_SEARCH_PROFILE`
   emit per-phase elapsed times when set. No-op when unset.
 - **`benchmarks/src/bin/`** — four perf runners now ship: the
   reproducible `performance` matrix that writes

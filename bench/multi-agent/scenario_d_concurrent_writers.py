@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Scenario D — concurrent writer lock behaviour.
 
-wg's redb store is single-writer. This scenario fires N parallel
+aidememo's redb store is single-writer. This scenario fires N parallel
 writers from M independent processes against the SAME store and
 verifies the fail-fast path is safe:
 
@@ -11,14 +11,14 @@ verifies the fail-fast path is safe:
   4. No process deadlocks.
 
 Two driving paths are exercised:
-  - "cli"  — each insert is a fresh `wg fact add` subprocess.
-  - "mcp"  — each writer is one long-lived `wg mcp` JSON-RPC stdio
-             session that issues N tools/call wg_fact_add in a row.
+  - "cli"  — each insert is a fresh `aidememo fact add` subprocess.
+  - "mcp"  — each writer is one long-lived `aidememo mcp` JSON-RPC stdio
+             session that issues N tools/call aidememo_fact_add in a row.
 
 The CLI path is what hermes's plugin uses by default; the MCP path
 is what claude-code and codex invoke. For smooth local sharing, use
 `store.lock_retry_ms` / Hermes `lock_retry_ms` or route agents through
-one `wg mcp-serve`.
+one `aidememo mcp-serve`.
 """
 
 from __future__ import annotations
@@ -33,11 +33,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 STORE = os.environ.get(
-    "WG_E2E_STORE", "/Users/mixlink/.wg-e2e/wiki.redb-concurrent"
+    "AIDEMEMO_E2E_STORE", "/Users/mixlink/.aidememo-e2e/wiki.redb-concurrent"
 )
-WG = os.environ.get("WG_BIN", "/Users/mixlink/.local/bin/wg")
-M_PROCESSES = int(os.environ.get("WG_E2E_PROCESSES", "4"))
-N_PER_PROC = int(os.environ.get("WG_E2E_N_PER_PROC", "25"))
+WG = os.environ.get("AIDEMEMO_BIN", "/Users/mixlink/.local/bin/aidememo")
+M_PROCESSES = int(os.environ.get("AIDEMEMO_E2E_PROCESSES", "4"))
+N_PER_PROC = int(os.environ.get("AIDEMEMO_E2E_N_PER_PROC", "25"))
 
 
 def reset_store() -> None:
@@ -51,7 +51,7 @@ def reset_store() -> None:
 # ---------- driver: CLI path ----------
 
 def cli_write_one(args: tuple[int, int]) -> dict:
-    """Run one `wg fact add` subprocess. Returns {id, latency_ms, error}."""
+    """Run one `aidememo fact add` subprocess. Returns {id, latency_ms, error}."""
     proc_idx, fact_idx = args
     content = f"cli/proc{proc_idx}/fact{fact_idx}/{os.urandom(4).hex()}"
     t = time.perf_counter_ns()
@@ -81,14 +81,14 @@ def cli_writer_proc(proc_idx: int) -> list[dict]:
 # ---------- driver: MCP path ----------
 
 def mcp_writer_proc(proc_idx: int) -> list[dict]:
-    """One `wg mcp` session that does N inserts."""
+    """One `aidememo mcp` session that does N inserts."""
     init = {"jsonrpc": "2.0", "id": 0, "method": "initialize",
             "params": {"protocolVersion": "2024-11-05", "capabilities": {}}}
     calls = [init]
     for i in range(N_PER_PROC):
         calls.append({
             "jsonrpc": "2.0", "id": i + 1, "method": "tools/call",
-            "params": {"name": "wg_fact_add", "arguments": {
+            "params": {"name": "aidememo_fact_add", "arguments": {
                 "content": f"mcp/proc{proc_idx}/fact{i}/{os.urandom(4).hex()}",
                 "entities": [f"E{proc_idx}"],
             }},
@@ -196,7 +196,7 @@ def main() -> int:
     cli_res = run_mode("cli", cli_writer_proc)
     mcp_res = run_mode("mcp", mcp_writer_proc)
 
-    # wg uses redb, which holds an exclusive file lock per process.
+    # aidememo uses redb, which holds an exclusive file lock per process.
     # Multi-process concurrent write is therefore expected to fail
     # for all but one process. The contract we VERIFY is not "every
     # write succeeds" but "the failure mode is safe":
@@ -222,13 +222,13 @@ def main() -> int:
         "concurrency": {"processes": M_PROCESSES, "facts_per_proc": N_PER_PROC,
                         "attempted_total": M_PROCESSES * N_PER_PROC},
         "verdict": (
-            "wg's redb backend enforces a single-process write lock. "
+            "aidememo's redb backend enforces a single-process write lock. "
             "Multi-process concurrent writes succeed only for the "
             "process that grabs the lock first; the rest fail-fast "
             "with an explicit lock-acquisition error. No data loss, "
             "no ID collisions, no deadlock — but agents that need "
-            "shared writes must point at one long-lived `wg mcp-serve` "
-            "endpoint instead of each spawning their own `wg mcp`."
+            "shared writes must point at one long-lived `aidememo mcp-serve` "
+            "endpoint instead of each spawning their own `aidememo mcp`."
         ),
         "cli": cli_res.__dict__,
         "mcp": mcp_res.__dict__,

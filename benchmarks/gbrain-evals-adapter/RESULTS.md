@@ -1,6 +1,6 @@
-# wg Adapter Results
+# aidememo Adapter Results
 
-Fresh-checkout validation for `benchmarks/gbrain-evals-adapter/wg-adapter.ts`.
+Fresh-checkout validation for `benchmarks/gbrain-evals-adapter/aidememo-adapter.ts`.
 
 ## 2026-05-19 — BrainBench Multi-Adapter Smoke
 
@@ -8,10 +8,10 @@ Environment:
 
 - `garrytan/gbrain-evals` commit: `ef7794f`
 - Bun: `1.3.11`
-- wg binary: `/Users/mixlink/dev/wg/target/debug/wg`
-- Adapter mode: `WG_ADAPTER_MODE=bm25`
+- aidememo binary: `/Users/mixlink/dev/aidememo/target/debug/aidememo`
+- Adapter mode: `AIDEMEMO_ADAPTER_MODE=bm25`
 - Adapter daemon: unset
-- Adapter limit: `WG_ADAPTER_LIMIT=10`
+- Adapter limit: `AIDEMEMO_ADAPTER_LIMIT=10`
 - Runs: `BRAINBENCH_N=1`
 
 Setup:
@@ -20,17 +20,17 @@ Setup:
 git clone --depth 1 https://github.com/garrytan/gbrain-evals "$TMP/gbrain-evals"
 cd "$TMP/gbrain-evals"
 bun install
-cp /Users/mixlink/dev/wg/benchmarks/gbrain-evals-adapter/wg-adapter.ts \
-  eval/runner/adapters/wg.ts
-# Register WgAdapter in eval/runner/multi-adapter.ts.
+cp /Users/mixlink/dev/aidememo/benchmarks/gbrain-evals-adapter/aidememo-adapter.ts \
+  eval/runner/adapters/aidememo.ts
+# Register AideMemoAdapter in eval/runner/multi-adapter.ts.
 ```
 
 Adapter smoke:
 
 ```bash
-WG_BIN=/Users/mixlink/dev/wg/target/debug/wg \
-WG_ADAPTER_MODE=bm25 \
-bun test ./eval/runner/adapters/wg-smoke.test.ts
+AIDEMEMO_BIN=/Users/mixlink/dev/aidememo/target/debug/aidememo \
+AIDEMEMO_ADAPTER_MODE=bm25 \
+bun test ./eval/runner/adapters/aidememo-smoke.test.ts
 ```
 
 Result:
@@ -45,17 +45,17 @@ BrainBench scorecard:
 ```bash
 /usr/bin/time -p env \
   BRAINBENCH_N=1 \
-  WG_BIN=/Users/mixlink/dev/wg/target/debug/wg \
-  WG_ADAPTER_MODE=bm25 \
-  WG_ADAPTER_LIMIT=10 \
-  bun eval/runner/multi-adapter.ts --adapter=wg
+  AIDEMEMO_BIN=/Users/mixlink/dev/aidememo/target/debug/aidememo \
+  AIDEMEMO_ADAPTER_MODE=bm25 \
+  AIDEMEMO_ADAPTER_LIMIT=10 \
+  bun eval/runner/multi-adapter.ts --adapter=aidememo
 ```
 
 Result:
 
 | Adapter | Runs | Corpus Pages | Queries | P@5 | R@5 | Correct / Expected | Runner Time | Real Time |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| wg bm25 | 1 | 240 | 145 | 17.4% | 64.1% | 125 / 261 | 63.3s | 63.38s |
+| aidememo bm25 | 1 | 240 | 145 | 17.4% | 64.1% | 125 / 261 | 63.3s | 63.38s |
 
 ## 2026-05-19 — Daemon Adapter Path
 
@@ -64,10 +64,10 @@ Same fresh checkout and registration patch as above.
 Adapter smoke:
 
 ```bash
-WG_BIN=/Users/mixlink/dev/wg/target/debug/wg \
-WG_ADAPTER_MODE=bm25 \
-WG_ADAPTER_DAEMON=1 \
-bun test ./eval/runner/adapters/wg-smoke.test.ts
+AIDEMEMO_BIN=/Users/mixlink/dev/aidememo/target/debug/aidememo \
+AIDEMEMO_ADAPTER_MODE=bm25 \
+AIDEMEMO_ADAPTER_DAEMON=1 \
+bun test ./eval/runner/adapters/aidememo-smoke.test.ts
 ```
 
 Result:
@@ -82,27 +82,27 @@ BrainBench scorecards:
 ```bash
 /usr/bin/time -p env \
   BRAINBENCH_N=1 \
-  WG_BIN=/Users/mixlink/dev/wg/target/debug/wg \
-  WG_ADAPTER_MODE=bm25 \
-  WG_ADAPTER_DAEMON=1 \
-  WG_ADAPTER_LIMIT=10 \
-  bun eval/runner/multi-adapter.ts --adapter=wg
+  AIDEMEMO_BIN=/Users/mixlink/dev/aidememo/target/debug/aidememo \
+  AIDEMEMO_ADAPTER_MODE=bm25 \
+  AIDEMEMO_ADAPTER_DAEMON=1 \
+  AIDEMEMO_ADAPTER_LIMIT=10 \
+  bun eval/runner/multi-adapter.ts --adapter=aidememo
 ```
 
 ```bash
 /usr/bin/time -p env \
   BRAINBENCH_N=1 \
-  WG_BIN=/Users/mixlink/dev/wg/target/debug/wg \
-  WG_ADAPTER_MODE=hybrid \
-  WG_ADAPTER_DAEMON=1 \
-  WG_ADAPTER_LIMIT=10 \
-  bun eval/runner/multi-adapter.ts --adapter=wg
+  AIDEMEMO_BIN=/Users/mixlink/dev/aidememo/target/debug/aidememo \
+  AIDEMEMO_ADAPTER_MODE=hybrid \
+  AIDEMEMO_ADAPTER_DAEMON=1 \
+  AIDEMEMO_ADAPTER_LIMIT=10 \
+  bun eval/runner/multi-adapter.ts --adapter=aidememo
 ```
 
 | Adapter | Runs | Corpus Pages | Queries | P@5 | R@5 | Correct / Expected | Runner Time | Real Time |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| wg bm25 daemon | 1 | 240 | 145 | 17.4% | 64.1% | 125 / 261 | 10.9s | 11.04s |
-| wg hybrid daemon | 1 | 240 | 145 | 16.7% | 62.5% | 121 / 261 | 45.5s | 45.64s |
+| aidememo bm25 daemon | 1 | 240 | 145 | 17.4% | 64.1% | 125 / 261 | 10.9s | 11.04s |
+| aidememo hybrid daemon | 1 | 240 | 145 | 16.7% | 62.5% | 121 / 261 | 45.5s | 45.64s |
 
 Delta vs non-daemon bm25:
 
@@ -121,29 +121,29 @@ Interpretation:
 Notes:
 
 - This measures the packaged adapter path, not an optimized in-process binding.
-- The non-daemon adapter shells out to `wg search` once per query; the 63s run
+- The non-daemon adapter shells out to `aidememo search` once per query; the 63s run
   time is mostly redb open / process-local setup overhead.
 - The daemon adapter still shells out once per query, but the expensive store
-  and model state live in `wg mcp-serve`.
-- Follow-up implementation note: `WG_ADAPTER_BACKEND=auto|napi|cli` now lets
-  the scaffold use `wg-napi` in process when the native package is available,
+  and model state live in `aidememo mcp-serve`.
+- Follow-up implementation note: `AIDEMEMO_ADAPTER_BACKEND=auto|napi|cli` now lets
+  the scaffold use `aidememo-napi` in process when the native package is available,
   removing per-query CLI spawn while preserving the previous CLI and daemon
   baselines for apples-to-apples comparisons. Fresh gbrain-evals scorecards
-  should record `WG_ADAPTER_BACKEND` and `WG_NAPI_MODULE` alongside the existing
+  should record `AIDEMEMO_ADAPTER_BACKEND` and `AIDEMEMO_NAPI_MODULE` alongside the existing
   knobs.
 
 ## 2026-05-21 — Native Backend Adapter Smoke
 
 This is a local fixture smoke for the adapter scaffold, not the full public
-BrainBench scorecard. It verifies that the copied `wg-adapter.ts` can run both
-the preserved CLI backend and the new native `wg-napi` backend against the same
+BrainBench scorecard. It verifies that the copied `aidememo-adapter.ts` can run both
+the preserved CLI backend and the new native `aidememo-napi` backend against the same
 Bun-shaped harness.
 
 Setup:
 
-- `wg-napi`: `npm install && npm run build`
-- CLI binary: `/Users/mixlink/dev/wg/target/debug/wg`
-- Adapter mode: `WG_ADAPTER_MODE=bm25`
+- `aidememo-napi`: `npm install && npm run build`
+- CLI binary: `/Users/mixlink/dev/aidememo/target/debug/aidememo`
+- Adapter mode: `AIDEMEMO_ADAPTER_MODE=bm25`
 - Fixture: 3 markdown pages, 30 repeated queries for
   `high availability cache failover`
 
@@ -151,27 +151,27 @@ Result:
 
 | Backend | Queries | Top Hit | p50 | p95 |
 |---|---:|---|---:|---:|
-| `WG_ADAPTER_BACKEND=cli` | 30 | `redis` | 124.55 ms | 132.08 ms |
-| `WG_ADAPTER_BACKEND=napi` | 30 | `redis` | 0.02 ms | 0.03 ms |
+| `AIDEMEMO_ADAPTER_BACKEND=cli` | 30 | `redis` | 124.55 ms | 132.08 ms |
+| `AIDEMEMO_ADAPTER_BACKEND=napi` | 30 | `redis` | 0.02 ms | 0.03 ms |
 
 Interpretation: the native path removes the per-query CLI process spawn and
 store open overhead on this small fixture. The next validation step is the full
-fresh-checkout `gbrain-evals` scorecard with `WG_ADAPTER_BACKEND=napi`; that
+fresh-checkout `gbrain-evals` scorecard with `AIDEMEMO_ADAPTER_BACKEND=napi`; that
 will measure end-to-end wall time under the public runner.
 
 ## 2026-05-21 — BrainBench Native Backend Scorecard
 
-Fresh-checkout validation after adding `WG_ADAPTER_BACKEND=napi`.
+Fresh-checkout validation after adding `AIDEMEMO_ADAPTER_BACKEND=napi`.
 
 Environment:
 
 - `garrytan/gbrain-evals` commit: `89445dd`
 - `gbrain` dependency: `garrytan/gbrain#1580c6d`
 - Bun: `1.3.11`
-- wg binary: `/Users/mixlink/dev/wg/target/debug/wg`
-- wg-napi module: `/Users/mixlink/dev/wg/crates/wg-napi`
-- Adapter mode: `WG_ADAPTER_MODE=bm25`
-- Adapter limit: `WG_ADAPTER_LIMIT=10`
+- aidememo binary: `/Users/mixlink/dev/aidememo/target/debug/aidememo`
+- aidememo-napi module: `/Users/mixlink/dev/aidememo/crates/aidememo-napi`
+- Adapter mode: `AIDEMEMO_ADAPTER_MODE=bm25`
+- Adapter limit: `AIDEMEMO_ADAPTER_LIMIT=10`
 - Runs: `BRAINBENCH_N=1`
 
 Setup:
@@ -180,9 +180,9 @@ Setup:
 git clone --depth 1 https://github.com/garrytan/gbrain-evals "$TMP/gbrain-evals"
 cd "$TMP/gbrain-evals"
 bun install
-cp /Users/mixlink/dev/wg/benchmarks/gbrain-evals-adapter/wg-adapter.ts \
-  eval/runner/adapters/wg.ts
-# Register WgAdapter in eval/runner/multi-adapter.ts.
+cp /Users/mixlink/dev/aidememo/benchmarks/gbrain-evals-adapter/aidememo-adapter.ts \
+  eval/runner/adapters/aidememo.ts
+# Register AideMemoAdapter in eval/runner/multi-adapter.ts.
 ```
 
 Native backend scorecard:
@@ -190,12 +190,12 @@ Native backend scorecard:
 ```bash
 /usr/bin/time -p env \
   BRAINBENCH_N=1 \
-  WG_BIN=/Users/mixlink/dev/wg/target/debug/wg \
-  WG_ADAPTER_BACKEND=napi \
-  WG_NAPI_MODULE=/Users/mixlink/dev/wg/crates/wg-napi \
-  WG_ADAPTER_MODE=bm25 \
-  WG_ADAPTER_LIMIT=10 \
-  bun eval/runner/multi-adapter.ts --adapter=wg
+  AIDEMEMO_BIN=/Users/mixlink/dev/aidememo/target/debug/aidememo \
+  AIDEMEMO_ADAPTER_BACKEND=napi \
+  AIDEMEMO_NAPI_MODULE=/Users/mixlink/dev/aidememo/crates/aidememo-napi \
+  AIDEMEMO_ADAPTER_MODE=bm25 \
+  AIDEMEMO_ADAPTER_LIMIT=10 \
+  bun eval/runner/multi-adapter.ts --adapter=aidememo
 ```
 
 Daemon baseline on the same checkout:
@@ -203,20 +203,20 @@ Daemon baseline on the same checkout:
 ```bash
 /usr/bin/time -p env \
   BRAINBENCH_N=1 \
-  WG_BIN=/Users/mixlink/dev/wg/target/debug/wg \
-  WG_ADAPTER_BACKEND=cli \
-  WG_ADAPTER_DAEMON=1 \
-  WG_ADAPTER_MODE=bm25 \
-  WG_ADAPTER_LIMIT=10 \
-  bun eval/runner/multi-adapter.ts --adapter=wg
+  AIDEMEMO_BIN=/Users/mixlink/dev/aidememo/target/debug/aidememo \
+  AIDEMEMO_ADAPTER_BACKEND=cli \
+  AIDEMEMO_ADAPTER_DAEMON=1 \
+  AIDEMEMO_ADAPTER_MODE=bm25 \
+  AIDEMEMO_ADAPTER_LIMIT=10 \
+  bun eval/runner/multi-adapter.ts --adapter=aidememo
 ```
 
 Result:
 
 | Adapter | Runs | Corpus Pages | Queries | P@5 | R@5 | Correct / Expected | Runner Time | Real Time |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| wg bm25 daemon | 1 | 240 | 145 | 17.4% | 64.1% | 125 / 261 | 10.7s | 10.77s |
-| wg bm25 napi | 1 | 240 | 145 | 17.4% | 64.1% | 125 / 261 | 6.2s | 6.48s |
+| aidememo bm25 daemon | 1 | 240 | 145 | 17.4% | 64.1% | 125 / 261 | 10.7s | 10.77s |
+| aidememo bm25 napi | 1 | 240 | 145 | 17.4% | 64.1% | 125 / 261 | 6.2s | 6.48s |
 
 Delta:
 

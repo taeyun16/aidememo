@@ -4,48 +4,48 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-if [[ -n "${WG_BIN:-}" ]]; then
-    WG="$WG_BIN"
+if [[ -n "${AIDEMEMO_BIN:-}" ]]; then
+    WG="$AIDEMEMO_BIN"
 elif [[ -f "$ROOT_DIR/Cargo.toml" ]] && command -v cargo >/dev/null 2>&1; then
-    cargo build -p wg-cli >/dev/null
-    WG="$ROOT_DIR/target/debug/wg"
-elif [[ -x "$ROOT_DIR/target/debug/wg" ]]; then
-    WG="$ROOT_DIR/target/debug/wg"
-elif [[ -x "$ROOT_DIR/target/release/wg" ]]; then
-    WG="$ROOT_DIR/target/release/wg"
+    cargo build -p aidememo-cli >/dev/null
+    WG="$ROOT_DIR/target/debug/aidememo"
+elif [[ -x "$ROOT_DIR/target/debug/aidememo" ]]; then
+    WG="$ROOT_DIR/target/debug/aidememo"
+elif [[ -x "$ROOT_DIR/target/release/aidememo" ]]; then
+    WG="$ROOT_DIR/target/release/aidememo"
 else
-    WG="$(command -v wg || true)"
+    WG="$(command -v aidememo || true)"
 fi
 
 if [[ -z "$WG" || ! -x "$WG" ]]; then
-    echo "wg binary not found. Set WG_BIN=/path/to/wg or run: cargo build -p wg-cli" >&2
+    echo "aidememo binary not found. Set AIDEMEMO_BIN=/path/to/aidememo or run: cargo build -p aidememo-cli" >&2
     exit 1
 fi
 
-BASE="${WG_DEMO_BASE:-$(mktemp -d "${TMPDIR:-/tmp}/wg-demo-workflow.XXXXXX")}"
+BASE="${AIDEMEMO_DEMO_BASE:-$(mktemp -d "${TMPDIR:-/tmp}/aidememo-demo-workflow.XXXXXX")}"
 STORE="$BASE/wiki.redb"
 
 cleanup() {
-    if [[ "${WG_DEMO_KEEP:-0}" != "1" ]]; then
+    if [[ "${AIDEMEMO_DEMO_KEEP:-0}" != "1" ]]; then
         rm -rf "$BASE"
     fi
 }
 trap cleanup EXIT
 
-run_wg() {
+run_aidememo() {
     "$WG" --store "$STORE" "$@"
 }
 
 add_fact() {
     local fact_type="$1"
     local content="$2"
-    run_wg --json fact add "$content" \
+    run_aidememo --json fact add "$content" \
         --type "$fact_type" \
         --entities Redis,Worker \
         --source-id demo >/dev/null
 }
 
-echo "wg workflow demo"
+echo "aidememo workflow demo"
 echo "store: $STORE"
 echo
 
@@ -59,7 +59,7 @@ print(time.perf_counter_ns() // 1_000_000)
 PY
 )"
 pack_json="$(
-    run_wg --json workflow start "Fix Redis timeout in worker" \
+    run_aidememo --json workflow start "Fix Redis timeout in worker" \
         --body "Worker jobs intermittently time out. The issue body has no more detail." \
         --source github:example/app#123 \
         --source-id demo \

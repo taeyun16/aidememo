@@ -1,13 +1,13 @@
 //! Reranker A/B on MIRACL/ko.
 //!
-//! Runs every dev query through `WikiGraph::hybrid_search` twice —
+//! Runs every dev query through `AideMemo::hybrid_search` twice —
 //! once with `rerank.provider = ""` (off) and once with `rerank.provider
 //! = "tei"` pointed at a local TEI `/rerank` endpoint — and compares
 //! Recall@10, MRR@10, and nDCG@10 against the MIRACL/ko qrels.
 //!
-//! The run uses the same wg store rebuilt by `miracl_ingest`. Pre-reqs:
-//!   - `/tmp/wg-bench-miracl/_meta/wiki.redb` ingested
-//!   - `/tmp/wg-tei-bench/miracl_ko_golden.jsonl` written
+//! The run uses the same aidememo store rebuilt by `miracl_ingest`. Pre-reqs:
+//!   - `/tmp/aidememo-bench-miracl/_meta/wiki.redb` ingested
+//!   - `/tmp/aidememo-tei-bench/miracl_ko_golden.jsonl` written
 //!   - TEI native rerank server reachable at `--rerank-endpoint`
 //!     (defaults to http://localhost:8082)
 //!
@@ -20,11 +20,11 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::time::Instant;
 
+use aidememo_core::{AideMemo, Config, FactListOpts, SearchOpts};
 use serde::Deserialize;
-use wg_core::{Config, FactListOpts, SearchOpts, WikiGraph};
 
-const STORE: &str = "/tmp/wg-bench-miracl/_meta/wiki.redb";
-const GOLDEN: &str = "/tmp/wg-tei-bench/miracl_ko_golden.jsonl";
+const STORE: &str = "/tmp/aidememo-bench-miracl/_meta/wiki.redb";
+const GOLDEN: &str = "/tmp/aidememo-tei-bench/miracl_ko_golden.jsonl";
 
 #[derive(Deserialize)]
 struct GoldenRow {
@@ -42,8 +42,8 @@ fn load_golden() -> Vec<GoldenRow> {
         .collect()
 }
 
-fn build_source_map(wiki: &WikiGraph) -> HashMap<wg_core::FactId, String> {
-    // wg's FactId is a ULID assigned at insert time; we keyed the
+fn build_source_map(wiki: &AideMemo) -> HashMap<aidememo_core::FactId, String> {
+    // aidememo's FactId is a ULID assigned at insert time; we keyed the
     // golden set on the original miracl docid which lives in
     // `source`. Build the reverse map once.
     let facts = wiki
@@ -120,9 +120,9 @@ fn score_query(ranked_sources: &[String], expected: &HashSet<String>, k: usize) 
 
 fn run(
     label: &str,
-    wiki: &WikiGraph,
+    wiki: &AideMemo,
     golden: &[GoldenRow],
-    src_by_id: &HashMap<wg_core::FactId, String>,
+    src_by_id: &HashMap<aidememo_core::FactId, String>,
 ) -> Metrics {
     let mut m = Metrics::default();
     let mut latencies = Vec::with_capacity(golden.len());
@@ -192,7 +192,7 @@ fn main() {
         let mut config = Config::default();
         config.store.path = STORE.to_string();
         config.search.semantic_index = "hnsw".into();
-        let wiki = WikiGraph::open(Path::new(STORE), config).expect("open wiki");
+        let wiki = AideMemo::open(Path::new(STORE), config).expect("open wiki");
         let t0 = Instant::now();
         let _ = wiki.vector_index_rebuild().expect("hnsw build");
         eprintln!("HNSW build: {:.1}s", t0.elapsed().as_secs_f64());
@@ -201,7 +201,7 @@ fn main() {
         run("baseline (no rerank)", &wiki, &golden, &src_by_id);
     }
 
-    // Stage 2: with rerank. New WikiGraph open with rerank config so
+    // Stage 2: with rerank. New AideMemo open with rerank config so
     // the lazy reranker loads on first search.
     for top_k in top_ks {
         let mut config = Config::default();
@@ -211,7 +211,7 @@ fn main() {
         config.rerank.endpoint = rerank_endpoint.clone();
         config.rerank.model = "BAAI/bge-reranker-base".into();
         config.rerank.top_k = top_k;
-        let wiki = WikiGraph::open(Path::new(STORE), config).expect("open wiki rerank");
+        let wiki = AideMemo::open(Path::new(STORE), config).expect("open wiki rerank");
         let _ = wiki.vector_index_rebuild().expect("hnsw build");
         let src_by_id = build_source_map(&wiki);
         let label = format!("rerank=tei top_k={}", top_k);

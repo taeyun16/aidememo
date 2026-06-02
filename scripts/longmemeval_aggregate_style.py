@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""LongMemEval multi-session test for the wg_aggregate primitive.
+"""LongMemEval multi-session test for the aidememo_aggregate primitive.
 
 Pulls the agent out of the synthesis loop for counting / aggregation
 questions. Instead of feeding the reader 30 raw snippets and asking
@@ -18,7 +18,7 @@ through unchanged for parity).
 
 Usage:
   python3 scripts/longmemeval_aggregate_style.py \
-      --retrievals /tmp/wg_retrievals_60bal_hybrid_ingest.jsonl \
+      --retrievals /tmp/aidememo_retrievals_60bal_hybrid_ingest.jsonl \
       --gold /tmp/longmemeval_data/longmemeval_s_cleaned.json \
       --reader MiniMax-M2.7-highspeed --judge MiniMax-M2.7-highspeed \
       --reader-base-url https://api.minimax.io/v1 \
@@ -26,7 +26,7 @@ Usage:
       --judge-base-url https://api.minimax.io/v1 \
       --judge-api-key-env MINIMAX_API_KEY \
       --workers 4 \
-      --out /tmp/wg_aggregate_test
+      --out /tmp/aidememo_aggregate_test
 """
 from __future__ import annotations
 
@@ -87,7 +87,7 @@ Final answer:"""
 
 
 def build_aggregate_view(retrievals: list, preview_chars: int = 160) -> dict:
-    """Mirror what wg_aggregate(op=enumerate) + by_entity would emit.
+    """Mirror what aidememo_aggregate(op=enumerate) + by_entity would emit.
 
     Pure post-process on the retrieval list — no actual MCP call.
     Validates whether feeding the reader a structured deduped view
@@ -145,7 +145,7 @@ def main() -> int:
     ap.add_argument("--gold", required=True, type=Path)
     ap.add_argument("--reader", default="MiniMax-M2.7-highspeed")
     ap.add_argument("--judge", default="MiniMax-M2.7-highspeed")
-    ap.add_argument("--out", default=Path("/tmp/wg_aggregate_test"), type=Path)
+    ap.add_argument("--out", default=Path("/tmp/aidememo_aggregate_test"), type=Path)
     ap.add_argument("--reader-base-url", default="https://api.minimax.io/v1")
     ap.add_argument("--reader-api-key-env", default="MINIMAX_API_KEY")
     ap.add_argument("--judge-base-url", default="https://api.minimax.io/v1")

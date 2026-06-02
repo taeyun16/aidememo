@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Scenario E — `wg mcp-serve` HTTP mode + concurrent clients.
+"""Scenario E — `aidememo mcp-serve` HTTP mode + concurrent clients.
 
-Companion to scenario D. D showed that multi-process stdio `wg mcp`
+Companion to scenario D. D showed that multi-process stdio `aidememo mcp`
 clients fight over redb's per-process file lock. The recommended
-shared-store pattern is one long-lived `wg mcp-serve` HTTP server
+shared-store pattern is one long-lived `aidememo mcp-serve` HTTP server
 with every agent talking to the same endpoint. This scenario
 verifies that pattern: a single server, M concurrent HTTP clients,
-each sending N JSON-RPC tools/call wg_fact_add — every insert must
+each sending N JSON-RPC tools/call aidememo_fact_add — every insert must
 land, with no IDs collisions and no lock errors (the server's redb
 handle is single-process, so contention is internal serialization).
 
@@ -34,11 +34,11 @@ import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 
-WG = os.environ.get("WG_BIN", "/Users/mixlink/.local/bin/wg")
-STORE = os.environ.get("WG_E2E_STORE", "/tmp/wg-e2e-e/wiki.redb")
-PORT = int(os.environ.get("WG_E2E_PORT", "3939"))
-M_CLIENTS = int(os.environ.get("WG_E2E_CLIENTS", "4"))
-N_PER_CLIENT = int(os.environ.get("WG_E2E_N_PER_CLIENT", "25"))
+WG = os.environ.get("AIDEMEMO_BIN", "/Users/mixlink/.local/bin/aidememo")
+STORE = os.environ.get("AIDEMEMO_E2E_STORE", "/tmp/aidememo-e2e-e/wiki.redb")
+PORT = int(os.environ.get("AIDEMEMO_E2E_PORT", "3939"))
+M_CLIENTS = int(os.environ.get("AIDEMEMO_E2E_CLIENTS", "4"))
+N_PER_CLIENT = int(os.environ.get("AIDEMEMO_E2E_N_PER_CLIENT", "25"))
 
 
 def reset_store() -> None:
@@ -97,7 +97,7 @@ def write_one(args: tuple[int, int, int]) -> dict:
         "jsonrpc": "2.0", "id": fact_idx + 1,
         "method": "tools/call",
         "params": {
-            "name": "wg_fact_add",
+            "name": "aidememo_fact_add",
             "arguments": {
                 "content": f"http/c{client_idx}/f{fact_idx}/{os.urandom(4).hex()}",
                 "entities": [f"E{client_idx}"],
@@ -153,7 +153,7 @@ def main() -> int:
     reset_store()
     port = free_port_or(PORT)
 
-    # Start `wg mcp-serve` in the background.
+    # Start `aidememo mcp-serve` in the background.
     log_path = Path(STORE).parent / "server.log"
     log_fp = open(log_path, "w")
     server = subprocess.Popen(

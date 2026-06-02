@@ -3,13 +3,13 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PROFILE="${WG_RELEASE_PREFLIGHT_PROFILE:-local}" # local | full
-BASE="${WG_RELEASE_PREFLIGHT_BASE:-$(mktemp -d "${TMPDIR:-/tmp}/wg-release-preflight.XXXXXX")}"
+PROFILE="${AIDEMEMO_RELEASE_PREFLIGHT_PROFILE:-local}" # local | full
+BASE="${AIDEMEMO_RELEASE_PREFLIGHT_BASE:-$(mktemp -d "${TMPDIR:-/tmp}/aidememo-release-preflight.XXXXXX")}"
 SUMMARY_TSV="$BASE/release-preflight.tsv"
 
 if [[ "$#" -gt 1 ]]; then
     echo "usage: $0 [semver]" >&2
-    echo "example: WG_RELEASE_PREFLIGHT_PROFILE=full $0 0.1.1" >&2
+    echo "example: AIDEMEMO_RELEASE_PREFLIGHT_PROFILE=full $0 0.1.1" >&2
     exit 1
 fi
 
@@ -18,29 +18,29 @@ VERSION="${1:-}"
 case "$PROFILE" in
     local | full) ;;
     *)
-        echo "WG_RELEASE_PREFLIGHT_PROFILE must be local or full (got $PROFILE)" >&2
+        echo "AIDEMEMO_RELEASE_PREFLIGHT_PROFILE must be local or full (got $PROFILE)" >&2
         exit 1
         ;;
 esac
 
 if [[ "$PROFILE" == "full" ]]; then
-    RUN_PUBLISH="${WG_RELEASE_PREFLIGHT_PUBLISH:-1}"
-    RUN_BINDINGS_OPTIONAL="${WG_RELEASE_PREFLIGHT_BINDINGS_OPTIONAL:-1}"
-    REQUIRE_ACTIONLINT="${WG_RELEASE_PREFLIGHT_REQUIRE_ACTIONLINT:-1}"
+    RUN_PUBLISH="${AIDEMEMO_RELEASE_PREFLIGHT_PUBLISH:-1}"
+    RUN_BINDINGS_OPTIONAL="${AIDEMEMO_RELEASE_PREFLIGHT_BINDINGS_OPTIONAL:-1}"
+    REQUIRE_ACTIONLINT="${AIDEMEMO_RELEASE_PREFLIGHT_REQUIRE_ACTIONLINT:-1}"
 else
-    RUN_PUBLISH="${WG_RELEASE_PREFLIGHT_PUBLISH:-0}"
-    RUN_BINDINGS_OPTIONAL="${WG_RELEASE_PREFLIGHT_BINDINGS_OPTIONAL:-0}"
-    REQUIRE_ACTIONLINT="${WG_RELEASE_PREFLIGHT_REQUIRE_ACTIONLINT:-0}"
+    RUN_PUBLISH="${AIDEMEMO_RELEASE_PREFLIGHT_PUBLISH:-0}"
+    RUN_BINDINGS_OPTIONAL="${AIDEMEMO_RELEASE_PREFLIGHT_BINDINGS_OPTIONAL:-0}"
+    REQUIRE_ACTIONLINT="${AIDEMEMO_RELEASE_PREFLIGHT_REQUIRE_ACTIONLINT:-0}"
 fi
 
-RUN_BINDINGS="${WG_RELEASE_PREFLIGHT_BINDINGS:-1}"
-RUN_WORKFLOW="${WG_RELEASE_PREFLIGHT_WORKFLOW:-1}"
-RUN_ACTIONLINT="${WG_RELEASE_PREFLIGHT_ACTIONLINT:-1}"
-RUN_SDK_PROMOTION="${WG_RELEASE_PREFLIGHT_SDK_PROMOTION:-1}"
-RUN_SDK_PROMOTION_SMOKE="${WG_RELEASE_PREFLIGHT_SDK_SMOKE:-0}"
-RUN_SDK_PROMOTION_SCENARIO_K="${WG_RELEASE_PREFLIGHT_SDK_SCENARIO_K:-0}"
-RUN_SDK_PROMOTION_REQUIRE_PUBLIC="${WG_RELEASE_PREFLIGHT_SDK_REQUIRE_PUBLIC:-0}"
-ACTIONLINT_BIN="${WG_RELEASE_PREFLIGHT_ACTIONLINT_BIN:-actionlint}"
+RUN_BINDINGS="${AIDEMEMO_RELEASE_PREFLIGHT_BINDINGS:-1}"
+RUN_WORKFLOW="${AIDEMEMO_RELEASE_PREFLIGHT_WORKFLOW:-1}"
+RUN_ACTIONLINT="${AIDEMEMO_RELEASE_PREFLIGHT_ACTIONLINT:-1}"
+RUN_SDK_PROMOTION="${AIDEMEMO_RELEASE_PREFLIGHT_SDK_PROMOTION:-1}"
+RUN_SDK_PROMOTION_SMOKE="${AIDEMEMO_RELEASE_PREFLIGHT_SDK_SMOKE:-0}"
+RUN_SDK_PROMOTION_SCENARIO_K="${AIDEMEMO_RELEASE_PREFLIGHT_SDK_SCENARIO_K:-0}"
+RUN_SDK_PROMOTION_REQUIRE_PUBLIC="${AIDEMEMO_RELEASE_PREFLIGHT_SDK_REQUIRE_PUBLIC:-0}"
+ACTIONLINT_BIN="${AIDEMEMO_RELEASE_PREFLIGHT_ACTIONLINT_BIN:-actionlint}"
 
 have() {
     command -v "$1" >/dev/null 2>&1
@@ -146,9 +146,9 @@ echo "base: $BASE"
 echo
 
 if [[ -n "$VERSION" ]]; then
-    run "release version gate" "$ROOT_DIR/scripts/wg-release-version.sh" "$VERSION"
+    run "release version gate" "$ROOT_DIR/scripts/aidememo-release-version.sh" "$VERSION"
 else
-    run "release version gate" "$ROOT_DIR/scripts/wg-release-version.sh"
+    run "release version gate" "$ROOT_DIR/scripts/aidememo-release-version.sh"
 fi
 
 if [[ "$RUN_ACTIONLINT" == "1" ]]; then
@@ -161,39 +161,39 @@ if [[ "$RUN_ACTIONLINT" == "1" ]]; then
         record_skip "workflow syntax lint" "$ACTIONLINT_BIN not installed"
     fi
 else
-    record_skip "workflow syntax lint" "WG_RELEASE_PREFLIGHT_ACTIONLINT=0"
+    record_skip "workflow syntax lint" "AIDEMEMO_RELEASE_PREFLIGHT_ACTIONLINT=0"
 fi
 
 if [[ "$RUN_BINDINGS" == "1" ]]; then
     run_without_child_summary "binding release smoke" env \
-        WG_BINDINGS_SMOKE_OPTIONAL="$RUN_BINDINGS_OPTIONAL" \
+        AIDEMEMO_BINDINGS_SMOKE_OPTIONAL="$RUN_BINDINGS_OPTIONAL" \
         "$ROOT_DIR/scripts/bindings-release-smoke.sh"
 else
-    record_skip "binding release smoke" "WG_RELEASE_PREFLIGHT_BINDINGS=0"
+    record_skip "binding release smoke" "AIDEMEMO_RELEASE_PREFLIGHT_BINDINGS=0"
 fi
 
 if [[ "$RUN_WORKFLOW" == "1" ]]; then
     run_without_child_summary "workflow release smoke" "$ROOT_DIR/scripts/workflow-release-smoke.sh"
 else
-    record_skip "workflow release smoke" "WG_RELEASE_PREFLIGHT_WORKFLOW=0"
+    record_skip "workflow release smoke" "AIDEMEMO_RELEASE_PREFLIGHT_WORKFLOW=0"
 fi
 
 if [[ "$RUN_SDK_PROMOTION" == "1" ]]; then
     run_without_child_summary "sdk promotion check" env \
-        WG_SDK_PROMOTION_RUN_SMOKE="$RUN_SDK_PROMOTION_SMOKE" \
-        WG_SDK_PROMOTION_RUN_SCENARIO_K="$RUN_SDK_PROMOTION_SCENARIO_K" \
-        WG_SDK_PROMOTION_REQUIRE_PUBLIC="$RUN_SDK_PROMOTION_REQUIRE_PUBLIC" \
+        AIDEMEMO_SDK_PROMOTION_RUN_SMOKE="$RUN_SDK_PROMOTION_SMOKE" \
+        AIDEMEMO_SDK_PROMOTION_RUN_SCENARIO_K="$RUN_SDK_PROMOTION_SCENARIO_K" \
+        AIDEMEMO_SDK_PROMOTION_REQUIRE_PUBLIC="$RUN_SDK_PROMOTION_REQUIRE_PUBLIC" \
         "$ROOT_DIR/scripts/sdk-promotion-check.sh"
 else
-    record_skip "sdk promotion check" "WG_RELEASE_PREFLIGHT_SDK_PROMOTION=0"
+    record_skip "sdk promotion check" "AIDEMEMO_RELEASE_PREFLIGHT_SDK_PROMOTION=0"
 fi
 
 if [[ "$RUN_PUBLISH" == "1" ]]; then
-    run_without_child_summary "wg-python publish dry-run" "$ROOT_DIR/scripts/wg-python-publish-dry-run.sh"
-    run_without_child_summary "wg-napi publish dry-run" "$ROOT_DIR/scripts/wg-napi-publish-dry-run.sh"
+    run_without_child_summary "aidememo-python publish dry-run" "$ROOT_DIR/scripts/aidememo-python-publish-dry-run.sh"
+    run_without_child_summary "aidememo-napi publish dry-run" "$ROOT_DIR/scripts/aidememo-napi-publish-dry-run.sh"
 else
-    record_skip "wg-python publish dry-run" "set WG_RELEASE_PREFLIGHT_PROFILE=full"
-    record_skip "wg-napi publish dry-run" "set WG_RELEASE_PREFLIGHT_PROFILE=full"
+    record_skip "aidememo-python publish dry-run" "set AIDEMEMO_RELEASE_PREFLIGHT_PROFILE=full"
+    record_skip "aidememo-napi publish dry-run" "set AIDEMEMO_RELEASE_PREFLIGHT_PROFILE=full"
 fi
 
 echo

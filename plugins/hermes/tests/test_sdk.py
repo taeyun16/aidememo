@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from hermes_wg.sdk import WgMemorySDK
+from hermes_aidememo.sdk import AideMemoMemorySDK
 
 
 class FakeClient:
@@ -29,7 +29,7 @@ class FakeClient:
 
 
 def test_search_many_preserves_order_and_metadata() -> None:
-    sdk = WgMemorySDK(FakeClient())
+    sdk = AideMemoMemorySDK(FakeClient())
 
     rows = sdk.search_many(
         [
@@ -54,16 +54,16 @@ def test_open_builds_default_client(monkeypatch) -> None:
             super().__init__()
             created.update(kwargs)
 
-    monkeypatch.setattr("wg_agent.sdk.WgClient", RecordingClient)
+    monkeypatch.setattr("aidememo_agent.sdk.AideMemoClient", RecordingClient)
 
-    sdk = WgMemorySDK.open(store_path="/tmp/wiki.redb", source_id="team-a", lock_retry_ms=250)
+    sdk = AideMemoMemorySDK.open(store_path="/tmp/wiki.redb", source_id="team-a", lock_retry_ms=250)
 
     assert isinstance(sdk.client, RecordingClient)
     assert created == {"store_path": "/tmp/wiki.redb", "source_id": "team-a", "lock_retry_ms": 250}
 
 
 def test_flatten_dedupe_group_and_coverage() -> None:
-    sdk = WgMemorySDK(FakeClient())
+    sdk = AideMemoMemorySDK(FakeClient())
     batches = [
         {
             "query": "redis",
@@ -90,7 +90,7 @@ def test_flatten_dedupe_group_and_coverage() -> None:
 
 
 def test_search_rows_flattens_and_dedupes_default_path() -> None:
-    sdk = WgMemorySDK(FakeClient())
+    sdk = AideMemoMemorySDK(FakeClient())
 
     rows = sdk.search_rows(
         [
@@ -108,7 +108,7 @@ def test_search_rows_flattens_and_dedupes_default_path() -> None:
 
 def test_to_fact_batch_and_commit() -> None:
     client = FakeClient()
-    sdk = WgMemorySDK(client)
+    sdk = AideMemoMemorySDK(client)
 
     items = sdk.to_fact_batch(
         [
@@ -138,7 +138,7 @@ def test_to_fact_batch_and_commit() -> None:
 
 def test_remember_converts_and_commits_batch() -> None:
     client = FakeClient()
-    sdk = WgMemorySDK(client)
+    sdk = AideMemoMemorySDK(client)
 
     ids = sdk.remember(
         [{"content": "Decision: keep SDK first-use path short", "entities": ["Hermes"]}],
@@ -160,7 +160,7 @@ def test_remember_converts_and_commits_batch() -> None:
 
 
 def test_query_and_aggregate_many_forward_source_scope() -> None:
-    sdk = WgMemorySDK(FakeClient())
+    sdk = AideMemoMemorySDK(FakeClient())
 
     contexts = sdk.query_many(["redis", {"topic": "billing", "source_id": "team-b"}], source_id="team-a")
     aggregates = sdk.aggregate_many(["redis decisions"], op="count", source_id="team-a")

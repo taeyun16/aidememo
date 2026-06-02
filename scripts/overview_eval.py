@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Phase 1 — does `wg_overview` actually help an LLM agent?
+Phase 1 — does `aidememo_overview` actually help an LLM agent?
 
-A/B compares an agent that has wg_overview against one that doesn't, on
+A/B compares an agent that has aidememo_overview against one that doesn't, on
 a fixed set of tasks against the same fixture wiki. Measures:
 
   - tool calls per task
@@ -34,10 +34,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-WG_BIN = os.environ.get("WG_BIN", "/Users/mixlink/dev/wg/target/debug/wg")
-STORE = Path(os.environ.get("WG_OVERVIEW_EVAL_STORE", str(Path(tempfile.gettempdir()) / "wg_overview_eval.redb")))
-MODEL = os.environ.get("WG_OVERVIEW_EVAL_MODEL", "gpt-4o")
-JUDGE_MODEL = os.environ.get("WG_OVERVIEW_EVAL_JUDGE", "gpt-4o")
+AIDEMEMO_BIN = os.environ.get("AIDEMEMO_BIN", "/Users/mixlink/dev/aidememo/target/debug/aidememo")
+STORE = Path(os.environ.get("AIDEMEMO_OVERVIEW_EVAL_STORE", str(Path(tempfile.gettempdir()) / "aidememo_overview_eval.redb")))
+MODEL = os.environ.get("AIDEMEMO_OVERVIEW_EVAL_MODEL", "gpt-4o")
+JUDGE_MODEL = os.environ.get("AIDEMEMO_OVERVIEW_EVAL_JUDGE", "gpt-4o")
 MAX_TOOL_TURNS = 10
 
 # ──────────────────────────────────────────────────────────── fixture spec
@@ -215,30 +215,30 @@ def build_fixture() -> None:
         sidecar.unlink()
 
     for name, etype in ENTITIES:
-        run([WG_BIN, "--store", str(STORE), "entity", "add", name, "--type", etype])
+        run([AIDEMEMO_BIN, "--store", str(STORE), "entity", "add", name, "--type", etype])
 
     for ftype, content, entities in FACTS:
         run([
-            WG_BIN, "--store", str(STORE),
+            AIDEMEMO_BIN, "--store", str(STORE),
             "fact", "add", content,
             "--type", ftype,
             "--entities", ",".join(entities),
         ])
 
     print(f"fixture built: {len(ENTITIES)} entities, {len(FACTS)} facts → {STORE}")
-    overview = run([WG_BIN, "--store", str(STORE), "overview"])
+    overview = run([AIDEMEMO_BIN, "--store", str(STORE), "overview"])
     print()
     print(overview.stdout)
 
 
 # ──────────────────────────────────────────────────────────── MCP client
 
-class WgMCP:
-    """Long-lived `wg mcp` stdio session."""
+class AideMemoMCP:
+    """Long-lived `aidememo mcp` stdio session."""
 
     def __init__(self, store: Path) -> None:
         self.proc = subprocess.Popen(
-            [WG_BIN, "--store", str(store), "mcp"],
+            [AIDEMEMO_BIN, "--store", str(store), "mcp"],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
@@ -298,13 +298,13 @@ class WgMCP:
 
 # ──────────────────────────────────────────────────────────── tool schemas
 
-# Subset of wg's MCP tools — manually curated so the OpenAI tool-calling
-# format matches what `wg mcp tools/list` would return.
+# Subset of aidememo's MCP tools — manually curated so the OpenAI tool-calling
+# format matches what `aidememo mcp tools/list` would return.
 def tool_search() -> dict:
     return {
         "type": "function",
         "function": {
-            "name": "wg_search",
+            "name": "aidememo_search",
             "description": "Hybrid BM25 + semantic search over facts. Returns ranked hits.",
             "parameters": {
                 "type": "object",
@@ -323,7 +323,7 @@ def tool_query() -> dict:
     return {
         "type": "function",
         "function": {
-            "name": "wg_query",
+            "name": "aidememo_query",
             "description": "Unified context fetch — combines hybrid search, entity resolution, traversal, and recent facts in one call. Pass a topic or entity name.",
             "parameters": {
                 "type": "object",
@@ -343,7 +343,7 @@ def tool_traverse() -> dict:
     return {
         "type": "function",
         "function": {
-            "name": "wg_traverse",
+            "name": "aidememo_traverse",
             "description": "Forward graph walk from an entity. Returns reachable entities up to depth.",
             "parameters": {
                 "type": "object",
@@ -361,7 +361,7 @@ def tool_recent() -> dict:
     return {
         "type": "function",
         "function": {
-            "name": "wg_recent",
+            "name": "aidememo_recent",
             "description": "Recently added/updated facts. Defaults to last 7 days.",
             "parameters": {
                 "type": "object",
@@ -378,8 +378,8 @@ def tool_entity_list() -> dict:
     return {
         "type": "function",
         "function": {
-            "name": "wg_entity_list",
-            "description": "List entities in the wiki graph with fact counts.",
+            "name": "aidememo_entity_list",
+            "description": "List entities in the aidememo with fact counts.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -395,7 +395,7 @@ def tool_fact_list() -> dict:
     return {
         "type": "function",
         "function": {
-            "name": "wg_fact_list",
+            "name": "aidememo_fact_list",
             "description": "List facts with optional entity filter.",
             "parameters": {
                 "type": "object",
@@ -412,7 +412,7 @@ def tool_entity_get() -> dict:
     return {
         "type": "function",
         "function": {
-            "name": "wg_entity_get",
+            "name": "aidememo_entity_get",
             "description": "Get one entity by name or alias.",
             "parameters": {
                 "type": "object",
@@ -427,7 +427,7 @@ def tool_overview() -> dict:
     return {
         "type": "function",
         "function": {
-            "name": "wg_overview",
+            "name": "aidememo_overview",
             "description": (
                 "First-impression snapshot of the wiki: entity-type buckets with top "
                 "examples, fact-type distribution, top central entities by fact_count, "
@@ -455,7 +455,7 @@ TOOLS_WITH_OVERVIEW = TOOLS_BASE + [tool_overview()]
 
 # ──────────────────────────────────────────────────────────── agent driver
 
-SYSTEM_PROMPT = """You are an agent inspecting a knowledge-graph wiki named `wg`. Use the provided tools to gather the information you need, then write a concise, well-organised answer to the user's question. Budget: at most {max_turns} tool calls. Stop calling tools as soon as you have enough information; don't pad."""
+SYSTEM_PROMPT = """You are an agent inspecting a knowledge-graph wiki named `aidememo`. Use the provided tools to gather the information you need, then write a concise, well-organised answer to the user's question. Budget: at most {max_turns} tool calls. Stop calling tools as soon as you have enough information; don't pad."""
 
 
 def _openai_request(api_key: str, body: dict, timeout: int = 60) -> dict:
@@ -492,7 +492,7 @@ def _openai_request(api_key: str, body: dict, timeout: int = 60) -> dict:
     raise RuntimeError(f"all retries failed: {last_err}")
 
 
-def run_agent(mcp: WgMCP, tools: list[dict], task: Task, model: str) -> dict:
+def run_agent(mcp: AideMemoMCP, tools: list[dict], task: Task, model: str) -> dict:
     api_key = os.environ["OPENAI_API_KEY"]
     messages: list[dict] = [
         {"role": "system", "content": SYSTEM_PROMPT.format(max_turns=MAX_TOOL_TURNS)},
@@ -545,7 +545,7 @@ def run_agent(mcp: WgMCP, tools: list[dict], task: Task, model: str) -> dict:
                     "result_chars": len(result),
                 })
                 # Cap tool result size to keep the conversation small;
-                # 6 KB is generous and matches what wg returns for the
+                # 6 KB is generous and matches what aidememo returns for the
                 # typical query / overview call.
                 if len(result) > 6000:
                     result = result[:6000] + "\n…<truncated>"
@@ -617,11 +617,11 @@ def judge(task: Task, answer: str, model: str) -> dict:
 # ──────────────────────────────────────────────────────────── main
 
 def main() -> int:
-    p = argparse.ArgumentParser(description="Phase 1 wg_overview A/B eval.")
+    p = argparse.ArgumentParser(description="Phase 1 aidememo_overview A/B eval.")
     p.add_argument("--build", action="store_true", help="Rebuild the fixture wiki")
     p.add_argument("--run", action="store_true", help="Run the A/B simulation")
     p.add_argument("--tasks", type=str, default="", help="Comma-separated task ids; default = all")
-    p.add_argument("--out", type=Path, default=Path("/tmp/wg_overview_eval_results.json"))
+    p.add_argument("--out", type=Path, default=Path("/tmp/aidememo_overview_eval_results.json"))
     p.add_argument("--repeat", type=int, default=1, help="Repeat each (task, condition) N times — picks the median")
     args = p.parse_args()
 
@@ -656,7 +656,7 @@ def main() -> int:
         for condition in ("A", "B"):
             tools = TOOLS_BASE if condition == "A" else TOOLS_WITH_OVERVIEW
             for rep in range(args.repeat):
-                mcp = WgMCP(STORE)
+                mcp = AideMemoMCP(STORE)
                 t0 = time.time()
                 try:
                     out = run_agent(mcp, tools, task, MODEL)

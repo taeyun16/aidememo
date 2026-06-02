@@ -1,19 +1,19 @@
-//! Bulk-load the prepared MIRACL/ko subset into a wg store.
+//! Bulk-load the prepared MIRACL/ko subset into a aidememo store.
 //!
-//! Reads `/tmp/wg-tei-bench/miracl_ko_facts.jsonl` (one
+//! Reads `/tmp/aidememo-tei-bench/miracl_ko_facts.jsonl` (one
 //! {content, source, fact_type, tags, source_confidence} object per
 //! line; produced by `prep_miracl.py`) and pushes everything in via
-//! `WikiGraph::fact_add_many`. Faster than shelling out to
-//! `wg fact add` per row.
+//! `AideMemo::fact_add_many`. Faster than shelling out to
+//! `aidememo fact add` per row.
 
 use std::path::Path;
 use std::time::Instant;
 
+use aidememo_core::{AideMemo, Config, FactInput, FactType};
 use serde::Deserialize;
-use wg_core::{Config, FactInput, FactType, WikiGraph};
 
-const DEFAULT_STORE: &str = "/tmp/wg-bench-miracl/_meta/wiki.redb";
-const DEFAULT_INPUT: &str = "/tmp/wg-tei-bench/miracl_ko_facts.jsonl";
+const DEFAULT_STORE: &str = "/tmp/aidememo-bench-miracl/_meta/wiki.redb";
+const DEFAULT_INPUT: &str = "/tmp/aidememo-tei-bench/miracl_ko_facts.jsonl";
 const BATCH: usize = 500;
 
 #[derive(Deserialize)]
@@ -28,8 +28,8 @@ struct Row {
 }
 
 fn main() {
-    let store = std::env::var("WG_BENCH_STORE").unwrap_or_else(|_| DEFAULT_STORE.to_string());
-    let input = std::env::var("WG_BENCH_INPUT").unwrap_or_else(|_| DEFAULT_INPUT.to_string());
+    let store = std::env::var("AIDEMEMO_BENCH_STORE").unwrap_or_else(|_| DEFAULT_STORE.to_string());
+    let input = std::env::var("AIDEMEMO_BENCH_INPUT").unwrap_or_else(|_| DEFAULT_INPUT.to_string());
     let store_path = Path::new(&store);
     if let Some(parent) = store_path.parent() {
         std::fs::create_dir_all(parent).expect("mkdir store dir");
@@ -40,7 +40,7 @@ fn main() {
     // Pure offline ingest — no need for HNSW or HTTP embed.
     // Keep semantic_index = "naive" so we don't auto-rebuild HNSW.
     config.search.semantic_index = "naive".into();
-    let wiki = WikiGraph::open(store_path, config).expect("open wg store");
+    let wiki = AideMemo::open(store_path, config).expect("open aidememo store");
 
     eprintln!("=== MIRACL/ko ingest into {store} ===");
     let body = std::fs::read_to_string(&input).expect("read facts file");

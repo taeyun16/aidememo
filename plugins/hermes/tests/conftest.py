@@ -5,7 +5,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 for path in [
-    ROOT / "packages" / "wg-agent-sdk" / "src",
+    ROOT / "packages" / "aidememo-agent-sdk" / "src",
     ROOT / "plugins" / "hermes" / "src",
 ]:
     text = str(path)

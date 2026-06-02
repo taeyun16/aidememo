@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Cross-tab a LongMemEval E2E judgement file with the wg retrieval
+"""Cross-tab a LongMemEval E2E judgement file with the aidememo retrieval
 metadata so we can answer questions like:
 
   - Of the questions where retrieval R@10 was a hit, what fraction
@@ -10,7 +10,7 @@ metadata so we can answer questions like:
 
 Usage:
   python3 scripts/longmemeval_analyze.py \\
-      --judgements /tmp/wg_e2e_500_mini/judgements_gpt-4o-mini_judge_gpt-4o-mini.jsonl
+      --judgements /tmp/aidememo_e2e_500_mini/judgements_gpt-4o-mini_judge_gpt-4o-mini.jsonl
 """
 from __future__ import annotations
 

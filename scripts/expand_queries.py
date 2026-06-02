@@ -4,7 +4,7 @@
 Verbatim port of OMEGA `scripts/longmemeval_official.py::_expand_query` and
 `_resolve_relative_dates`. Reads the original LongMemEval-S JSON, rewrites
 each question's `question` field with appended expansion keywords, writes
-a new JSON file. The wg-benchmarks bench then ingests/queries against the
+a new JSON file. The aidememo-benchmarks bench then ingests/queries against the
 expanded text so BM25/semantic retrieval picks up the explicit date and
 entity tokens.
 

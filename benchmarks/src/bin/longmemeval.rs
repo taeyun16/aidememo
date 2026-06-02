@@ -1,16 +1,16 @@
-//! LongMemEval-S retrieval baseline for `wg`.
+//! LongMemEval-S retrieval baseline for `aidememo`.
 //!
 //! Loads the LongMemEval-S JSON file (publicly available from the
 //! `xiaowu0162/longmemeval` HF dataset — see `docs/MEASUREMENTS.md`
 //! for the curl/hf-hub commands), and for every question:
 //!
-//! 1. Spins up a fresh, isolated wg store under a tempdir so haystacks
+//! 1. Spins up a fresh, isolated aidememo store under a tempdir so haystacks
 //!    from one question can't leak into another.
 //! 2. Ingests every chat turn from `haystack_sessions` as a fact —
 //!    one fact per turn, tagged with `session:<haystack_session_id>`
 //!    so we can later identify whether retrieved hits sit inside an
 //!    `answer_session_ids` evidence session.
-//! 3. Runs `wg_search` (BM25-only via `bm25_only=true` to keep the
+//! 3. Runs `aidememo_search` (BM25-only via `bm25_only=true` to keep the
 //!    baseline portable; semantic adds noise when the dataset is in
 //!    English and the default model is multilingual potion-128M).
 //! 4. Checks the top-K hits against `answer_session_ids` and records
@@ -19,7 +19,7 @@
 //! Reports R@1, R@5, R@10, MRR. This is the **retrieval-only** axis
 //! of LongMemEval — the official end-to-end metric needs an LLM to
 //! generate an answer from the retrieved context. Retrieval recall
-//! is the part `wg` directly affects, and high recall is necessary
+//! is the part `aidememo` directly affects, and high recall is necessary
 //! for high answer correctness, so this number is a useful proxy and
 //! a fair head-to-head against other memory backends evaluated on
 //! the same axis.
@@ -29,22 +29,22 @@
 //! ```bash
 //! # Tiny fixture (committed) — sanity-check the harness without
 //! # downloading the 277 MB cleaned dataset.
-//! cargo run --release -p wg-benchmarks --bin longmemeval -- \
+//! cargo run --release -p aidememo-benchmarks --bin longmemeval -- \
 //!     --data benchmarks/fixtures/longmemeval_tiny.json
 //!
 //! # Full dataset.
 //! LONGMEMEVAL_DATA=/tmp/longmemeval_s_cleaned.json \
-//!   cargo run --release -p wg-benchmarks --bin longmemeval -- --limit 50
+//!   cargo run --release -p aidememo-benchmarks --bin longmemeval -- --limit 50
 //! ```
 
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Instant;
 
+use aidememo_core::types::{FactInput, FactType, GacOpts, VectorRebuildOpts};
+use aidememo_core::{AideMemo, Config, EntityInput, EntityType, SearchOpts};
 use serde::Deserialize;
 use serde_json::Value;
-use wg_core::types::{FactInput, FactType, GacOpts, VectorRebuildOpts};
-use wg_core::{Config, EntityInput, EntityType, SearchOpts, WikiGraph};
 
 type TurnTypeMap = std::collections::HashMap<usize, String>;
 type SessionTypeMap = std::collections::HashMap<usize, TurnTypeMap>;
@@ -99,7 +99,7 @@ struct Args {
     temporal: bool,
     /// Use hybrid search (BM25 + semantic via in-process model2vec)
     /// instead of BM25-only. Adds the embedding-model load on the
-    /// first call per WikiGraph (~700-900 ms cold) — in this harness
+    /// first call per AideMemo (~700-900 ms cold) — in this harness
     /// that's once per question.
     hybrid: bool,
     /// Override the embedding model when --hybrid is on. Accepted:
@@ -151,7 +151,7 @@ struct Args {
     /// LLM-graded answer correctness.
     emit_retrievals: Option<PathBuf>,
     /// LLM-aided ingestion. When set, each haystack session's turns
-    /// are concatenated and fed to `wg_extract --llm` (uses
+    /// are concatenated and fed to `aidememo_extract --llm` (uses
     /// extract.provider — defaults to gpt-4o-mini via OpenAI). The
     /// classified facts (decision / pattern / preference / lesson /
     /// error / …) are added ALONGSIDE the raw turns so retrieval
@@ -169,7 +169,7 @@ struct Args {
     /// `https://api.openai.com/v1`. Use to swap in MiniMax
     /// (`https://api.minimax.io/v1`), Ollama
     /// (`http://localhost:11434/v1`), or any OpenAI-compatible
-    /// endpoint without touching wg config.
+    /// endpoint without touching aidememo config.
     llm_extract_base_url: Option<String>,
     /// Env var holding the LLM extract API key. Default
     /// `OPENAI_API_KEY`; pair with `--llm-extract-base-url` for
@@ -214,8 +214,8 @@ struct Args {
     /// turn to a `fact_type` label. Layout: `{question_id: {sess_idx:
     /// {turn_idx: type}}}`. When provided, ingest applies the
     /// classified type instead of the default Note. Mirrors the
-    /// "self-extraction" pattern wg ships in production (the calling
-    /// agent does the classification; wg stores it). Pure label-only
+    /// "self-extraction" pattern aidememo ships in production (the calling
+    /// agent does the classification; aidememo stores it). Pure label-only
     /// pass — content is unchanged, so the abstraction-mismatch
     /// failure mode of `--llm-extract` (which rewrites facts) does
     /// not apply.
@@ -496,7 +496,7 @@ struct EvalKnobs<'a> {
 fn build_store_for_question(
     q: &Question,
     opts: BuildOpts<'_>,
-) -> Result<(tempfile::TempDir, WikiGraph), String> {
+) -> Result<(tempfile::TempDir, AideMemo), String> {
     let BuildOpts {
         temporal,
         stamp_observed_at,
@@ -520,15 +520,15 @@ fn build_store_for_question(
     let mut config = Config::default();
     config.store.path = dir.path().join("store").to_string_lossy().into_owned();
     if llm_extract {
-        // Wire wg-core's LLM extractor. Defaults aim at OpenAI
+        // Wire aidememo-core's LLM extractor. Defaults aim at OpenAI
         // (gpt-4o-mini) to match the published baselines, but every
         // knob is overridable so the harness can exercise the same
         // path against MiniMax / Ollama / Kimi / OpenRouter without
-        // touching wg config.
+        // touching aidememo config.
         config.extract.provider = "openai".into();
         config.extract.model = llm_extract_model
             .map(str::to_string)
-            .or_else(|| std::env::var("WG_EXTRACT_MODEL").ok())
+            .or_else(|| std::env::var("AIDEMEMO_EXTRACT_MODEL").ok())
             .unwrap_or_else(|| "gpt-4o-mini".into());
         if let Some(url) = llm_extract_base_url {
             config.extract.endpoint = url.to_string();
@@ -540,14 +540,14 @@ fn build_store_for_question(
     }
     // BM25-only by default; --hybrid flips to the in-process semantic
     // path (model2vec embeddings + HNSW) at the cost of a one-time
-    // model load per WikiGraph instance.
+    // model load per AideMemo instance.
     if !hybrid {
         config.search.semantic_index = "bm25".into();
     } else if let Some(m) = embed_model {
         // --embed-model overrides the model2vec default with any
         // fastembed family member (bge-small-en-v1.5 by default for
         // English benchmarks). The fastembed feature must be on the
-        // wg-core build (it is via benchmarks/Cargo.toml).
+        // aidememo-core build (it is via benchmarks/Cargo.toml).
         config.model.provider = "fastembed".into();
         config.model.name = m.to_string();
     }
@@ -565,23 +565,23 @@ fn build_store_for_question(
     if let Some(w) = semantic_weight {
         config.search.semantic_weight = w;
     }
-    // Decay disabled by default in this harness — wg-core's
+    // Decay disabled by default in this harness — aidememo-core's
     // SearchConfig::default sets time_decay_tau_ms=90 days, but the
     // LongMemEval-S dataset has dating noise (74 evidence sessions
     // future-dated past the question; see docs/MEASUREMENTS.md)
     // and per-category measurements showed bge embeddings are better
     // off WITHOUT decay (knowledge-update R@1 0.692 → 0.987 by
     // turning decay off). The `--time-decay-days` flag opts the user
-    // back in: in hybrid mode it routes through wg-core's
+    // back in: in hybrid mode it routes through aidememo-core's
     // in-pipeline decay (so it composes correctly with the cross-
     // encoder reranker); in bm25_only mode the harness still applies
-    // a post-hoc multiplier (wg-core's BM25 path doesn't apply decay).
+    // a post-hoc multiplier (aidememo-core's BM25 path doesn't apply decay).
     config.search.time_decay_tau_ms = 0;
     if hybrid && let Some(days) = decay_days_for_hybrid {
         config.search.time_decay_tau_ms = (days * 86_400_000.0) as u64;
     }
     let store_path = PathBuf::from(&config.store.path);
-    let wiki = WikiGraph::open(&store_path, config).map_err(|e| e.to_string())?;
+    let wiki = AideMemo::open(&store_path, config).map_err(|e| e.to_string())?;
 
     // Each haystack session becomes an entity so we can tag turns
     // with it via `entity_ids`. That keeps the session linkage in
@@ -699,7 +699,7 @@ fn build_store_for_question(
     // just without the extra signal.
     if llm_extract {
         // Concurrent extraction: one HTTP call per session in
-        // parallel via rayon's global pool (wg-core's
+        // parallel via rayon's global pool (aidememo-core's
         // extract_candidates_llm only reads the store, no write
         // lock — safe for `&wiki` from multiple threads). Sessions
         // with empty turns are filtered upstream so the par_iter
@@ -809,10 +809,10 @@ struct RetrievalRecord {
     /// arithmetic. Anchored to `referenced_date` for relative-date
     /// resolution.
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
-    structured: Vec<wg_core::extract_structured::StructuredValue>,
+    structured: Vec<aidememo_core::extract_structured::StructuredValue>,
     /// Cosine similarity (0.0..1.0) between the question's embedding
     /// and this fact's content embedding, computed via the same
-    /// model wg uses for hybrid_search. Lets the Python aggregation
+    /// model aidememo uses for hybrid_search. Lets the Python aggregation
     /// layer filter structured values by per-fact semantic
     /// relevance — solves the "non-bike $40 leaks into bike-expense
     /// sum" failure mode where BM25 surfaces topically similar but
@@ -832,7 +832,7 @@ struct RetrievalRecord {
 /// None when the embedder fails to load (no semantic feature, or
 /// model file missing) — the field then serialises as null and the
 /// Python harness falls back to BM25 score.
-fn relevance_score(wiki: &WikiGraph, question: &str, fact_content: &str) -> Option<f32> {
+fn relevance_score(wiki: &AideMemo, question: &str, fact_content: &str) -> Option<f32> {
     use std::cell::RefCell;
     thread_local! {
         // (question_text, embedding) — invalidates when question
@@ -856,12 +856,12 @@ fn relevance_score(wiki: &WikiGraph, question: &str, fact_content: &str) -> Opti
         }
     })?;
     let f_vec = wiki.embed(fact_content).ok()?;
-    Some(WikiGraph::cosine_similarity(&q_vec, &f_vec))
+    Some(AideMemo::cosine_similarity(&q_vec, &f_vec))
 }
 
 fn evaluate(
     q: &Question,
-    wiki: &WikiGraph,
+    wiki: &AideMemo,
     top_k: usize,
     temporal: bool,
     hybrid: bool,
@@ -886,7 +886,7 @@ fn evaluate(
     };
     // Pull a wider slate when applying post-hoc decay (BM25-only mode)
     // so the post-multiplier can promote a low-BM25-but-recent hit
-    // into the top-K. Hybrid mode handles this inside wg-core, so
+    // into the top-K. Hybrid mode handles this inside aidememo-core, so
     // the wider slate is unnecessary there.
     let candidate_limit = if time_decay_days.is_some() && !hybrid {
         top_k.saturating_mul(5).max(50)
@@ -906,7 +906,7 @@ fn evaluate(
         Err(_) => return (None, Vec::new()),
     };
     // Post-hoc decay only applies to bm25_only mode — in hybrid mode
-    // wg-core's rrf_fusion already applies the decay in-pipeline (set
+    // aidememo-core's rrf_fusion already applies the decay in-pipeline (set
     // by build_store_for_question), so doubling here would corrupt
     // both ordering and any reranker step that ran after fusion.
     if let Some(tau_days) = time_decay_days
@@ -981,7 +981,7 @@ fn evaluate(
             let anchor_dt = fact
                 .observed_at
                 .and_then(|ms| chrono::DateTime::<chrono::Utc>::from_timestamp_millis(ms as i64));
-            let structured = wg_core::extract_structured::extract(&fact.content, anchor_dt);
+            let structured = aidememo_core::extract_structured::extract(&fact.content, anchor_dt);
             // Per-fact semantic relevance to the QUESTION (not the
             // search query — sometimes they differ when query was
             // expanded). Same embedder hybrid_search uses; the
@@ -1044,7 +1044,7 @@ fn run(args: &Args) -> Result<(), String> {
     let n = limit
         .map(|l| l.min(questions.len()))
         .unwrap_or(questions.len());
-    println!("LongMemEval-S retrieval baseline — wg BM25-only");
+    println!("LongMemEval-S retrieval baseline — aidememo BM25-only");
     println!("dataset:  {data:?}");
     println!("questions: {n} (of {})", questions.len());
     println!("top_k:    {top_k}");
@@ -1155,7 +1155,7 @@ fn run(args: &Args) -> Result<(), String> {
                 reranker: args.reranker.as_deref(),
                 bm25_weight: args.bm25_weight,
                 semantic_weight: args.semantic_weight,
-                // Hybrid path: route decay into wg-core's in-pipeline
+                // Hybrid path: route decay into aidememo-core's in-pipeline
                 // rrf_fusion (composes with rerank). bm25_only path:
                 // keep the post-hoc multiplier inside `evaluate`.
                 decay_days_for_hybrid: if args.hybrid {

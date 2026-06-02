@@ -1,66 +1,66 @@
-# AGENTS.md — Wiki-Graph (wg)
+# AGENTS.md — AideMemo (aidememo)
 
-Cross-tool agent guide for the `wg` Rust workspace. Loaded automatically by
+Cross-tool agent guide for the `aidememo` Rust workspace. Loaded automatically by
 Codex, Cursor, Aider, Jules, and any agent that follows the
 [agents.md](https://agents.md) spec. Claude Code imports this via
 `CLAUDE.md`.
 
-> Working directory: `/Users/mixlink/dev/wg`. Edition 2024, Rust 1.85+ (CI/tooling currently validated on Rust 1.95.0).
+> Working directory: `/Users/mixlink/dev/aidememo`. Edition 2024, Rust 1.85+ (CI/tooling currently validated on Rust 1.95.0).
 
 ## What this project is
 
-`wg` (Wiki-Graph) ingests a markdown wiki into a structured knowledge graph
+`aidememo` (AideMemo) ingests a markdown wiki into a structured knowledge graph
 (redb + BM25 + semantic vectors) and exposes it to LLM agents via CLI, MCP
 server, and native bindings (Python / Node / Elixir / C).
 
 | Crate | Purpose |
 |---|---|
-| `wg-core` | redb store, ingest, search, traverse, lint, validity windows |
-| `wg-cli` | `wg` binary (CLI + stdio/HTTP MCP) |
-| `wg-napi`, `wg-python`, `wg-nif`, `wg-ffi` | language bindings (full API) |
+| `aidememo-core` | redb store, ingest, search, traverse, lint, validity windows |
+| `aidememo-cli` | `aidememo` binary (CLI + stdio/HTTP MCP) |
+| `aidememo-napi`, `aidememo-python`, `aidememo-nif`, `aidememo-ffi` | language bindings (full API) |
 
 ## Setup commands
 
 ```bash
-cargo check -p wg-core -p wg-cli       # fast verify
-cargo build -p wg-cli                   # debug binary at target/debug/wg
-cargo build -p wg-cli --release         # release binary
-cargo test -p wg-core --features semantic
-cargo test -p wg-cli --bin wg
+cargo check -p aidememo-core -p aidememo-cli       # fast verify
+cargo build -p aidememo-cli                   # debug binary at target/debug/aidememo
+cargo build -p aidememo-cli --release         # release binary
+cargo test -p aidememo-core --features semantic
+cargo test -p aidememo-cli --bin aidememo
 ./scripts/ci-local.sh lint
 ./scripts/ci-local.sh demo               # first-run workflow memory smoke
 ./scripts/ci-local.sh test
 # Tests that download a HuggingFace embedding model are #[ignore]'d
 # (CI skips them — first run hits HF lock races). Run locally for the
 # full surface once the model is cached:
-cargo test -p wg-core --features semantic -- --ignored
+cargo test -p aidememo-core --features semantic -- --ignored
 cargo build 2>&1 | grep '^error'        # only errors
-cargo install --path crates/wg-cli      # one-off install
+cargo install --path crates/aidememo-cli      # one-off install
 ```
 
 ### Logging
 
 The CLI uses `tracing` (stderr). Default filter is
-`wg=info,wg_core=warn` so `wg mcp-serve` startup, `wg watch` file
+`aidememo=info,aidememo_core=warn` so `aidememo mcp-serve` startup, `aidememo watch` file
 events, and core fallback warnings (HNSW sidecar missing, reranker
 disabled) all appear without setup.
 
 ```bash
-RUST_LOG=debug wg search redis              # standard env
-WG_LOG="wg=debug,wg_core=trace" wg query …  # alias if you don't want
+RUST_LOG=debug aidememo search redis              # standard env
+AIDEMEMO_LOG="aidememo=debug,aidememo_core=trace" aidememo query …  # alias if you don't want
                                              # to scope RUST_LOG globally
-RUST_LOG=error wg mcp-serve                 # silence everything except errors
+RUST_LOG=error aidememo mcp-serve                 # silence everything except errors
 ```
 
-Useful debug spans (turn on with `RUST_LOG=wg_core=debug`):
+Useful debug spans (turn on with `RUST_LOG=aidememo_core=debug`):
 
-- `hybrid_search` — wraps every `wg search --hybrid` call. Inside it
+- `hybrid_search` — wraps every `aidememo search --hybrid` call. Inside it
   you'll see `embed_provider loaded ms=…` (model load on first call,
   near-zero after) and per-phase events `bm25` / `query_embed` /
   `hnsw_lookup`.
 - `Store::open` — directory create + redb open + schema init.
 
-The legacy `WG_SEARCH_PROFILE=1` and `WG_LINT_PROFILE=1` env vars
+The legacy `AIDEMEMO_SEARCH_PROFILE=1` and `AIDEMEMO_LINT_PROFILE=1` env vars
 still work as a self-contained `eprintln` dump for users who'd
 rather not configure tracing.
 
@@ -68,75 +68,75 @@ rather not configure tracing.
 
 ### Setup / init
 ```
-wg init <wiki-root> [--no-ingest]                  create store + ingest markdown
-wg init --agent codex <wiki-root>                  init + register wg MCP for an agent
-wg init --agent claude --agent-force <wiki-root>   overwrite existing agent MCP config
+aidememo init <wiki-root> [--no-ingest]                  create store + ingest markdown
+aidememo init --agent codex <wiki-root>                  init + register aidememo MCP for an agent
+aidememo init --agent claude --agent-force <wiki-root>   overwrite existing agent MCP config
 ```
 
 ### Read / search
 ```
-wg search <query> [-l N] [--current] [--hybrid] [--source-id ID] [--include-archive] [--via URL]
+aidememo search <query> [-l N] [--current] [--hybrid] [--source-id ID] [--include-archive] [--via URL]
                                                    BM25 by default (no model load — fast path).
                                                    --hybrid = also run semantic re-rank (loads
                                                    model). --include-archive = also search the
                                                    cold-tier `<store>.cold.redb` and merge any
                                                    matches in. --via = dispatch via running
-                                                   `wg mcp-serve` daemon (warm model, ~5-50 ms)
+                                                   `aidememo mcp-serve` daemon (warm model, ~5-50 ms)
                                                    --source-id scopes retrieval to one source /
                                                    tenant / upstream namespace.
-wg query <topic> [-l N] [-d N] [--recent-limit N] [-m naive|local|hybrid|global] [--source-id ID]
+aidememo query <topic> [-l N] [-d N] [--recent-limit N] [-m naive|local|hybrid|global] [--source-id ID]
                                                    unified search+traverse+recent
-wg recent [-n N] [--type T] [--last 30d]          last 7d facts (default)
-wg traverse <entity> [-d N]                        forward graph walk
-wg path <from> <to>                                shortest path
-wg graph [--from E] [--depth N] [--format mermaid|dot]
-wg entity get|list|show <NAME>                     show: compiled view (summary + recent)
-wg fact get|list
-wg stats                                           counts + size
+aidememo recent [-n N] [--type T] [--last 30d]          last 7d facts (default)
+aidememo traverse <entity> [-d N]                        forward graph walk
+aidememo path <from> <to>                                shortest path
+aidememo graph [--from E] [--depth N] [--format mermaid|dot]
+aidememo entity get|list|show <NAME>                     show: compiled view (summary + recent)
+aidememo fact get|list
+aidememo stats                                           counts + size
 ```
 
 ### Write
 ```
-wg fact add <content> --entities A,B [--type T] [--source-id ID]
+aidememo fact add <content> --entities A,B [--type T] [--source-id ID]
                                                    auto-creates missing entities; optional
                                                    source_id scopes shared-store retrieval.
-wg fact supersede <OLD_ID> <NEW_ID>                 validity-window invalidate
-wg fact archive --ids <ID,…>                        move to <store>.cold.redb (preserves FactId)
-wg fact archive --older-than 30d [--type note]      bulk move by age (+ optional type filter)
-wg edit fact <ID> --append/--prepend/--find+--replace/--content
-wg entity add <name> [--type service]               custom types accepted
-wg entity describe <name> "..." | --from-stdin | --clear   compiled-truth summary
-wg relation add <src> <tgt> <rel_type>
+aidememo fact supersede <OLD_ID> <NEW_ID>                 validity-window invalidate
+aidememo fact archive --ids <ID,…>                        move to <store>.cold.redb (preserves FactId)
+aidememo fact archive --older-than 30d [--type note]      bulk move by age (+ optional type filter)
+aidememo edit fact <ID> --append/--prepend/--find+--replace/--content
+aidememo entity add <name> [--type service]               custom types accepted
+aidememo entity describe <name> "..." | --from-stdin | --clear   compiled-truth summary
+aidememo relation add <src> <tgt> <rel_type>
 ```
 
 ### Maintenance
 ```
-wg doctor [--json]                       friendly health check (lint + memory +
+aidememo doctor [--json]                       friendly health check (lint + memory +
                                           agent setup + feedback-adapter status)
-wg lint [--json]                          raw lint issues
-wg bench <golden.jsonl> [--k 5] [--limit N]
+aidememo lint [--json]                          raw lint issues
+aidememo bench <golden.jsonl> [--k 5] [--limit N]
                                           P@K / R@K / latency benchmark
-wg skill check <path> [--json]            validate SKILL.md files
-wg ingest <root> [-i]                     ingest markdown
-wg watch <root> [--search Q]              live re-ingest + optional live search
-wg vector-rebuild [--current-only] [--json]  rebuild HNSW from scratch (after model swap).
+aidememo skill check <path> [--json]            validate SKILL.md files
+aidememo ingest <root> [-i]                     ingest markdown
+aidememo watch <root> [--search Q]              live re-ingest + optional live search
+aidememo vector-rebuild [--current-only] [--json]  rebuild HNSW from scratch (after model swap).
                                             --current-only skips superseded facts — pair with
-                                            `wg consolidate --gac` to actually shrink the index
+                                            `aidememo consolidate --gac` to actually shrink the index
                                             to the representative set (default keeps all facts
                                             so `as_of` historical retrieval keeps working).
-wg auto-relate [--top-k 3] [--threshold 0.0] [--dry-run] [--json]
+aidememo auto-relate [--top-k 3] [--threshold 0.0] [--dry-run] [--json]
                                             mine `related` edges from semantic similarity
                                             (one-shot; idempotent; semantic feature only)
-wg overview [-n 10] [--recent-days 7] [--json]
+aidememo overview [-n 10] [--recent-days 7] [--json]
                                             first-impression snapshot: entity-type buckets,
                                             fact-type distribution, top entities, recent
                                             activity. One call instead of stats + entity_list
                                             + fact_list.
-wg consolidate [--semantic-threshold 0.85] [--ttl TYPE=DAYS] [--dry-run] [--json]
+aidememo consolidate [--semantic-threshold 0.85] [--ttl TYPE=DAYS] [--dry-run] [--json]
                                             periodic memory-lifecycle pass: pairwise cosine
                                             dedup (older fact superseded) + per-type TTL
                                             expiry. Idempotent. Mirrors OMEGA's compaction.
-wg consolidate --gac [--gac-theta 0.85] [--gac-spread-budget N] [--gac-cold-tier]
+aidememo consolidate --gac [--gac-theta 0.85] [--gac-spread-budget N] [--gac-cold-tier]
                      [--gac-protect TYPE,TYPE,...]
                                             cluster-aware consolidation per the GAC
                                             (Geometry-Aware Consolidation, NeurIPS 2026)
@@ -150,26 +150,26 @@ wg consolidate --gac [--gac-theta 0.85] [--gac-spread-budget N] [--gac-cold-tier
                                             120q showed even θ=0.95 GAC drops 1 SS-pref q
                                             because near-paraphrases ARE the recall signal
                                             for that category). --dry-run for analysis-only.
-                                            Pair with `wg vector-rebuild --current-only` to
+                                            Pair with `aidememo vector-rebuild --current-only` to
                                             shrink the HNSW index proportionally — supersede
                                             alone leaves losers in the sidecar.
-wg session new <topic>                      tracked session entity + shell-evaluable
-                                            'export WG_SESSION_ID=…'. Auto-attaches to every
+aidememo session new <topic>                      tracked session entity + shell-evaluable
+                                            'export AIDEMEMO_SESSION_ID=…'. Auto-attaches to every
                                             subsequent fact_add while the env var is set.
-wg session current / list                   current/recent tracked sessions.
-wg workflow start <TITLE> [--body-file issue.md] [--source github:org/repo#123]
+aidememo session current / list                   current/recent tracked sessions.
+aidememo workflow start <TITLE> [--body-file issue.md] [--source github:org/repo#123]
                                             sparse issue/ticket entry point: create session,
                                             store trigger, return project context pack.
                                             Use --bm25-only for deterministic demos/hooks
                                             that should skip embedding-model load.
-wg export [--scope all|...] / wg import
-wg config get/set/list
+aidememo export [--scope all|...] / aidememo import
+aidememo config get/set/list
 
 # Speed/safety knob: drop per-commit fsync. Survives process crash
 # (page cache outlives it), but power loss within ~30s of a write
 # can lose recent commits. About 10× faster than the default.
-wg config set store.durability eventual    # opt in
-wg config set store.durability immediate   # default (recommended)
+aidememo config set store.durability eventual    # opt in
+aidememo config set store.durability immediate   # default (recommended)
 
 # Embedding model — when to switch off the model2vec default:
 #
@@ -186,8 +186,8 @@ wg config set store.durability immediate   # default (recommended)
 # it's where BGE's English-tuned semantics close the gap that
 # multilingual potion's lookup-based vectors miss.
 #
-wg config set model.provider fastembed
-wg config set model.name bge-small-en-v1.5    # 133 MB, ONNX
+aidememo config set model.provider fastembed
+aidememo config set model.name bge-small-en-v1.5    # 133 MB, ONNX
 #
 # Stay on the default when the workload is **surface-form-match
 # dominant**: code / docs / news RAG where the question shares
@@ -217,7 +217,7 @@ wg config set model.name bge-small-en-v1.5    # 133 MB, ONNX
 #   rerank.endpoint = "http://host:8081"
 #   rerank.model    = "BAAI/bge-reranker-base"
 #   rerank.top_k    = 32
-# Reranker failure is non-fatal — wg falls back to RRF order with a warning.
+# Reranker failure is non-fatal — aidememo falls back to RRF order with a warning.
 #
 # When to enable rerank — measured trade-offs (default: off):
 #   * Retrieval-bound workload: corpus where top-K recall is < 95%
@@ -236,42 +236,42 @@ wg config set model.name bge-small-en-v1.5    # 133 MB, ONNX
 
 ### Multi-project
 ```
-wg project list/show/create/use/remove
-wg --project NAME ...                     one-off override
-wg --store PATH ...                       absolute path override
+aidememo project list/show/create/use/remove
+aidememo --project NAME ...                     one-off override
+aidememo --store PATH ...                       absolute path override
 ```
 
 ### Servers
 ```
-wg mcp                                    stdio JSON-RPC (preferred)
-wg mcp-serve --port 3000                  HTTP + SSE; /health + /admin/status
+aidememo mcp                                    stdio JSON-RPC (preferred)
+aidememo mcp-serve --port 3000                  HTTP + SSE; /health + /admin/status
 ```
 
 ### Daemon (background mcp-serve, opportunistic discovery)
 
-`wg daemon` wraps `wg mcp-serve` so manual CLI calls (`wg search`,
+`aidememo daemon` wraps `aidememo mcp-serve` so manual CLI calls (`aidememo search`,
 …) auto-pick up the warm path without `--via`. Pattern follows
 docker / pg_ctl: one shell, one daemon, the rest of the machine
 just uses it.
 
 ```
-wg daemon start                          spawn mcp-serve in background;
-                                         ~/.wg/daemon.json holds port/pid
-wg daemon status                         show registry + /health probe
-wg daemon stop                           SIGTERM the recorded pid
+aidememo daemon start                          spawn mcp-serve in background;
+                                         ~/.aidememo/daemon.json holds port/pid
+aidememo daemon status                         show registry + /health probe
+aidememo daemon stop                           SIGTERM the recorded pid
 ```
 
-After `wg daemon start`, `wg search redis` automatically dispatches
+After `aidememo daemon start`, `aidememo search redis` automatically dispatches
 to the daemon over HTTP (no `--via` needed). Measured warm:
 
 | call | latency |
 |---|---|
-| `wg search redis` (BM25 via daemon)        | ~9 ms |
-| `wg search redis --hybrid` (HNSW via daemon) | ~45 ms |
-| `wg search redis` (no daemon, fresh CLI)   | ~70-300 ms |
+| `aidememo search redis` (BM25 via daemon)        | ~9 ms |
+| `aidememo search redis --hybrid` (HNSW via daemon) | ~45 ms |
+| `aidememo search redis` (no daemon, fresh CLI)   | ~70-300 ms |
 
-Set `WG_NO_DAEMON=1` to bypass discovery for one invocation. Note:
-because redb is single-writer, an in-process `wg` cannot open the
+Set `AIDEMEMO_NO_DAEMON=1` to bypass discovery for one invocation. Note:
+because redb is single-writer, an in-process `aidememo` cannot open the
 store while the daemon holds it — the bypass mode is only useful
 when no daemon is running (e.g. running CI scripts on the same
 store path).
@@ -279,8 +279,8 @@ store path).
 ## Code map
 
 ```
-crates/wg-core/src/
-  lib.rs        WikiGraph public API (re-exports)
+crates/aidememo-core/src/
+  lib.rs        AideMemo public API (re-exports)
   store.rs      redb CRUD (entity/fact/relation/alias index, current_only filter)
   graph.rs      traverse / path_find
   search.rs     BM25 + semantic hybrid (current_only filter, time windows)
@@ -288,18 +288,18 @@ crates/wg-core/src/
   types.rs      EntityType (Custom variant), FactRecord (superseded_at/by),
                 QueryOpts (current_only), …
   config.rs     Config { store, model, search, lint, projects, default_project }
-  error.rs      WgError + Result<T>
+  error.rs      AideMemoError + Result<T>
   lint.rs       graph health checks
   migrate.rs    schema migrations
 
-crates/wg-cli/src/
+crates/aidememo-cli/src/
   main.rs            command dispatch
   output.rs          Format::{Table, Json} renderers + format_query_result
   cmd/mod.rs         bpaf top-level + per-command parsers (--project / --json)
   cmd/{init,watch,model,feedback,adapt,doctor,recent,edit,graph,project}.rs
   cmd/mcp_tools.rs   shared MCP JSON-RPC types + 25-tool dispatch
-  cmd/mcp_stdio.rs   `wg mcp` (stdio)
-  cmd/mcp_serve.rs   `wg mcp-serve` (HTTP + SSE)
+  cmd/mcp_stdio.rs   `aidememo mcp` (stdio)
+  cmd/mcp_serve.rs   `aidememo mcp-serve` (HTTP + SSE)
 ```
 
 ## House rules
@@ -316,11 +316,11 @@ crates/wg-cli/src/
   use a variable named the same as the field.
 - Parser return type is `impl Parser<Command>`, not the concrete type.
 
-### redb / wg-core
+### redb / aidememo-core
 
-- `WikiGraph` wraps `Arc<RwLock<Store>>`; `Store` itself owns `Arc<Database>`.
-- `WikiGraph::ingest` is `&self` (uses interior mutability via the RwLock).
-  This makes `Arc<WikiGraph>` callable from bindings.
+- `AideMemo` wraps `Arc<RwLock<Store>>`; `Store` itself owns `Arc<Database>`.
+- `AideMemo::ingest` is `&self` (uses interior mutability via the RwLock).
+  This makes `Arc<AideMemo>` callable from bindings.
 - Only `Store::open(path, config)` exists — no `new` / `get_or_create`.
 - Read txn and write txn cannot be nested. Drop the txn before opening another.
 - All persisted records are JSON (not bincode), so adding `#[serde(default)]`
@@ -330,7 +330,7 @@ crates/wg-cli/src/
 ### Errors / lints
 
 - Workspace lints forbid `unsafe_code` and deny `unwrap_used`, `panic`,
-  `dbg_macro`. Use `?` with `WgError` variants instead.
+  `dbg_macro`. Use `?` with `AideMemoError` variants instead.
 - `Config.store.path` is a `String` — convert with `PathBuf::from(&…)`.
   `Config::default_store_path()` and `Config::project_path()` already
   expand `~/`.
@@ -339,13 +339,13 @@ crates/wg-cli/src/
 
 ## MCP integration
 
-`wg` ships two MCP transports backed by the same tool dispatch
+`aidememo` ships two MCP transports backed by the same tool dispatch
 (`cmd/mcp_tools.rs`):
 
 | Subcommand | Transport | When to use |
 |---|---|---|
-| `wg mcp` | stdio (newline-delimited JSON-RPC) | local agents (Claude Code, Codex CLI) |
-| `wg mcp-serve --port 3000` | HTTP POST `/mcp` + SSE `/sse` | browser/remote clients |
+| `aidememo mcp` | stdio (newline-delimited JSON-RPC) | local agents (Claude Code, Codex CLI) |
+| `aidememo mcp-serve --port 3000` | HTTP POST `/mcp` + SSE `/sse` | browser/remote clients |
 
 **Tool surface — 4 core, then standard, then advanced.** Agent prompts
 should lead with the core 4; the rest are there when needed.
@@ -354,45 +354,45 @@ should lead with the core 4; the rest are there when needed.
 
 | Tool | When |
 |---|---|
-| **`wg_workflow_start`** | **🟢 Ticket/issue/PR automation entry point** — create tracked session + store trigger text + return decisions/lessons/errors/search context. |
-| **`wg_context`** | **🟢 Top-of-turn entry point** — pinned + personalisation + recent + (with topic) search/traverse/lessons. One round-trip. |
-| **`wg_query`** | Topic dive after wg_context. `format:"text"` for compact prompt injection; `max_chars:N` for hard caps; `level:"entity"`/`"session"` to group by entity / by tracked session. |
-| **`wg_aggregate`** | Deterministic counting / sum / timeline across facts. Pulls agent out of in-head arithmetic for "how much / how many / between when" questions. ops: `count`/`enumerate`/`by_entity`/`sum_currency`/`sum_duration`/`count_distinct_dates`/`timeline`. |
-| **`wg_fact_add`** | Append a fact (auto-creates entities, `preference`/`lesson`/`error` types). Auto-attaches to `WG_SESSION_ID` when the env var is set. |
+| **`aidememo_workflow_start`** | **🟢 Ticket/issue/PR automation entry point** — create tracked session + store trigger text + return decisions/lessons/errors/search context. |
+| **`aidememo_context`** | **🟢 Top-of-turn entry point** — pinned + personalisation + recent + (with topic) search/traverse/lessons. One round-trip. |
+| **`aidememo_query`** | Topic dive after aidememo_context. `format:"text"` for compact prompt injection; `max_chars:N` for hard caps; `level:"entity"`/`"session"` to group by entity / by tracked session. |
+| **`aidememo_aggregate`** | Deterministic counting / sum / timeline across facts. Pulls agent out of in-head arithmetic for "how much / how many / between when" questions. ops: `count`/`enumerate`/`by_entity`/`sum_currency`/`sum_duration`/`count_distinct_dates`/`timeline`. |
+| **`aidememo_fact_add`** | Append a fact (auto-creates entities, `preference`/`lesson`/`error` types). Auto-attaches to `AIDEMEMO_SESSION_ID` when the env var is set. |
 
 **Standard (frequent, but optional in any single turn)**:
 
 | Tool | When |
 |---|---|
-| `wg_search` | Pure hybrid search, no graph wrapper — fastest pinpoint lookup. |
-| `wg_recent` | Last N days of facts. |
-| `wg_overview` | First-impression snapshot for an unfamiliar wiki — entity-type buckets, top centrals, recent activity. |
-| `wg_traverse` | Walk the graph from a known entity. `direction:"reverse"` for "what depends on X". |
-| `wg_doctor` | Health snapshot — counts + lint issues + per-code action hints + shared-store `sharing` guidance (`lock_retry_ms`, daemon state, serverless writer envelope). |
-| `wg_entity_get` | Fetch one entity (name / alias). |
-| `wg_fact_get` | Fetch one fact by ULID. |
-| `wg_entity_list` | Browse entities. |
+| `aidememo_search` | Pure hybrid search, no graph wrapper — fastest pinpoint lookup. |
+| `aidememo_recent` | Last N days of facts. |
+| `aidememo_overview` | First-impression snapshot for an unfamiliar wiki — entity-type buckets, top centrals, recent activity. |
+| `aidememo_traverse` | Walk the graph from a known entity. `direction:"reverse"` for "what depends on X". |
+| `aidememo_doctor` | Health snapshot — counts + lint issues + per-code action hints + shared-store `sharing` guidance (`lock_retry_ms`, daemon state, serverless writer envelope). |
+| `aidememo_entity_get` | Fetch one entity (name / alias). |
+| `aidememo_fact_get` | Fetch one fact by ULID. |
+| `aidememo_entity_list` | Browse entities. |
 
 **Advanced (write-side power tools, batch ops, niche)**:
 
 | Tool | When |
 |---|---|
-| `wg_fact_add_many` | Bulk fact insert in one transaction. |
-| `wg_fact_supersede` | Mark an old fact replaced by a new one (validity-window invalidate). |
-| `wg_fact_edit` | Patch fact content (append/prepend/find+replace/content). |
-| `wg_fact_archive` | Move facts to cold-tier (`<store>.cold.redb`) — hot store shrinks, FactId preserved for `wg_fact_get`. Pass `include_archive:true` on `wg_search` / `wg_query` to merge cold matches back in. |
-| `wg_fact_pin` | Pin / unpin a fact for the always-on tier. |
-| `wg_fact_list` | Paginated fact list with filters. |
-| `wg_pinned_context` | Just the pinned tier (subset of wg_context). |
-| `wg_session_start` | Pinned + recent only (subset of wg_context). |
-| `wg_path` | Shortest-path between two entities. |
-| `wg_entity_describe` | Set / clear an entity's prose summary. |
-| `wg_extract` | Run heuristic / optional LLM fact extraction over raw text. |
-| `wg_feedback` | Record positive / negative feedback on a search hit (training signal). |
+| `aidememo_fact_add_many` | Bulk fact insert in one transaction. |
+| `aidememo_fact_supersede` | Mark an old fact replaced by a new one (validity-window invalidate). |
+| `aidememo_fact_edit` | Patch fact content (append/prepend/find+replace/content). |
+| `aidememo_fact_archive` | Move facts to cold-tier (`<store>.cold.redb`) — hot store shrinks, FactId preserved for `aidememo_fact_get`. Pass `include_archive:true` on `aidememo_search` / `aidememo_query` to merge cold matches back in. |
+| `aidememo_fact_pin` | Pin / unpin a fact for the always-on tier. |
+| `aidememo_fact_list` | Paginated fact list with filters. |
+| `aidememo_pinned_context` | Just the pinned tier (subset of aidememo_context). |
+| `aidememo_session_start` | Pinned + recent only (subset of aidememo_context). |
+| `aidememo_path` | Shortest-path between two entities. |
+| `aidememo_entity_describe` | Set / clear an entity's prose summary. |
+| `aidememo_extract` | Run heuristic / optional LLM fact extraction over raw text. |
+| `aidememo_feedback` | Record positive / negative feedback on a search hit (training signal). |
 
 Tool schemas live in `cmd/mcp_tools.rs::list_tools()`. The deprecated
-`wg_lint` and `wg_backlinks` tools were removed in favour of
-`wg_doctor` and `wg_traverse(direction:"reverse")`.
+`aidememo_lint` and `aidememo_backlinks` tools were removed in favour of
+`aidememo_doctor` and `aidememo_traverse(direction:"reverse")`.
 
 ### Agent-UX cheatsheet (Tier A+B additions)
 
@@ -409,62 +409,62 @@ Tool schemas live in `cmd/mcp_tools.rs::list_tools()`. The deprecated
 | `note` | observational | 1× weight (default fallback) |
 | `question` | open investigation | 0.5× (deprioritised) |
 
-**Tracked sessions** — every `wg fact add` auto-attaches a session entity while `WG_SESSION_ID` is in the env:
+**Tracked sessions** — every `aidememo fact add` auto-attaches a session entity while `AIDEMEMO_SESSION_ID` is in the env:
 ```bash
-eval "$(wg session new 'auth migration')"
-wg fact add 'Decided to use Keycloak for SSO' --type decision --entities Auth
-wg fact add 'Tried bare-metal Postgres, hit IO limits at 5k qps' --type lesson --entities Postgres
-wg session current     # show topic + fact count attached so far
-wg session list        # all tracked sessions
-wg fact list --entity $WG_SESSION_ID  # pull one session's full thread
+eval "$(aidememo session new 'auth migration')"
+aidememo fact add 'Decided to use Keycloak for SSO' --type decision --entities Auth
+aidememo fact add 'Tried bare-metal Postgres, hit IO limits at 5k qps' --type lesson --entities Postgres
+aidememo session current     # show topic + fact count attached so far
+aidememo session list        # all tracked sessions
+aidememo fact list --entity $AIDEMEMO_SESSION_ID  # pull one session's full thread
 ```
 
 **Lifecycle / consolidation** — periodic batch dedup + TTL pass:
 ```bash
-wg consolidate --semantic-threshold 0.85          # OMEGA-style dedup
-wg consolidate --ttl note=30 --ttl question=14    # per-type expiry
-wg consolidate --semantic-threshold 0.85 --ttl note=30 --dry-run   # preview
+aidememo consolidate --semantic-threshold 0.85          # OMEGA-style dedup
+aidememo consolidate --ttl note=30 --ttl question=14    # per-type expiry
+aidememo consolidate --semantic-threshold 0.85 --ttl note=30 --dry-run   # preview
 ```
-Plus: `wg config set lifecycle.auto_supersede_atomic_types true` makes `wg fact add` of a `decision`/`convention` auto-supersede the existing same-type fact on the same entity (off by default — preserves the historical "every fact_add creates a new fact" contract).
+Plus: `aidememo config set lifecycle.auto_supersede_atomic_types true` makes `aidememo fact add` of a `decision`/`convention` auto-supersede the existing same-type fact on the same entity (off by default — preserves the historical "every fact_add creates a new fact" contract).
 
 **LLM-aided extractor (opt-in)** — when `extract.provider = "openai"`:
 ```bash
-wg config set extract.provider openai            # uses OPENAI_API_KEY
-wg config set extract.model gpt-4o-mini          # default
-wg extract --llm 'long chat transcript here…'    # CLI
-# MCP: wg_extract { llm: true, text: "…" }
+aidememo config set extract.provider openai            # uses OPENAI_API_KEY
+aidememo config set extract.model gpt-4o-mini          # default
+aidememo extract --llm 'long chat transcript here…'    # CLI
+# MCP: aidememo_extract { llm: true, text: "…" }
 
 # Non-interactive review queue for hooks / auto-capture:
-wg pending list --json
-wg pending stats --json
-wg pending approve --indices 1,3-5 --json
-wg pending reject --all --json
+aidememo pending list --json
+aidememo pending stats --json
+aidememo pending approve --indices 1,3-5 --json
+aidememo pending reject --all --json
 ```
 
-**Auto-context hooks (Claude Code)** — see `wg-skill/hooks/README.md` for installation:
+**Auto-context hooks (Claude Code)** — see `aidememo-skill/hooks/README.md` for installation:
 | Hook | Effect |
 |---|---|
-| `SessionStart` | injects `wg overview` + `wg recent` + pinned facts as `additionalContext` |
-| `PostToolUse` (Edit/Write) | surfaces wg facts related to the just-edited file |
-| `UserPromptSubmit` | extracts candidate facts from the prompt (preview only; opt into LLM via `WG_EXTRACT_LLM=1`) |
+| `SessionStart` | injects `aidememo overview` + `aidememo recent` + pinned facts as `additionalContext` |
+| `PostToolUse` (Edit/Write) | surfaces aidememo facts related to the just-edited file |
+| `UserPromptSubmit` | extracts candidate facts from the prompt (preview only; opt into LLM via `AIDEMEMO_EXTRACT_LLM=1`) |
 
-### Agentic-loop pattern — when to call `wg_aggregate` mid-turn
+### Agentic-loop pattern — when to call `aidememo_aggregate` mid-turn
 
-For most user questions, a single `wg_context` (opening turn) or `wg_query`
+For most user questions, a single `aidememo_context` (opening turn) or `aidememo_query`
 (follow-up) round-trip yields enough context for the reader to answer
-directly from snippets. Don't reach for `wg_aggregate` unless the question
+directly from snippets. Don't reach for `aidememo_aggregate` unless the question
 shape demands deterministic arithmetic across facts:
 
 | Question shape | Tool | Rationale |
 |---|---|---|
-| "What did I say about X?" | `wg_query` | Simple recall — read the snippet |
-| "When did I last do Y?" | `wg_query` (level=fact) | Single-fact lookup |
-| "What's my preference for Z?" | `wg_context` (personalisation tier) | Pre-surfaced |
-| **"How much $ total did I spend on X?"** | `wg_aggregate(op=sum_currency)` | Arithmetic across N facts |
-| **"How many hours of Y total?"** | `wg_aggregate(op=sum_duration)` | Time accumulation |
-| **"How many distinct days had event Z?"** | `wg_aggregate(op=count_distinct_dates)` | Set-cardinality across facts |
-| **"Timeline of all X events"** | `wg_aggregate(op=timeline)` | Chronological ordering |
-| **"How many times did I decide X?"** | `wg_aggregate(op=count, fact_type=decision)` | Bounded enumeration |
+| "What did I say about X?" | `aidememo_query` | Simple recall — read the snippet |
+| "When did I last do Y?" | `aidememo_query` (level=fact) | Single-fact lookup |
+| "What's my preference for Z?" | `aidememo_context` (personalisation tier) | Pre-surfaced |
+| **"How much $ total did I spend on X?"** | `aidememo_aggregate(op=sum_currency)` | Arithmetic across N facts |
+| **"How many hours of Y total?"** | `aidememo_aggregate(op=sum_duration)` | Time accumulation |
+| **"How many distinct days had event Z?"** | `aidememo_aggregate(op=count_distinct_dates)` | Set-cardinality across facts |
+| **"Timeline of all X events"** | `aidememo_aggregate(op=timeline)` | Chronological ordering |
+| **"How many times did I decide X?"** | `aidememo_aggregate(op=count, fact_type=decision)` | Bounded enumeration |
 
 LongMemEval measurement (240q balanced, MiniMax temp=0, 3-run mean,
 reproducibility-fixed bench): the agentic-loop variant is **within
@@ -476,43 +476,43 @@ What does survive across scales: SS-pref / temporal regressions when
 agentic-loop is forced everywhere (JSON tool-call overhead measurably
 scrambles single-fact reasoning). And one suggestive within-noise
 positive: KU "How many X?" counting questions tend to land 1-2pt
-above baseline when the agent uses `wg_aggregate(op=count|enumerate)`.
+above baseline when the agent uses `aidememo_aggregate(op=count|enumerate)`.
 
 Auto-dispatch via single-shot LLM classifier ("does this question
 need aggregation? YES/NO") nets to baseline at 240q (+0pt mean,
 classifier precision ≈40%; KU/temporal "false positives" are
 genuinely counting-shaped, not classifier mistakes). Don't bake
-auto-dispatch into wg — pay no extra round-trip for zero lift.
+auto-dispatch into aidememo — pay no extra round-trip for zero lift.
 
 The trigger table above remains the right pattern, but treat
-`wg_aggregate` as **insurance** for cross-fact arithmetic, not a
+`aidememo_aggregate` as **insurance** for cross-fact arithmetic, not a
 guaranteed accuracy lever. Most lift in our measurements comes from
-`wg_query` granularity / `level` and ingest hygiene, not from
+`aidememo_query` granularity / `level` and ingest hygiene, not from
 mid-turn tool dispatch.
 
 Implementation pattern in your reader prompt (recommended):
 
 ```
-You have access to wg_aggregate(op=sum_currency|sum_duration|count_distinct_dates|timeline|count).
+You have access to aidememo_aggregate(op=sum_currency|sum_duration|count_distinct_dates|timeline|count).
 Call it when the user's question requires summing or counting across
 facts (e.g., 'how much total', 'how many distinct days'). Otherwise
 answer directly from the snippets you already have.
 ```
 
-### Self-extraction pattern — agent classifies, wg stores
+### Self-extraction pattern — agent classifies, aidememo stores
 
-`wg` deliberately does **not** ship a built-in LLM-aided ingest
+`aidememo` deliberately does **not** ship a built-in LLM-aided ingest
 pipeline (the kind Mem0 / Letta have a dedicated extractor for).
-The reason is structural: every agent that calls `wg_fact_add`
+The reason is structural: every agent that calls `aidememo_fact_add`
 already has its own LLM, and that LLM is almost always a stronger
-model than wg could ever embed. Asking the calling agent to do the
-classification keeps wg local-first and free of API-key /
+model than aidememo could ever embed. Asking the calling agent to do the
+classification keeps aidememo local-first and free of API-key /
 extractor-quality coupling, while still benefiting from the
 agent's reasoning.
 
 What this means for the calling agent:
 
-* Before `wg_fact_add`, decide which `fact_type` fits — the trigger
+* Before `aidememo_fact_add`, decide which `fact_type` fits — the trigger
   cues are baked into the tool description, but here's the short
   form for prompt injection:
 
@@ -527,14 +527,14 @@ What this means for the calling agent:
   | factual without opinion | claim |
   | catch-all | note |
 
-* Pass the entity hints in the same call (`entities: [...]`) — wg
+* Pass the entity hints in the same call (`entities: [...]`) — aidememo
   auto-creates and aliases.
 
-* `wg_fact_add_many` gets the same self-extracted classification —
+* `aidememo_fact_add_many` gets the same self-extracted classification —
   the batch round-trip is for fsync amortisation, not classification.
 
 This is the pattern you should follow rather than reaching for a
-heavier ingest framework. wg's bench measurements show the in-pipeline
+heavier ingest framework. aidememo's bench measurements show the in-pipeline
 weighting (decay-exempt + 2× boost on personalisation tiers like
 preference / lesson / error) materially shifts ranking — but only
 when those types are populated correctly. Ship-default `note`
@@ -543,7 +543,7 @@ classification leaves the boost dormant.
 Historical caveats from our measurements:
 
 * Routing extraction through a same-class extractor (MiniMax →
-  MiniMax via `wg_extract --llm`) regressed LongMemEval 60q by
+  MiniMax via `aidememo_extract --llm`) regressed LongMemEval 60q by
   ~13pt because the extractor *rewrites* facts (paraphrases /
   summarises) and the reader can no longer match rewritten
   extracts to the raw turns.
@@ -555,45 +555,45 @@ Historical caveats from our measurements:
 
 The takeaway isn't "self-extraction is bad" — it's "the calling
 agent's classifier needs to be at least as strong as the reader
-that consumes the result". In practice production agents call wg
+that consumes the result". In practice production agents call aidememo
 from Claude Opus / GPT-5-class models, well above the bench reader
 class we measured against, so the lift hypothesis remains
 plausible — just unmeasured at this quota window.
 
 ### Register with Claude Code
 ```bash
-claude mcp add wg -- wg mcp
+claude mcp add aidememo -- aidememo mcp
 # or commit .mcp.json at repo root (already provided)
 ```
 
 ### Register with Codex CLI
 Add to `~/.codex/config.toml`:
 ```toml
-[mcp_servers.wg]
-command = "wg"
+[mcp_servers.aidememo]
+command = "aidememo"
 args = ["mcp"]
 ```
 
 ### Multi-agent shared store
 
-`wg` uses redb, which holds an **exclusive file lock per process**.
-Two agents that each spawn their own `wg mcp` against the same store
+`aidememo` uses redb, which holds an **exclusive file lock per process**.
+Two agents that each spawn their own `aidememo mcp` against the same store
 will fight over the lock — one wins, the other gets `Database
 already open. Cannot acquire lock.` Two ways to handle this:
 
-1. **Single shared `wg mcp-serve` instance** (recommended for shared
+1. **Single shared `aidememo mcp-serve` instance** (recommended for shared
    writes). Run one HTTP/SSE server, point every agent at the same
    URL. Each agent's MCP client sees the same tools, the same store,
    no lock contention.
    ```bash
-   wg mcp-serve --port 3000 --store ~/.wg/team.redb &
+   aidememo mcp-serve --port 3000 --store ~/.aidememo/team.redb &
    # In each agent's MCP config: type=http, url=http://localhost:3000/mcp
    ```
 2. **Brief opportunistic contention** is fine: set
-   `store.lock_retry_ms` so transient locks (one agent's `wg mcp`
-   briefly holds while you run a one-off `wg fact add`) auto-resolve.
+   `store.lock_retry_ms` so transient locks (one agent's `aidememo mcp`
+   briefly holds while you run a one-off `aidememo fact add`) auto-resolve.
    ```bash
-   wg config set store.lock_retry_ms 5000   # 5s budget, polls every 100ms
+   aidememo config set store.lock_retry_ms 5000   # 5s budget, polls every 100ms
    ```
    `lock_retry_ms = 0` (default) preserves the old fail-fast behaviour.
    Scenario J (`python3 bench/multi-agent/scenario_j_lock_retry_sweep.py`)
@@ -601,16 +601,16 @@ already open. Cannot acquire lock.` Two ways to handle this:
    (40/40 persisted, p95 1.28s). At 8 writers it still recovered
    79/80 writes but p95 rose to 2.99s and one write exhausted the
    5s budget, so use the shared daemon when that level of parallelism
-   is normal. `wg doctor --json` exposes the same threshold in its
+   is normal. `aidememo doctor --json` exposes the same threshold in its
    `sharing` block.
 
-Don't try to give multiple agents their own stdio `wg mcp` against
+Don't try to give multiple agents their own stdio `aidememo mcp` against
 the same redb path — it will work for whichever started first, then
 silently lose writes from the others.
 
 ### Hardened mcp-serve (Phase 1)
 
-`wg mcp-serve` defaults to `127.0.0.1` since the network-hardening
+`aidememo mcp-serve` defaults to `127.0.0.1` since the network-hardening
 pass landed (commit 8aa3f68). Three flags govern exposure:
 
 | Flag | Default | Effect |
@@ -618,7 +618,7 @@ pass landed (commit 8aa3f68). Three flags govern exposure:
 | `--bind ADDR` | `127.0.0.1` | Loopback only. Pass `0.0.0.0` to expose on the LAN |
 | `--auth-token TOKEN` | unset | Bearer token literal — exposed in shell history / `ps aux`, only use for ad-hoc tests |
 | `--auth-token-file PATH` | unset | Read the token from a file (mode 0600 recommended). Production-friendly |
-| `WG_MCP_AUTH_TOKEN` env | unset | Final fallback when neither flag is set |
+| `AIDEMEMO_MCP_AUTH_TOKEN` env | unset | Final fallback when neither flag is set |
 
 Non-loopback bind without an auth token is **refused at startup** —
 the server won't expose an unauthenticated store on the network.
@@ -628,49 +628,49 @@ reverse proxy (caddy / nginx) in front if you need them.
 
 ```bash
 # Same-host: agents go through loopback, no token needed
-wg mcp-serve --port 3000
+aidememo mcp-serve --port 3000
 curl http://127.0.0.1:3000/admin/status   # request counts, auth mode,
                                            # store path, sync cursor status
 
 # Multi-host team server: token in a file, never on the command line
-wg auth generate > /etc/wg/team-token   # one-time: emit 64-char hex
-chmod 600 /etc/wg/team-token
-wg mcp-serve --port 3000 --bind 0.0.0.0 --auth-token-file /etc/wg/team-token
+aidememo auth generate > /etc/aidememo/team-token   # one-time: emit 64-char hex
+chmod 600 /etc/aidememo/team-token
+aidememo mcp-serve --port 3000 --bind 0.0.0.0 --auth-token-file /etc/aidememo/team-token
 ```
 
-### Token UX — `wg auth` (commit will land alongside this section)
+### Token UX — `aidememo auth` (commit will land alongside this section)
 
-Operators rarely want to type bearer tokens. `wg auth` ships four
+Operators rarely want to type bearer tokens. `aidememo auth` ships four
 small commands so the secret never has to live in shell history:
 
 ```bash
-wg auth generate                        # → 64-char hex (32 random bytes)
-wg auth login http://team-host:3000 \
-        --token-file /etc/wg/team-token  # store in ~/.wg/auth.json (0600)
-wg auth list                            # redacted preview of stored URLs
-wg auth logout http://team-host:3000    # forget one
+aidememo auth generate                        # → 64-char hex (32 random bytes)
+aidememo auth login http://team-host:3000 \
+        --token-file /etc/aidememo/team-token  # store in ~/.aidememo/auth.json (0600)
+aidememo auth list                            # redacted preview of stored URLs
+aidememo auth logout http://team-host:3000    # forget one
 ```
 
-After `wg auth login`, every `wg sync pull <URL>` reads the token
+After `aidememo auth login`, every `aidememo sync pull <URL>` reads the token
 transparently — no `--token` / env var on the call:
 
 ```bash
-wg sync pull http://team-host:3000      # uses stored token
+aidememo sync pull http://team-host:3000      # uses stored token
 ```
 
-Token resolution chain in `wg sync pull` (highest precedence first):
+Token resolution chain in `aidememo sync pull` (highest precedence first):
 
 1. `--token TOKEN` (literal, exposed in `ps aux` — discouraged)
 2. `--token-file PATH` (read + trim)
-3. `WG_MCP_AUTH_TOKEN` env var
-4. Stored entry in `~/.wg/auth.json` (populated by `wg auth login`)
+3. `AIDEMEMO_MCP_AUTH_TOKEN` env var
+4. Stored entry in `~/.aidememo/auth.json` (populated by `aidememo auth login`)
 5. None — request goes out without an `Authorization` header
    (works only against loopback, no-auth servers)
 
 ### Pull-only delta sync (Phase 2)
 
 For "local working set + team-canonical store" topologies (Hermes
-first-party shape), each agent runs its own local `wg` for fast
+first-party shape), each agent runs its own local `aidememo` for fast
 offline reads and pulls deltas from the shared `mcp-serve`
 periodically. Writes still go through the shared store via mcp tool
 calls so there's a single writer (no conflict resolution needed
@@ -678,12 +678,12 @@ yet — that's Phase 3).
 
 ```bash
 # On each agent host (any machine that needs a local read cache)
-wg sync pull http://team-host:3000 --token "$WG_TEAM_TOKEN"
+aidememo sync pull http://team-host:3000 --token "$AIDEMEMO_TEAM_TOKEN"
 # → "pulled from http://team-host:3000: +12 entities, +47 facts,
 #    +3 relations (0 skipped, 0 errors); cursor → entity=… fact=…"
 
 # Idempotent — re-running with no upstream changes is a no-op
-wg sync pull http://team-host:3000 --token "$WG_TEAM_TOKEN"
+aidememo sync pull http://team-host:3000 --token "$AIDEMEMO_TEAM_TOKEN"
 # → "+0 entities, +0 facts, +0 relations"
 ```
 
@@ -709,9 +709,9 @@ master push with conflict resolution is Phase 3.
 
 ### Sync operations (Phase 2.6)
 
-`wg sync pull` auto-paginates — a single invocation keeps issuing
+`aidememo sync pull` auto-paginates — a single invocation keeps issuing
 `/sync/since` requests with the advancing cursor until the upstream
-returns less than a full batch. So `wg sync pull <URL>` always
+returns less than a full batch. So `aidememo sync pull <URL>` always
 catches up fully, no manual loop needed. Default per-batch limit
 is 5,000 records; tune with `--limit N`.
 
@@ -724,22 +724,22 @@ is 5,000 records; tune with `--limit N`.
 Two recipes:
 
 ```bash
-# Cron / one-shot (e.g. `*/5 * * * * wg sync pull http://team-host:3000`)
-wg sync pull http://team-host:3000
+# Cron / one-shot (e.g. `*/5 * * * * aidememo sync pull http://team-host:3000`)
+aidememo sync pull http://team-host:3000
 
 # Long-running daemon (systemd / supervisord)
-wg sync pull http://team-host:3000 --watch 60
+aidememo sync pull http://team-host:3000 --watch 60
 ```
 
-`wg sync status` prints per-remote cursor + age:
+`aidememo sync status` prints per-remote cursor + age:
 
 ```bash
-wg sync status                          # all remotes in <store>.sync.json
-wg sync status http://team-host:3000    # one remote
-wg sync status --json                   # script-friendly
+aidememo sync status                          # all remotes in <store>.sync.json
+aidememo sync status http://team-host:3000    # one remote
+aidememo sync status --json                   # script-friendly
 ```
 
-`wg sync status --json` shape (stable):
+`aidememo sync status --json` shape (stable):
 
 ```json
 {
@@ -756,8 +756,8 @@ wg sync status --json                   # script-friendly
 }
 ```
 
-The original `wg sync <DIR>` markdown-ingest alias moved under
-`wg sync ingest <DIR>` to make room for `wg sync pull <URL>`.
+The original `aidememo sync <DIR>` markdown-ingest alias moved under
+`aidememo sync ingest <DIR>` to make room for `aidememo sync pull <URL>`.
 
 ## Bindings (all four full coverage)
 
@@ -766,32 +766,32 @@ Each binding exposes ~22 methods including `current_only` filtering and
 
 ```python
 # Python
-import wg_python as wg
-g = wg.WikiGraph("./_meta/wiki.redb")
+import aidememo_python as aidememo
+g = aidememo.AideMemo("./_meta/wiki.redb")
 ctx = g.query("Redis", current_only=True)
 g.fact_supersede(old_id, new_id)
 ```
 
 ```javascript
 // Node
-const { WgStore } = require('wg-napi');
-const g = new WgStore('./_meta/wiki.redb');
+const { AideMemoStore } = require('aidememo-napi');
+const g = new AideMemoStore('./_meta/wiki.redb');
 const hits = JSON.parse(g.search('redis', { limit: 5, currentOnly: true }));
 g.factSupersede(oldId, newId);
 ```
 
 ```elixir
 # Elixir
-g = WgNif.open!("./_meta/wiki.redb")
-ctx = WgNif.query(g, "Redis", current_only: true)
-:ok = WgNif.fact_supersede(g, old_id, new_id)
+g = AideMemoNif.open!("./_meta/wiki.redb")
+ctx = AideMemoNif.query(g, "Redis", current_only: true)
+:ok = AideMemoNif.fact_supersede(g, old_id, new_id)
 ```
 
 ```c
 /* C */
-char* json = wg_query(g, "Redis", 5, 2, 5, /* current_only */ true);
-wg_fact_supersede(g, old_id, new_id);
-wg_free_string(json);
+char* json = aidememo_query(g, "Redis", 5, 2, 5, /* current_only */ true);
+aidememo_fact_supersede(g, old_id, new_id);
+aidememo_free_string(json);
 ```
 
 ## Common errors → fixes
@@ -801,7 +801,7 @@ wg_free_string(json);
 | `bpaf usage BUG: all positional and command items…` | Move positional fields rightmost; sync `construct!` order |
 | `bpaf: no rules expected ':' in macro` | `construct!` doesn't support `field: var`; rename var to match field |
 | `Cannot start a read transaction inside a read transaction` | Drop the outer txn before starting the next |
-| `cannot find type WgError / WikiGraph` | Use `wg_core::WgError` etc. |
+| `cannot find type AideMemoError / AideMemo` | Use `aidememo_core::AideMemoError` etc. |
 | `method not found: normalized_similarity` | Use `strsim::jaro_winkler(a, b)` |
 | `borrow of moved value` on `config.search.…` | Extract scalar fields into locals before the closure |
 | `missing field 'current_only' in initializer` | Add `current_only: false` (default) when constructing FactListOpts/SearchOpts/QueryOpts |
@@ -811,18 +811,18 @@ wg_free_string(json);
 - Unit tests live next to source (`#[cfg(test)] mod tests`).
 - Integration tests under `tests/` (workspace) and `crates/*/tests/`.
 - Each binding has a smoke test:
-  - `crates/wg-python/tests/smoke.py` (run after `maturin build` + `pip install`)
-  - `crates/wg-napi/tests/smoke.js` (run after `npm run build`)
-  - `crates/wg-nif/test/wg_nif_test.exs` (run via `mix test`)
-  - `crates/wg-ffi/example/smoke.c` (compile against `libwg_ffi.a`)
-- Run `cargo test -p wg-core --features semantic && cargo test -p wg-cli --bin wg`
+  - `crates/aidememo-python/tests/smoke.py` (run after `maturin build` + `pip install`)
+  - `crates/aidememo-napi/tests/smoke.js` (run after `npm run build`)
+  - `crates/aidememo-nif/test/aidememo_nif_test.exs` (run via `mix test`)
+  - `crates/aidememo-ffi/example/smoke.c` (compile against `libaidememo_ffi.a`)
+- Run `cargo test -p aidememo-core --features semantic && cargo test -p aidememo-cli --bin aidememo`
   before opening a PR.
 
 ## Reference
 
 - `PLAN.md` — Phase 1–6 roadmap
-- `wg-skill/SKILL.md` — Claude Code skill format
-- `wg-skill/REFERENCE.md` — full API reference
+- `aidememo-skill/SKILL.md` — Claude Code skill format
+- `aidememo-skill/REFERENCE.md` — full API reference
 - `README.md` — user-facing quick start
 
 ### Inline TODO markers
@@ -835,4 +835,4 @@ grep -rn "TODO(phase" crates/
 ```
 
 Currently flagged: phase6 (S3 transport is a local-fs mirror — see
-`wg-core/src/s3.rs`).
+`aidememo-core/src/s3.rs`).

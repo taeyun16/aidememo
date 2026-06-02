@@ -2,12 +2,12 @@
 """Scenario J — serverless shared-store lock-retry sweep.
 
 Scenario D verifies the fail-fast redb lock contract and Scenario E
-verifies the long-lived `wg mcp-serve` pattern. Scenario J answers a
+verifies the long-lived `aidememo mcp-serve` pattern. Scenario J answers a
 more product-facing question: how far can the serverless CLI path go
 with `store.lock_retry_ms` before users should switch to a shared
 daemon/server?
 
-It runs fresh `wg fact add` subprocesses from 1/2/4/8 concurrent
+It runs fresh `aidememo fact add` subprocesses from 1/2/4/8 concurrent
 processes against the same store with two config profiles:
 
   - retry 0 ms: old fail-fast behaviour.
@@ -32,19 +32,19 @@ from pathlib import Path
 from typing import Any
 
 REPO = Path(__file__).resolve().parents[2]
-WG = os.environ.get("WG_BIN", str(REPO / "target" / "debug" / "wg"))
-BASE = Path(os.environ.get("WG_E2E_BASE", str(Path(tempfile.gettempdir()) / "wg-e2e-j")))
+WG = os.environ.get("AIDEMEMO_BIN", str(REPO / "target" / "debug" / "aidememo"))
+BASE = Path(os.environ.get("AIDEMEMO_E2E_BASE", str(Path(tempfile.gettempdir()) / "aidememo-e2e-j")))
 PROCESSES = [
     int(x)
-    for x in os.environ.get("WG_E2E_SWEEP_PROCESSES", "1,2,4,8").split(",")
+    for x in os.environ.get("AIDEMEMO_E2E_SWEEP_PROCESSES", "1,2,4,8").split(",")
     if x.strip()
 ]
 RETRIES = [
     int(x)
-    for x in os.environ.get("WG_E2E_SWEEP_RETRY_MS", "0,5000").split(",")
+    for x in os.environ.get("AIDEMEMO_E2E_SWEEP_RETRY_MS", "0,5000").split(",")
     if x.strip()
 ]
-N_PER_PROC = int(os.environ.get("WG_E2E_N_PER_PROC", "10"))
+N_PER_PROC = int(os.environ.get("AIDEMEMO_E2E_N_PER_PROC", "10"))
 
 
 @dataclass
@@ -64,7 +64,7 @@ def reset_dir(path: Path) -> None:
 def write_config(home: Path, retry_ms: int) -> None:
     env = os.environ.copy()
     env["HOME"] = str(home)
-    env.pop("WG_STORE", None)
+    env.pop("AIDEMEMO_STORE", None)
     proc = subprocess.run(
         [WG, "config", "set", "store.lock_retry_ms", str(retry_ms)],
         capture_output=True,
@@ -93,7 +93,7 @@ def write_one(args: tuple[str, str, int, int]) -> dict[str, Any]:
     content = f"sweep/p{proc_idx}/f{fact_idx}/{os.urandom(4).hex()}"
     env = os.environ.copy()
     env["HOME"] = home
-    env.pop("WG_STORE", None)
+    env.pop("AIDEMEMO_STORE", None)
     start = time.perf_counter_ns()
     try:
         proc = subprocess.run(
@@ -135,7 +135,7 @@ def worker(args: tuple[str, str, int]) -> list[dict[str, Any]]:
 def persisted_count(store: Path, home: Path) -> tuple[int, int]:
     env = os.environ.copy()
     env["HOME"] = str(home)
-    env.pop("WG_STORE", None)
+    env.pop("AIDEMEMO_STORE", None)
     proc = subprocess.run(
         [WG, "--store", str(store), "--json", "fact", "list", "-l", "10000"],
         capture_output=True,

@@ -6,7 +6,7 @@ Hermes: expose local memory as programmable primitives so the agent can fan out,
 dedupe, check coverage, aggregate, and persist findings in one code path instead
 of pushing intermediate candidate sets through token space.
 
-The script uses the shared wg agent SDK directly:
+The script uses the shared aidememo agent SDK directly:
 
   1. Seed source-scoped research facts for two neighbouring projects.
   2. Fan out search requests across tool/dataset hypotheses.
@@ -28,19 +28,19 @@ from pathlib import Path
 from typing import Any
 
 REPO = Path(__file__).resolve().parents[2]
-WG = os.environ.get("WG_BIN", str(REPO / "target" / "debug" / "wg"))
+WG = os.environ.get("AIDEMEMO_BIN", str(REPO / "target" / "debug" / "aidememo"))
 STORE = os.environ.get(
-    "WG_E2E_STORE",
-    str(Path(tempfile.gettempdir()) / "wg-e2e-n" / "hermes-memory-as-code.redb"),
+    "AIDEMEMO_E2E_STORE",
+    str(Path(tempfile.gettempdir()) / "aidememo-e2e-n" / "hermes-memory-as-code.redb"),
 )
-AGENT_SDK_SRC = REPO / "packages" / "wg-agent-sdk" / "src"
+AGENT_SDK_SRC = REPO / "packages" / "aidememo-agent-sdk" / "src"
 SOURCE_ID = "hermes-research-alpha"
 NEIGHBOUR_SOURCE_ID = "hermes-research-beta"
 
 sys.path.insert(0, str(AGENT_SDK_SRC))
 os.environ["PATH"] = f"{Path(WG).parent}{os.pathsep}{os.environ.get('PATH', '')}"
 
-from wg_agent import Memory, WgClient  # noqa: E402
+from aidememo_agent import Memory, AideMemoClient  # noqa: E402
 
 
 SEED_FACTS: list[dict[str, Any]] = [
@@ -100,11 +100,11 @@ def reset_store() -> None:
 def main() -> int:
     reset_store()
     if not Path(WG).exists():
-        raise RuntimeError(f"WG_BIN does not exist: {WG}")
+        raise RuntimeError(f"AIDEMEMO_BIN does not exist: {WG}")
 
-    client = WgClient(store_path=STORE, source_id=SOURCE_ID, lock_retry_ms=5000)
+    client = AideMemoClient(store_path=STORE, source_id=SOURCE_ID, lock_retry_ms=5000)
     # Scenario N validates the Hermes plugin's MCP-shaped programmable path.
-    # Force the CLI backend even when wg-python is installed so batch writes
+    # Force the CLI backend even when aidememo-python is installed so batch writes
     # auto-create entities and aggregate calls exercise source-scoped MCP tools.
     client._py = None
     sdk = Memory(client)
