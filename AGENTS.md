@@ -22,6 +22,7 @@ server, and native bindings (Python / Node / Elixir / C).
 ## Setup commands
 
 ```bash
+mise install                                      # sync local tool versions with CI
 cargo check -p aidememo-core -p aidememo-cli       # fast verify
 cargo build -p aidememo-cli                   # debug binary at target/debug/aidememo
 cargo build -p aidememo-cli --release         # release binary
@@ -820,7 +821,6 @@ aidememo_free_string(json);
 
 ## Reference
 
-- `PLAN.md` — Phase 1–6 roadmap
 - `aidememo-skill/SKILL.md` — Claude Code skill format
 - `aidememo-skill/REFERENCE.md` — full API reference
 - `README.md` — user-facing quick start
@@ -828,7 +828,7 @@ aidememo_free_string(json);
 ### Inline TODO markers
 
 Roadmap gaps that touch live code carry a `TODO(phaseN):` marker so they
-surface where the gap actually lives, not just in `PLAN.md`. List them with:
+surface where the gap actually lives. List them with:
 
 ```bash
 grep -rn "TODO(phase" crates/

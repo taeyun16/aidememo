@@ -6,10 +6,13 @@ minimal — fast iteration over heavy process.
 ## Setup
 
 ```bash
-# Required
+# Recommended: installs the same toolchain versions used by CI.
+mise install
+mise run ci-lint
+
+# Rust-only fallback if you do not use mise.
 rustup toolchain install 1.96.0 --component rustfmt --component clippy
-# Or let rustup auto-install from rust-toolchain.toml on first cargo run.
-# Workspace MSRV remains 1.85, but CI parity is pinned to 1.96.0.
+# Workspace MSRV remains 1.85, but CI/development parity is pinned to 1.96.0.
 
 # Recommended
 brew install lefthook                    # or `npm i -g lefthook`

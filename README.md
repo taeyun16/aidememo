@@ -70,8 +70,10 @@ cargo install --git https://github.com/taeyun16/aidememo aidememo-cli
 cargo install --path crates/aidememo-cli
 ```
 
-The binary is `aidememo`. Add `~/.cargo/bin` to your `PATH` if needed. CI currently
-validates with Rust `1.96.0`; the workspace MSRV is `1.85`.
+The binary is `aidememo`. Add `~/.cargo/bin` to your `PATH` if needed. CI and
+local development versions are pinned in [`mise.toml`](mise.toml); run
+`mise install` from a checkout to use the same Rust, Node, Python, Go, and
+Elixir/Erlang versions. The workspace MSRV is `1.85`.
 
 ## 60-Second Quickstart
 
@@ -349,10 +351,9 @@ numbers behind claims in this README.
 | beads | You need a dependency-aware issue tracker with merge. | You need hybrid retrieval over facts and graph context. |
 | OMEGA-style systems | You optimize for top LongMemEval scores with heavier prompt/hook machinery. | You optimize for portability, deployment simplicity, and explicit memory control. |
 
-Full comparison: [`COMPARE.md`](COMPARE.md). Product positioning:
-[`POSITIONING.md`](POSITIONING.md). SDK promotion criteria:
-[`docs/SDK_POSITIONING.md`](docs/SDK_POSITIONING.md). Current roadmap:
-[`PRODUCT_ROADMAP.md`](PRODUCT_ROADMAP.md).
+Full comparison: [`COMPARE.md`](COMPARE.md). SDK promotion criteria:
+[`docs/SDK_POSITIONING.md`](docs/SDK_POSITIONING.md). Current measurements and
+release gates: [`docs/MEASUREMENTS.md`](docs/MEASUREMENTS.md).
 
 ## Repository Guide
 

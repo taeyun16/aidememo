@@ -1,0 +1,26 @@
+[tools]
+rust = "1.96.0"
+node = "24"
+python = ["3.13", "3.12", "3.10"]
+go = "1.24"
+erlang = "28"
+elixir = "1.19.5-otp-28"
+
+[env]
+CARGO_INCREMENTAL = "0"
+CARGO_NET_GIT_FETCH_WITH_CLI = "true"
+CARGO_NET_RETRY = "10"
+PYO3_USE_ABI3_FORWARD_COMPATIBILITY = "1"
+RUSTUP_MAX_RETRIES = "10"
+
+[tasks.ci-lint]
+description = "Run the local equivalent of the CI lint job"
+run = "./scripts/ci-local.sh lint"
+
+[tasks.ci-test]
+description = "Run the local equivalent of the CI Rust test job"
+run = "./scripts/ci-local.sh test"
+
+[tasks.bindings-smoke]
+description = "Run cross-binding smoke checks"
+run = "./scripts/bindings-release-smoke.sh"
