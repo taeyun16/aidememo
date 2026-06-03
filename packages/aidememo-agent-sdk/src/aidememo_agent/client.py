@@ -317,6 +317,7 @@ class AideMemoClient:
         limit: int = 8,
         depth: int = 2,
         recent_limit: int = 5,
+        bm25_only: bool = False,
     ) -> dict:
         """Start a workflow-triggered coding task.
 
@@ -335,6 +336,7 @@ class AideMemoClient:
                 limit=limit,
                 depth=depth,
                 recent_limit=recent_limit,
+                bm25_only=bm25_only,
             )
         args = [
             "workflow",
@@ -353,6 +355,8 @@ class AideMemoClient:
             args += ["--source", source]
         if source_id:
             args += ["--source-id", source_id]
+        if bm25_only:
+            args.append("--bm25-only")
         return self._cli_json(args)
 
     def _workflow_start_pyo3(
@@ -364,6 +368,7 @@ class AideMemoClient:
         limit: int = 8,
         depth: int = 2,
         recent_limit: int = 5,
+        bm25_only: bool = False,
     ) -> dict:
         if self._py is None:
             raise AideMemoUnavailable("aidememo-python backend is not available")
@@ -404,7 +409,7 @@ class AideMemoClient:
             "depth": depth,
             "recent_limit": recent_limit,
             "current_only": True,
-            "mode": "hybrid",
+            "mode": "local" if bm25_only else "hybrid",
         }
         search_kwargs: dict[str, Any] = {"limit": 30, "current_only": True}
         if source_id is not None:

@@ -103,6 +103,7 @@ def _make_handlers(client: AideMemoClient) -> list[tuple[str, dict, Callable[...
                 limit=int(args.get("limit") or 8),
                 depth=int(args.get("depth") or 2),
                 recent_limit=int(args.get("recent_limit") or 5),
+                bm25_only=bool(args.get("bm25_only", False)),
             )
         )
 

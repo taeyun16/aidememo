@@ -5,7 +5,7 @@
     One Rust binary. One redb store. A code-first SDK, MCP tools, CLI, and native bindings for agents that need memory with facts, graph traversal, and history.
   </p>
   <p>
-    <a href="https://github.com/taeyun16/aidememo/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/taeyun16/aidememo/ci.yml?branch=main&label=ci&style=flat-square"></a>
+    <a href="https://github.com/taeyun16/aidememo/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/taeyun16/aidememo/actions/workflows/ci.yml/badge.svg?branch=main"></a>
     <a href="./Cargo.toml"><img alt="Rust 1.85+" src="https://img.shields.io/badge/rust-1.85%2B-f46623?logo=rust&style=flat-square"></a>
     <a href="./Cargo.toml"><img alt="License: MIT OR Apache-2.0" src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-0f766e?style=flat-square"></a>
     <a href="#install"><img alt="Install with Cargo" src="https://img.shields.io/badge/install-cargo%20install-2563eb?style=flat-square"></a>

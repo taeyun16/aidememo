@@ -2292,6 +2292,10 @@ fn tool_workflow_start(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, 
         .get("recent_limit")
         .and_then(|v| v.as_u64())
         .unwrap_or(5) as usize;
+    let bm25_only = args
+        .get("bm25_only")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
 
     let payload = wiki
         .workflow_start(
@@ -2303,7 +2307,7 @@ fn tool_workflow_start(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, 
                 limit,
                 depth,
                 recent_limit,
-                bm25_only: false,
+                bm25_only,
             },
         )
         .map_err(|e| e.to_string())?;
@@ -3283,7 +3287,8 @@ pub fn list_tools() -> Vec<Tool> {
                     "source_id": {"type": "string", "description": "Optional source namespace / tenant / agent id for shared-store scoping. If omitted, MCP falls back to AIDEMEMO_SOURCE_ID when set."},
                     "limit": {"type": "number", "default": 8, "description": "Max context search hits."},
                     "depth": {"type": "number", "default": 2, "description": "Graph traversal depth for the topic query."},
-                    "recent_limit": {"type": "number", "default": 5, "description": "Recent facts attached to the resolved entity."}
+                    "recent_limit": {"type": "number", "default": 5, "description": "Recent facts attached to the resolved entity."},
+                    "bm25_only": {"type": "boolean", "default": false, "description": "Skip semantic embedding lookup. Use for deterministic CI/demo smoke runs or when surface-form recall is enough."}
                 },
                 "required": ["title"]
             }),

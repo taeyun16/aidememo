@@ -171,6 +171,7 @@ def workflow_cli(ticket: Ticket) -> dict[str, Any]:
                 "1",
                 "--recent-limit",
                 "3",
+                "--bm25-only",
             ]
         ).stdout
     )
@@ -213,6 +214,7 @@ def workflow_mcp(ticket: Ticket) -> dict[str, Any]:
             "limit": 6,
             "depth": 1,
             "recent_limit": 3,
+            "bm25_only": True,
         },
     )
 
@@ -231,6 +233,7 @@ def workflow_hermes(ticket: Ticket) -> dict[str, Any]:
         limit=6,
         depth=1,
         recent_limit=3,
+        bm25_only=True,
     )
 
 

@@ -164,6 +164,7 @@ def workflow_cli(ticket: Ticket) -> dict[str, Any]:
         "2",
         "--recent-limit",
         "5",
+        "--bm25-only",
     ]
     if ticket.source_id:
         cmd += ["--source-id", ticket.source_id]
@@ -205,6 +206,7 @@ def workflow_mcp(ticket: Ticket) -> dict[str, Any]:
         "limit": 10,
         "depth": 2,
         "recent_limit": 5,
+        "bm25_only": True,
     }
     if ticket.source_id:
         args["source_id"] = ticket.source_id
@@ -225,6 +227,7 @@ def workflow_hermes(ticket: Ticket) -> dict[str, Any]:
         limit=10,
         depth=2,
         recent_limit=5,
+        bm25_only=True,
     )
 
 
