@@ -176,7 +176,7 @@ that slice carries the smallest footprint.
 ## See also
 
 - [`docs/MEASUREMENTS.md`](docs/MEASUREMENTS.md) — benchmark and agent-UX measurement ledger
-- [`PRODUCT_ROADMAP.md`](PRODUCT_ROADMAP.md) — product gap roadmap with acceptance metrics
+- [`docs/SDK_POSITIONING.md`](docs/SDK_POSITIONING.md) — SDK promotion criteria and product positioning
 - [`bench/multi-agent/README.md`](bench/multi-agent/README.md) — multi-agent scenario benchmarks
 - [`AGENTS.md`](./AGENTS.md) — full agent guide (CLI + MCP surface)
 

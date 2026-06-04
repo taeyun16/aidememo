@@ -10,9 +10,9 @@ title: AideMemo 전체 API 참조
 ```
 /Users/mixlink/dev/aidememo/           ← 프로젝트 루트 (aidememo workspace)
 ├── Cargo.toml                   ← workspace manifest
-├── PLAN.md                     ← Phase 1-6 구현 계획
 ├── AGENTS.md                   ← 에이전트용 가이드 (CLAUDE.md → import)
 ├── README.md
+├── docs/                       ← durable measurement and positioning docs
 ├── crates/
 │   ├── aidememo-core/                ← 핵심 라이브러리 (lib)
 │   │   └── src/
