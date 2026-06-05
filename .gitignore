@@ -29,6 +29,9 @@ _meta/
 __pycache__/
 
 # Node bindings — built artifacts
+website/.docusaurus/
+website/build/
+website/node_modules/
 crates/aidememo-napi/node_modules/
 crates/aidememo-napi/package-lock.json
 crates/aidememo-napi/*.tgz

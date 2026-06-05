@@ -51,6 +51,20 @@ jobs:
           actionlint_bin="$(go env GOPATH)/bin/actionlint"
           "$actionlint_bin"
 
+  docs-site:
+    name: Docusaurus docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+      - run: npm --prefix website ci
+      - run: npm --prefix website audit --omit=dev
+      - run: npm --prefix website run build
+
   # Static checks share one cache and one toolchain install. fmt is a
   # cheap fail-fast at the top; clippy + doc dominate the wall time.
   lint:

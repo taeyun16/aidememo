@@ -24,3 +24,15 @@ run = "./scripts/ci-local.sh test"
 [tasks.bindings-smoke]
 description = "Run cross-binding smoke checks"
 run = "./scripts/bindings-release-smoke.sh"
+
+[tasks.docs-install]
+description = "Install the Docusaurus documentation site dependencies"
+run = "npm --prefix website install"
+
+[tasks.docs-build]
+description = "Build the static Docusaurus documentation site"
+run = "npm --prefix website run build"
+
+[tasks.docs-start]
+description = "Run the Docusaurus documentation site locally"
+run = "npm --prefix website run start -- --host 127.0.0.1"

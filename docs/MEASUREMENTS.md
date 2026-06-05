@@ -35,9 +35,9 @@ scripts/ci-local.sh sdk
 ```
 
 The gbrain adapter path is documented in
-[`benchmarks/gbrain-evals-adapter/README.md`](../benchmarks/gbrain-evals-adapter/README.md),
+[`benchmarks/gbrain-evals-adapter/README.md`](https://github.com/taeyun16/aidememo/blob/main/benchmarks/gbrain-evals-adapter/README.md),
 with current scorecards in
-[`benchmarks/gbrain-evals-adapter/RESULTS.md`](../benchmarks/gbrain-evals-adapter/RESULTS.md).
+[`benchmarks/gbrain-evals-adapter/RESULTS.md`](https://github.com/taeyun16/aidememo/blob/main/benchmarks/gbrain-evals-adapter/RESULTS.md).
 
 ## Agent UX
 

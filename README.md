@@ -75,6 +75,17 @@ local development versions are pinned in [`mise.toml`](mise.toml); run
 `mise install` from a checkout to use the same Rust, Node, Python, Go, and
 Elixir/Erlang versions. The workspace MSRV is `1.85`.
 
+## Documentation Site
+
+The static documentation site lives in [`website/`](website/) and renders the
+durable Markdown under [`docs/`](docs/) with Docusaurus.
+
+```bash
+mise run docs-install
+mise run docs-start
+mise run docs-build
+```
+
 ## 60-Second Quickstart
 
 From a checkout, see the core workflow in one zero-token command:
