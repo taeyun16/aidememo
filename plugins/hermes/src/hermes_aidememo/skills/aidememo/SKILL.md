@@ -2,7 +2,7 @@
 name: aidememo
 description: Local knowledge-graph wiki tool. Use to search, traverse, and append facts to a private markdown wiki indexed with BM25 + semantic vectors. Ideal when the user asks "what do we know about X", wants to record decisions/conventions, or needs context from prior project notes.
 license: MIT OR Apache-2.0
-compatibility: Requires the aidememo CLI binary on PATH (cargo install aidememo-cli, or build from https://github.com/taeyun16/aidememo). Optionally registers as an MCP server (`aidememo mcp` for stdio, `aidememo mcp-serve` for HTTP).
+compatibility: Requires the aidememo CLI binary on PATH (install from Git or build from https://github.com/taeyun16/aidememo until the crates.io release lands). Optionally registers as an MCP server (`aidememo mcp` for stdio, `aidememo mcp-serve` for HTTP).
 allowed-tools: Bash(aidememo:*)
 metadata:
   homepage: https://github.com/taeyun16/aidememo

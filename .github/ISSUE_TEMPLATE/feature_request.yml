@@ -1,0 +1,35 @@
+name: Feature request
+description: Propose an AideMemo capability or workflow improvement.
+title: "[feature] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: use_case
+    attributes:
+      label: Use case
+      description: What workflow should become easier or possible?
+    validations:
+      required: true
+  - type: textarea
+    id: proposed_api
+    attributes:
+      label: Proposed interface
+      description: CLI command, MCP tool shape, SDK method, or config you would want to call.
+      render: text
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Primary surface
+      options:
+        - CLI
+        - MCP
+        - Python SDK
+        - Native binding
+        - Hermes plugin
+        - Documentation
+        - Internal core
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Existing tools, workarounds, or competing systems with similar behavior.

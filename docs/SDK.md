@@ -11,16 +11,22 @@ working set instead of one tool call at a time.
 ## Install
 
 ```bash
-pip install aidememo-agent-sdk
+# From a checkout, until the PyPI release lands:
+python -m pip install -e packages/aidememo-agent-sdk
 ```
 
-Optional fast path:
+After the PyPI release:
 
 ```bash
-pip install "aidememo-agent-sdk[binding]"
+python -m pip install aidememo-agent-sdk
 ```
 
-Without the binding, the SDK falls back to the `aidememo` CLI on `PATH`.
+Without the native binding, the SDK falls back to the `aidememo` CLI on `PATH`.
+After `aidememo-python` is published, install the optional fast path with:
+
+```bash
+python -m pip install "aidememo-agent-sdk[binding]"
+```
 
 ## Open memory
 

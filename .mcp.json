@@ -2,7 +2,7 @@
   "mcpServers": {
     "aidememo": {
       "type": "stdio",
-      "command": "./target/debug/aidememo",
+      "command": "aidememo",
       "args": ["mcp"]
     }
   }

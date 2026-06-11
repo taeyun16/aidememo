@@ -198,9 +198,16 @@ needs fanout retrieval, dedupe, coverage checks, aggregation, or batch writes
 without routing every intermediate row through the LLM context.
 
 ```bash
-pip install aidememo-agent-sdk
-pip install "aidememo-agent-sdk[binding]"   # optional fast path via aidememo-python
+# From a checkout, until the PyPI release lands:
+python -m pip install -e packages/aidememo-agent-sdk
+
+# After the PyPI release:
+python -m pip install aidememo-agent-sdk
 ```
+
+The SDK falls back to the `aidememo` CLI on `PATH`. The optional native binding
+fast path becomes `python -m pip install "aidememo-agent-sdk[binding]"` after
+the `aidememo-python` PyPI release.
 
 ```python
 from aidememo_agent import Memory

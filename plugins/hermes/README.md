@@ -19,9 +19,13 @@ lifecycle hooks.
 ## Install
 
 ```bash
-pip install hermes-aidememo                    # CLI fallback (universal)
-pip install "hermes-aidememo[binding]"         # adds aidememo-python (~100× faster)
-pip install aidememo-agent-sdk                 # common SDK for Codex / Claude Code / scripts
+# From a checkout, until the PyPI releases land:
+python -m pip install -e packages/aidememo-agent-sdk
+python -m pip install -e plugins/hermes
+
+# After the PyPI releases:
+python -m pip install hermes-aidememo
+python -m pip install "hermes-aidememo[binding]"  # optional aidememo-python fast path
 ```
 
 Then enable it in `~/.hermes/config.yaml`:
@@ -45,7 +49,7 @@ plugins:
 
 The plugin needs **either** `aidememo-python` (in-process binding) **or** the
 `aidememo` CLI binary on `$PATH`. The CLI fallback is always available — install
-via `cargo install aidememo-cli` or build from source.
+from Git or build from source until the crates.io release lands.
 
 ## Why a plugin instead of just the MCP server?
 

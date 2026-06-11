@@ -64,7 +64,8 @@ class AideMemoClient:
         if self._py is None and not self._has_cli():
             raise AideMemoUnavailable(
                 "aidememo-python is not installed and the `aidememo` CLI is not on PATH; "
-                "install one of them: `pip install aidememo-python` or `cargo install aidememo-cli`."
+                "install one of them from the AideMemo checkout, or install the public packages "
+                "after the registry releases land."
             )
 
     # ------------------------------------------------------------------
