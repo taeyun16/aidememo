@@ -14,7 +14,7 @@ name = "aidememo_napi"
 crate-type = ["cdylib"]
 
 [dependencies]
-aidememo-core = { path = "../aidememo-core", features = ["semantic"] }
+aidememo-core = { version = "0.1.0", path = "../aidememo-core", features = ["semantic"] }
 napi = { version = "2", features = ["napi6"] }
 napi-derive = "2"
 serde = { version = "1.0", features = ["derive"] }

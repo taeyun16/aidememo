@@ -200,7 +200,7 @@ impl HnswIndex {
 }
 
 /// L2-normalize a vector in place. Matches the prototype + the
-/// behaviour of `model2vec_native` itself, so cached + freshly-
+/// behaviour of the Model2Vec provider itself, so cached + freshly-
 /// embedded vectors compose without double-normalization.
 pub(crate) fn l2_normalize(v: &mut [f32]) {
     let norm: f32 = v.iter().map(|x| x * x).sum::<f32>().sqrt().max(1e-12);

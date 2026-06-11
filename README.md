@@ -75,6 +75,9 @@ local development versions are pinned in [`mise.toml`](mise.toml); run
 `mise install` from a checkout to use the same Rust, Node, Python, Go, and
 Elixir/Erlang versions. The workspace MSRV is `1.85`.
 
+Registry releases are staged separately. Until the first crates.io, PyPI, and
+npm publishes complete, prefer the Git or checkout install paths above.
+
 ## Documentation Site
 
 The static documentation site lives in [`website/`](website/) and renders the
@@ -384,4 +387,9 @@ script organization, read [`scripts/README.md`](scripts/README.md).
 
 ## License
 
-See repository license metadata.
+AideMemo is licensed under either the [MIT License](LICENSE-MIT) or the
+[Apache License 2.0](LICENSE-APACHE), at your option.
+
+## Security
+
+Please report vulnerabilities privately. See [SECURITY.md](SECURITY.md).

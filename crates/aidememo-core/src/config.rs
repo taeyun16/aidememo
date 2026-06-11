@@ -124,10 +124,9 @@ pub struct ModelConfig {
     /// have different dims); for model2vec it's auto-detected.
     #[serde(default)]
     pub dimension: usize,
-    /// model2vec only: quantize the embedding matrix to int8 at load
-    /// time. Cuts heap from ~489 MB to ~124 MB on the 128M model with
-    /// <0.5% cosine similarity loss. mmap zero-copy is given up when
-    /// this is on.
+    /// Legacy model2vec compatibility knob. The current model2vec-rs backend
+    /// loads quantized safetensors when the model provides them, but this field
+    /// no longer forces an in-process f32 -> int8 conversion.
     #[serde(default)]
     pub quantize: bool,
 }

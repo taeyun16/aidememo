@@ -13,7 +13,7 @@ name = "aidememo"
 path = "src/main.rs"
 
 [dependencies]
-aidememo-core = { path = "../aidememo-core", features = ["semantic", "semantic-adapt"] }
+aidememo-core = { version = "0.1.0", path = "../aidememo-core", features = ["semantic", "semantic-adapt"] }
 
 # Profile-mode measurement for `aidememo bench`.
 # - memory-stats: cross-platform RSS (includes virtual mappings — useful as a

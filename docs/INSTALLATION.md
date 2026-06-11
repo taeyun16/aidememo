@@ -1,0 +1,77 @@
+---
+title: Install
+description: Install AideMemo and verify the CLI.
+---
+
+# Install
+
+The main binary is `aidememo`. It includes the CLI and MCP server.
+
+## From Git
+
+```bash
+cargo install --git https://github.com/taeyun16/aidememo aidememo-cli
+```
+
+The crates.io release path is being prepared. Until the first registry release
+lands, use the Git or checkout install paths.
+
+Verify the binary:
+
+```bash
+aidememo --help
+aidememo stats
+```
+
+If your shell cannot find the command, add Cargo's bin directory to your path:
+
+```bash
+export PATH="$HOME/.cargo/bin:$PATH"
+```
+
+## From a checkout
+
+```bash
+git clone https://github.com/taeyun16/aidememo.git
+cd aidememo
+mise install
+cargo build -p aidememo-cli --release
+export PATH="$PWD/target/release:$PATH"
+```
+
+For local development, the repo pins tool versions in `mise.toml`.
+
+```bash
+mise run docs-build
+mise run ci-lint
+mise run ci-test
+```
+
+## Store location
+
+By default, AideMemo uses its configured local store. For examples and scripts,
+you can pass an explicit store path:
+
+```bash
+aidememo --store ./memory.redb stats
+aidememo --store ./memory.redb fact add "A first note" --entities Project
+```
+
+Using `--store` is useful for demos, tests, and per-project memory files.
+
+## Recommended first check
+
+Run this in a temporary directory:
+
+```bash
+STORE="$(mktemp -d)/wiki.redb"
+
+aidememo --store "$STORE" fact add \
+  "Decision: AideMemo stores typed project memory locally." \
+  --type decision \
+  --entities AideMemo
+
+aidememo --store "$STORE" search "typed project memory"
+```
+
+You should see the fact you just added.

@@ -16,8 +16,11 @@
 //!   models produce incompatible vectors). For now we just compute on the
 //!   fly during search, so swap is risk-free.
 
+#[cfg(feature = "semantic")]
 use crate::config::Config;
-use crate::error::{AideMemoError, Result};
+#[cfg(feature = "semantic")]
+use crate::error::AideMemoError;
+use crate::error::Result;
 
 /// A plug-and-play source of text embeddings.
 ///
@@ -86,7 +89,7 @@ pub fn load_provider(config: &Config) -> Result<Box<dyn EmbeddingProvider>> {
 #[cfg(feature = "semantic")]
 mod model2vec {
     use super::{AideMemoError, Config, EmbeddingProvider, Result};
-    use model2vec_native::StaticModel;
+    use model2vec_rs::model::StaticModel;
     use std::path::{Path, PathBuf};
 
     pub struct Model2VecProvider {
@@ -105,30 +108,27 @@ mod model2vec {
                 cache_dir.join(&config.model.name)
             };
 
-            // model.quantize=true: load with int8 weights (~4× smaller
-            // heap, ~0.5% cosine loss vs f32). When false, the f32
-            // matrix stays mmap'd zero-copy. The dispatch happens
-            // here so aidememo-core code below never has to know which
-            // storage form is in play.
-            let q = config.model.quantize;
+            // model2vec-rs loads quantized safetensors when the model
+            // provides them. The legacy model.quantize knob is retained for
+            // config compatibility, but it no longer forces an in-process
+            // conversion from f32 to int8 at load time.
+            if config.model.quantize {
+                tracing::warn!(
+                    "model.quantize is kept for config compatibility; \
+                     model2vec-rs uses the quantization format provided by the model files"
+                );
+            }
             let inner = if local_candidate.exists() {
                 // Local directory layout (tokenizer.json/model.safetensors/config.json).
-                let r = if q {
-                    StaticModel::from_pretrained_quantized(&local_candidate, None)
-                } else {
-                    StaticModel::from_pretrained(&local_candidate, None)
-                };
+                let r = StaticModel::from_pretrained(&local_candidate, None, None, None);
                 r.map_err(|source| AideMemoError::ModelLoadFailed {
                     path: local_candidate.clone(),
                     source: Box::new(std::io::Error::other(source.to_string())),
                 })?
             } else if config.model.auto_download {
-                // HF Hub fallback. mmap kicks in on the cached files.
-                let r = if q {
-                    StaticModel::from_hub_quantized(&config.model.name, None)
-                } else {
-                    StaticModel::from_hub(&config.model.name, None)
-                };
+                // HF Hub fallback. The official crate resolves model2vec,
+                // sentence-transformers, and 0_StaticEmbedding layouts.
+                let r = StaticModel::from_pretrained(config.model.name.as_str(), None, None, None);
                 r.map_err(|source| AideMemoError::ModelLoadFailed {
                     path: PathBuf::from(&config.model.name),
                     source: Box::new(std::io::Error::other(source.to_string())),
@@ -140,7 +140,7 @@ mod model2vec {
                 });
             };
 
-            let dim = inner.dimension();
+            let dim = inner.encode_single("").len();
             Ok(Self {
                 inner,
                 name: config.model.name.clone(),

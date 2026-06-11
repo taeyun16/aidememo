@@ -10,7 +10,7 @@ version.workspace = true
 
 [features]
 default = []
-semantic = ["model2vec-native", "ureq", "simsimd", "instant-distance", "bincode"]
+semantic = ["model2vec-rs", "ureq", "simsimd", "instant-distance", "bincode"]
 semantic-adapt = ["semantic"]
 # `fastembed` opts the user into ONNX-runtime-backed BGE / E5 embedding
 # models via the `fastembed` crate (which uses pykeio/ort under the hood).
@@ -66,11 +66,10 @@ fundu = "2.0"              # Duration normalization "1.5 weeks" → seconds
 rusty-money = "0.4"        # Currency parsing "$1,200.50" → typed Money
 
 # 시맨틱 검색 (선택)
-# Zero-copy mmap variant of model2vec-rs — same API surface, the 489 MB
-# embedding matrix stays file-backed instead of being copied twice into
-# the heap. Lives in its own repo so it's reusable outside aidememo.
-# Pinned to a specific rev for reproducibility; bump as needed.
-model2vec-native = { git = "https://github.com/taeyun16/model2vec-native", rev = "254b304", optional = true }
+# Official Model2Vec Rust implementation. Kept as an optional dependency behind
+# the semantic feature so BM25-only builds remain lightweight and registry
+# packaging does not depend on an unpublished git crate.
+model2vec-rs = { version = "0.2.1", optional = true }
 
 # ONNX-Runtime-backed BGE / E5 embedding models. Opt-in via the
 # `fastembed` cargo feature — the default `semantic` build stays

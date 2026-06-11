@@ -794,8 +794,6 @@ pub(crate) struct MemoryReport {
     /// Mirrors the model name from config so the JSON consumer can
     /// surface "you're loading X" without re-reading the config.
     pub model_name: String,
-    /// Whether `model.quantize = true` was set; surfaces in advisories.
-    pub model_quantize: bool,
     /// `Some(true)` when `search.semantic_index = "hnsw"` and the
     /// sidecar is present, `Some(false)` when configured but missing,
     /// `None` when the user opted out of HNSW.
@@ -877,24 +875,10 @@ impl MemoryReport {
     }
 
     /// Surface advisories for the fix-suggestions block when the
-    /// memory picture suggests an obvious tweak (`model.quantize` for
-    /// large models, `aidememo vector-rebuild` for missing sidecar).
+    /// memory picture suggests an obvious tweak (`aidememo vector-rebuild`
+    /// for a missing sidecar).
     fn advisories(&self) -> Vec<FixSuggestion> {
         let mut out = Vec::new();
-        if let Some(model_entry) = self.ram_estimate.iter().find(|e| e.name == "model load") {
-            if model_entry.bytes >= 100 * 1024 * 1024 && !self.model_quantize {
-                out.push(FixSuggestion {
-                    target: "aidememo",
-                    kind: "memory",
-                    command: "aidememo config set model.quantize true".to_string(),
-                    reason: format!(
-                        "{} loads {:.0} MB into RAM; int8 quantize cuts that ~3.9×",
-                        self.model_name,
-                        model_entry.bytes as f64 / (1024.0 * 1024.0)
-                    ),
-                });
-            }
-        }
         if self.hnsw_sidecar_present == Some(false) {
             out.push(FixSuggestion {
                 target: "aidememo",
@@ -950,18 +934,10 @@ fn collect_memory(store_path: &Path, config: &Config) -> MemoryReport {
         }
     }
 
-    let model_bytes_unquantized = model_load_bytes(&config.model.name);
-    let model_bytes = if config.model.quantize {
-        // `quantize` field doc cites ~3.9× shrink (489 MB → 124 MB on
-        // 128M); apply the same factor here for the estimate.
-        model_bytes_unquantized.map(|b| (b as f64 / 3.9) as u64)
-    } else {
-        model_bytes_unquantized
-    };
-    let model_detail = match (model_bytes_unquantized, config.model.quantize) {
-        (Some(_), true) => format!("{} (quantized)", config.model.name),
-        (Some(_), false) => config.model.name.clone(),
-        (None, _) => format!("{} (unknown size)", config.model.name),
+    let model_bytes = model_load_bytes(&config.model.name);
+    let model_detail = match model_bytes {
+        Some(_) => config.model.name.clone(),
+        None => format!("{} (unknown size)", config.model.name),
     };
 
     let hnsw_sidecar_present = if config.search.semantic_index == "hnsw" {
@@ -983,7 +959,6 @@ fn collect_memory(store_path: &Path, config: &Config) -> MemoryReport {
         ram_estimate,
         ram_total_bytes: 0, // recomputed in `with_counts`
         model_name: config.model.name.clone(),
-        model_quantize: config.model.quantize,
         hnsw_sidecar_present,
         superseded_facts: 0, // populated in `with_counts`
     }
@@ -1142,21 +1117,13 @@ mod tests {
     }
 
     #[test]
-    fn collect_memory_quantize_advisory_fires_on_large_model() {
+    fn collect_memory_advises_rebuild_for_missing_hnsw_sidecar() {
         let dir = TempDir::new().unwrap();
         let store_path: PathBuf = dir.path().join("wiki.redb");
         std::fs::write(&store_path, vec![0u8; 64]).unwrap();
         let cfg = config_with_model("minishlab/potion-multilingual-128M", false, "hnsw");
         let mem = collect_memory(&store_path, &cfg).with_counts(0, 0);
         let advisories = mem.advisories();
-        assert!(
-            advisories
-                .iter()
-                .any(|a| a.command.contains("model.quantize true")),
-            "expected quantize advisory, got {:?}",
-            advisories
-        );
-        // hnsw sidecar missing → also advises rebuild.
         assert!(
             advisories
                 .iter()

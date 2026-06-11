@@ -1,6 +1,6 @@
 {
   "$schema": "https://claudecode.io/schema/settings.json",
-  "_comment": "Project-scoped aidememo dogfooding hooks. Activates when a Claude Code session starts inside this repo. Scripts live in ~/.claude/hooks/ (cp from aidememo-skill/hooks/ — see aidememo-skill/hooks/README.md). Soft-fail if aidememo binary or store missing, so this is safe to commit.",
+  "_comment": "Optional project-scoped AideMemo dogfooding hooks. Copy this file to .claude/settings.json to activate. Scripts live in ~/.claude/hooks/ (copy them from aidememo-skill/hooks/; see aidememo-skill/hooks/README.md). Hooks soft-fail if the aidememo binary or store is missing.",
   "hooks": {
     "SessionStart": [
       {
@@ -9,7 +9,7 @@
           {
             "type": "command",
             "command": "$HOME/.claude/hooks/aidememo-session-start.py",
-            "statusMessage": "aidememo: loading wiki context…"
+            "statusMessage": "aidememo: loading wiki context..."
           }
         ]
       }

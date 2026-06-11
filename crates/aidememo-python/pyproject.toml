@@ -32,6 +32,8 @@ module-name = "aidememo_python"
 features = ["pyo3/extension-module"]
 strip = true
 include = [
+    { path = "vendor/LICENSE", format = "sdist" },
+    { path = "vendor/tokenizers/LICENSE", format = "sdist" },
     { path = "vendor/tokenizers/Cargo.toml", format = "sdist" },
     { path = "vendor/tokenizers/src/**/*", format = "sdist" },
 ]
