@@ -1,0 +1,109 @@
+---
+title: Quickstart
+description: Add memory, search it, and start a workflow in a few commands.
+---
+
+# Quickstart
+
+This guide creates a small local store, writes memory, searches it, and starts a
+workflow from a sparse ticket.
+
+## 1. Create a demo store
+
+```bash
+export AIDEMEMO_DEMO_STORE="$(mktemp -d)/wiki.redb"
+```
+
+All commands below use this store:
+
+```bash
+am() {
+  aidememo --store "$AIDEMEMO_DEMO_STORE" "$@"
+}
+```
+
+## 2. Add facts
+
+Add a decision:
+
+```bash
+am fact add \
+  "Decision: Redis timeout fixes must go through the Worker job wrapper." \
+  --type decision \
+  --entities Redis,Worker
+```
+
+Add a lesson:
+
+```bash
+am fact add \
+  "Lesson: The last Worker Redis timeout was DNS resolution, not pool size." \
+  --type lesson \
+  --entities Redis,Worker
+```
+
+Add an error to avoid:
+
+```bash
+am fact add \
+  "Error: Avoid increasing Redis pool size before checking DNS metrics." \
+  --type error \
+  --entities Redis,Worker
+```
+
+## 3. Search memory
+
+```bash
+am search "Redis timeout"
+```
+
+Use `query` when you want search plus nearby graph context:
+
+```bash
+am query "Fix Redis timeout in worker" --limit 5 --depth 2
+```
+
+## 4. Start a workflow from a ticket
+
+`workflow start` is the recommended entry point for issue, PR, or ticket
+automation. It creates a tracked session, stores the ticket, and returns prior
+decisions, lessons, errors, and search hits.
+
+```bash
+am workflow start "Fix Redis timeout in worker" \
+  --body "Worker jobs intermittently time out against Redis." \
+  --source "github:org/app#123" \
+  --bm25-only
+```
+
+The output includes:
+
+- `session_id`: attach future facts to this task.
+- `ticket_fact_id`: the stored incoming ticket fact.
+- `relevant_decisions`: decisions that should guide the work.
+- `prior_lessons`: lessons from similar work.
+- `prior_errors`: known failure modes to avoid.
+
+## 5. Continue the session
+
+The CLI prints an export command. Use it so future `fact add` calls attach to
+the active workflow session:
+
+```bash
+export AIDEMEMO_SESSION_ID=session-...
+
+am fact add \
+  "Lesson: This timeout was caused by a missing DNS retry around the worker wrapper." \
+  --type lesson \
+  --entities Redis,Worker
+```
+
+## 6. Inspect recent memory
+
+```bash
+am recent --last 1d
+am stats
+```
+
+At this point you have a working local memory store that can be used from the
+CLI, MCP, or SDK.

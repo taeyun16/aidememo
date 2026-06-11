@@ -13,19 +13,19 @@ type DocLink = {
 
 const docLinks: DocLink[] = [
   {
-    title: 'Measurements',
-    description: 'Validated commands, benchmark results, workflow smokes, and release gates.',
-    to: '/docs/MEASUREMENTS',
+    title: 'Start Here',
+    description: 'Learn what AideMemo is, when to use it, and how it fits your agent workflow.',
+    to: '/docs/INTRODUCTION',
   },
   {
-    title: 'SDK Positioning',
-    description: 'How the agent SDK, native bindings, CLI, and MCP surfaces fit together.',
-    to: '/docs/SDK_POSITIONING',
+    title: 'Quickstart',
+    description: 'Add facts, search memory, and start a workflow from a sparse ticket.',
+    to: '/docs/QUICKSTART',
   },
   {
-    title: 'SkillOpt Lite',
-    description: 'The bounded profile-improvement loop and validation policy for memory skills.',
-    to: '/docs/SKILLOPT_LITE',
+    title: 'MCP Setup',
+    description: 'Register AideMemo with local agents and use the core memory tools.',
+    to: '/docs/MCP',
   },
 ];
 
@@ -38,12 +38,12 @@ function HomepageHeader() {
           Agent-friendly SDK memory for coding agents.
         </Heading>
         <p className={styles.subtitle}>
-          Static documentation for the AideMemo CLI, MCP surface, SDK path, and
-          measurement-backed workflow gates.
+          Learn how to install AideMemo, add useful memory, connect it to agents
+          through MCP, and use the SDK from scripts.
         </p>
         <div className={styles.actions}>
-          <Link className="button button--primary" to="/docs/MEASUREMENTS">
-            Open Docs
+          <Link className="button button--primary" to="/docs/INTRODUCTION">
+            Start Reading
           </Link>
           <Link className="button button--secondary" to="https://github.com/taeyun16/aidememo">
             View GitHub

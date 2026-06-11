@@ -3,9 +3,15 @@ const sidebars = {
   docs: [
     {
       type: 'category',
-      label: 'Reference',
+      label: 'Get Started',
       collapsed: false,
-      items: ['MEASUREMENTS', 'SDK_POSITIONING', 'SKILLOPT_LITE'],
+      items: ['INTRODUCTION', 'INSTALLATION', 'QUICKSTART'],
+    },
+    {
+      type: 'category',
+      label: 'Use AideMemo',
+      collapsed: false,
+      items: ['CLI', 'MCP', 'SDK', 'OPERATIONS'],
     },
   ],
 };

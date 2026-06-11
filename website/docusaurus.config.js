@@ -30,6 +30,7 @@ const config = {
           path: '../docs',
           routeBasePath: 'docs',
           sidebarPath: require.resolve('./sidebars.js'),
+          exclude: ['MEASUREMENTS.md', 'SDK_POSITIONING.md', 'SKILLOPT_LITE.md'],
           editUrl: ({docPath}) =>
             `https://github.com/taeyun16/aidememo/blob/main/docs/${docPath}`,
         },
@@ -74,16 +75,16 @@ const config = {
             title: 'Docs',
             items: [
               {
-                label: 'Measurements',
-                to: '/docs/MEASUREMENTS',
+                label: 'Overview',
+                to: '/docs/INTRODUCTION',
               },
               {
-                label: 'SDK Positioning',
-                to: '/docs/SDK_POSITIONING',
+                label: 'Quickstart',
+                to: '/docs/QUICKSTART',
               },
               {
-                label: 'SkillOpt Lite',
-                to: '/docs/SKILLOPT_LITE',
+                label: 'MCP Setup',
+                to: '/docs/MCP',
               },
             ],
           },
