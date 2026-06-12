@@ -1,6 +1,6 @@
 # SDK Positioning
 
-`aidememo` should now lead with an SDK-based memory-system position, but keep the
+AideMemo should now lead with an SDK-based memory-system position, but keep the
 word "SDK" scoped carefully. `aidememo-agent-sdk` owns the agent workflow and can be
 called an agent SDK. Low-level native packages should keep saying "binding" or
 "SDK candidate" until they own a complete developer workflow, not just a native

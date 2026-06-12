@@ -1,12 +1,12 @@
 ---
 kind: doc
-title: aidememo + Claude Code hooks
+title: AideMemo + Claude Code hooks
 ---
 
-# Claude Code 훅으로 aidememo 자동화
+# Claude Code 훅으로 AideMemo 자동화
 
 Claude Code의 hook 시스템을 사용해 매 세션 / 편집 / user prompt마다
-aidememo 위키 컨텍스트를 자동 surface 하고 fact 후보를 미리 추출합니다.
+AideMemo 위키 컨텍스트를 자동 surface 하고 fact 후보를 미리 추출합니다.
 OMEGA의 `omega_welcome` + 자동 capture 패턴을 참고했습니다 (Apache 2.0).
 
 ## 제공 훅

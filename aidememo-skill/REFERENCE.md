@@ -8,7 +8,7 @@ title: AideMemo 전체 API 참조
 ## 프로젝트 구조
 
 ```
-/Users/mixlink/dev/aidememo/           ← 프로젝트 루트 (aidememo workspace)
+/Users/mixlink/dev/aidememo/           ← 프로젝트 루트 (AideMemo workspace)
 ├── Cargo.toml                   ← workspace manifest
 ├── AGENTS.md                   ← 에이전트용 가이드 (CLAUDE.md → import)
 ├── README.md

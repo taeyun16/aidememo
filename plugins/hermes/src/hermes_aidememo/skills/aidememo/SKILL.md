@@ -14,7 +14,7 @@ metadata:
       - 'You need persistent context across conversations beyond CLAUDE.md'
 ---
 
-# aidememo — AideMemo
+# AideMemo (`aidememo`)
 
 Structured local wiki: redb store + BM25 + semantic vectors + entity graph.
 All operations are offline and private.

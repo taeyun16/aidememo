@@ -702,7 +702,7 @@ def _aggregate_item(hit: dict, preview_chars: int) -> dict:
 
 
 def _context_to_text(payload: dict, preview_chars: int = 160, max_chars: int | None = None) -> str:
-    lines: list[str] = ["# aidememo context"]
+    lines: list[str] = ["# AideMemo context"]
     for title, key in [
         ("Pinned", "pinned"),
         ("Personalisation", "personalisation"),

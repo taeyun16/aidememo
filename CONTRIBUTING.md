@@ -1,4 +1,4 @@
-# Contributing to aidememo
+# Contributing to AideMemo
 
 Thanks for considering a contribution. The workflow is intentionally
 minimal — fast iteration over heavy process.

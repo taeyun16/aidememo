@@ -3,7 +3,7 @@ kind: doc
 title: Hermes Agent 설정 가이드
 ---
 
-# Setup Guide: Hermes Agent에서 aidememo 사용하기
+# Setup Guide: Hermes Agent에서 AideMemo 사용하기
 
 ## 개요
 
@@ -34,7 +34,7 @@ export PATH="$HOME/dev/aidememo/target/release:$PATH"
 
 ## 사용
 
-Hermes Agent가 자동으로 aidememo를 호출합니다. `.claude.md`, `.codex.md`도 함께 배치하면 더 많은 에이전트에서 동작합니다:
+Hermes Agent가 자동으로 AideMemo를 호출합니다. `.claude.md`, `.codex.md`도 함께 배치하면 더 많은 에이전트에서 동작합니다:
 
 ```bash
 cp ~/dev/aidememo/.claude.md ~/projects/your-project/.claude.md

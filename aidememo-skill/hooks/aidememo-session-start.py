@@ -68,7 +68,7 @@ def main() -> int:
         return 0
 
     body = (
-        "## aidememo wiki context (auto-loaded by hook)\n\n"
+        "## AideMemo wiki context (auto-loaded by hook)\n\n"
         + "\n\n".join(sections)
         + "\n\nUse `aidememo_query <topic>` / `aidememo_search <q>` for follow-up retrieval."
     )

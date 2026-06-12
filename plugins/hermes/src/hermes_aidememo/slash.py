@@ -348,50 +348,50 @@ def _handle_clear(target: str) -> str:
         entry = pending.clear_one(idx)
     except IndexError as exc:
         return f"{exc}. Run `/aidememo-pending` to see valid indices."
-    return f"Discarded #{idx} ([{entry.fact_type}]) without writing to aidememo."
+    return f"Discarded #{idx} ([{entry.fact_type}]) without writing to AideMemo."
 
 
 def register_all(ctx: Any, client: AideMemoClient) -> None:
     ctx.register_command(
         name="aidememo",
         handler=_aidememo_handler(client),
-        description="One-shot aidememo context fetch (search + graph + recent).",
+        description="One-shot AideMemo context fetch (search + graph + recent).",
         args_hint="<topic> [--source-id ID]",
     )
     ctx.register_command(
         name="aidememo-context",
         handler=_aidememo_context_handler(client),
-        description="Top-of-turn aidememo context envelope (pinned + personalisation + recent + optional topic).",
+        description="Top-of-turn AideMemo context envelope (pinned + personalisation + recent + optional topic).",
         args_hint="[topic] [--source-id ID]",
     )
     ctx.register_command(
         name="aidememo-aggregate",
         handler=_aidememo_aggregate_handler(client),
-        description="Exact count / sum / timeline over matching aidememo facts.",
+        description="Exact count / sum / timeline over matching AideMemo facts.",
         args_hint="<query> [--op count] [--type decision] [--entity Redis]",
     )
     ctx.register_command(
         name="aidememo-start",
         handler=_aidememo_start_handler(client),
-        description="Start an issue/ticket workflow and return aidememo project context.",
+        description="Start an issue/ticket workflow and return AideMemo project context.",
         args_hint="<title> [--body TEXT] [--source URL] [--source-id ID]",
     )
     ctx.register_command(
         name="aidememo-add",
         handler=_aidememo_add_handler(client),
-        description="Append a fact to the aidememo knowledge graph.",
+        description="Append a fact to the AideMemo knowledge graph.",
         args_hint="<content> [--entities A,B] [--type decision] [--source-id ID]",
     )
     ctx.register_command(
         name="aidememo-recent",
         handler=_aidememo_recent_handler(client),
-        description="Show recent aidememo facts (default last 7 days).",
+        description="Show recent AideMemo facts (default last 7 days).",
         args_hint="[7d|24h|30d]",
     )
     ctx.register_command(
         name="aidememo-doctor",
         handler=_aidememo_doctor_handler(client),
-        description="Show aidememo/Hermes setup, sharing, and graph diagnostics.",
+        description="Show AideMemo/Hermes setup, sharing, and graph diagnostics.",
         args_hint="",
     )
     ctx.register_command(

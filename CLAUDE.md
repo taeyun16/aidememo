@@ -10,11 +10,11 @@ lives in `AGENTS.md` (cross-tool spec) — read that first.
 ### MCP — registered via `.mcp.json`
 
 This repo ships a project-level `.mcp.json` that wires `aidememo mcp` (stdio) into
-Claude Code automatically. After `cargo build -p aidememo-cli`, the wiki tools
+Claude Code automatically. It expects `aidememo` on `PATH`; run
+`cargo install --path crates/aidememo-cli` from this checkout, or add
+`target/debug` to `PATH` after `cargo build -p aidememo-cli`. The wiki tools
 (`aidememo_context`, `aidememo_query`, `aidememo_aggregate`, `aidememo_fact_add`, `aidememo_doctor`, …) are
 available without extra setup.
-
-If the binary path differs from `./target/debug/aidememo`, edit `.mcp.json`.
 
 ### Skills, slash commands, hooks
 

@@ -1,6 +1,6 @@
 # hermes-aidememo
 
-Hermes Agent plugin for [aidememo (AideMemo)](https://github.com/taeyun16/aidememo)
+Hermes Agent plugin for [AideMemo (`aidememo`)](https://github.com/taeyun16/aidememo)
 — exposes the local knowledge graph as native tools, slash commands, and
 lifecycle hooks.
 
@@ -11,8 +11,8 @@ lifecycle hooks.
 | **12 tools** | `aidememo_workflow_start`, `aidememo_context`, `aidememo_query`, `aidememo_search`, `aidememo_recent`, `aidememo_aggregate`, `aidememo_entity_list`, `aidememo_traverse`, `aidememo_fact_add`, `aidememo_fact_add_many`, `aidememo_doctor`, `aidememo_lint` — the Hermes-native surface now covers the MCP core tools plus the legacy raw lint helper. `aidememo_context`, retrieval/write tools, and `aidememo_aggregate` accept `source_id` for shared-store scoping and fall back to `plugins.aidememo.source_id` / `AIDEMEMO_SOURCE_ID` when omitted. |
 | **8 slash commands** | `/aidememo-start <title>` (issue/ticket workflow context), `/aidememo-context [topic]` (top-of-turn context), `/aidememo <topic>` (topic query), `/aidememo-aggregate <query>` (exact count/sum/timeline), `/aidememo-add <content>` (record a fact), `/aidememo-recent` (last 7 days), `/aidememo-doctor` (setup/sharing diagnostics), `/aidememo-pending` (review/commit dry-run captures). Source-scoped commands accept `--source-id ID`. |
 | **Python SDK** | Re-exports `aidememo_agent.Memory` / `AideMemoMemorySDK` with code-first primitives: `open`, `search_rows`, `search_many`, `query_many`, `aggregate_many`, `coverage_by`, `group_by_entity`, and `remember`. Use it when a Hermes task needs fanout, coverage checks, or deterministic intermediate-state handling. The same `aidememo-agent-sdk` package also works from Codex, Claude Code, CI, and local scripts. |
-| **`pre_llm_call` hook** | Auto-injects recent facts into the first turn so the model has aidememo context before it answers. |
-| **`post_llm_call` hook** | Scans each turn for decision-style phrasings and auto-records them as aidememo facts. |
+| **`pre_llm_call` hook** | Auto-injects recent facts into the first turn so the model has AideMemo context before it answers. |
+| **`post_llm_call` hook** | Scans each turn for decision-style phrasings and auto-records them as AideMemo facts. |
 | **`hermes aidememo ...` CLI** | `hermes aidememo query` / `search` / `recent` / `add` / `stats` / `lint`. |
 | **Bundled skill** | The agentskills.io-conformant `SKILL.md` registers automatically. |
 
@@ -60,7 +60,7 @@ capabilities that MCP can't reach:
   facts pre-loaded — no tool call, no prompt, no model latency cost.
 - **Auto-fact recording.** Decisions like "Decision: ship HNSW as default"
   or "결정: multilingual-128M로 가자" are detected and persisted at
-  `on_session_end`. Hermes's "memory that grows with you" + aidememo's
+  `on_session_end`. Hermes's "memory that grows with you" + AideMemo's
   structured wiki, with no manual `aidememo fact add`.
 - **Slash commands.** `/aidememo redis` is one keypress vs the model picking
   to call `aidememo_query`.
@@ -72,7 +72,7 @@ capabilities that MCP can't reach:
 
 ## Hermes-fit usage profiles
 
-`aidememo` is strongest when the Hermes task shape selects the memory behaviour,
+AideMemo is strongest when the Hermes task shape selects the memory behaviour,
 not when every turn uses the same generic retrieval call.
 
 | Profile | Use it for | Primary surface | Memory behaviour |
@@ -116,12 +116,12 @@ floor, modest 7-day window, auto-record on).
 
 | Key | Default | Notes |
 |---|---|---|
-| `store_path` | aidememo's resolution | Override the redb store location. |
+| `store_path` | AideMemo config resolution | Override the redb store location. |
 | `source_id` | unset | Default namespace for scoped tool reads/writes. Explicit tool `source_id` values override it; `AIDEMEMO_SOURCE_ID` is also honored when config is unset. |
 | `recent_window` | `7d` | How far back the session-start preamble looks. |
 | `recent_limit` | `10` | Max facts in the preamble. |
 | `auto_record` | `true` | Toggle the `on_session_end` recorder. |
-| `dry_run` | `false` | When `true`, detections are appended to `pending_log` instead of being written to aidememo. Useful for auditing precision before trusting writes. |
+| `dry_run` | `false` | When `true`, detections are appended to `pending_log` instead of being written to AideMemo. Useful for auditing precision before trusting writes. |
 | `confidence_floor` | `0.85` | 0.7–1.0; lower = more captures (and more noise). |
 | `lock_retry_ms` | `5000` | CLI fallback retries short redb lock collisions for this long. Keeps two local Hermes agents smooth without requiring a daemon. Set `0` for fail-fast debugging. |
 | `default_entities` | `[]` | Entities to attach to auto-recorded facts. |
@@ -178,4 +178,4 @@ Hermes plugin entry point, `plugin.yaml`, and bundled `SKILL.md`.
 
 ## License
 
-MIT OR Apache-2.0 (matches the aidememo workspace).
+MIT OR Apache-2.0 (matches the AideMemo workspace).

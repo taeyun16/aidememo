@@ -80,7 +80,7 @@ def main() -> int:
         return 0
 
     body = (
-        "## aidememo extract — candidate facts in this message (preview)\n\n"
+        "## AideMemo extract - candidate facts in this message (preview)\n\n"
         f"{out}\n\n"
         "These are NOT auto-saved. Call `aidememo_fact_add` if any are worth keeping."
     )

@@ -143,7 +143,7 @@ LLM-graded with a `gpt-4o` judge:
 | Mastra published | gpt-4o | 84.2% |
 | OMEGA published local | gpt-4.1 | 95.4% |
 
-Use these numbers carefully. `aidememo` should lead with deployment and temporal
+Use these numbers carefully. AideMemo should lead with deployment and temporal
 memory ergonomics, not a SOTA claim.
 
 ## Model And Rerank Trade-offs

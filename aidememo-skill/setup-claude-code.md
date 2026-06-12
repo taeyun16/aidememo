@@ -3,9 +3,9 @@ kind: doc
 title: Claude Code 설정 가이드
 ---
 
-# Claude Code 에서 aidememo 사용하기
+# Claude Code 에서 AideMemo 사용하기
 
-`aidememo`는 Claude Code의 MCP / Skill / Slash command 시스템 셋 다 지원합니다.
+AideMemo는 Claude Code의 MCP / Skill / Slash command 시스템 셋 다 지원합니다.
 가장 큰 효과를 얻으려면 **MCP**를 먼저 등록하세요.
 
 ## 1. 빌드
@@ -18,7 +18,7 @@ export PATH="$HOME/dev/aidememo/target/release:$PATH"   # ~/.zshrc에 추가
 
 ## 2. MCP 서버 등록 (가장 중요)
 
-Claude Code가 stdio로 aidememo를 부르도록 등록합니다. 한 번만:
+Claude Code가 stdio로 AideMemo를 부르도록 등록합니다. 한 번만:
 
 ```bash
 claude mcp add aidememo -- aidememo mcp
@@ -43,7 +43,7 @@ claude mcp add aidememo -- aidememo mcp
 
 ## 3. Skill 설치 (선택)
 
-LLM이 aidememo를 *언제* 써야 할지 학습시키려면 SKILL.md를 복사:
+LLM이 AideMemo를 *언제* 써야 할지 학습시키려면 SKILL.md를 복사:
 
 ```bash
 mkdir -p ~/.claude/skills/aidememo

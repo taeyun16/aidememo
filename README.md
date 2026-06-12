@@ -46,9 +46,9 @@ flowchart LR
     Core --> Store[("redb + BM25 + HNSW")]
 ```
 
-## Why aidememo
+## Why AideMemo
 
-| Need | What aidememo gives you |
+| Need | What AideMemo gives you |
 |---|---|
 | Agent-friendly SDK memory | `aidememo-agent-sdk` gives code-executing agents `Memory.open`, `search_rows`, `coverage_by`, `aggregate_many`, and `remember`. |
 | Local agent memory | Single binary + single embedded store. No Postgres, Qdrant, Neo4j, or hosted vendor. |
@@ -290,7 +290,7 @@ parallel.
 | `aidememo-napi` publish workflow | trusted-publisher workflow defaults to dry-run and gates real publish on exact version input |
 
 See [`docs/MEASUREMENTS.md`](docs/MEASUREMENTS.md) for methodology, commands,
-and caveats. The short version: `aidememo` should lead with operational simplicity
+and caveats. The short version: AideMemo should lead with operational simplicity
 and temporal memory semantics, not a SOTA benchmark claim.
 
 ## Feature Map
@@ -343,20 +343,20 @@ aidememo config set model.name bge-small-en-v1.5
 
 ## Influences And References
 
-`aidememo` is not a clone of any one system. The design combines ideas from agent
+AideMemo is not a clone of any one system. The design combines ideas from agent
 skill optimization, long-term memory benchmarks, temporal knowledge graphs,
 and local coding-agent tools:
 
-| Reference | What aidememo borrows or reacts to |
+| Reference | What AideMemo borrows or reacts to |
 |---|---|
-| [SkillOpt](https://arxiv.org/abs/2605.23904) / [project page](https://microsoft.github.io/SkillOpt/) | Treat the agent memory skill/profile as a trainable artifact. `aidememo` borrows bounded edits, validation gates, rejected-edit buffers, and static deployment through `scripts/skillopt-lite-check.sh` / `scripts/skillopt-lite-cycle.sh`. |
-| [SkillOps](https://arxiv.org/abs/2605.13716) | Adjacent framing for periodic skill-library maintenance. `aidememo` keeps the lighter single-profile loop for now instead of a full skill ecosystem graph. |
-| [SkillMOO](https://arxiv.org/abs/2604.09297) | Adjacent multi-objective skill tuning work. `aidememo` currently gates correctness and workflow invariants first; cost/runtime trade-offs are future optimizer inputs. |
-| [LongMemEval](https://arxiv.org/abs/2410.10813) and [LongMemEval-V2](https://arxiv.org/abs/2605.12493) | Benchmark shape for long-term personal / agent memory. `aidememo` uses these results to calibrate retrieval, aggregation, and reader-side caveats without leading with SOTA claims. |
-| [Graphiti](https://github.com/getzep/graphiti) / [Zep](https://www.getzep.com/) | Temporal knowledge-graph semantics and validity-window comparisons. `aidememo` keeps similar history semantics but uses a single local redb store. |
-| [Mem0](https://github.com/mem0ai/mem0) and [Letta](https://github.com/letta-ai/letta) | Cloud/default extraction and memory-OS alternatives. `aidememo` intentionally stays bring-your-own-agent, explicit, and local-first. |
-| [Mastra Observational Memory](https://mastra.ai/research/observational-memory) and [OMEGA](https://omegamax.co/docs/benchmark-report) | High-scoring memory-system references. `aidememo` uses them as benchmark context while prioritizing SDK ergonomics and zero-token default ingest. |
-| [beads](https://gastownhall.github.io/beads/) | Agent-oriented local task graph and `bd ready` workflow. `aidememo` borrows the agent-local tool ergonomics, but focuses on typed memory retrieval rather than issue dependency tracking. |
+| [SkillOpt](https://arxiv.org/abs/2605.23904) / [project page](https://microsoft.github.io/SkillOpt/) | Treat the agent memory skill/profile as a trainable artifact. AideMemo borrows bounded edits, validation gates, rejected-edit buffers, and static deployment through `scripts/skillopt-lite-check.sh` / `scripts/skillopt-lite-cycle.sh`. |
+| [SkillOps](https://arxiv.org/abs/2605.13716) | Adjacent framing for periodic skill-library maintenance. AideMemo keeps the lighter single-profile loop for now instead of a full skill ecosystem graph. |
+| [SkillMOO](https://arxiv.org/abs/2604.09297) | Adjacent multi-objective skill tuning work. AideMemo currently gates correctness and workflow invariants first; cost/runtime trade-offs are future optimizer inputs. |
+| [LongMemEval](https://arxiv.org/abs/2410.10813) and [LongMemEval-V2](https://arxiv.org/abs/2605.12493) | Benchmark shape for long-term personal / agent memory. AideMemo uses these results to calibrate retrieval, aggregation, and reader-side caveats without leading with SOTA claims. |
+| [Graphiti](https://github.com/getzep/graphiti) / [Zep](https://www.getzep.com/) | Temporal knowledge-graph semantics and validity-window comparisons. AideMemo keeps similar history semantics but uses a single local redb store. |
+| [Mem0](https://github.com/mem0ai/mem0) and [Letta](https://github.com/letta-ai/letta) | Cloud/default extraction and memory-OS alternatives. AideMemo intentionally stays bring-your-own-agent, explicit, and local-first. |
+| [Mastra Observational Memory](https://mastra.ai/research/observational-memory) and [OMEGA](https://omegamax.co/docs/benchmark-report) | High-scoring memory-system references. AideMemo uses them as benchmark context while prioritizing SDK ergonomics and zero-token default ingest. |
+| [beads](https://gastownhall.github.io/beads/) | Agent-oriented local task graph and `bd ready` workflow. AideMemo borrows the agent-local tool ergonomics, but focuses on typed memory retrieval rather than issue dependency tracking. |
 
 See [`COMPARE.md`](COMPARE.md) for the broader competitive map and source
 ledger, and [`docs/MEASUREMENTS.md`](docs/MEASUREMENTS.md) for the commands and
@@ -364,7 +364,7 @@ numbers behind claims in this README.
 
 ## Compare
 
-| Alternative | Pick it when | Pick aidememo when |
+| Alternative | Pick it when | Pick AideMemo when |
 |---|---|---|
 | Mem0 | You want managed memory and automatic cloud extraction. | You want local-first explicit facts and no default vendor dependency. |
 | Letta | You want a full stateful agent runtime. | You already have an agent and need a pluggable memory layer. |

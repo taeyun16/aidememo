@@ -1,6 +1,6 @@
-# SkillOpt-lite For aidememo
+# SkillOpt-lite For AideMemo
 
-`aidememo` borrows the useful part of SkillOpt without making runtime memory
+AideMemo borrows the useful part of SkillOpt without making runtime memory
 self-modifying: treat the agent memory skill/profile as an offline trainable
 artifact, then deploy only the validated artifact.
 
@@ -134,6 +134,6 @@ A candidate is acceptable only when:
 - the diff is small enough to audit manually;
 - rejected edits and validation output are saved with the run.
 
-The important SkillOpt lesson for `aidememo` is the discipline, not the benchmark
+The important SkillOpt lesson for AideMemo is the discipline, not the benchmark
 claim: skill/profile edits should be bounded, evidence-backed, validated, and
 deployed as a static artifact.

@@ -1,4 +1,4 @@
-"""Composable aidememo primitives for code-first agent workflows.
+"""Composable AideMemo primitives for code-first agent workflows.
 
 The tool layer exposes convenient endpoints for the model. This module is
 the code-oriented surface: an agent can run a small Python program that
@@ -30,7 +30,7 @@ class AideMemoMemorySDK:
         source_id: str | None = None,
         lock_retry_ms: int | None = None,
     ) -> "AideMemoMemorySDK":
-        """Create an SDK from normal aidememo environment defaults."""
+        """Create an SDK from normal AideMemo environment defaults."""
 
         return cls(AideMemoClient(store_path=store_path, source_id=source_id, lock_retry_ms=lock_retry_ms))
 

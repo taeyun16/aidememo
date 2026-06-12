@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """PostToolUse hook for Claude Code (matcher: Edit|Write) — surfaces
-aidememo facts related to the file just edited so the agent sees the
+AideMemo facts related to the file just edited so the agent sees the
 relevant decisions / patterns / conventions before responding.
 
 Cost: one local `aidememo query` per matching tool call. No API.
@@ -87,7 +87,7 @@ def main() -> int:
         out = run_aidememo("query", topic, "-l", "3", "--recent-limit", "3")
         if out and "no results" not in out.lower() and out.strip():
             body = (
-                f"## aidememo facts related to `{file_path}` (via topic '{topic}')\n\n"
+                f"## AideMemo facts related to `{file_path}` (via topic '{topic}')\n\n"
                 f"{out}\n\n"
                 "If anything contradicts the change you just made, consider "
                 "`aidememo_fact_supersede` to retire the stale fact."

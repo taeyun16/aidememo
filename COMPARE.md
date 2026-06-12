@@ -1,10 +1,10 @@
-# How does `aidememo` compare?
+# How Does AideMemo Compare?
 
-This page lays out where `aidememo` sits in the 2026 agent-memory landscape
+This page lays out where AideMemo sits in the 2026 agent-memory landscape
 and what it's meaningfully better (or worse) at than its neighbours.
 The category is crowded — pick the right tool.
 
-> **Bottom line:** `aidememo` is an SDK-first agent-memory system with a
+> **Bottom line:** AideMemo is an SDK-first agent-memory system with a
 > lightweight temporal knowledge graph underneath. One Rust binary, one redb
 > file, `aidememo-agent-sdk` for code-executing agents, and MCP-native tools on
 > stdio + HTTP. If you want a hosted service, vendor lock-in, or default LLM
@@ -16,12 +16,12 @@ The category is crowded — pick the right tool.
 |---|---|---|
 | Cloud-first SaaS | [mem0 managed](https://mem0.ai/), [Zep](https://www.getzep.com/) | data egress, vendor lock, network round-trip per call |
 | Self-hosted server | [mem0 OSS](https://github.com/mem0ai/mem0), [Letta](https://github.com/letta-ai/letta), [Graphiti](https://github.com/getzep/graphiti) | Python + Postgres + Qdrant + Neo4j footprint |
-| Local MCP server | mem0 OpenMemory MCP, [Supermemory](https://supermemory.ai/), OMEGA, **aidememo** | (most don't have validity windows or graph traversal) |
+| Local MCP server | mem0 OpenMemory MCP, [Supermemory](https://supermemory.ai/), OMEGA, **AideMemo** | (most don't have validity windows or graph traversal) |
 | Memory OS | [Letta (MemGPT)](https://github.com/letta-ai/letta) | Python runtime, single-language ecosystem |
 | Observational | [Mastra](https://mastra.ai/), MemPalace | requires a hosted LLM call per insert |
 | Temporal KG | [Graphiti / Zep](https://github.com/getzep/graphiti) | Neo4j install, Python-only client |
 
-`aidememo` lives in **Local MCP server + Temporal KG hybrid**, and within
+AideMemo lives in **Local MCP server + Temporal KG hybrid**, and within
 that slice carries the smallest footprint.
 
 ## Head-to-head
@@ -148,14 +148,14 @@ that slice carries the smallest footprint.
 
 | Gap | What's missing | Status |
 |---|---|---|
-| LLM-grade auto-extraction | Mastra Observer/Reflector and Supermemory pre-curate chat at insert time with an LLM, hitting 84-95% on LongMemEval. aidememo's default `aidememo_extract` path is heuristic. | Agent can call its own LLM and feed structured output to `aidememo_fact_add_many`; aidememo keeps this explicit so the default path stays local-first and zero-token. |
-| LongMemEval E2E SOTA | OMEGA reports 95.4% with gpt-4.1, deep hooks, rerank, and temporal prompting. | aidememo @ bge + reranker K=20→10 measured 74.0% with MiniMax-M2.7-highspeed and 72.6% with gpt-4.1. Retrieval is high (R@10 = 0.992); remaining errors are mostly reader-side temporal / multi-session reasoning. |
-| Multi-writer merge | beads has git-style cell merge; aidememo is single-writer. | Use `lock_retry_ms` for small same-host teams, one `aidememo mcp-serve` daemon for shared writes, and pull-only sync for local read caches. Full distributed write merge isn't in scope. |
+| LLM-grade auto-extraction | Mastra Observer/Reflector and Supermemory pre-curate chat at insert time with an LLM, hitting 84-95% on LongMemEval. AideMemo's default `aidememo_extract` path is heuristic. | Agent can call its own LLM and feed structured output to `aidememo_fact_add_many`; AideMemo keeps this explicit so the default path stays local-first and zero-token. |
+| LongMemEval E2E SOTA | OMEGA reports 95.4% with gpt-4.1, deep hooks, rerank, and temporal prompting. | AideMemo @ bge + reranker K=20→10 measured 74.0% with MiniMax-M2.7-highspeed and 72.6% with gpt-4.1. Retrieval is high (R@10 = 0.992); remaining errors are mostly reader-side temporal / multi-session reasoning. |
+| Multi-writer merge | beads has git-style cell merge; AideMemo is single-writer. | Use `lock_retry_ms` for small same-host teams, one `aidememo mcp-serve` daemon for shared writes, and pull-only sync for local read caches. Full distributed write merge isn't in scope. |
 | Community / cluster detection | Graphiti groups related entities into communities. | Not implemented; out of scope for v0.x. |
-| Cloud-managed multi-tenant ops | SaaS peers partition users and operate the service for you. | `source_id` scopes facts/search inside one store and projects provide hard local isolation, but aidememo does not try to be hosted multi-tenant infrastructure. |
-| Entity centrality | Zep / Graphiti boost facts on central nodes. | aidememo ships `search.entity_centrality_weight` (commit `0d67e47`); default off but turning it on adds `1 + w * log10(1 + max_fact_count)` to the rrf weight. |
+| Cloud-managed multi-tenant ops | SaaS peers partition users and operate the service for you. | `source_id` scopes facts/search inside one store and projects provide hard local isolation, but AideMemo does not try to be hosted multi-tenant infrastructure. |
+| Entity centrality | Zep / Graphiti boost facts on central nodes. | AideMemo ships `search.entity_centrality_weight` (commit `0d67e47`); default off but turning it on adds `1 + w * log10(1 + max_fact_count)` to the rrf weight. |
 
-## When `aidememo` is the right call
+## When AideMemo Is The Right Call
 
 - Your agent needs project memory that survives across IDEs / model
   vendors / agent runtimes — not memory tied to one SaaS account.
@@ -166,7 +166,7 @@ that slice carries the smallest footprint.
 - You like Graphiti's temporal model but don't want to install Neo4j.
 - You're allergic to vendor lock-in and Python service stacks.
 
-## When `aidememo` is the wrong call
+## When AideMemo Is The Wrong Call
 
 - You need cloud-managed multi-tenant memory across thousands of users.
 - You need state-of-the-art chat extraction (use a hosted LLM there).

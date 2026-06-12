@@ -1,4 +1,4 @@
-"""Tool definitions for the aidememo plugin.
+"""Tool definitions for the AideMemo plugin.
 
 Each tool returns plain JSON-serialisable Python (Hermes serialises
 to the model). Schemas are minimal - the description is the most
@@ -312,7 +312,7 @@ def _make_handlers(client: AideMemoClient) -> list[tuple[str, dict, Callable[...
                 },
             ),
             _aggregate,
-            "Exact aggregation over aidememo facts for counts, sums, dates, and timelines.",
+            "Exact aggregation over AideMemo facts for counts, sums, dates, and timelines.",
             "🧮",
         ),
         (

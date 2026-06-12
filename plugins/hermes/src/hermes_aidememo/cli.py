@@ -81,5 +81,5 @@ def register(ctx: Any, client: AideMemoClient) -> None:
         help="AideMemo subcommands (query / search / recent / add / stats / lint)",
         setup_fn=_setup,
         handler_fn=_handler_factory(client),
-        description="Talk to the aidememo knowledge graph from the hermes CLI.",
+        description="Talk to the AideMemo knowledge graph from the hermes CLI.",
     )

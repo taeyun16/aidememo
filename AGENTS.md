@@ -9,7 +9,7 @@ Codex, Cursor, Aider, Jules, and any agent that follows the
 
 ## What this project is
 
-`aidememo` (AideMemo) ingests a markdown wiki into a structured knowledge graph
+AideMemo (`aidememo`) ingests a markdown wiki into a structured knowledge graph
 (redb + BM25 + semantic vectors) and exposes it to LLM agents via CLI, MCP
 server, and native bindings (Python / Node / Elixir / C).
 
@@ -218,7 +218,7 @@ aidememo config set model.name bge-small-en-v1.5    # 133 MB, ONNX
 #   rerank.endpoint = "http://host:8081"
 #   rerank.model    = "BAAI/bge-reranker-base"
 #   rerank.top_k    = 32
-# Reranker failure is non-fatal — aidememo falls back to RRF order with a warning.
+# Reranker failure is non-fatal — AideMemo falls back to RRF order with a warning.
 #
 # When to enable rerank — measured trade-offs (default: off):
 #   * Retrieval-bound workload: corpus where top-K recall is < 95%
@@ -446,7 +446,7 @@ aidememo pending reject --all --json
 | Hook | Effect |
 |---|---|
 | `SessionStart` | injects `aidememo overview` + `aidememo recent` + pinned facts as `additionalContext` |
-| `PostToolUse` (Edit/Write) | surfaces aidememo facts related to the just-edited file |
+| `PostToolUse` (Edit/Write) | surfaces AideMemo facts related to the just-edited file |
 | `UserPromptSubmit` | extracts candidate facts from the prompt (preview only; opt into LLM via `AIDEMEMO_EXTRACT_LLM=1`) |
 
 ### Agentic-loop pattern — when to call `aidememo_aggregate` mid-turn

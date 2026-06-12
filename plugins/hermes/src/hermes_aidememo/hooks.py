@@ -75,7 +75,7 @@ def _extract_title(message: str) -> str:
 
 def _format_workflow_pack(pack: dict[str, Any]) -> str:
     lines = [
-        "## aidememo - workflow context pack",
+        "## AideMemo - workflow context pack",
         "",
         "`aidememo_workflow_start` was run automatically for this sparse "
         "ticket. Base the plan on the scoped prior memory below.",
@@ -107,9 +107,9 @@ def _format_workflow_pack(pack: dict[str, Any]) -> str:
 def _format_recent_block(facts: list[dict]) -> str:
     """Render a compact, model-friendly preamble."""
     lines = [
-        "## aidememo - workflow memory",
+        "## AideMemo - workflow memory",
         "",
-        "Auto-loaded by the aidememo Hermes plugin. When the user gives a "
+        "Auto-loaded by the AideMemo Hermes plugin. When the user gives a "
         "sparse issue, ticket, PR, or automation trigger, call "
         "`aidememo_workflow_start` before making a plan. Pass any user-provided "
         "`source_id` through to the tool so neighbouring project memory "
@@ -186,7 +186,7 @@ def make_post_llm_call(
     """Build the ``post_llm_call`` callback.
 
     Runs the decision detector against the just-finished turn's text
-    and either auto-records each match as a aidememo fact (the default) or
+    and either auto-records each match as an AideMemo fact (the default) or
     appends it to ``pending_path`` for offline review when
     ``dry_run`` is on.
 

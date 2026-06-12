@@ -3,7 +3,7 @@ kind: doc
 title: Codex CLI 설정 가이드
 ---
 
-# Codex CLI 에서 aidememo 사용하기
+# Codex CLI 에서 AideMemo 사용하기
 
 OpenAI Codex CLI는 `~/.codex/config.toml`에서 stdio MCP 서버를 그대로 받습니다.
 설정 한 줄로 끝납니다.
@@ -78,6 +78,6 @@ printf '%s\n' \
 
 | 증상 | 해결 |
 |---|---|
-| Codex가 aidememo를 못 봄 | `~/.codex/config.toml` 경로 + TOML 키 이름 (`mcp_servers`) 확인 |
+| Codex가 AideMemo를 못 봄 | `~/.codex/config.toml` 경로 + TOML 키 이름 (`mcp_servers`) 확인 |
 | 매번 승인 프롬프트가 뜸 | `default_tools_approval_mode = "approve"` 설정 |
 | `command not found: aidememo` | 절대경로 사용: `command = "/Users/me/dev/aidememo/target/release/aidememo"` |
