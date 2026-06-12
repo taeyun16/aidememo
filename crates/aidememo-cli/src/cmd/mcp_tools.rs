@@ -3172,7 +3172,7 @@ pub fn list_tools() -> Vec<Tool> {
         },
         Tool {
             name: "aidememo_entity_list".into(),
-            description: "List entities in the aidememo with fact counts. To fetch one entity's record use aidememo_entity_get; to find related entities by graph use aidememo_traverse.".into(),
+            description: "List entities in AideMemo with fact counts. To fetch one entity's record use aidememo_entity_get; to find related entities by graph use aidememo_traverse.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -3330,10 +3330,10 @@ pub fn list_tools() -> Vec<Tool> {
         },
         Tool {
             name: "aidememo_fact_add".into(),
-            description: "Add a fact to the aidememo.\n\n**SELF-EXTRACTION PATTERN**: Before calling, classify the content yourself \
-                from the menu below. aidememo deliberately does NOT ship a built-in LLM-aided \
+            description: "Add a fact to AideMemo.\n\n**SELF-EXTRACTION PATTERN**: Before calling, classify the content yourself \
+                from the menu below. AideMemo deliberately does NOT ship a built-in LLM-aided \
                 ingest pipeline (cf. Mem0 / Letta) — instead it relies on the calling \
-                agent's own reasoning, which is almost always a stronger model than aidememo \
+                agent's own reasoning, which is almost always a stronger model than AideMemo \
                 could ever embed. Pick the right `fact_type` (preference / lesson / \
                 error / decision / convention / claim / note) so the in-pipeline weighting \
                 (decay-exempt + 2× boost on personalisation tiers) actually fires on the \

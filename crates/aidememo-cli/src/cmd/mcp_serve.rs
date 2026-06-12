@@ -406,7 +406,7 @@ async fn handle_sync_since(
             .into_response();
     }
     // Plain text — JSONL isn't a registered MIME but `application/x-ndjson`
-    // is the convention; pin it so curl + the aidememo client both recognise it.
+    // is the convention; pin it so curl + the `aidememo` client both recognise it.
     (
         StatusCode::OK,
         [("content-type", "application/x-ndjson")],

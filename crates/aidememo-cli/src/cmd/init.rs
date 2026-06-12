@@ -50,7 +50,7 @@ pub fn init_command() -> impl Parser<Command> {
     .map(Command::Init)
     .to_options()
     .command("init")
-    .help("Initialize a aidememo store and optionally ingest the wiki")
+    .help("Initialize an AideMemo store and optionally ingest the wiki")
 }
 
 /// Run `aidememo init` — create config/store and optionally ingest.

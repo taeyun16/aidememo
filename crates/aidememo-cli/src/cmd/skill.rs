@@ -377,7 +377,7 @@ fn validate_allowed_tool(spec: &str, mcp_tools: &[String]) -> Option<Issue> {
         severity: Severity::Warning,
         code: "unknown-tool".into(),
         message: format!(
-            "allowed-tool '{}' is neither Bash(…), a aidememo MCP tool, nor a known Claude Code built-in",
+            "allowed-tool '{}' is neither Bash(…), an AideMemo MCP tool, nor a known Claude Code built-in",
             s
         ),
     })
@@ -571,7 +571,7 @@ pub(crate) fn target_agents_md_path(target: &str) -> Option<PathBuf> {
     }
 }
 
-/// Markers we wrap the aidememo-skill section in inside an AGENTS.md file
+/// Markers we wrap the `aidememo-skill` section in inside an AGENTS.md file
 /// so re-running `aidememo skill install --force` can replace just our
 /// block instead of stomping the whole file. Stable across versions
 /// so an older marker keeps replacing correctly.
@@ -596,7 +596,7 @@ fn install_into_agents_md(
     let already = existing.contains(AIDEMEMO_AGENTS_BEGIN);
     if already && !force {
         return Err(AideMemoError::InvalidInput(format!(
-            "{} already has a aidememo-skill section — pass --force to overwrite",
+            "{} already has an aidememo-skill section — pass --force to overwrite",
             path.display()
         )));
     }
@@ -1025,8 +1025,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join(".config/pi/AGENTS.md");
 
-        // Pre-populate with user content above and below the aidememo block,
-        // plus an "old" aidememo block.
+        // Pre-populate with user content above and below the AideMemo block,
+        // plus an old AideMemo block.
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(
             &path,

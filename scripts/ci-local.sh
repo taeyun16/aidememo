@@ -120,6 +120,11 @@ sdk() {
     run_without_child_summary "sdk promotion check" "$ROOT_DIR/scripts/sdk-promotion-check.sh"
 }
 
+docs() {
+    run "$ROOT_DIR/scripts/docs-feature-gate.py"
+    run npm --prefix "$ROOT_DIR/website" run build
+}
+
 demo() {
     run "$ROOT_DIR/scripts/demo-workflow.sh"
 }
@@ -134,17 +139,21 @@ case "${1:-all}" in
     sdk)
         sdk
         ;;
+    docs)
+        docs
+        ;;
     demo)
         demo
         ;;
     all)
         lint
+        docs
         demo
         sdk
         tests
         ;;
     *)
-        echo "usage: $0 [lint|test|sdk|demo|all]" >&2
+        echo "usage: $0 [lint|test|sdk|docs|demo|all]" >&2
         exit 1
         ;;
 esac

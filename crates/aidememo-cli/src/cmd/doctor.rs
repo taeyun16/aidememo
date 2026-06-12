@@ -458,7 +458,7 @@ fn collect_workflow_status(
         hints.push(WorkflowHint {
             code: "workflow_no_skill_prompt",
             severity: "warn",
-            message: "no checked agent has the aidememo workflow skill/prompt installed"
+            message: "no checked agent has the AideMemo workflow skill/prompt installed"
                 .to_string(),
             action: "aidememo skill install --target claude".to_string(),
         });

@@ -1,5 +1,5 @@
 """AideMemoClient tests — focus on the subprocess fallback path since the
-PyO3 binding is exercised by the aidememo-python smoke tests upstream."""
+PyO3 binding is exercised by the `aidememo-python` smoke tests upstream."""
 
 from __future__ import annotations
 

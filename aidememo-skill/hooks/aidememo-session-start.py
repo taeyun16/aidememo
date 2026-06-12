@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""SessionStart hook for Claude Code — surfaces the aidememo wiki's pinned
+"""SessionStart hook for Claude Code — surfaces the AideMemo wiki's pinned
 context + recent activity at the top of every new conversation.
 
 Modeled after OMEGA's `omega_welcome` (session briefing). Cost: one

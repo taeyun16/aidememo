@@ -408,7 +408,7 @@ def _make_handlers(client: AideMemoClient) -> list[tuple[str, dict, Callable[...
             "aidememo_doctor",
             _schema(
                 "aidememo_doctor",
-                "Health and setup diagnostics for the aidememo store and Hermes integration. Use when memory reads/writes fail, source scoping looks wrong, or shared-store lock contention appears.",
+                "Health and setup diagnostics for the AideMemo store and Hermes integration. Use when memory reads/writes fail, source scoping looks wrong, or shared-store lock contention appears.",
                 {"type": "object", "properties": {}},
             ),
             _doctor,

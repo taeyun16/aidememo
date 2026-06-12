@@ -7,6 +7,7 @@ description: Register AideMemo as an MCP server and use its core tools.
 
 AideMemo exposes the same memory store through MCP so agents can search and
 write memory as tools.
+For the complete tool inventory, see [`Feature Inventory`](FEATURES.md).
 
 ## Stdio MCP
 

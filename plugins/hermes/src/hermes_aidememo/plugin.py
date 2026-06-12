@@ -4,7 +4,7 @@ Hermes calls :func:`register` once per plugin enable. We:
 
 1. Build a :class:`AideMemoClient` (aidememo-python in-process if available, CLI
    subprocess fallback otherwise).
-2. Register 8 tools (the same surface the aidememo MCP server exposes).
+2. Register 8 tools (the same surface the AideMemo MCP server exposes).
 3. Register 5 slash commands (``/aidememo``, ``/aidememo-start``, ``/aidememo-add``,
    ``/aidememo-recent``, ``/aidememo-pending``).
 4. Register 2 lifecycle hooks (``pre_llm_call`` auto-context,

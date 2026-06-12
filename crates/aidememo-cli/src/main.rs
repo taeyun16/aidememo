@@ -152,7 +152,7 @@ fn main() {
                 match cmd::daemon::registry_state(&store_path) {
                     RegistryState::Healthy(reg) => {
                         eprintln!(
-                            "Hint: a aidememo daemon is running on port {} and is holding this \
+                            "Hint: an AideMemo daemon is running on port {} and is holding this \
                              store's lock. The CLI auto-dispatches read commands + \
                              fact-add through it; commands not yet daemon-aware will \
                              collide. Stop the daemon (`aidememo daemon stop`) if you need \
@@ -1741,7 +1741,7 @@ fn handle_query(
 /// `aidememo query` daemon path. Calls the `aidememo_query` MCP tool and prints
 /// its JSON response verbatim (the tool already JSON-encodes the
 /// QueryResult; reformatting it as a local table would require
-/// deserialising into the aidememo-core type, which costs more code than
+/// deserialising into the `aidememo-core` type, which costs more code than
 /// it's worth for the warm-path one-shot.)
 fn run_query_via_daemon(base_url: &str, sub: &cmd::QuerySub) -> Result<String, AideMemoError> {
     let url = format!("{}/mcp", base_url.trim_end_matches('/'));

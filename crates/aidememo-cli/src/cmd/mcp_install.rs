@@ -1,4 +1,4 @@
-//! `aidememo mcp-install` — register the aidememo MCP server with a target agent.
+//! `aidememo mcp-install` — register the AideMemo MCP server with a target agent.
 //!
 //! Each agent has a different surface for MCP registration:
 //!
@@ -81,7 +81,7 @@ pub fn mcp_install_command() -> impl Parser<Command> {
     .to_options()
     .command("mcp-install")
     .help(
-        "Register the aidememo MCP server with an agent (claude / hermes / \
+        "Register the AideMemo MCP server with an agent (claude / hermes / \
          openclaw / codex / cursor / opencode)",
     )
 }

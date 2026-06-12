@@ -6,6 +6,8 @@ description: Common AideMemo CLI commands with examples.
 # CLI Usage
 
 The CLI is the fastest way to add, inspect, and maintain memory.
+For the complete top-level command inventory, see
+[`Feature Inventory`](FEATURES.md).
 
 ## Search and query
 

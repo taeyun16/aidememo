@@ -506,7 +506,7 @@ answer directly from the snippets you already have.
 pipeline (the kind Mem0 / Letta have a dedicated extractor for).
 The reason is structural: every agent that calls `aidememo_fact_add`
 already has its own LLM, and that LLM is almost always a stronger
-model than aidememo could ever embed. Asking the calling agent to do the
+model than AideMemo could ever embed. Asking the calling agent to do the
 classification keeps aidememo local-first and free of API-key /
 extractor-quality coupling, while still benefiting from the
 agent's reasoning.
