@@ -9,6 +9,11 @@ BASE="${AIDEMEMO_PYTHON_PUBLISH_BASE:-$(mktemp -d "${TMPDIR:-/tmp}/aidememo-pyth
 SUMMARY_TSV="$BASE/aidememo-python-publish.tsv"
 tmp_dir=""
 
+# shellcheck source=scripts/pyo3-python.sh
+source "$ROOT_DIR/scripts/pyo3-python.sh"
+PYO3_PYTHON_BIN="$(aidememo_resolve_pyo3_python)"
+export PYO3_PYTHON="$PYO3_PYTHON_BIN"
+
 run() {
     local label start end status elapsed
     label="$*"
@@ -133,12 +138,15 @@ mkdir -p "$BASE"
 : > "$SUMMARY_TSV"
 trap cleanup EXIT
 
-if ! command -v maturin >/dev/null 2>&1; then
-    record_fail "maturin availability" "maturin is required for aidememo-python publish dry-run"
+if ! command -v uvx >/dev/null 2>&1; then
+    record_fail "uvx availability" "uvx is required for aidememo-python publish dry-run; run mise install"
     exit 1
 fi
 
 run_labeled "aidememo-python version gate" "$ROOT_DIR/scripts/aidememo-python-version.sh"
+run_labeled "uv version" "$ROOT_DIR/scripts/uv.sh" --version
+echo "PYO3_PYTHON=$PYO3_PYTHON ($(aidememo_pyo3_python_version "$PYO3_PYTHON"))"
+run_labeled "maturin version" "$ROOT_DIR/scripts/maturin.sh" --version
 
 version="$(
     python3 - "$PY_DIR/pyproject.toml" <<'PY'
@@ -165,8 +173,8 @@ fi
 venv_dir="$tmp_dir/venv"
 mkdir -p "$dist_dir"
 
-run_labeled "create virtualenv" python3 -m venv "$venv_dir"
-run_labeled "maturin build --release --sdist" bash -lc "cd '$PY_DIR' && maturin build --release --sdist -i '$venv_dir/bin/python' -o '$dist_dir'"
+run_labeled "create virtualenv" "$ROOT_DIR/scripts/uv.sh" venv --seed -p "$PYO3_PYTHON" "$venv_dir"
+run_labeled "maturin build --release --sdist" bash -lc "cd '$PY_DIR' && '$ROOT_DIR/scripts/maturin.sh' build --release --sdist -i '$venv_dir/bin/python' -o '$dist_dir'"
 run_labeled "validate publish payload" "$ROOT_DIR/scripts/aidememo_python_publish_check.py" "$dist_dir" "$version"
 
 echo "OK: aidememo-python publish dry-run passed"

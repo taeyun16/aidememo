@@ -42,9 +42,19 @@ export PATH="$PWD/target/release:$PATH"
 For local development, the repo pins tool versions in `mise.toml`.
 
 ```bash
+mise run release-preflight
 mise run docs-build
 mise run ci-lint
 mise run ci-test
+```
+
+The Python release path uses `uvx` to run the pinned `maturin` build tool, so
+`mise install` is enough to reproduce the local wheel and publish dry-run
+checks:
+
+```bash
+mise run python-pack-smoke
+mise run python-publish-dry-run
 ```
 
 ## Store location

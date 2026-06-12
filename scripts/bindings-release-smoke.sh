@@ -8,6 +8,11 @@ RUN_OPTIONAL="${AIDEMEMO_BINDINGS_SMOKE_OPTIONAL:-0}"
 BASE="${AIDEMEMO_BINDINGS_SMOKE_BASE:-$(mktemp -d "${TMPDIR:-/tmp}/aidememo-bindings-smoke.XXXXXX")}"
 SUMMARY_TSV="$BASE/bindings-release-smoke.tsv"
 
+# shellcheck source=scripts/pyo3-python.sh
+source "$ROOT_DIR/scripts/pyo3-python.sh"
+PYO3_PYTHON_BIN="$(aidememo_resolve_pyo3_python)"
+export PYO3_PYTHON="$PYO3_PYTHON_BIN"
+
 timer_now() {
     python3 - <<'PY'
 import time
@@ -128,11 +133,12 @@ mkdir -p "$BASE"
 trap print_summary EXIT
 
 echo "binding release smoke"
+echo "PYO3_PYTHON=$PYO3_PYTHON ($(aidememo_pyo3_python_version "$PYO3_PYTHON"))"
 echo
 status_line "binding" "status" "detail"
 status_line "-------" "------" "------"
 
-run cargo check -p aidememo-python -p aidememo-napi -p aidememo-nif -p aidememo-ffi
+run env PYO3_PYTHON="$PYO3_PYTHON" cargo check -p aidememo-python -p aidememo-napi -p aidememo-nif -p aidememo-ffi
 
 if [[ "$RUN_NPM" == "1" ]]; then
     run scripts/aidememo-napi-version.sh
@@ -142,16 +148,16 @@ else
     record_status "aidememo-napi" "skip" "set AIDEMEMO_BINDINGS_SMOKE_NPM=1 to run npm pack/install smoke"
 fi
 
-if have maturin; then
+if have uvx; then
     if [[ "$RUN_OPTIONAL" == "1" ]]; then
         run_without_child_summary "scripts/aidememo-python-pack-smoke.sh" scripts/aidememo-python-pack-smoke.sh
         record_status "aidememo-python" "ok" "version gate + wheel install smoke"
     else
         run scripts/aidememo-python-version.sh
-        record_status "aidememo-python" "ready" "maturin found; set AIDEMEMO_BINDINGS_SMOKE_OPTIONAL=1 to run wheel install smoke"
+        record_status "aidememo-python" "ready" "uvx found; set AIDEMEMO_BINDINGS_SMOKE_OPTIONAL=1 to run wheel install smoke"
     fi
 else
-    record_status "aidememo-python" "todo" "install maturin, then run scripts/aidememo-python-pack-smoke.sh"
+    record_status "aidememo-python" "todo" "install uv via mise install, then run scripts/aidememo-python-pack-smoke.sh"
 fi
 
 if have mix; then

@@ -2,6 +2,7 @@
 rust = "1.96.0"
 node = "24"
 python = ["3.13", "3.12", "3.10"]
+uv = "0.11.21"
 go = "1.24"
 erlang = "28"
 elixir = "1.19.5-otp-28"
@@ -10,6 +11,8 @@ elixir = "1.19.5-otp-28"
 CARGO_INCREMENTAL = "0"
 CARGO_NET_GIT_FETCH_WITH_CLI = "true"
 CARGO_NET_RETRY = "10"
+AIDEMEMO_MATURIN_SPEC = "maturin==1.14.0"
+AIDEMEMO_UV_SPEC = "uv==0.11.21"
 PYO3_USE_ABI3_FORWARD_COMPATIBILITY = "1"
 RUSTUP_MAX_RETRIES = "10"
 
@@ -24,6 +27,18 @@ run = "./scripts/ci-local.sh test"
 [tasks.bindings-smoke]
 description = "Run cross-binding smoke checks"
 run = "./scripts/bindings-release-smoke.sh"
+
+[tasks.release-preflight]
+description = "Run the local release preflight gate"
+run = "./scripts/release-preflight.sh"
+
+[tasks.python-pack-smoke]
+description = "Build and install-smoke the aidememo-python wheel via uvx+maturin"
+run = "./scripts/aidememo-python-pack-smoke.sh"
+
+[tasks.python-publish-dry-run]
+description = "Build and validate aidememo-python PyPI payloads via uvx+maturin"
+run = "./scripts/aidememo-python-publish-dry-run.sh"
 
 [tasks.docs-install]
 description = "Install the Docusaurus documentation site dependencies"

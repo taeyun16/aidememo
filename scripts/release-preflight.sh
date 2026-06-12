@@ -35,6 +35,7 @@ fi
 
 RUN_BINDINGS="${AIDEMEMO_RELEASE_PREFLIGHT_BINDINGS:-1}"
 RUN_WORKFLOW="${AIDEMEMO_RELEASE_PREFLIGHT_WORKFLOW:-1}"
+RUN_DOCS="${AIDEMEMO_RELEASE_PREFLIGHT_DOCS:-1}"
 RUN_ACTIONLINT="${AIDEMEMO_RELEASE_PREFLIGHT_ACTIONLINT:-1}"
 RUN_SDK_PROMOTION="${AIDEMEMO_RELEASE_PREFLIGHT_SDK_PROMOTION:-1}"
 RUN_SDK_PROMOTION_SMOKE="${AIDEMEMO_RELEASE_PREFLIGHT_SDK_SMOKE:-0}"
@@ -162,6 +163,14 @@ if [[ "$RUN_ACTIONLINT" == "1" ]]; then
     fi
 else
     record_skip "workflow syntax lint" "AIDEMEMO_RELEASE_PREFLIGHT_ACTIONLINT=0"
+fi
+
+if [[ "$RUN_DOCS" == "1" ]]; then
+    run "docs feature gate" "$ROOT_DIR/scripts/docs-feature-gate.py"
+    run "docs site build" npm --prefix "$ROOT_DIR/website" run build
+else
+    record_skip "docs feature gate" "AIDEMEMO_RELEASE_PREFLIGHT_DOCS=0"
+    record_skip "docs site build" "AIDEMEMO_RELEASE_PREFLIGHT_DOCS=0"
 fi
 
 if [[ "$RUN_BINDINGS" == "1" ]]; then

@@ -17,6 +17,20 @@ Run the local release gate from a clean checkout:
 scripts/release-preflight.sh
 ```
 
+This includes the version pins, workflow syntax lint, docs feature coverage
+gate, docs-site build, binding smoke, workflow smoke, and SDK promotion check.
+
+`maturin` is intentionally run through `uvx` using the pinned spec from
+`mise.toml`, not from whichever `maturin` happens to be on `PATH`.
+
+The Python binding uses PyO3 0.23, so release smoke scripts select a Python
+3.9-3.13 interpreter for native builds. If your default `python3` is newer,
+set the interpreter explicitly:
+
+```bash
+AIDEMEMO_PYO3_PYTHON=python3.13 scripts/release-preflight.sh
+```
+
 For a full registry dry-run:
 
 ```bash
@@ -49,6 +63,13 @@ Publish native bindings before composition packages:
 1. `aidememo-python`
 2. `aidememo-agent-sdk`
 3. `hermes-aidememo`
+
+Local Python payload checks:
+
+```bash
+mise run python-pack-smoke
+mise run python-publish-dry-run
+```
 
 Before the first PyPI release, user-facing docs should show checkout installs:
 
