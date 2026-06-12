@@ -146,19 +146,24 @@ class AideMemoClient:
         if self._py is None:
             return self._mcp_tool("aidememo_context", args)
 
-        recent = self.recent(last=f"{recent_days}d", limit=recent_limit)
+        recent_fetch_limit = recent_limit * 4 if source_id else recent_limit
+        recent = self.recent(last=f"{recent_days}d", limit=recent_fetch_limit)
+        if source_id:
+            recent = [f for f in recent if _normalise_source_id(f.get("source_id")) == source_id]
+        recent = recent[:recent_limit]
+        pinned_fn = getattr(self._py, "pinned_facts", None)
+        pinned_fetch_limit = pinned_limit * 4 if source_id else pinned_limit
+        pinned = list(pinned_fn(limit=max(pinned_fetch_limit, 0))) if pinned_fn is not None else []
+        if source_id:
+            pinned = [f for f in pinned if _normalise_source_id(f.get("source_id")) == source_id]
         payload: dict[str, Any] = {
-            "pinned": [],
+            "pinned": pinned[:pinned_limit],
             "personalisation": [
                 f
                 for f in recent
                 if str(f.get("fact_type") or "").lower() in {"preference", "lesson", "error"}
             ][:limit],
             "recent": recent,
-            "backend_note": (
-                "aidememo-agent-sdk is using aidememo-python; pinned facts are not exposed by the binding yet, "
-                "so this context is composed from query/search/recent."
-            ),
         }
         if topic:
             query_result = self.query(
@@ -453,6 +458,7 @@ class AideMemoClient:
         tags: list[str] | None = None,
         confidence: float | None = None,
         source_id: str | None = None,
+        session_id: str | None = None,
     ) -> str:
         source_id = self._source_id(source_id)
         if self._py is not None:
@@ -466,7 +472,27 @@ class AideMemoClient:
                 kwargs["confidence"] = confidence
             if source_id is not None:
                 kwargs["source_id"] = source_id
+            if session_id is not None:
+                kwargs["session_id"] = session_id
             return self._py.fact_add(content, **kwargs)
+        if session_id:
+            mcp_args: dict[str, Any] = {
+                "content": content,
+                "fact_type": fact_type,
+                "session_id": session_id,
+            }
+            if entities:
+                mcp_args["entities"] = entities
+            if tags:
+                mcp_args["tags"] = tags
+            if confidence is not None:
+                mcp_args["confidence"] = confidence
+            if source_id:
+                mcp_args["source_id"] = source_id
+            payload = self._mcp_tool("aidememo_fact_add", mcp_args)
+            if isinstance(payload, dict) and isinstance(payload.get("id"), str):
+                return payload["id"]
+            raise AideMemoUnavailable(f"aidememo_fact_add returned no id: {payload!r}")
         args = ["fact", "add", content, "--type", fact_type]
         if entities:
             args += ["--entities", ",".join(entities)]
@@ -517,11 +543,6 @@ class AideMemoClient:
                 return [str(f.get("id")) for f in facts if isinstance(f, dict) and f.get("id")]
             return []
 
-        if any(item.get("session_id") for item in items):
-            raise AideMemoUnavailable(
-                "fact_add_many with session_id requires the MCP/CLI backend; "
-                "aidememo-python does not expose session attachment yet."
-            )
         if self._py is not None:
             py_items = []
             for item in items:
@@ -535,6 +556,7 @@ class AideMemoClient:
                     "tags": item.get("tags") or [],
                     "confidence": item.get("confidence"),
                     "source_id": source_id,
+                    "session_id": item.get("session_id"),
                 })
             return list(self._py.fact_add_many(py_items))
         return []

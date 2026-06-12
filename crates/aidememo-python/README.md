@@ -5,18 +5,36 @@ a local knowledge-graph wiki indexed with BM25 + semantic vectors.
 
 ## Install
 
+From a checkout, use the pinned release toolchain:
+
 ```bash
-pip install maturin
+mise install
+mise run python-pack-smoke
+```
+
+For iterative local development, install into the current Python environment:
+
+```bash
 cd crates/aidememo-python
-maturin develop --release   # builds + installs into the current Python env
+../../scripts/maturin.sh develop --release
 ```
 
 Or build a wheel:
 
 ```bash
-maturin build --release
+cd crates/aidememo-python
+../../scripts/maturin.sh build --release
 pip install target/wheels/aidememo_python-*.whl
 ```
+
+After the public PyPI release:
+
+```bash
+python -m pip install aidememo-python
+```
+
+The wrapper runs `maturin` through the pinned `uvx` spec in `mise.toml`; no
+global `maturin` install is required.
 
 ## Quick start
 
@@ -88,10 +106,20 @@ pack = g.workflow_start(
 print(pack["session_id"])
 print(pack["ticket_fact_id"])
 print([hit["content"] for hit in pack["relevant_decisions"]])
+
+g.fact_add(
+    "Lesson: follow-up facts can attach to this workflow session",
+    entity_ids=[redis],
+    fact_type="lesson",
+    source_id="team-a",
+    session_id=pack["session_id"],
+)
+thread = g.fact_list(entity=pack["session_id"], limit=20)
 ```
 
 For a multi-agent shared store, pass `source_id` on writes and reads. The same
-field flows through `search`, `query`, `fact_list`, and `workflow_start`.
+field flows through `search`, `query`, `fact_list`, `fact_add`, `fact_add_many`,
+and `workflow_start`.
 
 ## Errors
 
@@ -129,7 +157,8 @@ Exception classes:
 | `path_find(from, to)` | `list[dict] \| None` |
 | `entity_add(name, ...)` / `entity_get(name)` / `entity_list(...)` / `entity_delete(name)` | … |
 | `resolve_entity(name)` | ULID string |
-| `fact_add(content, ...)` / `fact_get(id)` / `fact_list(...)` / `fact_delete(id)` | … |
+| `fact_add(content, ..., session_id?)` / `fact_add_many(items, session_id?)` / `fact_get(id)` / `fact_list(...)` / `fact_delete(id)` | … |
+| `fact_pin(id, pinned)` / `pinned_facts(limit?)` | always-loaded facts |
 | `relation_add/remove/get` | … |
 | `ingest(wiki_root, incremental?)` | `dict` |
 | `lint()` | `list[dict]` |

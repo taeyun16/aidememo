@@ -28,6 +28,18 @@ After `aidememo-python` is published, install the optional fast path with:
 python -m pip install "aidememo-agent-sdk[binding]"
 ```
 
+## Native bindings
+
+This page covers the Python composition SDK. Runtime-specific native bindings
+are documented in their package READMEs:
+
+| Runtime | Package | Release path | Docs |
+|---|---|---|---|
+| Python native | `aidememo-python` | PyPI trusted-publisher workflow is ready | [README](https://github.com/taeyun16/aidememo/tree/main/crates/aidememo-python) |
+| Node.js | `aidememo-napi` | npm trusted-publisher workflow is ready; platform packages publish before the root wrapper | [README](https://github.com/taeyun16/aidememo/tree/main/crates/aidememo-napi) |
+| Elixir | `aidememo_nif` | Local/path binding docs are ready; no Hex publish workflow yet | [README](https://github.com/taeyun16/aidememo/tree/main/crates/aidememo-nif) |
+| C ABI | `aidememo-ffi` | Rust crate plus C header/linking docs | [README](https://github.com/taeyun16/aidememo/tree/main/crates/aidememo-ffi) |
+
 ## Open memory
 
 ```python

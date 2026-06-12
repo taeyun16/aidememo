@@ -54,6 +54,10 @@ const config = {
       ],
       navbar: {
         title: 'AideMemo',
+        logo: {
+          alt: 'AideMemo logo',
+          src: 'img/aidememo-logo.png',
+        },
         items: [
           {
             type: 'docSidebar',

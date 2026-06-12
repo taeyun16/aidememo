@@ -9,7 +9,56 @@ This page records the package publish order. It is intentionally conservative:
 publish lower-level packages first, then install and smoke the layers above
 them.
 
-## 1. Local preflight
+## 1. Registry and repository setup
+
+Create the repository environments and registry trusted-publisher entries before
+the first live publish run. The configured PyPI and npm workflows use OIDC, so
+do not add long-lived `PYPI_API_TOKEN` or `NPM_TOKEN` repository secrets for the
+normal release path.
+
+GitHub environments:
+
+| Environment | Workflows | Purpose |
+|---|---|---|
+| `pypi-publish` | `.github/workflows/aidememo-python-publish.yml` | Approval gate for PyPI trusted publishing |
+| `npm-publish` | `.github/workflows/aidememo-napi-publish.yml` | Approval gate for npm trusted publishing |
+
+Recommended protection: require a reviewer for both environments and restrict
+deployment branches/tags to the release branches or tags that the project uses.
+
+PyPI trusted publishers:
+
+| Project | GitHub owner/repo | Workflow | Environment | Status |
+|---|---|---|---|---|
+| `aidememo-python` | `taeyun16/aidememo` | `aidememo-python-publish.yml` | `pypi-publish` | Workflow ready |
+| `aidememo-agent-sdk` | `taeyun16/aidememo` | none yet | none yet | Keep checkout/manual publish docs until a workflow is added |
+| `hermes-aidememo` | `taeyun16/aidememo` | none yet | none yet | Keep checkout/manual publish docs until a workflow is added |
+
+npm trusted publishers:
+
+Register each npm package with GitHub owner/repo `taeyun16/aidememo`, workflow
+`aidememo-napi-publish.yml`, and environment `npm-publish`:
+
+1. `aidememo-napi`
+2. `aidememo-napi-darwin-arm64`
+3. `aidememo-napi-darwin-x64`
+4. `aidememo-napi-linux-arm64-gnu`
+5. `aidememo-napi-linux-x64-gnu`
+6. `aidememo-napi-win32-x64-msvc`
+
+Rust crates currently publish from an operator machine, not from GitHub Actions.
+Use `cargo login` or a local `CARGO_REGISTRY_TOKEN` when running
+`cargo publish`; do not add a repository secret unless a Rust publish workflow
+is introduced.
+
+The Elixir NIF is currently documented as a local/path binding. There is no Hex
+publish workflow or repository `HEX_API_KEY` requirement yet; add those only if
+the project decides to publish `aidememo_nif` through Hex.
+
+Optional runtime keys such as `OPENAI_API_KEY` are for local feature use
+(`aidememo extract --llm`) and are not release secrets.
+
+## 2. Local preflight
 
 Run the local release gate from a clean checkout:
 
@@ -44,7 +93,7 @@ published:
 cargo package -p aidememo-core
 ```
 
-## 2. Rust crates
+## 3. Rust crates
 
 Publish in dependency order:
 
@@ -56,7 +105,7 @@ Publish in dependency order:
 `cargo package` checks will fail against crates.io until `aidememo-core` is
 published at the matching version.
 
-## 3. Python packages
+## 4. Python packages
 
 Publish native bindings before composition packages:
 
@@ -86,7 +135,7 @@ python -m pip install "aidememo-agent-sdk[binding]"
 python -m pip install hermes-aidememo
 ```
 
-## 4. Node package
+## 5. Node package
 
 Publish the platform packages before the root wrapper:
 
@@ -96,7 +145,7 @@ Publish the platform packages before the root wrapper:
 Use the trusted-publisher workflow with the exact version input. The default
 workflow mode is dry-run.
 
-## 5. Post-release checks
+## 6. Post-release checks
 
 After each registry publish:
 

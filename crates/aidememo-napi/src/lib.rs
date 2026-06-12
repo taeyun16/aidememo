@@ -85,6 +85,25 @@ fn parse_fact_id(s: &str) -> napi::Result<FactId> {
     FactId::parse(s).ok_or_else(|| invalid_arg(format!("invalid fact id: {s}")))
 }
 
+fn attach_session_entity(
+    wiki: &AideMemo,
+    entity_ids: &mut Vec<EntityId>,
+    session_id: Option<String>,
+) -> napi::Result<()> {
+    let Some(session_id) = session_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    else {
+        return Ok(());
+    };
+    let session_entity_id = wiki.resolve_entity(session_id).map_err(map_err)?;
+    if !entity_ids.contains(&session_entity_id) {
+        entity_ids.push(session_entity_id);
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Optional argument bags (so JS callers can pass {} or omit fields)
 // ---------------------------------------------------------------------------
@@ -152,6 +171,7 @@ pub struct FactAddArgs {
     pub tags: Option<Vec<String>>,
     pub source: Option<String>,
     pub source_id: Option<String>,
+    pub session_id: Option<String>,
     pub confidence: Option<f64>,
 }
 
@@ -164,6 +184,7 @@ pub struct FactAddManyItem {
     pub tags: Option<Vec<String>>,
     pub source: Option<String>,
     pub source_id: Option<String>,
+    pub session_id: Option<String>,
     pub confidence: Option<f64>,
 }
 
@@ -378,16 +399,18 @@ impl AideMemoStore {
             tags: None,
             source: None,
             source_id: None,
+            session_id: None,
             confidence: None,
         });
-        let entity_ids = match args.entity_ids {
-            Some(ids) => Some(
-                ids.iter()
-                    .map(|s| parse_entity_id(s))
-                    .collect::<napi::Result<Vec<_>>>()?,
-            ),
-            None => None,
+        let mut ids = match args.entity_ids {
+            Some(ids) => ids
+                .iter()
+                .map(|s| parse_entity_id(s))
+                .collect::<napi::Result<Vec<_>>>()?,
+            None => Vec::new(),
         };
+        attach_session_entity(&self.wiki, &mut ids, args.session_id)?;
+        let entity_ids = if ids.is_empty() { None } else { Some(ids) };
         let input = FactInput {
             content,
             fact_type: args.fact_type.as_deref().and_then(parse_fact_type),
@@ -409,14 +432,15 @@ impl AideMemoStore {
     pub fn fact_add_many(&self, items: Vec<FactAddManyItem>) -> napi::Result<Vec<String>> {
         let mut inputs = Vec::with_capacity(items.len());
         for item in items {
-            let entity_ids = match item.entity_ids {
-                Some(ids) => Some(
-                    ids.iter()
-                        .map(|s| parse_entity_id(s))
-                        .collect::<napi::Result<Vec<_>>>()?,
-                ),
-                None => None,
+            let mut ids = match item.entity_ids {
+                Some(ids) => ids
+                    .iter()
+                    .map(|s| parse_entity_id(s))
+                    .collect::<napi::Result<Vec<_>>>()?,
+                None => Vec::new(),
             };
+            attach_session_entity(&self.wiki, &mut ids, item.session_id)?;
+            let entity_ids = if ids.is_empty() { None } else { Some(ids) };
             inputs.push(FactInput {
                 content: item.content,
                 fact_type: item.fact_type.as_deref().and_then(parse_fact_type),
@@ -437,6 +461,21 @@ impl AideMemoStore {
         let id = parse_fact_id(&fact_id)?;
         let fact = self.wiki.fact_get(&id).map_err(map_err)?;
         to_json(&fact)
+    }
+
+    #[napi]
+    pub fn pinned_facts(&self, limit: Option<u32>) -> napi::Result<String> {
+        let facts = self
+            .wiki
+            .pinned_facts(limit.unwrap_or(10) as usize)
+            .map_err(map_err)?;
+        to_json(&facts)
+    }
+
+    #[napi]
+    pub fn fact_pin(&self, fact_id: String, pinned: bool) -> napi::Result<()> {
+        let id = parse_fact_id(&fact_id)?;
+        self.wiki.fact_pin(&id, pinned).map_err(map_err)
     }
 
     #[napi]

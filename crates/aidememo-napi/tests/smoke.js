@@ -53,6 +53,13 @@ function main() {
     const fact = JSON.parse(g.factGet(fid));
     if (!fact.content.startsWith('Redis Sentinel')) throw new Error('fact content mismatch');
 
+    g.factPin(fid, true);
+    const pinned = JSON.parse(g.pinnedFacts(5));
+    if (!pinned.some((row) => row.id === fid)) throw new Error('pinnedFacts should surface pinned fact');
+    g.factPin(fid, false);
+    const unpinned = JSON.parse(g.pinnedFacts(5));
+    if (unpinned.some((row) => row.id === fid)) throw new Error('factPin(false) should remove pinned fact');
+
     const facts = JSON.parse(g.factList({ entity: 'Redis', limit: 10, sourceId: 'alpha' }));
     if (facts.length !== 1) throw new Error(`expected 1 fact, got ${facts.length}`);
 
@@ -126,6 +133,30 @@ function main() {
     if (pack.prior_lessons.length < 1) throw new Error('workflow_start should surface scoped lessons');
     if (pack.prior_errors.length < 1) throw new Error('workflow_start should surface scoped errors');
     if (pack.relevant_decisions.length < 1) throw new Error('workflow_start should surface scoped decisions');
+
+    const sessionFactId = g.factAdd('Lesson: Redis workflow follow-up facts should attach to the tracked session', {
+      entityIds: [eidRedis],
+      factType: 'lesson',
+      sourceId: 'alpha',
+      sessionId: pack.session_id,
+    });
+    const sessionManyIds = g.factAddMany([
+      {
+        content: 'Decision: Redis workflow batches keep the same session thread',
+        entityIds: [eidRedis],
+        factType: 'decision',
+        sourceId: 'alpha',
+        sessionId: pack.session_id,
+      },
+    ]);
+    const sessionFacts = JSON.parse(g.factList({ entity: pack.session_id, limit: 10 }));
+    const sessionContents = new Set(sessionFacts.map((row) => row.content));
+    if (!sessionContents.has(JSON.parse(g.factGet(sessionFactId)).content)) {
+      throw new Error('factAdd sessionId did not attach fact to workflow session');
+    }
+    if (!sessionContents.has(JSON.parse(g.factGet(sessionManyIds[0])).content)) {
+      throw new Error('factAddMany sessionId did not attach fact to workflow session');
+    }
 
     // Validity windows
     const newFid = g.factAdd('Redis Sentinel + Cluster supersedes Sentinel-only HA', {

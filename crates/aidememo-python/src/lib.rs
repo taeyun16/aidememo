@@ -125,6 +125,21 @@ fn parse_fact_id(s: &str) -> PyResult<FactId> {
     FactId::parse(s).ok_or_else(|| err(format!("invalid fact id: {s}")))
 }
 
+fn attach_session_entity(
+    wiki: &AideMemo,
+    entity_ids: &mut Vec<EntityId>,
+    session_id: Option<&str>,
+) -> PyResult<()> {
+    let Some(session_id) = session_id.map(str::trim).filter(|s| !s.is_empty()) else {
+        return Ok(());
+    };
+    let session_entity_id = wiki.resolve_entity(session_id).map_err(map_err)?;
+    if !entity_ids.contains(&session_entity_id) {
+        entity_ids.push(session_entity_id);
+    }
+    Ok(())
+}
+
 fn to_py<T: serde::Serialize>(py: Python<'_>, value: &T) -> PyResult<PyObject> {
     pythonize(py, value)
         .map(|b| b.into())
@@ -148,14 +163,19 @@ where
 /// `fact_add_many` (and any future caller that takes per-fact dicts).
 /// `content` is required; everything else collapses Python `None` and
 /// missing keys to `None`. The `entity_ids` field is normalized from
-/// ULID strings to `EntityId`.
-fn fact_input_from_dict(item: &Bound<'_, PyDict>) -> PyResult<FactInput> {
+/// ULID strings to `EntityId`. `session_id`, when present, is resolved
+/// as a session entity and attached to the fact's entity list.
+fn fact_input_from_dict(
+    wiki: &AideMemo,
+    item: &Bound<'_, PyDict>,
+    default_session_id: Option<&str>,
+) -> PyResult<FactInput> {
     let content: String = item
         .get_item("content")?
         .ok_or_else(|| err("each item needs a 'content' field"))?
         .extract()?;
 
-    let entity_ids = match dict_opt::<Vec<String>>(item, "entity_ids")? {
+    let mut entity_ids = match dict_opt::<Vec<String>>(item, "entity_ids")? {
         Some(names) => Some(
             names
                 .iter()
@@ -168,6 +188,11 @@ fn fact_input_from_dict(item: &Bound<'_, PyDict>) -> PyResult<FactInput> {
     let fact_type = dict_opt::<String>(item, "fact_type")?
         .as_deref()
         .and_then(parse_fact_type);
+    let item_session_id = dict_opt::<String>(item, "session_id")?;
+    let session_id = item_session_id.as_deref().or(default_session_id);
+    let mut ids = entity_ids.take().unwrap_or_default();
+    attach_session_entity(wiki, &mut ids, session_id)?;
+    let entity_ids = if ids.is_empty() { None } else { Some(ids) };
 
     Ok(FactInput {
         content,
@@ -423,7 +448,7 @@ impl PyAideMemo {
 
     /// Add a fact. `entity_ids` are ULIDs (use `resolve_entity` to convert names).
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (content, entity_ids=None, fact_type=None, tags=None, source=None, confidence=None, source_id=None))]
+    #[pyo3(signature = (content, entity_ids=None, fact_type=None, tags=None, source=None, confidence=None, source_id=None, session_id=None))]
     fn fact_add(
         &self,
         content: String,
@@ -433,15 +458,17 @@ impl PyAideMemo {
         source: Option<String>,
         confidence: Option<f32>,
         source_id: Option<String>,
+        session_id: Option<String>,
     ) -> PyResult<String> {
-        let entity_ids = match entity_ids {
-            Some(ids) => Some(
-                ids.iter()
-                    .map(|s| parse_entity_id(s))
-                    .collect::<PyResult<Vec<_>>>()?,
-            ),
-            None => None,
+        let mut ids = match entity_ids {
+            Some(ids) => ids
+                .iter()
+                .map(|s| parse_entity_id(s))
+                .collect::<PyResult<Vec<_>>>()?,
+            None => Vec::new(),
         };
+        attach_session_entity(&self.0, &mut ids, session_id.as_deref())?;
+        let entity_ids = if ids.is_empty() { None } else { Some(ids) };
         let input = FactInput {
             content,
             fact_type: fact_type.as_deref().and_then(parse_fact_type),
@@ -460,13 +487,18 @@ impl PyAideMemo {
     ///
     /// Each item is a dict with the same keys `fact_add` accepts:
     /// `content` (required), `entity_ids`, `fact_type`, `tags`,
-    /// `source`, `source_id`, `confidence`. Returns the new fact ULIDs in input
-    /// order. All-or-nothing — if one item fails to validate, no
-    /// facts land.
-    fn fact_add_many<'py>(&self, items: Vec<Bound<'py, PyDict>>) -> PyResult<Vec<String>> {
+    /// `source`, `source_id`, `confidence`, `session_id`. Returns the new fact
+    /// ULIDs in input order. All-or-nothing — if one item fails to validate,
+    /// no facts land.
+    #[pyo3(signature = (items, session_id=None))]
+    fn fact_add_many<'py>(
+        &self,
+        items: Vec<Bound<'py, PyDict>>,
+        session_id: Option<String>,
+    ) -> PyResult<Vec<String>> {
         let inputs: Vec<FactInput> = items
             .iter()
-            .map(fact_input_from_dict)
+            .map(|item| fact_input_from_dict(&self.0, item, session_id.as_deref()))
             .collect::<PyResult<_>>()?;
         let ids = self.0.fact_add_many(inputs).map_err(map_err)?;
         Ok(ids.iter().map(|id| id.to_string()).collect())
@@ -529,6 +561,19 @@ impl PyAideMemo {
     fn fact_delete(&self, fact_id: String) -> PyResult<()> {
         let id = parse_fact_id(&fact_id)?;
         self.0.fact_delete(&id).map_err(map_err)
+    }
+
+    /// Return currently pinned facts, sorted by recency.
+    #[pyo3(signature = (limit=10))]
+    fn pinned_facts(&self, py: Python<'_>, limit: usize) -> PyResult<PyObject> {
+        let facts = self.0.pinned_facts(limit).map_err(map_err)?;
+        to_py(py, &facts)
+    }
+
+    /// Pin or unpin a fact in the always-loaded tier.
+    fn fact_pin(&self, fact_id: String, pinned: bool) -> PyResult<()> {
+        let id = parse_fact_id(&fact_id)?;
+        self.0.fact_pin(&id, pinned).map_err(map_err)
     }
 
     /// Mark `old_id` as superseded by `new_id` (validity windows).

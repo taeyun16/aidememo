@@ -87,10 +87,19 @@ const pack = JSON.parse(g.workflowStart('Fix Redis timeout in worker', {
 console.log(pack.session_id);
 console.log(pack.ticket_fact_id);
 console.log(pack.relevant_decisions.map((hit) => hit.content));
+
+g.factAdd('Lesson: follow-up facts can attach to this workflow session', {
+  entityIds: [redis],
+  factType: 'lesson',
+  sourceId: 'team-a',
+  sessionId: pack.session_id,
+});
+const thread = JSON.parse(g.factList({ entity: pack.session_id, limit: 20 }));
 ```
 
 For a multi-agent shared store, pass `sourceId` on writes and reads. The same
-field flows through `search`, `query`, `factList`, and `workflowStart`.
+field flows through `search`, `query`, `factList`, `factAdd`, `factAddMany`,
+and `workflowStart`.
 
 ## Errors
 
@@ -121,5 +130,6 @@ try {
 | `pathFind(from, to)` | JSON string: path or `null` |
 | `entityAdd/get/list/delete`, `resolveEntity`, `entityDescribe` | entity operations |
 | `factAdd`, `factAddMany`, `factGet/list`, `factSupersede`, `factDelete` | fact operations |
+| `factPin`, `pinnedFacts` | always-loaded facts |
 | `relationAdd/remove`, `relationsGet` | relation operations |
 | `ingest(wikiRoot, incremental?)`, `lint()`, `stats()` | maintenance |

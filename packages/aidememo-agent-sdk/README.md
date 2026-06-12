@@ -48,11 +48,28 @@ mem.remember([
         "entities": ["aidememo", "Codex"],
     }
 ])
+
+pack = mem.client.workflow_start(
+    "Fix Redis timeout in worker",
+    source="github:org/app#123",
+    source_id="codex-aidememo",
+)
+mem.remember(
+    [
+        {
+            "content": "Decision: Redis timeout follow-ups stay attached to the workflow session.",
+            "fact_type": "decision",
+            "entities": ["Redis"],
+        }
+    ],
+    source_id="codex-aidememo",
+    session_id=pack["session_id"],
+)
 ```
 
 Use MCP/tools for one-off model-visible calls. Use this SDK when the agent
 needs memory as code: fanout retrieval, dedupe, coverage checks, aggregation,
-or batch writes without spending model turns on intermediate state.
+or session-aware batch writes without spending model turns on intermediate state.
 
 `source_id` can be passed to `Memory.open(...)` or inherited from
 `AIDEMEMO_SOURCE_ID`, matching the MCP `aidememo mcp-install --source-id <namespace>` path.

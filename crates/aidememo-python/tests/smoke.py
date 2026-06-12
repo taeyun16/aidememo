@@ -57,6 +57,12 @@ def main() -> None:
         assert fact["content"].startswith("Redis Sentinel")
         assert fact["source_id"] == "team-a"
 
+        g.fact_pin(fid, True)
+        pinned = g.pinned_facts(limit=5)
+        assert any(f["id"] == fid for f in pinned), "pinned_facts should surface pinned fact"
+        g.fact_pin(fid, False)
+        assert all(f["id"] != fid for f in g.pinned_facts(limit=5))
+
         facts = g.fact_list(entity="Redis", limit=10, source_id="team-a")
         assert len(facts) == 1
         assert all(f["source_id"] == "team-a" for f in facts)
@@ -136,6 +142,29 @@ def main() -> None:
         assert pack["prior_lessons"], "workflow_start should surface scoped lessons"
         assert pack["prior_errors"], "workflow_start should surface scoped errors"
         assert pack["relevant_decisions"], "workflow_start should surface scoped decisions"
+
+        session_fact_id = g.fact_add(
+            "Lesson: Redis workflow follow-up facts should attach to the tracked session",
+            entity_ids=[eid_redis],
+            fact_type="lesson",
+            source_id="team-a",
+            session_id=pack["session_id"],
+        )
+        session_many_ids = g.fact_add_many(
+            [
+                {
+                    "content": "Decision: Redis workflow batches keep the same session thread",
+                    "entity_ids": [eid_redis],
+                    "fact_type": "decision",
+                    "source_id": "team-a",
+                }
+            ],
+            session_id=pack["session_id"],
+        )
+        session_facts = g.fact_list(entity=pack["session_id"], limit=10)
+        session_contents = {f["content"] for f in session_facts}
+        assert g.fact_get(session_fact_id)["content"] in session_contents
+        assert g.fact_get(session_many_ids[0])["content"] in session_contents
 
         # Validity windows: supersede the first fact with a new one and verify
         # current_only filtering hides it.

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from aidememo_agent.client import AideMemoClient
 from aidememo_agent.sdk import AideMemoMemorySDK
 
 
@@ -157,6 +158,70 @@ def test_remember_converts_and_commits_batch() -> None:
             "source_id": "team-a",
         }
     ]
+
+
+def test_pyo3_backend_preserves_session_and_context_scope() -> None:
+    class FakePyBackend:
+        def __init__(self) -> None:
+            self.fact_add_kwargs = {}
+            self.fact_add_many_items = []
+
+        def resolve_entity(self, name):
+            return f"entity-{name}"
+
+        def fact_add(self, content, **kwargs):
+            self.fact_add_kwargs = {"content": content, **kwargs}
+            return "fact-one"
+
+        def fact_add_many(self, items):
+            self.fact_add_many_items = items
+            return ["fact-batch"]
+
+        def fact_list(self, **kwargs):
+            return [
+                {"id": "recent-a", "source_id": "team-a", "fact_type": "lesson"},
+                {"id": "recent-b", "source_id": "team-b", "fact_type": "lesson"},
+            ]
+
+        def pinned_facts(self, **kwargs):
+            return [
+                {"id": "pinned-a", "source_id": "team-a", "fact_type": "decision"},
+                {"id": "pinned-b", "source_id": "team-b", "fact_type": "decision"},
+            ]
+
+    backend = FakePyBackend()
+    client = AideMemoClient.__new__(AideMemoClient)
+    client.store_path = "/tmp/wiki.redb"
+    client.lock_retry_ms = 5000
+    client.default_source_id = None
+    client._py = backend
+
+    assert client.fact_add(
+        "Lesson: session fact",
+        entities=["Redis"],
+        fact_type="lesson",
+        source_id="team-a",
+        session_id="session-1",
+    ) == "fact-one"
+    assert backend.fact_add_kwargs["session_id"] == "session-1"
+    assert backend.fact_add_kwargs["source_id"] == "team-a"
+
+    assert client.fact_add_many([
+        {
+            "content": "Decision: session batch",
+            "entities": ["Redis"],
+            "fact_type": "decision",
+            "source_id": "team-a",
+            "session_id": "session-1",
+        }
+    ]) == ["fact-batch"]
+    assert backend.fact_add_many_items[0]["entity_ids"] == ["entity-Redis"]
+    assert backend.fact_add_many_items[0]["session_id"] == "session-1"
+
+    context = client.context(source_id="team-a")
+    assert [row["id"] for row in context["pinned"]] == ["pinned-a"]
+    assert [row["id"] for row in context["recent"]] == ["recent-a"]
+    assert [row["id"] for row in context["personalisation"]] == ["recent-a"]
 
 
 def test_query_and_aggregate_many_forward_source_scope() -> None:
