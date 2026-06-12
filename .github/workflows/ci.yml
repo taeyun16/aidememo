@@ -221,10 +221,10 @@ jobs:
           AIDEMEMO_RELEASE_SMOKE_BASE: ${{ runner.temp }}/aidememo-workflow-release-smoke
         run: scripts/workflow-release-smoke.sh
 
-  # Fast SDK wording guard. This catches drift between package docs,
-  # error-mapping guarantees, version pins, and the current "SDK
-  # candidate until public registry release" positioning without
-  # running the heavier package smokes.
+  # Fast SDK wording/parity guard. This catches drift between package docs,
+  # session/pinned binding surfaces, error-mapping guarantees, version pins,
+  # and the current "SDK candidate until public registry release" positioning
+  # without running the heavier package smokes.
   sdk-promotion-check:
     name: SDK promotion check
     needs: lint

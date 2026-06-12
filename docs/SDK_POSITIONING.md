@@ -52,7 +52,9 @@ AIDEMEMO_RELEASE_PREFLIGHT_SDK_REQUIRE_PUBLIC=1 scripts/release-preflight.sh
 The default check should keep `local_ready=true` but `sdk_promotable=false` for
 `aidememo-python` / `aidememo-napi` until public PyPI/npm installs are verified. That does
 not block the top-level product wording from calling `aidememo-agent-sdk` the
-agent-facing SDK path.
+agent-facing SDK path. The same gate also protects the SDK-consumer contract:
+session-aware writes, pinned context access, and PyO3/Node/agent-SDK parity must
+stay documented and present in code before release wording changes pass.
 
 ## Recommended Sequence
 

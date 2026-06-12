@@ -8,13 +8,13 @@ adding scratch note files.
 
 | Script | Purpose |
 |---|---|
-| `ci-local.sh` | Local CI parity with one top-level timed summary: fmt, clippy, docs, first-run workflow demo, SDK promotion check, and tests. Use `ci-local.sh demo` for just the workflow onboarding smoke or `ci-local.sh sdk` for just the SDK wording gate. |
+| `ci-local.sh` | Local CI parity with one top-level timed summary: fmt, clippy, docs, first-run workflow demo, SDK promotion check, and tests. Use `ci-local.sh demo` for just the workflow onboarding smoke or `ci-local.sh sdk` for just the SDK wording/parity gate. |
 | `demo-workflow.sh` | Zero-token first-run demo: seeds a temp store, starts a sparse ticket, and verifies decision + lesson + error context. |
 | `openai_check.sh` | Quick OpenAI-compatible API smoke. |
 | `bench-agent-ux.sh` | Small agent-memory UX regression: Rust check, Hermes tests, and zero-token multi-agent scenarios. |
 | `bindings-release-smoke.sh` | Cross-binding release readiness with one top-level timed summary: Rust checks for Python/Node/Elixir/C bindings, npm version/pack/install smoke, and optional Python/Elixir/C package smokes. Python wheel smokes run `maturin` through pinned `uvx`. |
 | `release-preflight.sh` | One-command release gate with one top-level timed summary. Local profile runs version, workflow lint, docs feature gate, docs build, binding smoke, workflow smoke, and SDK promotion check; full profile adds optional binding smokes plus Python/npm publish dry-runs. Set `AIDEMEMO_RELEASE_PREFLIGHT_ACTIONLINT_BIN` to pin or test the actionlint executable. |
-| `sdk-promotion-check.sh` | SDK wording gate for `aidememo-python` and `aidememo-napi`: checks local criteria, optional package smokes / Scenario K, and public-registry blockers. Also runs as the CI `SDK promotion check` job and writes `$GITHUB_STEP_SUMMARY` when available. |
+| `sdk-promotion-check.sh` | SDK wording/parity gate for `aidememo-python`, `aidememo-napi`, and `aidememo-agent-sdk`: checks local criteria, session/pinned surface parity, optional package smokes / Scenario K, and public-registry blockers. Also runs as the CI `SDK promotion check` job and writes `$GITHUB_STEP_SUMMARY` when available. |
 | `skillopt-lite-cycle.sh` | Periodic SkillOpt-lite runner: checks the current memory profile or queued candidates, writes accepted/rejected JSONL records under `target/skillopt-lite`, and applies a passing candidate only with `--apply` / `AIDEMEMO_SKILLOPT_APPLY=1`. |
 | `skillopt-lite-check.sh` | Offline SkillOpt-style gate for agent memory skill/profile edits: validates required `aidememo` memory workflow tokens, runs `aidememo skill check`, whitespace check, `cargo check -p aidememo-cli`, the first-run demo, and the SDK promotion gate. Set `AIDEMEMO_SKILLOPT_CANDIDATE=/path/to/SKILL.md` for a candidate and `AIDEMEMO_SKILLOPT_RUN_SCENARIOS=1` for Scenario L/M/N. |
 | `workflow-release-smoke.sh` | Release-oriented workflow memory smoke with an always-printed timing summary: builds `aidememo`, runs the first-run demo plus Scenario F + I, then asserts `aidememo doctor --json` workflow readiness on a fixture store. |

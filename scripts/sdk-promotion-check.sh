@@ -163,6 +163,16 @@ ok, detail = has_tokens(
 )
 append_status(checks, "aidememo-python", "workflow docs", ok, detail, detail)
 ok, detail = has_tokens(
+    "crates/aidememo-python/README.md",
+    ["session_id", "fact_add_many", "fact_pin", "pinned_facts"],
+)
+append_status(checks, "aidememo-python", "session/pinned docs", ok, detail, detail)
+ok, detail = has_tokens(
+    "crates/aidememo-python/src/lib.rs",
+    ["session_id", "fn pinned_facts", "fn fact_pin", "attach_session_entity"],
+)
+append_status(checks, "aidememo-python", "session/pinned API", ok, detail, detail)
+ok, detail = has_tokens(
     "crates/aidememo-python/src/lib.rs",
     ["create_exception!", "AideMemoNotFoundError", "AideMemoInvalidInputError", "e.code()"],
 )
@@ -177,11 +187,37 @@ ok, detail = has_tokens(
 )
 append_status(checks, "aidememo-napi", "workflow docs", ok, detail, detail)
 ok, detail = has_tokens(
+    "crates/aidememo-napi/README.md",
+    ["sessionId", "factAddMany", "factPin", "pinnedFacts"],
+)
+append_status(checks, "aidememo-napi", "session/pinned docs", ok, detail, detail)
+ok, detail = has_tokens(
+    "crates/aidememo-napi/src/lib.rs",
+    ["session_id", "pub fn pinned_facts", "pub fn fact_pin", "attach_session_entity"],
+)
+append_status(checks, "aidememo-napi", "session/pinned API", ok, detail, detail)
+ok, detail = has_tokens(
     "crates/aidememo-napi/src/lib.rs",
     ["Status::InvalidArg", "e.code()", "fn map_err"],
 )
 append_status(checks, "aidememo-napi", "idiomatic errors", ok, detail, detail)
 optional_smoke(checks, "aidememo-napi", "scripts/aidememo-napi-pack-smoke.sh", "npm pack/install smoke")
+
+ok, detail = has_tokens(
+    "packages/aidememo-agent-sdk/README.md",
+    ["workflow_start", "remember", "session_id", "source_id"],
+)
+append_status(checks, "aidememo-agent-sdk", "session workflow docs", ok, detail, detail)
+ok, detail = has_tokens(
+    "packages/aidememo-agent-sdk/src/aidememo_agent/client.py",
+    ["pinned_facts", "session_id", "aidememo_fact_add", "aidememo_fact_add_many"],
+)
+append_status(checks, "aidememo-agent-sdk", "backend parity API", ok, detail, detail)
+ok, detail = has_tokens(
+    "packages/aidememo-agent-sdk/tests/test_sdk.py",
+    ["test_pyo3_backend_preserves_session_and_context_scope", "pinned_facts", "session_id"],
+)
+append_status(checks, "aidememo-agent-sdk", "backend parity tests", ok, detail, detail)
 
 optional_scenario_k(checks)
 
