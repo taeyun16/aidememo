@@ -33,6 +33,7 @@ function HomepageHeader() {
   return (
     <header className={styles.hero}>
       <div className="container">
+        <img className={styles.logoMark} src="/img/aidememo-logo.png" alt="AideMemo logo" />
         <p className={styles.eyebrow}>AideMemo Docs</p>
         <Heading as="h1" className={styles.title}>
           Agent-friendly SDK memory for coding agents.

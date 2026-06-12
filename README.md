@@ -1,4 +1,5 @@
 <div align="center">
+  <img src="./website/static/img/aidememo-logo.png" alt="AideMemo logo" width="96" height="96">
   <h1 align="center">AideMemo</h1>
   <p><strong>Agent-friendly SDK memory for coding agents.</strong></p>
   <p>

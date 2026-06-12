@@ -4,6 +4,13 @@
   border-bottom: 1px solid #e2e8f0;
 }
 
+.logoMark {
+  display: block;
+  width: 88px;
+  height: 88px;
+  margin: 0 0 20px;
+}
+
 .eyebrow {
   margin: 0 0 12px;
   color: #0f766e;
