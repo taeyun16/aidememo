@@ -296,6 +296,11 @@ Runtime promotion status:
   keeps redb/SQLite sync/import/archive compatibility, libsqlite runtime
   spelling, concurrent SQLite MCP writes, and SDK feature boundaries visible in
   PR checks instead of relying only on local `ci-local.sh test` runs.
+* `scripts/release-preflight.sh` runs the storage backend feature, SQLite
+  full-surface, SQLite advanced-surface, parity, real-corpus diff, SQLite MCP
+  soak, and SDK binding backend gates by default. Set
+  `AIDEMEMO_RELEASE_PREFLIGHT_STORAGE_BACKEND=0` only for narrow non-storage
+  release checks.
 * `s3` no longer enables the `redb` feature. Its local WAL staging path uses
   SQLite (`wal.sqlite`), so `cargo check -p aidememo-core --no-default-features
   --features s3` proves the S3/manifest code can build without compiling the

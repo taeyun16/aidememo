@@ -36,6 +36,7 @@ fi
 RUN_BINDINGS="${AIDEMEMO_RELEASE_PREFLIGHT_BINDINGS:-1}"
 RUN_WORKFLOW="${AIDEMEMO_RELEASE_PREFLIGHT_WORKFLOW:-1}"
 RUN_DOCS="${AIDEMEMO_RELEASE_PREFLIGHT_DOCS:-1}"
+RUN_STORAGE_BACKEND="${AIDEMEMO_RELEASE_PREFLIGHT_STORAGE_BACKEND:-1}"
 RUN_ACTIONLINT="${AIDEMEMO_RELEASE_PREFLIGHT_ACTIONLINT:-1}"
 RUN_SDK_PROMOTION="${AIDEMEMO_RELEASE_PREFLIGHT_SDK_PROMOTION:-1}"
 RUN_SDK_PROMOTION_SMOKE="${AIDEMEMO_RELEASE_PREFLIGHT_SDK_SMOKE:-0}"
@@ -171,6 +172,18 @@ if [[ "$RUN_DOCS" == "1" ]]; then
 else
     record_skip "docs feature gate" "AIDEMEMO_RELEASE_PREFLIGHT_DOCS=0"
     record_skip "docs site build" "AIDEMEMO_RELEASE_PREFLIGHT_DOCS=0"
+fi
+
+if [[ "$RUN_STORAGE_BACKEND" == "1" ]]; then
+    run "storage backend feature gate" "$ROOT_DIR/scripts/storage-backend-feature-gate.sh"
+    run "storage backend SQLite full surface" "$ROOT_DIR/scripts/storage-backend-sqlite-full-surface.sh"
+    run "storage backend SQLite advanced surface" "$ROOT_DIR/scripts/storage-backend-sqlite-advanced-surface.sh"
+    run "storage backend parity" "$ROOT_DIR/scripts/storage-backend-parity.sh"
+    run "storage backend real corpus diff" "$ROOT_DIR/scripts/storage-backend-real-corpus-diff.sh"
+    run "storage backend SQLite MCP soak" "$ROOT_DIR/scripts/storage-backend-sqlite-mcp-soak.sh"
+    run "storage backend SDK binding check" "$ROOT_DIR/scripts/storage-backend-sdk-bindings-check.sh"
+else
+    record_skip "storage backend preflight" "AIDEMEMO_RELEASE_PREFLIGHT_STORAGE_BACKEND=0"
 fi
 
 if [[ "$RUN_BINDINGS" == "1" ]]; then
