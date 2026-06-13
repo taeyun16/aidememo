@@ -326,7 +326,9 @@ Runtime promotion status:
 * `scripts/storage-backend-feature-gate.sh` locks the Cargo feature boundary:
   default and SQLite-only core/CLI/SDK builds plus S3-only core builds must
   omit the `redb` crate from `cargo tree`, while redb still appears only when
-  the explicit `redb` feature is selected.
+  the explicit `redb` feature is selected. It also builds a redb-only CLI and
+  smoke-tests that empty-config defaults report `store.backend = "redb"` /
+  `./_meta/wiki.redb` and create a `.redb` store rather than a SQLite file.
 
 Validation added in the runtime spike:
 
