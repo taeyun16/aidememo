@@ -396,7 +396,7 @@ fn io_serialize(e: std::io::Error) -> AideMemoError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::FactInput;
+    use crate::types::{FactInput, RelationInput, RelationType};
     use crate::{Config, EntityInput, EntityType};
 
     fn open_temp() -> (tempfile::TempDir, AideMemo) {
@@ -412,6 +412,142 @@ mod tests {
         });
         let wiki = AideMemo::open(&path, config).unwrap();
         (dir, wiki)
+    }
+
+    #[cfg(all(feature = "redb", feature = "sqlite"))]
+    fn open_backend(dir: &tempfile::TempDir, name: &str, backend: &str) -> AideMemo {
+        let path = dir.path().join(format!("{name}.{backend}"));
+        let mut config = Config::default();
+        config.store.backend = backend.to_string();
+        config.store.path = path.to_string_lossy().into_owned();
+        AideMemo::open(&path, config).unwrap()
+    }
+
+    #[cfg(all(feature = "redb", feature = "sqlite"))]
+    fn assert_sync_compatible_between_backends(source_backend: &str, target_backend: &str) {
+        let dir = tempfile::tempdir().unwrap();
+        let source = open_backend(&dir, "source", source_backend);
+        let target = open_backend(&dir, "target", target_backend);
+
+        let redis = source
+            .entity_add(EntityInput {
+                name: "Redis".into(),
+                entity_type: Some(EntityType::Technology),
+                ..Default::default()
+            })
+            .unwrap();
+        let sentinel = source
+            .entity_add(EntityInput {
+                name: "Sentinel".into(),
+                entity_type: Some(EntityType::Technology),
+                ..Default::default()
+            })
+            .unwrap();
+        source
+            .relation_add(RelationInput {
+                source: "Sentinel".into(),
+                target: "Redis".into(),
+                relation_type: RelationType::new("monitors"),
+                weight: Some(1.0),
+                evidence: Some(vec![format!("{source_backend} to {target_backend}")]),
+            })
+            .unwrap();
+        let original = source
+            .fact_add(FactInput {
+                content: format!("Sync compatibility fact from {source_backend}"),
+                entity_ids: Some(vec![redis]),
+                fact_type: Some(crate::types::FactType::Claim),
+                ..Default::default()
+            })
+            .unwrap();
+
+        let mut full = Vec::new();
+        source
+            .sync_export(
+                SyncExportOpts {
+                    include_relations: true,
+                    ..Default::default()
+                },
+                &mut full,
+            )
+            .unwrap();
+        let first = target
+            .sync_import(std::str::from_utf8(&full).unwrap())
+            .unwrap();
+        assert_eq!(first.entities_inserted, 2);
+        assert_eq!(first.facts_inserted, 1);
+        assert_eq!(first.relations_inserted, 1);
+        assert_eq!(first.errors, 0);
+        assert!(matches!(first.new_cursor.entity, Some(id) if id == redis || id == sentinel));
+        assert_eq!(first.new_cursor.fact, Some(original));
+
+        assert_eq!(target.entity_get_by_id(redis).unwrap().name, "Redis");
+        assert_eq!(
+            target.fact_get(&original).unwrap().content,
+            format!("Sync compatibility fact from {source_backend}")
+        );
+        let rels = target
+            .relations_get("Sentinel", TraverseDirection::Forward)
+            .unwrap();
+        assert_eq!(rels.len(), 1);
+        assert_eq!(rels[0].target_id, redis);
+
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        source
+            .entity_describe("Redis", "Cross-backend sync summary")
+            .unwrap();
+        let replacement = source
+            .fact_add(FactInput {
+                content: format!("Replacement fact from {source_backend}"),
+                entity_ids: Some(vec![redis]),
+                fact_type: Some(crate::types::FactType::Claim),
+                ..Default::default()
+            })
+            .unwrap();
+        source.fact_supersede(&original, &replacement).unwrap();
+
+        let mut delta = Vec::new();
+        source
+            .sync_export(
+                SyncExportOpts {
+                    since: first.new_cursor.clone(),
+                    include_relations: true,
+                    ..Default::default()
+                },
+                &mut delta,
+            )
+            .unwrap();
+        let second = target
+            .sync_import(std::str::from_utf8(&delta).unwrap())
+            .unwrap();
+        assert_eq!(second.errors, 0);
+        assert!(
+            second.entities_inserted + second.entities_skipped >= 1,
+            "entity update should cross from {source_backend} to {target_backend}"
+        );
+        assert!(
+            second.facts_inserted + second.facts_skipped >= 2,
+            "replacement and supersede update should cross from {source_backend} to {target_backend}"
+        );
+
+        assert_eq!(
+            target.entity_get_by_id(redis).unwrap().summary.as_deref(),
+            Some("Cross-backend sync summary")
+        );
+        let synced_original = target.fact_get(&original).unwrap();
+        assert_eq!(synced_original.superseded_by, Some(replacement));
+        assert!(synced_original.superseded_at.is_some());
+        assert_eq!(
+            target.fact_get(&replacement).unwrap().content,
+            format!("Replacement fact from {source_backend}")
+        );
+    }
+
+    #[cfg(all(feature = "redb", feature = "sqlite"))]
+    #[test]
+    fn sync_export_import_is_backend_compatible() {
+        assert_sync_compatible_between_backends("redb", "sqlite");
+        assert_sync_compatible_between_backends("sqlite", "redb");
     }
 
     #[test]

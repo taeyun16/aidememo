@@ -38,6 +38,7 @@ PY
 
 cd "$ROOT_DIR"
 cargo build -p aidememo-cli --features sqlite,redb
+cargo test -p aidememo-core --features sqlite,redb sync_export_import_is_backend_compatible
 
 mkdir -p "$BASE"
 REDB_HOME="$BASE/home-redb"
@@ -211,4 +212,4 @@ PY
 mcp_cleanup
 trap cleanup EXIT
 
-echo "storage backend parity ok: redb export/import -> SQLite + relation + archive + MCP concurrency"
+echo "storage backend parity ok: redb/SQLite sync + redb export/import -> SQLite + relation + archive + MCP concurrency"

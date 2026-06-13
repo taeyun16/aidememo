@@ -252,9 +252,14 @@ Runtime promotion status:
   fixture, imports it into SQLite, verifies entity/fact IDs and graph/search
   parity, then replays the same JSONL to prove the migration path is
   idempotent.
+* `sync_export_import_is_backend_compatible` verifies the pull-sync wire format
+  in both directions (redb → SQLite and SQLite → redb). It checks full sync
+  entity/fact/relation ID preservation and then applies an incremental delta
+  with `entity_describe` plus `fact_supersede`, proving in-place updates cross
+  the backend boundary as well as fresh inserts.
 * `scripts/storage-backend-parity.sh` is the CLI/MCP gate: redb export/import
-  into SQLite, relation preservation, SQLite cold-tier archive/search, and 24
-  concurrent MCP writes through `mcp-serve`.
+  into SQLite, redb/SQLite sync compatibility, relation preservation, SQLite
+  cold-tier archive/search, and 24 concurrent MCP writes through `mcp-serve`.
 * `scripts/storage-backend-sqlite-full-surface.sh` is the SQLite-only
   full-surface smoke: it builds the CLI with `--features sqlite` and exercises
   init, ingest, entity/fact writes, BM25 search/query, graph traversal,
@@ -298,6 +303,7 @@ cargo test -p aidememo-core
 cargo test -p aidememo-core --no-default-features --features sqlite
 cargo test -p aidememo-core --no-default-features --features redb
 cargo test -p aidememo-core --features sqlite,redb archive_contract_matches_redb_and_sqlite_public_api
+cargo test -p aidememo-core --features sqlite,redb sync_export_import_is_backend_compatible
 cargo test -p aidememo-core --features sqlite,semantic,semantic-adapt
 cargo check -p aidememo-core --no-default-features --features s3
 ./scripts/storage-backend-feature-gate.sh
