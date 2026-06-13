@@ -313,6 +313,52 @@ fn init_agent_codex_initializes_store_and_mcp_config() {
 }
 
 #[test]
+fn overview_honors_global_json_flag() {
+    let home = tempfile::tempdir().unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let store = root.path().join("wiki.sqlite");
+
+    let add = run_with_home(
+        home.path(),
+        &[
+            "--store",
+            store.to_str().unwrap(),
+            "fact",
+            "add",
+            "Overview JSON smoke fact",
+            "--entities",
+            "Overview",
+        ],
+    );
+    assert!(
+        add.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&add.stderr)
+    );
+
+    let out = run_with_home(
+        home.path(),
+        &[
+            "--json",
+            "--store",
+            store.to_str().unwrap(),
+            "overview",
+            "--recent-days",
+            "365",
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let payload: serde_json::Value =
+        serde_json::from_slice(&out.stdout).expect("overview --json should emit valid JSON");
+    assert_eq!(payload["stats"]["fact_count"], 1);
+    assert_eq!(payload["current_fact_count"], 1);
+}
+
+#[test]
 fn mcp_install_cursor_writes_fresh_config() {
     let home = tempfile::tempdir().unwrap();
     let out = run_with_home(home.path(), &["mcp-install", "--target", "cursor"]);

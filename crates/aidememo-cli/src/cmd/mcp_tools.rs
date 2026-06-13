@@ -3,7 +3,7 @@
 //! Used by both the stdio transport (`aidememo mcp`) and the HTTP+SSE transport
 //! (`aidememo mcp-serve`). Speaks MCP JSON-RPC 2.0.
 
-use aidememo_core::{AideMemo, WorkflowStartOpts};
+use aidememo_core::{AideMemo, WorkflowStartOpts, backend::StoreBackend};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -2845,9 +2845,15 @@ fn tool_fact_supersede(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, 
     let new = parse_fact_id(new_id)?;
     // Resolve both records before any write so the agent sees the
     // before/after content, the entity links that survive, and the
-    // existence checks both fail-fast on bad ULIDs.
-    let old_record = wiki.fact_get(&old).map_err(|e| e.to_string())?;
-    let new_record = wiki.fact_get(&new).map_err(|e| e.to_string())?;
+    // existence checks both fail-fast on bad ULIDs. Use the hot store
+    // directly: public fact_get also resolves archived cold-tier facts,
+    // but supersede mutates only the live tier.
+    let (old_record, new_record) = {
+        let store = wiki.store().read();
+        let old_record = store.fact_get(&old).map_err(|e| e.to_string())?;
+        let new_record = store.fact_get(&new).map_err(|e| e.to_string())?;
+        (old_record, new_record)
+    };
     if !dry_run {
         wiki.fact_supersede(&old, &new).map_err(|e| e.to_string())?;
     }
@@ -2889,10 +2895,12 @@ fn tool_fact_archive(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, St
     }
     let moved = if dry_run {
         // Pre-check existence to give the agent a useful preview count
-        // without actually moving anything.
+        // without actually moving anything. Check the hot store directly:
+        // public fact_get also resolves already-archived cold facts.
+        let store = wiki.store().read();
         targets
             .iter()
-            .filter(|id| wiki.fact_get(id).is_ok())
+            .filter(|id| store.fact_get(id).is_ok())
             .count()
     } else {
         wiki.archive_facts(&targets).map_err(|e| e.to_string())?
@@ -4358,6 +4366,103 @@ mod tests {
         assert_eq!(payload["applied"], true);
         let after = wiki.fact_get(&old).unwrap();
         assert!(after.superseded_at.is_some());
+    }
+
+    #[test]
+    fn fact_archive_preserves_mcp_fact_get_for_cold_tier() {
+        let (_dir, wiki) = open_temp_wiki();
+        let id = add_fact(
+            &wiki,
+            "archive smoke keeps cold facts addressable",
+            "Archive",
+        );
+
+        let archived = tool_fact_archive(
+            &json!({
+                "ids": [id.0.to_string()],
+            }),
+            &wiki,
+        )
+        .unwrap();
+        let payload: Value =
+            serde_json::from_str(archived.content[0].text.as_deref().unwrap()).unwrap();
+        assert_eq!(payload["moved"], 1);
+        assert!(
+            wiki.store().read().fact_get(&id).is_err(),
+            "archive should remove the fact from the hot store",
+        );
+
+        let get = tool_fact_get(&json!({"id": id.0.to_string()}), &wiki).unwrap();
+        let fact: Value = serde_json::from_str(get.content[0].text.as_deref().unwrap()).unwrap();
+        assert_eq!(fact["id"], id.0.to_string());
+        assert_eq!(
+            fact["content"],
+            "archive smoke keeps cold facts addressable"
+        );
+
+        let dry_run_again = tool_fact_archive(
+            &json!({
+                "ids": [id.0.to_string()],
+                "dry_run": true,
+            }),
+            &wiki,
+        )
+        .unwrap();
+        let payload: Value =
+            serde_json::from_str(dry_run_again.content[0].text.as_deref().unwrap()).unwrap();
+        assert_eq!(
+            payload["moved"], 0,
+            "dry-run candidate count should only include hot facts"
+        );
+
+        let live = add_fact(&wiki, "live successor for archived fact", "Archive");
+        let err = tool_fact_supersede(
+            &json!({
+                "old_id": id.0.to_string(),
+                "new_id": live.0.to_string(),
+                "dry_run": true,
+            }),
+            &wiki,
+        )
+        .unwrap_err();
+        assert!(
+            err.contains(&id.0.to_string()),
+            "supersede dry-run must not treat archived facts as hot: {err}"
+        );
+
+        let hot_only = tool_search(
+            &json!({
+                "query": "cold facts addressable",
+                "bm25_only": true,
+                "limit": 5,
+            }),
+            &wiki,
+        )
+        .unwrap();
+        let payload: Value =
+            serde_json::from_str(hot_only.content[0].text.as_deref().unwrap()).unwrap();
+        assert!(payload["results"].as_array().unwrap().is_empty());
+
+        let include_archive = tool_search(
+            &json!({
+                "query": "cold facts addressable",
+                "bm25_only": true,
+                "include_archive": true,
+                "limit": 5,
+            }),
+            &wiki,
+        )
+        .unwrap();
+        let payload: Value =
+            serde_json::from_str(include_archive.content[0].text.as_deref().unwrap()).unwrap();
+        assert!(
+            payload["results"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|hit| hit["fact_id"] == id.0.to_string()),
+            "include_archive search should surface the archived fact"
+        );
     }
 
     #[test]

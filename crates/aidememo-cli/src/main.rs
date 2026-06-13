@@ -6,7 +6,7 @@ mod output;
 use aidememo_core::{
     AideMemo, AideMemoError, Config, EntityInput, EntitySort, EntityType, ExportScope, FactInput,
     FactListOpts, FactType, LintReport, ListOpts, QueryOpts, SearchOpts, TraverseDirection,
-    TraverseOpts, WorkflowStartOpts,
+    TraverseOpts, WorkflowStartOpts, backend::StoreBackend,
 };
 use std::path::{Path, PathBuf};
 use std::process::exit;
@@ -130,7 +130,7 @@ fn main() {
         cmd::Command::Session(sub) => handle_session(&store_path, config, sub, json),
         cmd::Command::Workflow(sub) => handle_workflow(&store_path, config, sub, json),
         cmd::Command::AutoRelate(sub) => handle_auto_relate(&store_path, config, sub),
-        cmd::Command::Overview(sub) => handle_overview(&store_path, config, sub),
+        cmd::Command::Overview(sub) => handle_overview(&store_path, config, sub, json),
         cmd::Command::Consolidate(sub) => handle_consolidate(&store_path, config, sub),
         cmd::Command::Auth(sub) => cmd::auth::run_auth(sub),
     };
@@ -750,12 +750,23 @@ fn handle_fact(
                 return Ok("No facts matched (give --ids or --older-than).".into());
             }
             if dry_run {
-                let mut out = format!("would archive {} fact(s):", targets.len());
-                for id in targets.iter().take(50) {
+                let hot_targets: Vec<_> = {
+                    let store = wiki.store().read();
+                    targets
+                        .iter()
+                        .copied()
+                        .filter(|id| store.fact_get(id).is_ok())
+                        .collect()
+                };
+                if hot_targets.is_empty() {
+                    return Ok("No hot facts matched (they may already be archived).".into());
+                }
+                let mut out = format!("would archive {} fact(s):", hot_targets.len());
+                for id in hot_targets.iter().take(50) {
                     out.push_str(&format!("\n  {id}"));
                 }
-                if targets.len() > 50 {
-                    out.push_str(&format!("\n  ... and {} more", targets.len() - 50));
+                if hot_targets.len() > 50 {
+                    out.push_str(&format!("\n  ... and {} more", hot_targets.len() - 50));
                 }
                 return Ok(out);
             }
@@ -2298,6 +2309,7 @@ fn handle_overview(
     path: &Path,
     config: Config,
     sub: cmd::OverviewSub,
+    json: bool,
 ) -> Result<String, AideMemoError> {
     with_wiki(path, config, |wiki| {
         let mut opts = aidememo_core::OverviewOpts::default();
@@ -2309,7 +2321,7 @@ fn handle_overview(
         }
         let result = wiki.overview(opts.clone())?;
 
-        if sub.json {
+        if json || sub.json {
             return serde_json::to_string_pretty(&result).map_err(|e| AideMemoError::Serialize {
                 context: "overview".to_string(),
                 source: e,

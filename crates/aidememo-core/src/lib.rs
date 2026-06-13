@@ -681,7 +681,21 @@ impl AideMemo {
 
     /// Get a fact by ID.
     pub fn fact_get(&self, id: &FactId) -> Result<FactRecord> {
-        self.store.read().fact_get(id)
+        match self.store.read().fact_get(id) {
+            Ok(fact) => Ok(fact),
+            Err(hot_err) if !self.is_cold => {
+                let cold_path =
+                    archive::cold_path_for_backend(&self.store_path, &self.config.store.backend);
+                if !cold_path.exists() {
+                    return Err(hot_err);
+                }
+                match self.cold()? {
+                    Some(cold) => cold.fact_get(id).or(Err(hot_err)),
+                    None => Err(hot_err),
+                }
+            }
+            Err(err) => Err(err),
+        }
     }
 
     /// Update a fact.
@@ -775,14 +789,16 @@ impl AideMemo {
     /// and `old.superseded_by = new_id`. Errors if either ID doesn't exist or
     /// `old_id` is already superseded.
     pub fn fact_supersede(&self, old_id: &FactId, new_id: &FactId) -> Result<()> {
-        let old = self.fact_get(old_id)?;
+        let old = self.store.read().fact_get(old_id)?;
         if old.superseded_at.is_some() {
             return Err(AideMemoError::InvalidInput(format!(
                 "fact {old_id} already superseded"
             )));
         }
-        // Verify the new fact exists.
-        let _ = self.fact_get(new_id)?;
+        // Verify the replacement exists in the hot store. Archived facts are
+        // readable through fact_get for audit, but write-side timeline changes
+        // operate only on the live tier.
+        let _ = self.store.read().fact_get(new_id)?;
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis() as u64)
@@ -2141,13 +2157,79 @@ mod sqlite_backend_tests {
 
         let moved = wiki.archive_facts(&[fact]).unwrap();
         assert_eq!(moved, 1);
-        assert!(wiki.fact_get(&fact).is_err());
+        assert_eq!(
+            wiki.fact_get(&fact).unwrap().content,
+            "Redis stores hot cache keys"
+        );
         let cold = wiki.cold().unwrap().unwrap();
         assert!(cold.store_path.ends_with("wiki.sqlite.cold.sqlite"));
         assert_eq!(
             cold.fact_get(&fact).unwrap().content,
             "Redis stores hot cache keys"
         );
+    }
+
+    #[test]
+    fn aidememo_sqlite_fact_supersede_requires_hot_facts() {
+        let (wiki, _dir) = fresh_sqlite();
+        let entity = wiki
+            .entity_add(EntityInput {
+                name: "Redis".to_string(),
+                ..Default::default()
+            })
+            .unwrap();
+        let archived = wiki
+            .fact_add(FactInput {
+                content: "archived Redis decision".to_string(),
+                fact_type: Some(FactType::Decision),
+                entity_ids: Some(vec![entity]),
+                ..Default::default()
+            })
+            .unwrap();
+        let replacement = wiki
+            .fact_add(FactInput {
+                content: "live Redis decision".to_string(),
+                fact_type: Some(FactType::Decision),
+                entity_ids: Some(vec![entity]),
+                ..Default::default()
+            })
+            .unwrap();
+
+        assert_eq!(wiki.archive_facts(&[archived]).unwrap(), 1);
+        assert_eq!(
+            wiki.fact_get(&archived).unwrap().content,
+            "archived Redis decision"
+        );
+        let err = wiki
+            .fact_supersede(&archived, &replacement)
+            .expect_err("archived old fact must not be superseded from cold tier");
+        assert!(format!("{err}").contains(&archived.to_string()));
+
+        let live_before = wiki
+            .store()
+            .read()
+            .fact_get(&replacement)
+            .expect("live replacement remains hot");
+        assert!(live_before.superseded_at.is_none());
+
+        let live = wiki
+            .fact_add(FactInput {
+                content: "another live Redis decision".to_string(),
+                fact_type: Some(FactType::Decision),
+                entity_ids: Some(vec![entity]),
+                ..Default::default()
+            })
+            .unwrap();
+        let err = wiki
+            .fact_supersede(&live, &archived)
+            .expect_err("archived replacement fact must not be used as live successor");
+        assert!(format!("{err}").contains(&archived.to_string()));
+        let live_after = wiki
+            .store()
+            .read()
+            .fact_get(&live)
+            .expect("live fact remains hot");
+        assert!(live_after.superseded_at.is_none());
     }
 
     #[test]

@@ -249,6 +249,15 @@ Runtime promotion status:
 * `scripts/storage-backend-parity.sh` is the CLI/MCP gate: redb export/import
   into SQLite, relation preservation, SQLite cold-tier archive/search, and 24
   concurrent MCP writes through `mcp-serve`.
+* `scripts/storage-backend-sqlite-full-surface.sh` is the SQLite-only
+  full-surface smoke: it builds the CLI with `--features sqlite` and exercises
+  init, ingest, entity/fact writes, BM25 search/query, graph traversal,
+  sessions, workflow start, archive, export, and import without redb compiled
+  in.
+* `fact_archive_preserves_mcp_fact_get_for_cold_tier` is the MCP archive
+  invariant gate: archived facts leave the hot store, `aidememo_fact_get` still
+  resolves them from the backend-specific cold tier, default search hides them,
+  and `include_archive:true` search returns them.
 * `scripts/storage-backend-real-corpus-diff.sh` ingests the repo's real docs
   corpus into redb and SQLite independently, normalizes away backend-specific
   ULIDs/timestamps, compares entity/fact/relation exports, then compares
@@ -269,6 +278,7 @@ cargo test -p aidememo-core --no-default-features --features redb
 cargo test -p aidememo-core --features sqlite,semantic,semantic-adapt
 cargo check -p aidememo-cli
 cargo test -p aidememo-cli --no-default-features --features redb --bin aidememo
+./scripts/storage-backend-sqlite-full-surface.sh
 ./scripts/storage-backend-parity.sh
 ./scripts/storage-backend-real-corpus-diff.sh
 ./scripts/storage-backend-sqlite-mcp-soak.sh
