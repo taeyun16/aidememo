@@ -341,6 +341,10 @@ Current replacement read:
   (`.cold.redb` for redb, `.cold.sqlite` for SQLite), the docs corpus parity
   gate covers a representative real markdown corpus, and the local MCP soak
   covers concurrent SQLite write traffic.
+* `aidememo doctor` warns when `store.backend` and the store path extension
+  imply different persistence layers, for example `store.backend = "redb"`
+  with `wiki.sqlite`. The engine can open those combinations, but release
+  guidance keeps suffixes aligned so users can tell which backend owns a file.
 * libSQL/Turso remote operation is still a separate decision. The current
   implementation uses bundled SQLite through rusqlite and the S3 manifest/WAL
   path uses local SQLite staging; this proves relational schema fit and local

@@ -50,6 +50,7 @@ pub struct StoreConfig {
     /// Storage backend. Supported values:
     ///
     /// - `"sqlite"` (default): bundled local SQLite backend.
+    /// - `"libsqlite"`: alias for the bundled local SQLite backend.
     /// - `"redb"`: optional embedded redb backend behind the `redb` Cargo feature.
     #[serde(default = "default_backend")]
     pub backend: String,

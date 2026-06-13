@@ -23,6 +23,11 @@ For scripts and CI, prefer explicit store paths:
 aidememo --store ./project.sqlite query "release checklist"
 ```
 
+Keep the file suffix aligned with the backend (`.sqlite` for SQLite /
+`libsqlite`, `.redb` for redb). The suffix is not required by the storage
+engine, but `aidememo doctor` warns when `store.backend` and the path extension
+point to different persistence layers because that is easy to misread later.
+
 ## Use source scoping
 
 `source_id` prevents neighbouring project or team facts from leaking into a

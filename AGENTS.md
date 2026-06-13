@@ -350,6 +350,10 @@ crates/aidememo-cli/src/
 - `Config.store.path` is a `String` — convert with `PathBuf::from(&…)`.
   `Config::default_store_path()` and `Config::project_path()` already
   expand `~/`.
+- Keep store suffixes aligned with the selected backend (`.sqlite` for
+  SQLite / `libsqlite`, `.redb` for redb). The engine does not require it, but
+  `aidememo doctor` warns on mismatches because they hide which persistence
+  layer owns the file.
 - Time helpers: `parse_iso_to_epoch_ms` (YYYY-MM-DD or RFC3339),
   `parse_duration_to_ms` (`30d`, `12h`, `4w`, `1y`).
 

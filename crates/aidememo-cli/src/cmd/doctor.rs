@@ -648,6 +648,9 @@ pub(crate) fn collect_sharing_status(store_path: &Path, config: &Config) -> Shar
             action: "aidememo daemon start".to_string(),
         });
     }
+    if let Some(hint) = backend_path_hint(store_path, &config.store.backend) {
+        hints.push(hint);
+    }
 
     let recommended_mode = if daemon.state == "healthy" {
         "daemon"
@@ -682,6 +685,40 @@ impl SharingReport {
         }
         out
     }
+}
+
+fn backend_path_hint(store_path: &Path, backend: &str) -> Option<SharingHint> {
+    let ext = store_path
+        .extension()
+        .and_then(|s| s.to_str())
+        .map(str::to_ascii_lowercase)?;
+    let backend = backend.to_ascii_lowercase();
+    let suggested = match backend.as_str() {
+        "redb" if ext == "sqlite" => Some((
+            "redb",
+            "redb",
+            "aidememo config set store.path ./_meta/wiki.redb",
+        )),
+        "sqlite" | "libsqlite" if ext == "redb" => Some((
+            "sqlite",
+            "SQLite",
+            "aidememo config set store.path ./_meta/wiki.sqlite",
+        )),
+        _ => None,
+    }?;
+
+    Some(SharingHint {
+        code: "storage_backend_path_extension_mismatch",
+        severity: "warn",
+        message: format!(
+            "store.backend is {} but store path ends with .{}; this works, but makes the persistence layer ambiguous",
+            backend, ext
+        ),
+        action: format!(
+            "rename or export/import the store to a .{} path for {} stores, then run `{}`",
+            suggested.0, suggested.1, suggested.2
+        ),
+    })
 }
 
 fn format_sharing(sharing: &SharingReport) -> String {
@@ -1405,6 +1442,27 @@ mod tests {
             report.advisories().is_empty(),
             "healthy daemon should be the smooth sharing path"
         );
+    }
+
+    #[test]
+    fn backend_path_hint_warns_when_redb_uses_sqlite_extension() {
+        let hint =
+            backend_path_hint(Path::new("./_meta/wiki.sqlite"), "redb").expect("redb path hint");
+        assert_eq!(hint.code, "storage_backend_path_extension_mismatch");
+        assert_eq!(hint.severity, "warn");
+        assert!(hint.message.contains("store.backend is redb"));
+        assert!(hint.message.contains(".sqlite"));
+        assert!(hint.action.contains("./_meta/wiki.redb"));
+    }
+
+    #[test]
+    fn backend_path_hint_warns_when_sqlite_uses_redb_extension() {
+        let hint = backend_path_hint(Path::new("./_meta/wiki.redb"), "libsqlite")
+            .expect("sqlite path hint");
+        assert_eq!(hint.code, "storage_backend_path_extension_mismatch");
+        assert!(hint.message.contains("store.backend is libsqlite"));
+        assert!(hint.message.contains(".redb"));
+        assert!(hint.action.contains("./_meta/wiki.sqlite"));
     }
 
     #[test]
