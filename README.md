@@ -328,8 +328,10 @@ aidememo doctor --json                           # includes sharing.mode and dae
 aidememo config set model.provider fastembed
 aidememo config set model.name bge-small-en-v1.5
 
-# SQLite is the default local backend. Build with `--features redb` to opt into redb.
+# SQLite is the default local backend. `libsqlite` is an alias for the same path.
+# Build with `--features redb` to opt into redb.
 aidememo config set store.backend sqlite
+aidememo config set store.backend libsqlite
 aidememo config set store.backend redb
 ```
 
@@ -338,6 +340,7 @@ build with Cargo `redb` to open redb stores:
 
 ```python
 g = aidememo.AideMemo("./_meta/wiki.sqlite", backend="sqlite")
+g = aidememo.AideMemo("./_meta/wiki.sqlite", backend="libsqlite")
 g = aidememo.AideMemo("./_meta/wiki.redb", backend="redb")
 ```
 

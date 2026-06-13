@@ -16,9 +16,9 @@ SQLITE_HEADER = b"SQLite format 3\x00"
 
 def smoke_backend() -> str:
     backend = os.environ.get("AIDEMEMO_PYTHON_SMOKE_BACKEND", "sqlite").strip().lower()
-    if backend in {"", "libsqlite"}:
+    if backend == "":
         return "sqlite"
-    if backend not in {"sqlite", "redb"}:
+    if backend not in {"sqlite", "libsqlite", "redb"}:
         raise AssertionError(f"unsupported AIDEMEMO_PYTHON_SMOKE_BACKEND={backend!r}")
     return backend
 
@@ -26,7 +26,7 @@ def smoke_backend() -> str:
 def assert_backend_file(path: str, backend: str) -> None:
     with open(path, "rb") as handle:
         header = handle.read(16)
-    if backend == "sqlite":
+    if backend in {"sqlite", "libsqlite"}:
         assert header == SQLITE_HEADER, header
     elif backend == "redb":
         assert header != SQLITE_HEADER, "redb backend produced a SQLite store file"

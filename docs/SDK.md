@@ -41,10 +41,12 @@ are documented in their package READMEs:
 | C ABI | `aidememo-ffi` | Rust crate plus C header/linking docs | [README](https://github.com/taeyun16/aidememo/tree/main/crates/aidememo-ffi) |
 
 All native bindings use the same backend selector as the CLI. Default builds
-include SQLite and can select it at open time (`backend="sqlite"` /
-`{ backend: "sqlite" }` / `backend: "sqlite"` /
-`aidememo_open_with_backend(..., "sqlite")`). Build with Cargo `redb` when you
-need to open redb stores.
+include SQLite and can select it at open time (`backend="sqlite"` or
+`backend="libsqlite"` / `{ backend: "sqlite" }` or `{ backend: "libsqlite" }` /
+`backend: "sqlite"` or `backend: "libsqlite"` /
+`aidememo_open_with_backend(..., "sqlite")` or
+`aidememo_open_with_backend(..., "libsqlite")`). Build with Cargo `redb` when
+you need to open redb stores.
 
 ## Open memory
 

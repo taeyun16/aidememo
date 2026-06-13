@@ -4,6 +4,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BASE="${AIDEMEMO_SQLITE_FULL_SURFACE_BASE:-$(mktemp -d "${TMPDIR:-/tmp}/aidememo-sqlite-full-surface.XXXXXX")}"
+BACKEND="${AIDEMEMO_SQLITE_FULL_SURFACE_BACKEND:-libsqlite}"
 BIN="$ROOT_DIR/target/debug/aidememo"
 
 cleanup() {
@@ -99,10 +100,10 @@ am_json() {
     HOME="$HOME_DIR" "$BIN" --store "$STORE" --json "$@"
 }
 
-HOME="$HOME_DIR" "$BIN" config set store.backend sqlite >/dev/null
+HOME="$HOME_DIR" "$BIN" config set store.backend "$BACKEND" >/dev/null
 backend="$(HOME="$HOME_DIR" "$BIN" config get store.backend)"
-if [[ "$backend" != "sqlite" ]]; then
-    echo "expected sqlite backend, got $backend" >&2
+if [[ "$backend" != "$BACKEND" ]]; then
+    echo "expected $BACKEND backend, got $backend" >&2
     exit 1
 fi
 
@@ -222,4 +223,4 @@ expect_contains "archive dry-run after cold move" "$(am fact archive --ids "$FAC
 
 assert_stats_at_least "$(am_json stats)" 4 5 1
 
-echo "sqlite full-surface ok: init/ingest/read/write/search/graph/session/workflow/archive/export/import"
+echo "sqlite full-surface ok ($BACKEND): init/ingest/read/write/search/graph/session/workflow/archive/export/import"
