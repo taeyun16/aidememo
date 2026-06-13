@@ -50,15 +50,43 @@ run "${cargo_cmd[@]}" check -p aidememo-core --no-default-features --features s3
 run "${cargo_cmd[@]}" check -p aidememo-core --no-default-features --features redb
 run "${cargo_cmd[@]}" check -p aidememo-cli --no-default-features --features redb
 
+assert_redb_absent "aidememo-core default" \
+    -p aidememo-core
+assert_redb_absent "aidememo-cli default" \
+    -p aidememo-cli
+assert_redb_absent "aidememo-python default" \
+    -p aidememo-python
+assert_redb_absent "aidememo-napi default" \
+    -p aidememo-napi
+assert_redb_absent "aidememo-nif default" \
+    -p aidememo-nif
+assert_redb_absent "aidememo-ffi default" \
+    -p aidememo-ffi
 assert_redb_absent "aidememo-core sqlite-only" \
     -p aidememo-core --no-default-features --features sqlite
 assert_redb_absent "aidememo-cli sqlite-only" \
     -p aidememo-cli --no-default-features --features sqlite
+assert_redb_absent "aidememo-python sqlite-only" \
+    -p aidememo-python --no-default-features --features sqlite
+assert_redb_absent "aidememo-napi sqlite-only" \
+    -p aidememo-napi --no-default-features --features sqlite
+assert_redb_absent "aidememo-nif sqlite-only" \
+    -p aidememo-nif --no-default-features --features sqlite
+assert_redb_absent "aidememo-ffi sqlite-only" \
+    -p aidememo-ffi --no-default-features --features sqlite
 assert_redb_absent "aidememo-core s3-only" \
     -p aidememo-core --no-default-features --features s3
 assert_redb_present "aidememo-core redb feature" \
     -p aidememo-core --no-default-features --features redb
 assert_redb_present "aidememo-cli redb feature" \
     -p aidememo-cli --no-default-features --features redb
+assert_redb_present "aidememo-python redb feature" \
+    -p aidememo-python --no-default-features --features redb
+assert_redb_present "aidememo-napi redb feature" \
+    -p aidememo-napi --no-default-features --features redb
+assert_redb_present "aidememo-nif redb feature" \
+    -p aidememo-nif --no-default-features --features redb
+assert_redb_present "aidememo-ffi redb feature" \
+    -p aidememo-ffi --no-default-features --features redb
 
-echo "storage backend feature gate ok: SQLite/S3 omit redb, redb remains explicit"
+echo "storage backend feature gate ok: default/SQLite/S3 omit redb, redb remains explicit across CLI and SDK crates"

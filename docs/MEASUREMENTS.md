@@ -287,9 +287,9 @@ Runtime promotion status:
   --features s3` proves the S3/manifest code can build without compiling the
   optional redb backend.
 * `scripts/storage-backend-feature-gate.sh` locks the Cargo feature boundary:
-  SQLite-only core/CLI builds and S3-only core builds must omit the `redb`
-  crate from `cargo tree`, while redb still appears only when the explicit
-  `redb` feature is selected.
+  default and SQLite-only core/CLI/SDK builds plus S3-only core builds must
+  omit the `redb` crate from `cargo tree`, while redb still appears only when
+  the explicit `redb` feature is selected.
 
 Validation added in the runtime spike:
 
