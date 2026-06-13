@@ -31,11 +31,13 @@ use std::path::PathBuf;
 use redb::ReadableTable;
 
 #[cfg(feature = "redb")]
+use crate::backend::StoreBackend;
+#[cfg(feature = "redb")]
 use crate::error::{AideMemoError, Result};
 #[cfg(feature = "redb")]
-use crate::store::{FACT_BY_ENTITY_TABLE, FACT_CONTENT_HASH_TABLE, FACTS_TABLE, Store};
+use crate::store::{FACTS_TABLE, Store};
 #[cfg(feature = "redb")]
-use crate::types::{FactId, FactRecord};
+use crate::types::FactId;
 
 /// Compute the cold-tier db path for a hot db file. Both files sit
 /// side by side so user backups copy them together.
@@ -52,23 +54,6 @@ pub fn cold_path_for_backend(hot_path: &std::path::Path, backend: &str) -> PathB
     };
     s.push(suffix);
     PathBuf::from(s)
-}
-
-/// SHA-256 hex of the fact content. Mirrors `store::sha256_hex` so
-/// archive entries land in the same hash bucket cold-side dedup
-/// expects. Reimplemented here so the archive module doesn't need to
-/// expose store internals.
-#[cfg(feature = "redb")]
-fn sha256_hex(s: &str) -> String {
-    use sha2::{Digest, Sha256};
-    let mut hasher = Sha256::new();
-    hasher.update(s.as_bytes());
-    let bytes = hasher.finalize();
-    let mut out = String::with_capacity(64);
-    for b in bytes {
-        out.push_str(&format!("{:02x}", b));
-    }
-    out
 }
 
 #[cfg(feature = "redb")]
@@ -95,107 +80,19 @@ impl Store {
     /// actually transferred (skips ids that don't exist in hot — they
     /// may already have been archived in an earlier call).
     ///
-    /// Two write transactions: one on cold (insert facts + content
-    /// hash), one on hot (delete facts + content hash + per-entity
-    /// index rows). Cold commits first; hot commits second. A crash
-    /// between them leaves a duplicate that the next archive call
-    /// resolves via cold's content-hash dedup.
+    /// This legacy redb-specific entry point delegates to the shared
+    /// `StoreBackend::fact_archive_to` contract so direct `Store` callers and
+    /// the public `AideMemo` API preserve the same archive semantics.
     pub fn archive_facts(&mut self, fact_ids: &[FactId]) -> Result<usize> {
         if fact_ids.is_empty() {
             return Ok(0);
         }
-        // Phase 1: read fact records from hot (one read txn).
-        let read_txn = self
-            .db_arc()
-            .begin_read()
-            .map_err(|e| AideMemoError::TransactionBegin {
-                source: Box::new(e),
-            })?;
-        let hot_facts = read_txn
-            .open_table(FACTS_TABLE)
-            .map_err(|e| AideMemoError::StoreRead {
-                table: "facts",
-                key: "<archive-read>".to_string(),
-                source: Box::new(e),
-            })?;
-        let mut to_move: Vec<(FactId, FactRecord)> = Vec::with_capacity(fact_ids.len());
-        for id in fact_ids {
-            let raw = match hot_facts.get(id.as_bytes().as_slice()) {
-                Ok(Some(v)) => v.value().to_vec(),
-                _ => continue,
-            };
-            let record: FactRecord = match serde_json::from_slice(&raw) {
-                Ok(r) => r,
-                Err(_) => continue,
-            };
-            to_move.push((*id, record));
-        }
-        drop(hot_facts);
-        drop(read_txn);
-
-        if to_move.is_empty() {
+        let hot_ids = <Store as StoreBackend>::existing_fact_ids(self, fact_ids)?;
+        if hot_ids.is_empty() {
             return Ok(0);
         }
-
-        // Phase 2: write to cold (separate Store + separate redb file).
         let mut cold = self.open_cold()?;
-        cold.cold_insert_archived(&to_move)?;
-
-        // Phase 3: delete from hot.
-        let entity_keys: Vec<(String, FactId)> = to_move
-            .iter()
-            .flat_map(|(id, rec)| {
-                rec.entity_ids
-                    .iter()
-                    .map(move |eid| (format!("{}\0{}", eid, id), *id))
-            })
-            .collect();
-        let content_hashes: Vec<String> = to_move
-            .iter()
-            .map(|(_, rec)| sha256_hex(&rec.content))
-            .collect();
-        let ids_to_delete: Vec<FactId> = to_move.iter().map(|(id, _)| *id).collect();
-
-        let write_txn = self.begin_archive_write()?;
-        {
-            let mut facts =
-                write_txn
-                    .open_table(FACTS_TABLE)
-                    .map_err(|e| AideMemoError::StoreWrite {
-                        table: "facts",
-                        key: "<archive-delete>".to_string(),
-                        source: Box::new(e),
-                    })?;
-            let mut fact_by_entity = write_txn.open_table(FACT_BY_ENTITY_TABLE).map_err(|e| {
-                AideMemoError::StoreWrite {
-                    table: "fact_by_entity",
-                    key: "<archive-delete>".to_string(),
-                    source: Box::new(e),
-                }
-            })?;
-            let mut content_hash = write_txn.open_table(FACT_CONTENT_HASH_TABLE).map_err(|e| {
-                AideMemoError::StoreWrite {
-                    table: "fact_content_hash",
-                    key: "<archive-delete>".to_string(),
-                    source: Box::new(e),
-                }
-            })?;
-            for id in &ids_to_delete {
-                let _ = facts.remove(id.as_bytes().as_slice());
-            }
-            for (key, _) in &entity_keys {
-                let _ = fact_by_entity.remove(key.as_str());
-            }
-            for h in &content_hashes {
-                let _ = content_hash.remove(h.as_str());
-            }
-        }
-        write_txn.commit().map_err(|e| AideMemoError::StoreWrite {
-            table: "facts",
-            key: "archive-commit".to_string(),
-            source: Box::new(e),
-        })?;
-        Ok(to_move.len())
+        <Store as StoreBackend>::fact_archive_to(self, &mut cold, &hot_ids)
     }
 
     /// Count facts in this store (used by archive tests / `aidememo stats
@@ -223,60 +120,6 @@ impl Store {
                 source: Box::new(e),
             })?
             .count() as u64)
-    }
-
-    /// Cold-side raw insert. Preserves IDs and rebuilds the
-    /// content-hash index so cold-tier dedup keeps working. Skips ids
-    /// that already exist in cold (idempotent re-archive).
-    fn cold_insert_archived(&mut self, items: &[(FactId, FactRecord)]) -> Result<()> {
-        let write_txn = self.begin_archive_write()?;
-        {
-            let mut facts =
-                write_txn
-                    .open_table(FACTS_TABLE)
-                    .map_err(|e| AideMemoError::StoreWrite {
-                        table: "facts",
-                        key: "<cold-insert>".to_string(),
-                        source: Box::new(e),
-                    })?;
-            let mut content_hash = write_txn.open_table(FACT_CONTENT_HASH_TABLE).map_err(|e| {
-                AideMemoError::StoreWrite {
-                    table: "fact_content_hash",
-                    key: "<cold-insert>".to_string(),
-                    source: Box::new(e),
-                }
-            })?;
-            for (id, record) in items {
-                if facts.get(id.as_bytes().as_slice()).ok().flatten().is_some() {
-                    continue; // already archived
-                }
-                let bytes = serde_json::to_vec(record).map_err(|e| AideMemoError::Serialize {
-                    context: format!("cold fact {:?}", id),
-                    source: e,
-                })?;
-                facts
-                    .insert(id.as_bytes().as_slice(), bytes.as_slice())
-                    .map_err(|e| AideMemoError::StoreWrite {
-                        table: "facts",
-                        key: id.to_string(),
-                        source: Box::new(e),
-                    })?;
-                let h = sha256_hex(&record.content);
-                content_hash
-                    .insert(h.as_str(), id.as_bytes().as_slice())
-                    .map_err(|e| AideMemoError::StoreWrite {
-                        table: "fact_content_hash",
-                        key: h,
-                        source: Box::new(e),
-                    })?;
-            }
-        }
-        write_txn.commit().map_err(|e| AideMemoError::StoreWrite {
-            table: "facts",
-            key: "cold-commit".to_string(),
-            source: Box::new(e),
-        })?;
-        Ok(())
     }
 }
 
@@ -355,18 +198,7 @@ mod tests {
         let cold = store.open_cold().unwrap();
         assert_eq!(cold.fact_count().unwrap(), 3);
         for id in to_archive {
-            let rec = cold
-                .db_arc()
-                .begin_read()
-                .unwrap()
-                .open_table(FACTS_TABLE)
-                .unwrap()
-                .get(id.as_bytes().as_slice())
-                .unwrap()
-                .unwrap()
-                .value()
-                .to_vec();
-            let parsed: FactRecord = serde_json::from_slice(&rec).unwrap();
+            let parsed = cold.fact_get(id).unwrap();
             assert_eq!(parsed.id, *id);
             assert!(parsed.content.starts_with("fact "));
         }

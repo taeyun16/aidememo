@@ -121,6 +121,7 @@ jobs:
       # skips them by default; run locally with `--ignored` to cover
       # the full surface.
       - run: cargo test --workspace --no-default-features
+      - run: cargo check -p aidememo-core --no-default-features --features s3
       - run: cargo test -p aidememo-core --features semantic
       - run: cargo test -p aidememo-cli --bin aidememo
       - run: scripts/storage-backend-sqlite-full-surface.sh

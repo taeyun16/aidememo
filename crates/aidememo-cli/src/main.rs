@@ -752,11 +752,7 @@ fn handle_fact(
             if dry_run {
                 let hot_targets: Vec<_> = {
                     let store = wiki.store().read();
-                    targets
-                        .iter()
-                        .copied()
-                        .filter(|id| store.fact_get(id).is_ok())
-                        .collect()
+                    store.existing_fact_ids(&targets)?
                 };
                 if hot_targets.is_empty() {
                     return Ok("No hot facts matched (they may already be archived).".into());

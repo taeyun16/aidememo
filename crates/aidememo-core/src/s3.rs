@@ -101,6 +101,11 @@ pub fn download_segment(segment_id: SegmentId) -> Result<String> {
 }
 
 pub fn flush_segments_to_manifest(segments: Vec<WALSegment>) -> Result<ManifestEntry> {
+    let root = current_bucket_root();
+    flush_segments_to_manifest_at(&root, segments)
+}
+
+fn flush_segments_to_manifest_at(root: &Path, segments: Vec<WALSegment>) -> Result<ManifestEntry> {
     if segments.is_empty() {
         return Err(AideMemoError::InvalidInput(
             "cannot flush an empty set of WAL segments".to_string(),
@@ -125,8 +130,7 @@ pub fn flush_segments_to_manifest(segments: Vec<WALSegment>) -> Result<ManifestE
         WALSegment::from_records(search_sessions, search_feedback)
     };
 
-    let root = current_bucket_root();
-    persist_segment(&root, &segment)?;
+    persist_segment(root, &segment)?;
 
     let entry = ManifestEntry {
         segment_id: segment.segment_id,
@@ -145,6 +149,12 @@ fn persist_segment(root: &Path, segment: &WALSegment) -> Result<PathBuf> {
             "failed to compress segment {}: {source}",
             segment.segment_id
         ))
+    })?;
+    std::fs::create_dir_all(root.join(SEGMENTS_DIR)).map_err(|source| {
+        AideMemoError::StoreOpen {
+            path: root.join(SEGMENTS_DIR),
+            source: Box::new(source),
+        }
     })?;
     let path = segment_path(root, segment.segment_id);
     std::fs::write(&path, compressed).map_err(|source| AideMemoError::StoreWrite {
@@ -268,9 +278,8 @@ mod tests {
     #[test]
     fn flush_writes_segment() {
         let tmp = tempfile::tempdir().unwrap();
-        std::env::set_var("AIDEMEMO_STORAGE", tmp.path());
         let segment = WALSegment::from_records(Vec::new(), Vec::new());
-        let entry = flush_segments_to_manifest(vec![segment]).unwrap();
-        assert!(entry.fact_count <= 0);
+        let entry = flush_segments_to_manifest_at(tmp.path(), vec![segment]).unwrap();
+        assert_eq!(entry.fact_count, 0);
     }
 }

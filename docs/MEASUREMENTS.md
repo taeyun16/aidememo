@@ -223,6 +223,10 @@ Runtime promotion status:
 
 * `crates/aidememo-core/src/backend.rs` defines `StoreBackend` plus `StoreKind`,
   so `AideMemo::open` can select redb or SQLite from `config.store.backend`.
+  The trait also owns the shared archive-transfer contract
+  (`existing_fact_ids`, `fact_archive_to`): cold-tier moves must preserve
+  `FactId`, skip already-archived hot misses, and delete from hot only after the
+  cold store can address the archived id.
 * `crates/aidememo-core/src/sqlite_store.rs` implements the same public store
   surface used by entity/fact CRUD, relation graph traversal, lint, ingest,
   BM25 search, query, archive/cold-tier moves, JSONL import/export, pull sync,
@@ -240,8 +244,10 @@ Runtime promotion status:
   path aligned with CLI/MCP instead of making backend choice a CLI-only spike.
 * `sqlite_matches_redb_for_core_public_api_fixture` seeds the same fixture into
   redb and SQLite, then compares stats, fact contents, traversal output, and
-  BM25 search results. This is the current semantic parity gate for backend
-  promotion.
+  BM25 search results. `archive_contract_matches_redb_and_sqlite_public_api`
+  exercises the same hot-to-cold archive contract through the public
+  `AideMemo` API on both backends. Together these are the current semantic
+  parity gates for backend promotion.
 * `sqlite_import_preserves_redb_export_ids_for_migration_gate` exports a redb
   fixture, imports it into SQLite, verifies entity/fact IDs and graph/search
   parity, then replays the same JSONL to prove the migration path is
@@ -269,13 +275,19 @@ Runtime promotion status:
 * `scripts/storage-backend-sdk-bindings-check.sh` verifies the SDK/binding
   surface: default SQLite builds plus redb-only Cargo feature builds across
   Python, Node, Elixir, and C.
+* `s3` no longer enables the `redb` feature. Its local WAL staging path uses
+  SQLite (`wal.sqlite`), so `cargo check -p aidememo-core --no-default-features
+  --features s3` proves the S3/manifest code can build without compiling the
+  optional redb backend.
 
 Validation added in the runtime spike:
 
 ```bash
 cargo test -p aidememo-core
 cargo test -p aidememo-core --no-default-features --features redb
+cargo test -p aidememo-core --features sqlite,redb archive_contract_matches_redb_and_sqlite_public_api
 cargo test -p aidememo-core --features sqlite,semantic,semantic-adapt
+cargo check -p aidememo-core --no-default-features --features s3
 cargo check -p aidememo-cli
 cargo test -p aidememo-cli --no-default-features --features redb --bin aidememo
 ./scripts/storage-backend-sqlite-full-surface.sh
@@ -287,18 +299,18 @@ cargo test -p aidememo-cli --no-default-features --features redb --bin aidememo
 
 Current replacement read:
 
-* SQLite is viable enough to keep behind a feature flag and run through the
-  full public `AideMemo` API surface in tests. The main replacement blockers
-  are no longer graph/search/lint/ingest wiring.
-* Remaining promotion gate before making SQLite the default: a deliberate
-  default-backend migration policy for existing users. Archive siblings already
-  use backend-specific suffixes (`.cold.redb` for redb, `.cold.sqlite` for
-  SQLite), the docs corpus parity gate covers a representative real markdown
-  corpus, and the local MCP soak covers concurrent SQLite write traffic.
-* libSQL/Turso or S3-style remote operation is still a separate decision. The
-  current implementation uses bundled SQLite through rusqlite; it proves
-  relational schema fit and local runtime replaceability, not remote
-  replication semantics.
+* SQLite is now the default backend and runs through the full public
+  `AideMemo` API surface in tests. The main replacement blockers are no longer
+  graph/search/lint/ingest wiring.
+* The redb path remains available as an explicit Cargo feature and runtime
+  backend selection. Archive siblings use backend-specific suffixes
+  (`.cold.redb` for redb, `.cold.sqlite` for SQLite), the docs corpus parity
+  gate covers a representative real markdown corpus, and the local MCP soak
+  covers concurrent SQLite write traffic.
+* libSQL/Turso remote operation is still a separate decision. The current
+  implementation uses bundled SQLite through rusqlite and the S3 manifest/WAL
+  path uses local SQLite staging; this proves relational schema fit and local
+  runtime replaceability, not managed remote replication semantics.
 
 ## Workflow Doctor Readiness
 

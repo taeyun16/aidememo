@@ -112,6 +112,7 @@ lint() {
 
 tests() {
     run "${cargo_cmd[@]}" test -p aidememo-core --no-default-features --features redb
+    run "${cargo_cmd[@]}" check -p aidememo-core --no-default-features --features s3
     run "${cargo_cmd[@]}" test -p aidememo-core --features semantic
     run "${cargo_cmd[@]}" test -p aidememo-core --features sqlite,semantic,semantic-adapt
     run "${cargo_cmd[@]}" check -p aidememo-cli --features sqlite

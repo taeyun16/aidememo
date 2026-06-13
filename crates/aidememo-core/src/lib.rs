@@ -742,44 +742,23 @@ impl AideMemo {
                 "archive_facts called on a cold AideMemo (no nested archives)".into(),
             ));
         }
-        let mut to_move = Vec::new();
-        {
-            let store = self.store.read();
-            for id in fact_ids {
-                if let Ok(fact) = store.fact_get(id) {
-                    to_move.push(fact);
-                }
-            }
-        }
-        if to_move.is_empty() {
+        let hot_ids = self.store.read().existing_fact_ids(fact_ids)?;
+        if hot_ids.is_empty() {
             return Ok(0);
         }
         let cold = self.cold()?.ok_or_else(|| {
             AideMemoError::InvalidInput("archive_facts called without a cold sibling".into())
         })?;
-        {
-            let mut cold_store = cold.store.write();
-            for fact in &to_move {
-                let _ = cold_store.fact_upsert_record(fact.clone())?;
-            }
-        }
-        let mut moved = 0usize;
-        {
+        let moved = {
             let mut store = self.store.write();
-            for fact in &to_move {
-                if store.fact_delete(&fact.id).is_ok() {
-                    moved += 1;
-                }
-            }
-        }
+            let mut cold_store = cold.store.write();
+            store.fact_archive_to(&mut *cold_store, &hot_ids)?
+        };
         if moved > 0 {
             self.bm25_mark_dirty();
             // Cold's BM25 / semantic indexes need a rebuild too — the
-            // raw inserts that cold_insert_archived does don't go
-            // through the regular fact_add path that flips the dirty
-            // bit. Open the sibling lazily so single-archive workflows
-            // don't pay the open cost when search-with-archive isn't
-            // used.
+            // backend-level archive transfer writes raw fact records, bypassing
+            // the regular fact_add path that flips the dirty bit.
             cold.bm25_mark_dirty();
         }
         Ok(moved)
@@ -2087,6 +2066,14 @@ mod sqlite_backend_tests {
         config
     }
 
+    #[cfg(feature = "redb")]
+    fn redb_config(path: &std::path::Path) -> Config {
+        let mut config = Config::default();
+        config.store.backend = "redb".to_string();
+        config.store.path = path.to_string_lossy().into_owned();
+        config
+    }
+
     fn fresh_sqlite() -> (AideMemo, tempfile::TempDir) {
         let dir = tempdir().unwrap();
         let path = dir.path().join("wiki.sqlite");
@@ -2232,6 +2219,60 @@ mod sqlite_backend_tests {
         assert!(live_after.superseded_at.is_none());
     }
 
+    #[cfg(feature = "redb")]
+    #[test]
+    fn archive_contract_matches_redb_and_sqlite_public_api() {
+        fn seed(wiki: &AideMemo) -> FactId {
+            let entity = wiki
+                .entity_add(EntityInput {
+                    name: "Redis".to_string(),
+                    entity_type: Some(EntityType::Technology),
+                    ..Default::default()
+                })
+                .unwrap();
+            wiki.fact_add(FactInput {
+                content: "Redis archive contract fact".to_string(),
+                fact_type: Some(FactType::Claim),
+                entity_ids: Some(vec![entity]),
+                source_confidence: Some(1.0),
+                ..Default::default()
+            })
+            .unwrap()
+        }
+
+        fn assert_archive_contract(wiki: &AideMemo, id: FactId, cold_suffix: &str) {
+            assert_eq!(wiki.archive_facts(&[id]).unwrap(), 1);
+            assert!(
+                wiki.store().read().fact_get(&id).is_err(),
+                "archive must remove the fact from the hot store",
+            );
+            assert_eq!(
+                wiki.fact_get(&id).unwrap().content,
+                "Redis archive contract fact"
+            );
+            let cold = wiki.cold().unwrap().unwrap();
+            assert!(cold.store_path.ends_with(cold_suffix));
+            assert_eq!(
+                cold.fact_get(&id).unwrap().content,
+                "Redis archive contract fact"
+            );
+            assert_eq!(wiki.archive_facts(&[id]).unwrap(), 0);
+        }
+
+        let dir = tempdir().unwrap();
+        let redb_path = dir.path().join("wiki.redb");
+        let sqlite_path = dir.path().join("wiki.sqlite");
+
+        let redb = AideMemo::open(&redb_path, redb_config(&redb_path)).unwrap();
+        let sqlite = AideMemo::open(&sqlite_path, sqlite_config(&sqlite_path)).unwrap();
+
+        let redb_fact = seed(&redb);
+        let sqlite_fact = seed(&sqlite);
+
+        assert_archive_contract(&redb, redb_fact, "wiki.redb.cold.redb");
+        assert_archive_contract(&sqlite, sqlite_fact, "wiki.sqlite.cold.sqlite");
+    }
+
     #[test]
     fn aidememo_sqlite_exports_imports_and_syncs() {
         let (wiki, dir) = fresh_sqlite();
@@ -2320,6 +2361,7 @@ mod sqlite_backend_search_tests {
     use super::*;
     use tempfile::tempdir;
 
+    #[cfg(feature = "redb")]
     fn seed_backend(wiki: &AideMemo) {
         let redis = wiki
             .entity_add(EntityInput {
@@ -2411,6 +2453,7 @@ mod sqlite_backend_search_tests {
         assert_eq!(result.recent_facts.len(), 1);
     }
 
+    #[cfg(feature = "redb")]
     #[test]
     fn sqlite_matches_redb_for_core_public_api_fixture() {
         let dir = tempdir().unwrap();
@@ -2418,11 +2461,14 @@ mod sqlite_backend_search_tests {
         let sqlite_path = dir.path().join("wiki.sqlite");
 
         let mut redb_config = Config::default();
+        redb_config.store.backend = "redb".to_string();
+        redb_config.store.path = redb_path.to_string_lossy().into_owned();
         redb_config.search.semantic_weight = 0.0;
         let redb = AideMemo::open(&redb_path, redb_config).unwrap();
 
         let mut sqlite_config = Config::default();
         sqlite_config.store.backend = "sqlite".to_string();
+        sqlite_config.store.path = sqlite_path.to_string_lossy().into_owned();
         sqlite_config.search.semantic_weight = 0.0;
         let sqlite = AideMemo::open(&sqlite_path, sqlite_config).unwrap();
 
@@ -2493,6 +2539,7 @@ mod sqlite_backend_search_tests {
         assert_eq!(search_contents(&redb), search_contents(&sqlite));
     }
 
+    #[cfg(feature = "redb")]
     #[test]
     fn sqlite_import_preserves_redb_export_ids_for_migration_gate() {
         let dir = tempdir().unwrap();
@@ -2500,6 +2547,8 @@ mod sqlite_backend_search_tests {
         let sqlite_path = dir.path().join("target.sqlite");
 
         let mut redb_config = Config::default();
+        redb_config.store.backend = "redb".to_string();
+        redb_config.store.path = redb_path.to_string_lossy().into_owned();
         redb_config.search.semantic_weight = 0.0;
         let redb = AideMemo::open(&redb_path, redb_config).unwrap();
         seed_backend(&redb);
@@ -2510,6 +2559,7 @@ mod sqlite_backend_search_tests {
 
         let mut sqlite_config = Config::default();
         sqlite_config.store.backend = "sqlite".to_string();
+        sqlite_config.store.path = sqlite_path.to_string_lossy().into_owned();
         sqlite_config.search.semantic_weight = 0.0;
         let mut sqlite = AideMemo::open(&sqlite_path, sqlite_config).unwrap();
         let mut reader = exported.as_slice();

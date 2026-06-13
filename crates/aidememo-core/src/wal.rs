@@ -1,21 +1,18 @@
 //! Write-ahead log for search sessions and feedback.
 //!
-//! The WAL is stored in a local redb database as a staging area before
-//! S3 manifest flushes. When the `s3` feature is disabled this module is
-//! not compiled.
+//! The WAL is stored in a local SQLite database as a staging area before S3
+//! manifest flushes. When the `s3` feature is disabled this module is not
+//! compiled.
 
 use crate::error::{AideMemoError, Result};
 use crate::types::{SearchFeedback, SearchSession};
-use redb::{Database, ReadableTable, TableDefinition};
+use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 use ulid::Ulid;
 
 pub type SegmentId = Ulid;
-
-const WAL_SEGMENTS_TABLE: TableDefinition<&[u8], &[u8]> = TableDefinition::new("wal_segments");
-const WAL_META_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("wal_meta");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "payload")]
@@ -108,70 +105,38 @@ impl WALSegment {
 }
 
 pub fn wal_append(segment: WALSegment) -> Result<SegmentId> {
-    let db = wal_db()?;
-    let write_txn = db
-        .begin_write()
-        .map_err(|source| AideMemoError::TransactionBegin {
-            source: Box::new(source),
-        })?;
-    {
-        let mut table = write_txn.open_table(WAL_SEGMENTS_TABLE).map_err(|source| {
-            AideMemoError::StoreWrite {
-                table: "wal_segments",
-                key: segment.segment_id.to_string(),
-                source: Box::new(source),
-            }
-        })?;
-        let bytes = serde_json::to_vec(&segment).map_err(|source| AideMemoError::Serialize {
-            context: "wal segment".to_string(),
-            source,
-        })?;
-        table
-            .insert(segment.segment_id.to_bytes().as_slice(), bytes.as_slice())
-            .map_err(|source| AideMemoError::StoreWrite {
-                table: "wal_segments",
-                key: segment.segment_id.to_string(),
-                source: Box::new(source),
-            })?;
-    }
-    write_txn
-        .commit()
-        .map_err(|source| AideMemoError::StoreWrite {
-            table: "wal_segments",
-            key: segment.segment_id.to_string(),
-            source: Box::new(source),
-        })?;
+    let conn = wal_db()?;
+    let bytes = serde_json::to_vec(&segment).map_err(|source| AideMemoError::Serialize {
+        context: "wal segment".to_string(),
+        source,
+    })?;
+    conn.execute(
+        "INSERT OR REPLACE INTO wal_segments (id, created_at, record_json)
+         VALUES (?1, ?2, ?3)",
+        params![
+            segment.segment_id.to_string(),
+            segment.created_at as i64,
+            bytes
+        ],
+    )
+    .map_err(|source| sqlite_write("wal_segments", &segment.segment_id.to_string(), source))?;
     Ok(segment.segment_id)
 }
 
 pub fn wal_segments() -> Result<Vec<WALSegment>> {
-    let db = wal_db()?;
-    let read_txn = db
-        .begin_read()
-        .map_err(|source| AideMemoError::TransactionBegin {
-            source: Box::new(source),
-        })?;
-    let table = match read_txn.open_table(WAL_SEGMENTS_TABLE) {
-        Ok(table) => table,
-        Err(_) => return Ok(Vec::new()),
-    };
-
+    let conn = wal_db()?;
+    let mut stmt = conn
+        .prepare("SELECT record_json FROM wal_segments ORDER BY id ASC")
+        .map_err(|source| sqlite_read("wal_segments", "<prepare>", source))?;
+    let rows = stmt
+        .query_map([], |row| row.get::<_, Vec<u8>>(0))
+        .map_err(|source| sqlite_read("wal_segments", "<iter>", source))?;
     let mut segments = Vec::new();
-    for entry in table.iter().map_err(|source| AideMemoError::StoreRead {
-        table: "wal_segments",
-        key: "<iter>".to_string(),
-        source: Box::new(source),
-    })? {
-        let (key, value) = entry.map_err(|source| AideMemoError::StoreRead {
-            table: "wal_segments",
-            key: "<iter>".to_string(),
-            source: Box::new(source),
-        })?;
-        let id_bytes: [u8; 16] = key.value().try_into().unwrap_or([0; 16]);
-        let id = Ulid::from_bytes(id_bytes);
+    for row in rows {
+        let bytes = row.map_err(|source| sqlite_read("wal_segments", "<row>", source))?;
         let segment: WALSegment =
-            serde_json::from_slice(value.value()).map_err(|source| AideMemoError::Deserialize {
-                context: format!("wal segment {id}"),
+            serde_json::from_slice(&bytes).map_err(|source| AideMemoError::Deserialize {
+                context: "wal segment".to_string(),
                 source,
             })?;
         segments.push(segment);
@@ -202,48 +167,38 @@ pub fn wal_compact(segment_ids: Vec<SegmentId>) -> Result<WALSegment> {
     }
 
     let compacted = WALSegment::new(combined_sessions, combined_feedback);
-    let db = wal_db()?;
-    let write_txn = db
-        .begin_write()
-        .map_err(|source| AideMemoError::TransactionBegin {
-            source: Box::new(source),
-        })?;
-    {
-        let mut table = write_txn.open_table(WAL_SEGMENTS_TABLE).map_err(|source| {
-            AideMemoError::StoreWrite {
-                table: "wal_segments",
-                key: compacted.segment_id.to_string(),
-                source: Box::new(source),
-            }
-        })?;
-
-        for id in &segment_ids {
-            table.remove(id.to_bytes().as_slice()).ok();
-        }
-        let bytes = serde_json::to_vec(&compacted).map_err(|source| AideMemoError::Serialize {
-            context: "compacted wal segment".to_string(),
-            source,
-        })?;
-        table
-            .insert(compacted.segment_id.to_bytes().as_slice(), bytes.as_slice())
-            .map_err(|source| AideMemoError::StoreWrite {
-                table: "wal_segments",
-                key: compacted.segment_id.to_string(),
-                source: Box::new(source),
-            })?;
+    let mut conn = wal_db()?;
+    let tx = conn
+        .transaction()
+        .map_err(|source| sqlite_write("wal_segments", "begin", source))?;
+    for id in &segment_ids {
+        let _ = tx.execute(
+            "DELETE FROM wal_segments WHERE id = ?1",
+            params![id.to_string()],
+        );
     }
-    write_txn
-        .commit()
-        .map_err(|source| AideMemoError::StoreWrite {
-            table: "wal_segments",
-            key: compacted.segment_id.to_string(),
-            source: Box::new(source),
-        })?;
+    let bytes = serde_json::to_vec(&compacted).map_err(|source| AideMemoError::Serialize {
+        context: "compacted wal segment".to_string(),
+        source,
+    })?;
+    tx.execute(
+        "INSERT OR REPLACE INTO wal_segments (id, created_at, record_json)
+         VALUES (?1, ?2, ?3)",
+        params![
+            compacted.segment_id.to_string(),
+            compacted.created_at as i64,
+            bytes
+        ],
+    )
+    .map_err(|source| sqlite_write("wal_segments", &compacted.segment_id.to_string(), source))?;
+    tx.commit().map_err(|source| {
+        sqlite_write("wal_segments", &compacted.segment_id.to_string(), source)
+    })?;
 
     Ok(compacted)
 }
 
-fn wal_db() -> Result<Database> {
+fn wal_db() -> Result<Connection> {
     let path = wal_path();
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|source| AideMemoError::StoreOpen {
@@ -251,31 +206,57 @@ fn wal_db() -> Result<Database> {
             source: Box::new(source),
         })?;
     }
-    let db = Database::create(&path).map_err(|source| AideMemoError::StoreOpen {
-        path,
+    let conn = Connection::open(&path).map_err(|source| AideMemoError::StoreOpen {
+        path: path.clone(),
         source: Box::new(source),
     })?;
-
-    // Ensure tables exist.
-    if let Ok(txn) = db.begin_write() {
-        let _ = txn.open_table(WAL_SEGMENTS_TABLE);
-        let _ = txn.open_table(WAL_META_TABLE);
-        let _ = txn.commit();
-    }
-
-    Ok(db)
+    conn.pragma_update(None, "journal_mode", "WAL")
+        .map_err(|source| sqlite_write("wal_pragma", "journal_mode", source))?;
+    conn.pragma_update(None, "synchronous", "NORMAL")
+        .map_err(|source| sqlite_write("wal_pragma", "synchronous", source))?;
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS wal_segments (
+            id TEXT PRIMARY KEY,
+            created_at INTEGER NOT NULL,
+            record_json BLOB NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS wal_meta (
+            key TEXT PRIMARY KEY,
+            value BLOB NOT NULL
+        );
+        "#,
+    )
+    .map_err(|source| sqlite_write("wal_schema", "<batch>", source))?;
+    Ok(conn)
 }
 
 fn wal_path() -> PathBuf {
     if let Ok(storage) = std::env::var("AIDEMEMO_STORAGE") {
         let storage = PathBuf::from(storage);
         if storage.extension().is_some() {
-            return storage.with_extension("wal.redb");
+            return storage.with_extension("wal.sqlite");
         }
-        return storage.join("wal.redb");
+        return storage.join("wal.sqlite");
     }
 
-    std::env::temp_dir().join("aidememo-wal.redb")
+    std::env::temp_dir().join("aidememo-wal.sqlite")
+}
+
+fn sqlite_read(table: &'static str, key: &str, source: rusqlite::Error) -> AideMemoError {
+    AideMemoError::StoreRead {
+        table,
+        key: key.to_string(),
+        source: Box::new(source),
+    }
+}
+
+fn sqlite_write(table: &'static str, key: &str, source: rusqlite::Error) -> AideMemoError {
+    AideMemoError::StoreWrite {
+        table,
+        key: key.to_string(),
+        source: Box::new(source),
+    }
 }
 
 fn now_ms() -> u64 {

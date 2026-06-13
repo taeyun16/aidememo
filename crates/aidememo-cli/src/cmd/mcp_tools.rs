@@ -2898,10 +2898,10 @@ fn tool_fact_archive(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, St
         // without actually moving anything. Check the hot store directly:
         // public fact_get also resolves already-archived cold facts.
         let store = wiki.store().read();
-        targets
-            .iter()
-            .filter(|id| store.fact_get(id).is_ok())
-            .count()
+        store
+            .existing_fact_ids(&targets)
+            .map_err(|e| e.to_string())?
+            .len()
     } else {
         wiki.archive_facts(&targets).map_err(|e| e.to_string())?
     };

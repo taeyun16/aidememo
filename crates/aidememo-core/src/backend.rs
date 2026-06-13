@@ -130,6 +130,21 @@ pub trait StoreBackend {
     /// Fetch many facts, preserving input order and skipping missing ids.
     fn fact_get_many(&self, ids: &[FactId]) -> Result<Vec<FactRecord>>;
 
+    /// Return the subset of `ids` that currently exists in this store.
+    ///
+    /// Higher layers use this for hot-tier previews. Public `AideMemo::fact_get`
+    /// may also resolve archived cold-tier facts, but this backend-level check
+    /// is intentionally scoped to the store handle it is called on.
+    fn existing_fact_ids(&self, ids: &[FactId]) -> Result<Vec<FactId>> {
+        let mut existing = Vec::with_capacity(ids.len());
+        for id in ids {
+            if self.fact_get(id).is_ok() {
+                existing.push(*id);
+            }
+        }
+        Ok(existing)
+    }
+
     /// List facts with the existing AideMemo filters.
     fn fact_list(&self, opts: FactListOpts) -> Result<Vec<FactRecord>>;
 
@@ -141,6 +156,53 @@ pub trait StoreBackend {
 
     /// Insert or update a raw fact record while preserving its id.
     fn fact_upsert_record(&mut self, record: FactRecord) -> Result<bool>;
+
+    /// Move facts from this hot store to a same-backend cold store.
+    ///
+    /// The default implementation defines the cross-backend archive contract:
+    /// read the hot records, upsert them into cold while preserving `FactId`,
+    /// verify cold can address each id, then delete from hot. Missing hot ids are
+    /// skipped so re-archiving is idempotent.
+    fn fact_archive_to(&mut self, cold: &mut Self, ids: &[FactId]) -> Result<usize>
+    where
+        Self: Sized,
+    {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+
+        let mut to_move = Vec::with_capacity(ids.len());
+        for id in ids {
+            if let Ok(fact) = self.fact_get(id) {
+                to_move.push(fact);
+            }
+        }
+        if to_move.is_empty() {
+            return Ok(0);
+        }
+
+        for fact in &to_move {
+            let _ = cold.fact_upsert_record(fact.clone())?;
+            let archived = cold.fact_get(&fact.id)?;
+            if archived.content != fact.content
+                || archived.entity_ids != fact.entity_ids
+                || archived.fact_type != fact.fact_type
+            {
+                return Err(AideMemoError::InvalidInput(format!(
+                    "cold-tier archive verification failed for fact {}",
+                    fact.id
+                )));
+            }
+        }
+
+        let mut moved = 0usize;
+        for fact in &to_move {
+            if self.fact_delete(&fact.id).is_ok() {
+                moved += 1;
+            }
+        }
+        Ok(moved)
+    }
 
     /// Return currently pinned facts.
     fn pinned_facts(&self, limit: usize) -> Result<Vec<FactRecord>>;
@@ -549,6 +611,23 @@ impl StoreBackend for StoreKind {
             StoreKind::Redb(store) => store.fact_upsert_record(record),
             #[cfg(feature = "sqlite")]
             StoreKind::Sqlite(store) => store.fact_upsert_record(record),
+        }
+    }
+
+    fn fact_archive_to(&mut self, cold: &mut Self, ids: &[FactId]) -> Result<usize> {
+        match (self, cold) {
+            #[cfg(feature = "redb")]
+            (StoreKind::Redb(hot), StoreKind::Redb(cold)) => {
+                <Store as StoreBackend>::fact_archive_to(hot, cold, ids)
+            }
+            #[cfg(feature = "sqlite")]
+            (StoreKind::Sqlite(hot), StoreKind::Sqlite(cold)) => {
+                <crate::sqlite_store::SqliteStore as StoreBackend>::fact_archive_to(hot, cold, ids)
+            }
+            #[allow(unreachable_patterns)]
+            _ => Err(AideMemoError::InvalidInput(
+                "hot and cold store backends must match for archive transfer".to_string(),
+            )),
         }
     }
 
