@@ -263,14 +263,14 @@ Runtime promotion status:
   into SQLite, redb/SQLite sync compatibility, relation preservation, SQLite
   cold-tier archive/search, and 24 concurrent MCP writes through `mcp-serve`.
 * `scripts/storage-backend-sqlite-full-surface.sh` is the SQLite-only
-  full-surface smoke: it builds the CLI with `--features sqlite` and exercises
-  init, ingest, entity/fact writes, BM25 search/query, graph traversal,
-  sessions, workflow start, archive, export, and import without redb compiled
-  in. It defaults `store.backend` to the `libsqlite` alias, so the full public
-  surface proves both the canonical SQLite backend and the user-facing
-  libsqlite spelling resolve to the same implementation.
+  full-surface smoke: it builds the CLI with `--no-default-features --features
+  sqlite` and exercises init, ingest, entity/fact writes, BM25 search/query,
+  graph traversal, sessions, workflow start, archive, export, and import
+  without redb compiled in. It defaults `store.backend` to the `libsqlite`
+  alias, so the full public surface proves both the canonical SQLite backend
+  and the user-facing libsqlite spelling resolve to the same implementation.
 * `scripts/storage-backend-sqlite-advanced-surface.sh` is the SQLite-only
-  advanced-surface smoke: it builds the same SQLite CLI and verifies
+  advanced-surface smoke: it builds the same no-default SQLite CLI and verifies
   CLI-level `store.lock_retry_ms` busy-timeout behaviour under a held SQLite
   writer lock, fact-level feedback, search feedback, adapter train/status/eval,
   heuristic extract preview/apply, pending approve/reject, and TTL-only
@@ -285,10 +285,10 @@ Runtime promotion status:
   corpus into redb and SQLite independently, normalizes away backend-specific
   ULIDs/timestamps, compares entity/fact/relation exports, then compares
   BM25 search results across representative queries.
-* `scripts/storage-backend-sqlite-mcp-soak.sh` runs the SQLite `mcp-serve`
-  write path under concurrent load. The default local gate writes 200 facts
-  through 16 parallel HTTP MCP callers, verifies unique fact IDs, final stats,
-  and BM25 visibility for a tail write.
+* `scripts/storage-backend-sqlite-mcp-soak.sh` builds the same no-default
+  SQLite CLI and runs the SQLite `mcp-serve` write path under concurrent load.
+  The default local gate writes 200 facts through 16 parallel HTTP MCP callers,
+  verifies unique fact IDs, final stats, and BM25 visibility for a tail write.
 * `scripts/storage-backend-sdk-bindings-check.sh` verifies the SDK/binding
   surface: default SQLite builds, `libsqlite` alias opens in native binding
   tests, and redb-only Cargo feature builds across Python, Node, Elixir, and C.

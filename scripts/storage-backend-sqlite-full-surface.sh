@@ -83,7 +83,7 @@ PY
 }
 
 cd "$ROOT_DIR"
-cargo build -p aidememo-cli --features sqlite
+cargo build -p aidememo-cli --no-default-features --features sqlite
 
 HOME_DIR="$BASE/home"
 WIKI_DIR="$BASE/wiki"
