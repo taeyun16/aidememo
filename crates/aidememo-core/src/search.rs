@@ -1016,17 +1016,35 @@ fn current_epoch_ms() -> u64 {
 #[cfg(feature = "semantic")]
 pub use semantic::{hybrid_search, hybrid_search_with_ctx, hybrid_search_with_hnsw};
 
-#[cfg(all(test, feature = "redb"))]
+#[cfg(all(test, any(feature = "sqlite", feature = "redb")))]
 mod tests {
     use super::*;
-    use crate::store::Store;
+    use crate::backend::{StoreBackend, StoreKind};
+    use std::path::PathBuf;
     use tempfile::tempdir;
 
-    fn create_test_store() -> (Store, tempfile::TempDir) {
+    fn test_store_path(
+        dir: &tempfile::TempDir,
+        stem: &str,
+        mut config: Config,
+    ) -> (PathBuf, Config) {
+        if cfg!(all(feature = "redb", not(feature = "sqlite"))) {
+            config.store.backend = "redb".to_string();
+        }
+        let suffix = if config.store.backend == "redb" {
+            "redb"
+        } else {
+            "sqlite"
+        };
+        let path = dir.path().join(format!("{stem}.{suffix}"));
+        config.store.path = path.to_string_lossy().into_owned();
+        (path, config)
+    }
+
+    fn create_test_store() -> (StoreKind, tempfile::TempDir) {
         let dir = tempdir().unwrap();
-        let path = dir.path().join("test.redb");
-        let config = Config::default();
-        let store = Store::open(&path, config).unwrap();
+        let (path, config) = test_store_path(&dir, "test", Config::default());
+        let store = StoreKind::open(&path, config).unwrap();
         (store, dir)
     }
 
@@ -1162,13 +1180,13 @@ mod tests {
         // weight_by_confidence the BM25 rank alone would tie or
         // invert (insertion-order tiebreak).
         let dir = tempdir().unwrap();
-        let path = dir.path().join("test.redb");
         let mut config = Config::default();
         // Disable time decay so the only differentiator is confidence.
         config.search.time_decay_tau_ms = 0;
         config.search.weight_by_confidence = true;
         config.search.semantic_index = "bm25".to_string();
-        let mut store = Store::open(&path, config.clone()).unwrap();
+        let (path, config) = test_store_path(&dir, "test", config);
+        let mut store = StoreKind::open(&path, config.clone()).unwrap();
 
         store
             .entity_add(EntityInput {
@@ -1225,12 +1243,12 @@ mod tests {
         // the older fact's weight is e^(-12) ≈ 0 — it must rank
         // behind the fresh one even when BM25 would tie.
         let dir = tempdir().unwrap();
-        let path = dir.path().join("test.redb");
         let mut config = Config::default();
         config.search.time_decay_tau_ms = 30 * 24 * 60 * 60 * 1000; // 30 days
         config.search.weight_by_confidence = false; // isolate decay
         config.search.semantic_index = "bm25".to_string();
-        let mut store = Store::open(&path, config.clone()).unwrap();
+        let (path, config) = test_store_path(&dir, "test", config);
+        let mut store = StoreKind::open(&path, config.clone()).unwrap();
 
         store
             .entity_add(EntityInput {
@@ -1291,12 +1309,12 @@ mod tests {
         // operators on an archival wiki want every fact treated
         // equally regardless of when it was observed.
         let dir = tempdir().unwrap();
-        let path = dir.path().join("test.redb");
         let mut config = Config::default();
         config.search.time_decay_tau_ms = 0;
         config.search.weight_by_confidence = false;
         config.search.semantic_index = "bm25".to_string();
-        let mut store = Store::open(&path, config.clone()).unwrap();
+        let (path, config) = test_store_path(&dir, "test", config);
+        let mut store = StoreKind::open(&path, config.clone()).unwrap();
 
         store
             .entity_add(EntityInput {
@@ -1358,13 +1376,13 @@ mod tests {
         use ulid::Ulid;
 
         let dir = tempdir().unwrap();
-        let path = dir.path().join("test.redb");
         let mut config = Config::default();
         config.search.time_decay_tau_ms = 0;
         config.search.weight_by_confidence = false;
         config.search.semantic_index = "bm25".to_string();
         config.search.use_adapter = true;
-        let mut store = Store::open(&path, config.clone()).unwrap();
+        let (path, mut config) = test_store_path(&dir, "test", config);
+        let mut store = StoreKind::open(&path, config.clone()).unwrap();
 
         store
             .entity_add(EntityInput {
@@ -1424,7 +1442,7 @@ mod tests {
         // Bypass: with use_adapter=false the bias must not influence
         // ranking, so the original BM25 / RRF tie-break order returns.
         config.search.use_adapter = false;
-        let store_no_adapter = Store::open(&path, config).unwrap();
+        let store_no_adapter = StoreKind::open(&path, config).unwrap();
         let untouched = semantic::hybrid_search(
             &store_no_adapter,
             "topic indexing",
@@ -1447,14 +1465,14 @@ mod tests {
         // weight, so the Decision wins ranking even though both are
         // equally old.
         let dir = tempdir().unwrap();
-        let path = dir.path().join("test.redb");
         let mut config = Config::default();
         config.search.time_decay_tau_ms = 30 * 24 * 60 * 60 * 1000; // 30 days
         config.search.weight_by_confidence = false;
         config.search.semantic_index = "bm25".to_string();
         // decay_exempt_types defaults to {decision, convention, pattern} —
         // verify by relying on the default rather than over-configuring.
-        let mut store = Store::open(&path, config.clone()).unwrap();
+        let (path, config) = test_store_path(&dir, "test", config);
+        let mut store = StoreKind::open(&path, config.clone()).unwrap();
         store
             .entity_add(EntityInput {
                 name: "Topic".to_string(),

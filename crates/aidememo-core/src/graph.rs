@@ -268,18 +268,27 @@ impl<'a, B: StoreBackend + ?Sized> Graph<'a, B> {
     }
 }
 
-#[cfg(all(test, feature = "redb"))]
+#[cfg(all(test, any(feature = "sqlite", feature = "redb")))]
 mod tests {
     use super::*;
+    use crate::backend::{StoreBackend, StoreKind};
     use crate::config::Config;
-    use crate::store::Store;
     use tempfile::tempdir;
 
-    fn create_test_store() -> (Store, tempfile::TempDir) {
+    fn create_test_store() -> (StoreKind, tempfile::TempDir) {
         let dir = tempdir().unwrap();
-        let path = dir.path().join("test.redb");
-        let config = Config::default();
-        let store = Store::open(&path, config).unwrap();
+        let mut config = Config::default();
+        if cfg!(all(feature = "redb", not(feature = "sqlite"))) {
+            config.store.backend = "redb".to_string();
+        }
+        let suffix = if config.store.backend == "redb" {
+            "redb"
+        } else {
+            "sqlite"
+        };
+        let path = dir.path().join(format!("test.{suffix}"));
+        config.store.path = path.to_string_lossy().into_owned();
+        let store = StoreKind::open(&path, config).unwrap();
         (store, dir)
     }
 

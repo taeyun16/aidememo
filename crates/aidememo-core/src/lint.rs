@@ -367,17 +367,27 @@ fn check_conflicts(entities: &[EntitySummary], facts: &[FactRecord]) -> Vec<Lint
     issues
 }
 
-#[cfg(all(test, feature = "redb"))]
+#[cfg(all(test, any(feature = "sqlite", feature = "redb")))]
 mod tests {
     use super::*;
+    use crate::backend::{StoreBackend, StoreKind};
     use crate::config::Config;
-    use crate::store::Store;
     use tempfile::tempdir;
 
-    fn fresh_store() -> (Store, tempfile::TempDir) {
+    fn fresh_store() -> (StoreKind, tempfile::TempDir) {
         let dir = tempdir().unwrap();
-        let path = dir.path().join("lint-test.redb");
-        let store = Store::open(&path, Config::default()).unwrap();
+        let mut config = Config::default();
+        if cfg!(all(feature = "redb", not(feature = "sqlite"))) {
+            config.store.backend = "redb".to_string();
+        }
+        let suffix = if config.store.backend == "redb" {
+            "redb"
+        } else {
+            "sqlite"
+        };
+        let path = dir.path().join(format!("lint-test.{suffix}"));
+        config.store.path = path.to_string_lossy().into_owned();
+        let store = StoreKind::open(&path, config).unwrap();
         (store, dir)
     }
 

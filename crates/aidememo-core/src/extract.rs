@@ -553,22 +553,34 @@ mod tests {
         assert_eq!(with.suggested_fact_type, FactType::Decision);
     }
 
-    #[cfg(feature = "redb")]
+    #[cfg(any(feature = "sqlite", feature = "redb"))]
     #[test]
     fn extract_candidates_sorts_by_confidence() {
         // Use a temp store so we can populate it with one entity then
         // run extraction. Top result should be the decision sentence
         // mentioning the entity.
+        use crate::backend::{StoreBackend, StoreKind};
         use crate::config::Config;
-        use crate::store::Store;
         use crate::types::{EntityInput, EntityType};
         use tempfile::TempDir;
 
         let dir = TempDir::new().unwrap();
         let mut config = Config::default();
-        config.store.path = dir.path().join("store").to_string_lossy().into_owned();
+        if cfg!(all(feature = "redb", not(feature = "sqlite"))) {
+            config.store.backend = "redb".to_string();
+        }
+        let suffix = if config.store.backend == "redb" {
+            "redb"
+        } else {
+            "sqlite"
+        };
+        config.store.path = dir
+            .path()
+            .join(format!("store.{suffix}"))
+            .to_string_lossy()
+            .into_owned();
         let path: std::path::PathBuf = (&config.store.path).into();
-        let mut store = Store::open(&path, config).unwrap();
+        let mut store = StoreKind::open(&path, config).unwrap();
         store
             .entity_add(EntityInput {
                 name: "Postgres".into(),
