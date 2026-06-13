@@ -2752,8 +2752,6 @@ mod sqlite_backend_search_tests {
     fn sqlite_import_preserves_redb_export_ids_for_migration_gate() {
         let dir = tempdir().unwrap();
         let redb_path = dir.path().join("source.redb");
-        let sqlite_path = dir.path().join("target.sqlite");
-
         let mut redb_config = Config::default();
         redb_config.store.backend = "redb".to_string();
         redb_config.store.path = redb_path.to_string_lossy().into_owned();
@@ -2764,37 +2762,6 @@ mod sqlite_backend_search_tests {
         let mut exported = Vec::new();
         redb.export_jsonl(&mut exported, ExportScope::All)
             .expect("redb export");
-
-        let mut sqlite_config = Config::default();
-        sqlite_config.store.backend = "sqlite".to_string();
-        sqlite_config.store.path = sqlite_path.to_string_lossy().into_owned();
-        sqlite_config.search.semantic_weight = 0.0;
-        let mut sqlite = AideMemo::open(&sqlite_path, sqlite_config).unwrap();
-        let mut reader = exported.as_slice();
-        let import_stats = sqlite.import_jsonl(&mut reader).expect("sqlite import");
-        assert_eq!(import_stats.entities_imported, 2);
-        assert_eq!(import_stats.facts_imported, 2);
-        assert_eq!(import_stats.errors, 0);
-
-        let redb_stats = redb.stats().unwrap();
-        let sqlite_stats = sqlite.stats().unwrap();
-        assert_eq!(sqlite_stats.entity_count, redb_stats.entity_count);
-        assert_eq!(sqlite_stats.fact_count, redb_stats.fact_count);
-        assert_eq!(sqlite_stats.relation_count, redb_stats.relation_count);
-
-        for summary in redb.entity_list(ListOpts::default()).unwrap() {
-            let redb_entity = redb.entity_get_by_id(summary.id).unwrap();
-            let sqlite_entity = sqlite.entity_get_by_id(summary.id).unwrap();
-            assert_eq!(sqlite_entity.name, redb_entity.name);
-            assert_eq!(sqlite_entity.aliases, redb_entity.aliases);
-        }
-
-        for fact in redb.fact_list(FactListOpts::default()).unwrap() {
-            let imported = sqlite.fact_get(&fact.id).unwrap();
-            assert_eq!(imported.content, fact.content);
-            assert_eq!(imported.entity_ids, fact.entity_ids);
-            assert_eq!(imported.fact_type, fact.fact_type);
-        }
 
         let traverse_names = |wiki: &AideMemo| {
             let mut names: Vec<String> = wiki
@@ -2814,8 +2781,6 @@ mod sqlite_backend_search_tests {
             names.sort();
             names
         };
-        assert_eq!(traverse_names(&redb), traverse_names(&sqlite));
-
         let search_contents = |wiki: &AideMemo| {
             wiki.search(
                 "hot cache",
@@ -2829,14 +2794,54 @@ mod sqlite_backend_search_tests {
             .map(|hit| hit.content)
             .collect::<Vec<_>>()
         };
-        assert_eq!(search_contents(&redb), search_contents(&sqlite));
 
-        let mut replay = exported.as_slice();
-        let replay_stats = sqlite.import_jsonl(&mut replay).expect("re-import");
-        assert_eq!(replay_stats.entities_imported, 0);
-        assert_eq!(replay_stats.relations_imported, 0);
-        assert_eq!(replay_stats.facts_imported, 0);
-        assert_eq!(replay_stats.errors, 0);
+        for target_backend in ["sqlite", "libsqlite"] {
+            let target_path = dir.path().join(format!("target.{target_backend}"));
+            let mut target_config = Config::default();
+            target_config.store.backend = target_backend.to_string();
+            target_config.store.path = target_path.to_string_lossy().into_owned();
+            target_config.search.semantic_weight = 0.0;
+            let mut target = AideMemo::open(&target_path, target_config).unwrap();
+            let mut reader = exported.as_slice();
+            let import_stats = target
+                .import_jsonl(&mut reader)
+                .unwrap_or_else(|_| panic!("{target_backend} import"));
+            assert_eq!(import_stats.entities_imported, 2, "{target_backend}");
+            assert_eq!(import_stats.facts_imported, 2, "{target_backend}");
+            assert_eq!(import_stats.errors, 0, "{target_backend}");
+
+            let redb_stats = redb.stats().unwrap();
+            let target_stats = target.stats().unwrap();
+            assert_eq!(target_stats.entity_count, redb_stats.entity_count);
+            assert_eq!(target_stats.fact_count, redb_stats.fact_count);
+            assert_eq!(target_stats.relation_count, redb_stats.relation_count);
+
+            for summary in redb.entity_list(ListOpts::default()).unwrap() {
+                let redb_entity = redb.entity_get_by_id(summary.id).unwrap();
+                let target_entity = target.entity_get_by_id(summary.id).unwrap();
+                assert_eq!(target_entity.name, redb_entity.name);
+                assert_eq!(target_entity.aliases, redb_entity.aliases);
+            }
+
+            for fact in redb.fact_list(FactListOpts::default()).unwrap() {
+                let imported = target.fact_get(&fact.id).unwrap();
+                assert_eq!(imported.content, fact.content);
+                assert_eq!(imported.entity_ids, fact.entity_ids);
+                assert_eq!(imported.fact_type, fact.fact_type);
+            }
+
+            assert_eq!(traverse_names(&redb), traverse_names(&target));
+            assert_eq!(search_contents(&redb), search_contents(&target));
+
+            let mut replay = exported.as_slice();
+            let replay_stats = target
+                .import_jsonl(&mut replay)
+                .unwrap_or_else(|_| panic!("{target_backend} re-import"));
+            assert_eq!(replay_stats.entities_imported, 0, "{target_backend}");
+            assert_eq!(replay_stats.relations_imported, 0, "{target_backend}");
+            assert_eq!(replay_stats.facts_imported, 0, "{target_backend}");
+            assert_eq!(replay_stats.errors, 0, "{target_backend}");
+        }
     }
 }
 

@@ -549,7 +549,9 @@ mod tests {
     #[test]
     fn sync_export_import_is_backend_compatible() {
         assert_sync_compatible_between_backends("redb", "sqlite");
+        assert_sync_compatible_between_backends("redb", "libsqlite");
         assert_sync_compatible_between_backends("sqlite", "redb");
+        assert_sync_compatible_between_backends("libsqlite", "redb");
     }
 
     #[test]
