@@ -244,10 +244,11 @@ Runtime promotion status:
   path aligned with CLI/MCP instead of making backend choice a CLI-only spike.
 * `sqlite_matches_redb_for_core_public_api_fixture` seeds the same fixture into
   redb and SQLite, then compares stats, fact contents, traversal output, and
-  BM25 search results. `archive_contract_matches_redb_and_sqlite_public_api`
-  exercises the same hot-to-cold archive contract through the public
-  `AideMemo` API on both backends. Together these are the current semantic
-  parity gates for backend promotion.
+  BM25 search results.
+  `archive_contract_matches_redb_sqlite_and_libsqlite_public_api` exercises
+  the same hot-to-cold archive contract through the public `AideMemo` API on
+  redb, canonical SQLite, and the `libsqlite` alias. Together these are the
+  current semantic parity gates for backend promotion.
 * `sqlite_import_preserves_redb_export_ids_for_migration_gate` exports a redb
   fixture, imports it into SQLite, verifies entity/fact IDs and graph/search
   parity, then replays the same JSONL to prove the migration path is
@@ -304,7 +305,7 @@ Validation added in the runtime spike:
 cargo test -p aidememo-core
 cargo test -p aidememo-core --no-default-features --features sqlite
 cargo test -p aidememo-core --no-default-features --features redb
-cargo test -p aidememo-core --features sqlite,redb archive_contract_matches_redb_and_sqlite_public_api
+cargo test -p aidememo-core --features sqlite,redb archive_contract_matches_redb_sqlite_and_libsqlite_public_api
 cargo test -p aidememo-core --features sqlite,redb sync_export_import_is_backend_compatible
 cargo test -p aidememo-core --features sqlite,semantic,semantic-adapt
 cargo check -p aidememo-core --no-default-features --features s3

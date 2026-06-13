@@ -2065,6 +2065,13 @@ mod sqlite_backend_tests {
         config
     }
 
+    fn libsqlite_config(path: &std::path::Path) -> Config {
+        let mut config = Config::default();
+        config.store.backend = "libsqlite".to_string();
+        config.store.path = path.to_string_lossy().into_owned();
+        config
+    }
+
     #[cfg(feature = "redb")]
     fn redb_config(path: &std::path::Path) -> Config {
         let mut config = Config::default();
@@ -2264,7 +2271,7 @@ mod sqlite_backend_tests {
 
     #[cfg(feature = "redb")]
     #[test]
-    fn archive_contract_matches_redb_and_sqlite_public_api() {
+    fn archive_contract_matches_redb_sqlite_and_libsqlite_public_api() {
         fn seed(wiki: &AideMemo) -> FactId {
             let entity = wiki
                 .entity_add(EntityInput {
@@ -2305,15 +2312,19 @@ mod sqlite_backend_tests {
         let dir = tempdir().unwrap();
         let redb_path = dir.path().join("wiki.redb");
         let sqlite_path = dir.path().join("wiki.sqlite");
+        let libsqlite_path = dir.path().join("wiki.libsqlite");
 
         let redb = AideMemo::open(&redb_path, redb_config(&redb_path)).unwrap();
         let sqlite = AideMemo::open(&sqlite_path, sqlite_config(&sqlite_path)).unwrap();
+        let libsqlite = AideMemo::open(&libsqlite_path, libsqlite_config(&libsqlite_path)).unwrap();
 
         let redb_fact = seed(&redb);
         let sqlite_fact = seed(&sqlite);
+        let libsqlite_fact = seed(&libsqlite);
 
         assert_archive_contract(&redb, redb_fact, "wiki.redb.cold.redb");
         assert_archive_contract(&sqlite, sqlite_fact, "wiki.sqlite.cold.sqlite");
+        assert_archive_contract(&libsqlite, libsqlite_fact, "wiki.libsqlite.cold.sqlite");
     }
 
     #[test]
