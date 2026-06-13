@@ -213,7 +213,7 @@ the `aidememo-python` PyPI release.
 ```python
 from aidememo_agent import Memory
 
-mem = Memory.open(source_id="research-alpha")
+mem = Memory.open(source_id="research-alpha", storage_backend="libsqlite")
 rows = mem.search_rows([
     "release preflight decisions",
     {"query": "lock retry lessons", "topic": "Shared store"},
@@ -333,6 +333,8 @@ aidememo config set model.name bge-small-en-v1.5
 aidememo config set store.backend sqlite
 aidememo config set store.backend libsqlite
 aidememo config set store.backend redb
+# Or override for one command without mutating config:
+aidememo --backend libsqlite --store ./_meta/wiki.sqlite stats
 ```
 
 Native bindings use the same backend selector. Default builds include SQLite;

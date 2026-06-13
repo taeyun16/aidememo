@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import sys
+import types
+
 from aidememo_agent.client import AideMemoClient
 from aidememo_agent.sdk import AideMemoMemorySDK
 
@@ -57,10 +60,68 @@ def test_open_builds_default_client(monkeypatch) -> None:
 
     monkeypatch.setattr("aidememo_agent.sdk.AideMemoClient", RecordingClient)
 
-    sdk = AideMemoMemorySDK.open(store_path="/tmp/wiki.sqlite", source_id="team-a", lock_retry_ms=250)
+    sdk = AideMemoMemorySDK.open(
+        store_path="/tmp/wiki.sqlite",
+        source_id="team-a",
+        lock_retry_ms=250,
+        storage_backend="libsqlite",
+    )
 
     assert isinstance(sdk.client, RecordingClient)
-    assert created == {"store_path": "/tmp/wiki.sqlite", "source_id": "team-a", "lock_retry_ms": 250}
+    assert created == {
+        "store_path": "/tmp/wiki.sqlite",
+        "source_id": "team-a",
+        "lock_retry_ms": 250,
+        "storage_backend": "libsqlite",
+    }
+
+
+def test_client_passes_storage_backend_to_pyo3(monkeypatch) -> None:
+    opened = {}
+
+    class FakeAideMemo:
+        def __init__(self, store_path, **kwargs) -> None:
+            opened["store_path"] = store_path
+            opened["kwargs"] = kwargs
+
+    monkeypatch.setitem(sys.modules, "aidememo_python", types.SimpleNamespace(AideMemo=FakeAideMemo))
+
+    client = AideMemoClient(store_path="/tmp/wiki.sqlite", storage_backend=" libsqlite ")
+
+    assert client.backend == "aidememo-python"
+    assert client.storage_backend == "libsqlite"
+    assert opened == {"store_path": "/tmp/wiki.sqlite", "kwargs": {"backend": "libsqlite"}}
+
+
+def test_cli_backend_override_is_forwarded(monkeypatch) -> None:
+    captured = {}
+
+    class Completed:
+        returncode = 0
+        stdout = "{}"
+        stderr = ""
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        captured["kwargs"] = kwargs
+        return Completed()
+
+    monkeypatch.setattr("aidememo_agent.client.subprocess.run", fake_run)
+    client = AideMemoClient.__new__(AideMemoClient)
+    client.store_path = "/tmp/wiki.sqlite"
+    client.storage_backend = "libsqlite"
+    client.lock_retry_ms = 0
+
+    assert client._cli_json(["stats"]) == {}
+    assert captured["cmd"] == [
+        "aidememo",
+        "--backend",
+        "libsqlite",
+        "--store",
+        "/tmp/wiki.sqlite",
+        "--json",
+        "stats",
+    ]
 
 
 def test_flatten_dedupe_group_and_coverage() -> None:

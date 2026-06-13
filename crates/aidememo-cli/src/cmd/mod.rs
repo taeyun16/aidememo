@@ -46,6 +46,7 @@ pub use watch::WatchSub;
 #[derive(Debug, Clone)]
 pub struct Args {
     pub store_path: Option<PathBuf>,
+    pub store_backend: Option<String>,
     pub project: Option<String>,
     pub json: bool,
     pub command: Command,
@@ -424,6 +425,11 @@ pub fn build_cli() -> OptionParser<Args> {
         .argument::<String>("NAME")
         .optional();
 
+    let store_backend = long("backend")
+        .help("Storage backend override for this invocation: sqlite, libsqlite, or redb")
+        .argument::<String>("NAME")
+        .optional();
+
     let json = long("json")
         .short('j')
         .help("Output JSON for read commands (entity, fact, search, traverse, path, stats, lint)")
@@ -493,6 +499,7 @@ pub fn build_cli() -> OptionParser<Args> {
 
     construct!(Args {
         store_path,
+        store_backend,
         project,
         json,
         command,

@@ -56,8 +56,10 @@ class AideMemoClient:
         store_path: str | os.PathLike | None = None,
         lock_retry_ms: int | None = None,
         source_id: str | None = None,
+        storage_backend: str | None = None,
     ) -> None:
         self.store_path = str(store_path) if store_path else None
+        self.storage_backend = _normalise_storage_backend(storage_backend)
         self.lock_retry_ms = 5000 if lock_retry_ms is None else max(0, int(lock_retry_ms))
         self.default_source_id = _normalise_source_id(source_id or os.environ.get("AIDEMEMO_SOURCE_ID"))
         self._py = self._try_load_pyo3()
@@ -81,7 +83,9 @@ class AideMemoClient:
             # The PyO3 binding requires an explicit store path. Without
             # one, fall through to the CLI — which honors `aidememo config`.
             return None
-        return aidememo_python.AideMemo(self.store_path)
+        if self.storage_backend is None:
+            return aidememo_python.AideMemo(self.store_path)
+        return aidememo_python.AideMemo(self.store_path, backend=self.storage_backend)
 
     @staticmethod
     def _has_cli() -> bool:
@@ -582,6 +586,8 @@ class AideMemoClient:
 
     def _cli(self, args: list[str], input_text: str | None = None) -> str:
         cmd = ["aidememo"]
+        if self.storage_backend:
+            cmd += ["--backend", self.storage_backend]
         if self.store_path:
             cmd += ["--store", self.store_path]
         cmd += args
@@ -661,6 +667,13 @@ def _normalise_source_id(source_id: Any) -> str | None:
         return None
     source_id = str(source_id).strip()
     return source_id or None
+
+
+def _normalise_storage_backend(backend: Any) -> str | None:
+    if backend is None:
+        return None
+    backend = str(backend).strip()
+    return backend or None
 
 
 # Crockford's ULID alphabet: 26 chars, [0-9A-HJKMNP-TV-Z] (no I, L, O,

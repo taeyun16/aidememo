@@ -54,11 +54,18 @@ you need to open redb stores.
 ```python
 from aidememo_agent import Memory
 
-mem = Memory.open(source_id="team-a")
+mem = Memory.open(source_id="team-a", storage_backend="libsqlite")
 ```
 
 Use `source_id` to isolate one team, agent, tenant, or project inside a shared
 store.
+
+`storage_backend` is optional. It uses the same values as the CLI/native
+binding selector: omit it or pass an empty string for the compiled default,
+`"sqlite"` or `"libsqlite"` for the default local SQLite backend, or `"redb"`
+when the installed binding / CLI was built with Cargo `redb`. The SDK forwards
+the selector to both `aidememo-python` and the subprocess fallback
+(`aidememo --backend ...`).
 
 ## Search several topics
 

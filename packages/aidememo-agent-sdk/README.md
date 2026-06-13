@@ -30,7 +30,7 @@ optional in-process binding fast path.
 ```python
 from aidememo_agent import Memory
 
-mem = Memory.open(source_id="codex-aidememo")
+mem = Memory.open(source_id="codex-aidememo", storage_backend="libsqlite")
 
 rows = mem.search_rows([
     "release preflight decisions",
@@ -73,3 +73,10 @@ or session-aware batch writes without spending model turns on intermediate state
 
 `source_id` can be passed to `Memory.open(...)` or inherited from
 `AIDEMEMO_SOURCE_ID`, matching the MCP `aidememo mcp-install --source-id <namespace>` path.
+
+`storage_backend` is optional and matches the CLI/native binding selector:
+omit it or pass an empty string for the compiled default, pass `"sqlite"` or
+`"libsqlite"` for the default local SQLite backend, or pass `"redb"` when the
+installed native binding / CLI was built with the Cargo `redb` feature. The SDK
+passes the selector to both the `aidememo-python` fast path and the CLI fallback
+(`aidememo --backend ...`).

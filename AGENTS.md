@@ -250,6 +250,7 @@ aidememo config set model.name bge-small-en-v1.5    # 133 MB, ONNX
 aidememo project list/show/create/use/remove
 aidememo --project NAME ...                     one-off override
 aidememo --store PATH ...                       absolute path override
+aidememo --backend libsqlite --store PATH ...   one-off storage backend override
 ```
 
 ### Servers
@@ -789,7 +790,7 @@ Each binding exposes ~22 methods including `current_only` filtering and
 ```python
 # Python
 import aidememo_python as aidememo
-g = aidememo.AideMemo("./_meta/wiki.sqlite")
+g = aidememo.AideMemo("./_meta/wiki.sqlite", backend="libsqlite")
 ctx = g.query("Redis", current_only=True)
 g.fact_supersede(old_id, new_id)
 ```

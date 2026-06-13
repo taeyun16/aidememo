@@ -29,10 +29,18 @@ class AideMemoMemorySDK:
         store_path: str | None = None,
         source_id: str | None = None,
         lock_retry_ms: int | None = None,
+        storage_backend: str | None = None,
     ) -> "AideMemoMemorySDK":
         """Create an SDK from normal AideMemo environment defaults."""
 
-        return cls(AideMemoClient(store_path=store_path, source_id=source_id, lock_retry_ms=lock_retry_ms))
+        return cls(
+            AideMemoClient(
+                store_path=store_path,
+                source_id=source_id,
+                lock_retry_ms=lock_retry_ms,
+                storage_backend=storage_backend,
+            )
+        )
 
     def search_many(
         self,

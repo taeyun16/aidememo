@@ -224,15 +224,30 @@ ok, detail = has_tokens(
 )
 append_status(checks, "aidememo-agent-sdk", "session workflow docs", ok, detail, detail)
 ok, detail = has_tokens(
+    "packages/aidememo-agent-sdk/README.md",
+    ["storage_backend", '"sqlite"', '"libsqlite"', '"redb"', "aidememo --backend"],
+)
+append_status(checks, "aidememo-agent-sdk", "backend selector docs", ok, detail, detail)
+ok, detail = has_tokens(
     "packages/aidememo-agent-sdk/src/aidememo_agent/client.py",
     ["pinned_facts", "session_id", "aidememo_fact_add", "aidememo_fact_add_many"],
 )
 append_status(checks, "aidememo-agent-sdk", "backend parity API", ok, detail, detail)
 ok, detail = has_tokens(
+    "packages/aidememo-agent-sdk/src/aidememo_agent/client.py",
+    ["storage_backend", "backend=self.storage_backend", '"--backend"'],
+)
+append_status(checks, "aidememo-agent-sdk", "backend selector API", ok, detail, detail)
+ok, detail = has_tokens(
     "packages/aidememo-agent-sdk/tests/test_sdk.py",
     ["test_pyo3_backend_preserves_session_and_context_scope", "pinned_facts", "session_id"],
 )
 append_status(checks, "aidememo-agent-sdk", "backend parity tests", ok, detail, detail)
+ok, detail = has_tokens(
+    "packages/aidememo-agent-sdk/tests/test_sdk.py",
+    ["test_client_passes_storage_backend_to_pyo3", "test_cli_backend_override_is_forwarded", "storage_backend"],
+)
+append_status(checks, "aidememo-agent-sdk", "backend selector tests", ok, detail, detail)
 
 ok, detail = has_tokens(
     "crates/aidememo-nif/README.md",

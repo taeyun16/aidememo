@@ -40,7 +40,7 @@ fn main() {
     let args = app.run();
 
     // Load config
-    let config = match Config::load() {
+    let mut config = match Config::load() {
         Ok(c) => c,
         Err(e) => {
             eprintln!("Error loading config: {}", e);
@@ -48,7 +48,21 @@ fn main() {
         }
     };
 
+    if let Some(backend) = args
+        .store_backend
+        .as_deref()
+        .map(str::trim)
+        .filter(|backend| !backend.is_empty())
+    {
+        if let Err(e) = config.set("store.backend", backend) {
+            eprintln!("Error setting backend override: {}", e);
+            exit(1);
+        }
+    }
+
     // Resolve store path: --store > --project > default_project > store.path.
+    // Apply --backend first so the selected file opens through the requested
+    // persistence layer without mutating config.toml.
     let store_path = if let Some(path) = args.store_path.clone() {
         path
     } else if let Some(project) = &args.project {

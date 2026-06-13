@@ -122,7 +122,9 @@ python3 scripts/docs-feature-gate.py
 
 The native Python, Node, Elixir, and C bindings use the same backend selector
 as the CLI. Default builds include the local SQLite backend; build with Cargo
-`redb` when you need to open a redb store.
+`redb` when you need to open a redb store. The Python composition SDK exposes
+the same values through `Memory.open(storage_backend=...)` and forwards them to
+both the `aidememo-python` fast path and the CLI fallback.
 
 ## Gate contract
 
