@@ -1704,21 +1704,10 @@ impl Store {
         } else {
             record.relevance_score = (record.relevance_score - 0.15).max(0.0);
         }
+        record.updated_at =
+            crate::time::current_epoch_ms().max(record.updated_at.saturating_add(1));
 
-        self.fact_update(
-            id,
-            FactUpdate {
-                content: None,
-                fact_type: None,
-                tags: None,
-                source: None,
-                source_id: None,
-                observed_at: None,
-                superseded_at: None,
-                superseded_by: None,
-                pinned: None,
-            },
-        )?;
+        let _ = self.fact_upsert_record(record)?;
 
         Ok(())
     }

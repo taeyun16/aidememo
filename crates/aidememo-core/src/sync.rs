@@ -396,7 +396,9 @@ fn io_serialize(e: std::io::Error) -> AideMemoError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{FactInput, RelationInput, RelationType};
+    use crate::types::FactInput;
+    #[cfg(all(feature = "redb", feature = "sqlite"))]
+    use crate::types::{RelationInput, RelationType};
     use crate::{Config, EntityInput, EntityType};
 
     fn open_temp() -> (tempfile::TempDir, AideMemo) {

@@ -2065,6 +2065,7 @@ mod sqlite_backend_tests {
         config
     }
 
+    #[cfg(feature = "redb")]
     fn libsqlite_config(path: &std::path::Path) -> Config {
         let mut config = Config::default();
         config.store.backend = "libsqlite".to_string();
@@ -2325,6 +2326,159 @@ mod sqlite_backend_tests {
         assert_archive_contract(&redb, redb_fact, "wiki.redb.cold.redb");
         assert_archive_contract(&sqlite, sqlite_fact, "wiki.sqlite.cold.sqlite");
         assert_archive_contract(&libsqlite, libsqlite_fact, "wiki.libsqlite.cold.sqlite");
+    }
+
+    #[cfg(feature = "redb")]
+    #[test]
+    fn sqlite_matches_redb_for_mutation_feedback_and_relation_contract() {
+        #[derive(Debug, PartialEq)]
+        struct Snapshot {
+            entity_names: Vec<String>,
+            fact_contents: Vec<String>,
+            pinned_contents: Vec<String>,
+            primary_relevance_milli: i32,
+            redis_fact_count: u32,
+            relation_count: u64,
+            search_feedback_count: usize,
+        }
+
+        fn exercise(wiki: &AideMemo) -> Snapshot {
+            let redis = wiki
+                .entity_add(EntityInput {
+                    name: "Redis".to_string(),
+                    entity_type: Some(EntityType::Technology),
+                    aliases: Some(vec!["redis-cache".to_string()]),
+                    ..Default::default()
+                })
+                .unwrap();
+            let cache = wiki
+                .entity_add(EntityInput {
+                    name: "CacheLayer".to_string(),
+                    entity_type: Some(EntityType::Custom("component".to_string())),
+                    ..Default::default()
+                })
+                .unwrap();
+            wiki.entity_add(EntityInput {
+                name: "ScratchEntity".to_string(),
+                entity_type: Some(EntityType::Custom("scratch".to_string())),
+                ..Default::default()
+            })
+            .unwrap();
+            wiki.entity_rename("ScratchEntity", "RenamedScratch")
+                .unwrap();
+            assert!(wiki.entity_get("ScratchEntity").is_err());
+            assert_eq!(
+                wiki.entity_get("RenamedScratch").unwrap().name,
+                "RenamedScratch"
+            );
+            wiki.entity_delete("RenamedScratch").unwrap();
+            assert!(wiki.entity_get("RenamedScratch").is_err());
+
+            let ids = wiki
+                .fact_add_many(vec![
+                    FactInput {
+                        content: "Redis mutation contract primary fact".to_string(),
+                        fact_type: Some(FactType::Claim),
+                        entity_ids: Some(vec![redis, cache]),
+                        source_confidence: Some(1.0),
+                        ..Default::default()
+                    },
+                    FactInput {
+                        content: "Redis mutation contract delete candidate".to_string(),
+                        fact_type: Some(FactType::Note),
+                        entity_ids: Some(vec![redis]),
+                        source_confidence: Some(1.0),
+                        ..Default::default()
+                    },
+                ])
+                .unwrap();
+            assert_eq!(ids.len(), 2);
+            wiki.fact_delete(&ids[1]).unwrap();
+            assert!(wiki.fact_get(&ids[1]).is_err());
+
+            wiki.fact_pin(&ids[0], true).unwrap();
+            wiki.fact_feedback(&ids[0], false).unwrap();
+            wiki.search_session_add(&SearchSession {
+                id: "session-mutation-contract".to_string(),
+                query: "redis mutation".to_string(),
+                timestamp: 42,
+                result_count: 1,
+            })
+            .unwrap();
+            wiki.search_feedback_add(&SearchFeedback {
+                session_id: "session-mutation-contract".to_string(),
+                fact_id: ids[0],
+                helpful: true,
+                timestamp: 43,
+            })
+            .unwrap();
+
+            wiki.relation_add(RelationInput {
+                source: "Redis".to_string(),
+                target: "CacheLayer".to_string(),
+                relation_type: RelationType::new("uses"),
+                weight: Some(1.0),
+                evidence: Some(vec!["mutation-contract".to_string()]),
+            })
+            .unwrap();
+            assert_eq!(
+                wiki.relations_get("Redis", TraverseDirection::Forward)
+                    .unwrap()
+                    .len(),
+                1
+            );
+            wiki.relation_remove("Redis", "CacheLayer", "uses").unwrap();
+            assert!(
+                wiki.relations_get("Redis", TraverseDirection::Forward)
+                    .unwrap()
+                    .is_empty()
+            );
+
+            let mut entity_names: Vec<String> = wiki
+                .entity_list(ListOpts::default())
+                .unwrap()
+                .into_iter()
+                .map(|entity| entity.name)
+                .collect();
+            entity_names.sort();
+
+            let mut fact_contents: Vec<String> = wiki
+                .fact_list(FactListOpts::default())
+                .unwrap()
+                .into_iter()
+                .map(|fact| fact.content)
+                .collect();
+            fact_contents.sort();
+
+            let pinned_contents = wiki
+                .pinned_facts(10)
+                .unwrap()
+                .into_iter()
+                .map(|fact| fact.content)
+                .collect();
+            let primary = wiki.fact_get(&ids[0]).unwrap();
+            let redis_id = wiki.resolve_entity("redis-cache").unwrap();
+            let store = wiki.store().read();
+
+            Snapshot {
+                entity_names,
+                fact_contents,
+                pinned_contents,
+                primary_relevance_milli: (primary.relevance_score * 1000.0).round() as i32,
+                redis_fact_count: store.count_entity_facts(&redis_id).unwrap(),
+                relation_count: wiki.stats().unwrap().relation_count,
+                search_feedback_count: store.search_feedback_count().unwrap(),
+            }
+        }
+
+        let dir = tempdir().unwrap();
+        let redb_path = dir.path().join("wiki.redb");
+        let sqlite_path = dir.path().join("wiki.sqlite");
+
+        let redb = AideMemo::open(&redb_path, redb_config(&redb_path)).unwrap();
+        let sqlite = AideMemo::open(&sqlite_path, sqlite_config(&sqlite_path)).unwrap();
+
+        assert_eq!(exercise(&redb), exercise(&sqlite));
     }
 
     #[test]

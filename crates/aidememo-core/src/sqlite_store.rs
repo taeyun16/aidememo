@@ -961,6 +961,8 @@ impl StoreBackend for SqliteStore {
             } else {
                 record.relevance_score = (record.relevance_score - 0.15).max(0.0);
             }
+            record.updated_at =
+                crate::time::current_epoch_ms().max(record.updated_at.saturating_add(1));
             Self::update_fact_record(&tx, &record)?;
             tx.commit()
                 .map_err(|source| sqlite_write("facts", "commit", source))?;

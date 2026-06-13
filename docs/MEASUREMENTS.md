@@ -246,6 +246,12 @@ Runtime promotion status:
 * `sqlite_matches_redb_for_core_public_api_fixture` seeds the same fixture into
   redb and SQLite, then compares stats, fact contents, traversal output, and
   BM25 search results.
+  `sqlite_matches_redb_for_mutation_feedback_and_relation_contract` applies the
+  same entity rename/delete, fact delete, pin, direct fact feedback, search
+  feedback, and relation remove sequence to redb and SQLite, then compares the
+  resulting user-visible snapshot. This caught and fixed the legacy redb
+  `fact_feedback` path that changed an in-memory record but did not persist the
+  updated relevance score.
   `archive_contract_matches_redb_sqlite_and_libsqlite_public_api` exercises
   the same hot-to-cold archive contract through the public `AideMemo` API on
   redb, canonical SQLite, and the `libsqlite` alias. Together these are the
@@ -259,9 +265,10 @@ Runtime promotion status:
   entity/fact/relation ID preservation and then applies an incremental delta
   with `entity_describe` plus `fact_supersede`, proving in-place updates cross
   the backend boundary as well as fresh inserts.
-* `scripts/storage-backend-parity.sh` is the CLI/MCP gate: redb export/import
-  into SQLite, redb/SQLite sync compatibility, relation preservation, SQLite
-  cold-tier archive/search, and 24 concurrent MCP writes through `mcp-serve`.
+* `scripts/storage-backend-parity.sh` is the CLI/MCP gate: redb/SQLite
+  mutation and feedback parity, redb export/import into SQLite, redb/SQLite
+  sync compatibility, relation preservation, SQLite cold-tier archive/search,
+  and 24 concurrent MCP writes through `mcp-serve`.
 * `scripts/storage-backend-sqlite-full-surface.sh` is the SQLite-only
   full-surface smoke: it builds the CLI with `--no-default-features --features
   sqlite` and exercises init, ingest, entity/fact writes, entity rename/delete,
@@ -320,6 +327,7 @@ cargo test -p aidememo-core
 cargo test -p aidememo-core --no-default-features --features sqlite
 cargo test -p aidememo-core --no-default-features --features redb
 cargo test -p aidememo-core --features sqlite,redb archive_contract_matches_redb_sqlite_and_libsqlite_public_api
+cargo test -p aidememo-core --features sqlite,redb sqlite_matches_redb_for_mutation_feedback_and_relation_contract
 cargo test -p aidememo-core --features sqlite,redb sync_export_import_is_backend_compatible
 cargo test -p aidememo-core --features sqlite,semantic,semantic-adapt
 cargo check -p aidememo-core --no-default-features --features s3
