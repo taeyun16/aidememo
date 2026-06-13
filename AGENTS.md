@@ -592,7 +592,7 @@ Add to `~/.codex/config.toml`:
 ```toml
 [mcp_servers.aidememo]
 command = "aidememo"
-args = ["mcp"]
+args = ["--backend", "libsqlite", "mcp"]
 ```
 
 ### Multi-agent shared store

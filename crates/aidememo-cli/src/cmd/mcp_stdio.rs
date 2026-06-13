@@ -1,9 +1,10 @@
 //! `aidememo mcp` — MCP server over stdio (newline-delimited JSON-RPC 2.0).
 //!
 //! This is the transport used by local agents that spawn the server as a
-//! subprocess: Claude Code (`claude mcp add aidememo -- aidememo mcp`), OpenAI Codex CLI
-//! (`[mcp_servers.aidememo] command = "aidememo" args = ["mcp"]`), and any other client
-//! that follows the MCP stdio convention.
+//! subprocess: Claude Code (`claude mcp add aidememo -- aidememo --backend libsqlite mcp`),
+//! OpenAI Codex CLI (`[mcp_servers.aidememo] command = "aidememo"
+//! args = ["--backend", "libsqlite", "mcp"]`), and any other client that follows the MCP
+//! stdio convention.
 //!
 //! Protocol:
 //! - Each request is one JSON object on a single line read from stdin.

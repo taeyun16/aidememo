@@ -138,7 +138,9 @@ fn main() {
             let path = sub.wiki_root.unwrap_or_else(|| store_path.clone());
             cmd::mcp_stdio::run_mcp(path, config)
         }
-        cmd::Command::McpInstall(sub) => cmd::mcp_install::run_mcp_install(sub, json),
+        cmd::Command::McpInstall(sub) => {
+            cmd::mcp_install::run_mcp_install(sub, json, &config.store.backend)
+        }
         cmd::Command::Completions(sub) => cmd::completions::run_completions(sub),
         cmd::Command::Pending(sub) => cmd::pending::run_pending(sub, &store_path, config, json),
         cmd::Command::VectorRebuild(sub) => handle_vector_rebuild(&store_path, config, sub),

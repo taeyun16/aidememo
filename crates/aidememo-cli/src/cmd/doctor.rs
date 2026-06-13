@@ -64,7 +64,7 @@ pub fn run_doctor(
     let adaptation = collect_adaptation(&wiki, &config);
     let agents = collect_agent_integration();
     let workflow = collect_workflow_status(&wiki, &agents)?;
-    let mut fixes = collect_fix_suggestions(&agents);
+    let mut fixes = collect_fix_suggestions(&agents, &config.store.backend);
     fixes.extend(memory.advisories());
     fixes.extend(adaptation.advisories());
     fixes.extend(sharing.advisories());
@@ -327,7 +327,7 @@ pub(crate) struct FixSuggestion {
     reason: String,
 }
 
-fn collect_fix_suggestions(agents: &[AgentStatus]) -> Vec<FixSuggestion> {
+fn collect_fix_suggestions(agents: &[AgentStatus], storage_backend: &str) -> Vec<FixSuggestion> {
     let mut out = Vec::new();
     for a in agents {
         // Skill gap: target supports skills (skill_path is Some) but
@@ -351,7 +351,11 @@ fn collect_fix_suggestions(agents: &[AgentStatus]) -> Vec<FixSuggestion> {
             out.push(FixSuggestion {
                 target: a.target,
                 kind: "mcp",
-                command: format!("aidememo mcp-install --target {}", a.target),
+                command: format!(
+                    "aidememo --backend {} mcp-install --target {}",
+                    shell_arg(storage_backend),
+                    a.target
+                ),
                 reason: format!("aidememo not registered ({})", a.mcp_detail),
             });
         }
@@ -437,6 +441,7 @@ fn collect_workflow_status(
             .map(str::trim)
             .filter(|s| !s.is_empty())
     });
+    let storage_backend = wiki.config().store.backend.as_str();
 
     let mcp_ready = agents
         .iter()
@@ -451,7 +456,7 @@ fn collect_workflow_status(
             code: "workflow_no_mcp_agent",
             severity: "error",
             message: "no checked agent has aidememo registered as an MCP server".to_string(),
-            action: mcp_install_action(suggested_source_id),
+            action: mcp_install_action(suggested_source_id, storage_backend),
         });
     }
     if !skill_ready {
@@ -499,13 +504,17 @@ fn summarize_workflow_ticket(fact: &FactRecord) -> WorkflowTicketSummary {
     }
 }
 
-fn mcp_install_action(source_id: Option<&str>) -> String {
+fn mcp_install_action(source_id: Option<&str>, storage_backend: &str) -> String {
     match source_id {
         Some(source_id) => format!(
-            "aidememo mcp-install --target codex --source-id {}",
+            "aidememo --backend {} mcp-install --target codex --source-id {}",
+            shell_arg(storage_backend),
             shell_arg(source_id)
         ),
-        None => "aidememo mcp-install --target codex".to_string(),
+        None => format!(
+            "aidememo --backend {} mcp-install --target codex",
+            shell_arg(storage_backend)
+        ),
     }
 }
 
@@ -1343,7 +1352,7 @@ mod tests {
 
         assert_eq!(
             hint.action,
-            "aidememo mcp-install --target codex --source-id team-alpha"
+            "aidememo --backend sqlite mcp-install --target codex --source-id team-alpha"
         );
         assert!(
             !report
@@ -1358,12 +1367,12 @@ mod tests {
     #[test]
     fn mcp_install_action_quotes_shell_sensitive_source_id() {
         assert_eq!(
-            mcp_install_action(Some("team alpha")),
-            "aidememo mcp-install --target codex --source-id 'team alpha'"
+            mcp_install_action(Some("team alpha"), "libsqlite"),
+            "aidememo --backend libsqlite mcp-install --target codex --source-id 'team alpha'"
         );
         assert_eq!(
-            mcp_install_action(Some("team-alpha")),
-            "aidememo mcp-install --target codex --source-id team-alpha"
+            mcp_install_action(Some("team-alpha"), "libsqlite"),
+            "aidememo --backend libsqlite mcp-install --target codex --source-id team-alpha"
         );
     }
 

@@ -119,15 +119,15 @@ Register it with an agent:
 
 ```bash
 aidememo init --agent codex ./my-wiki
-aidememo mcp-install --target codex --source-id my-project
+aidememo --backend libsqlite mcp-install --target codex --source-id my-project
 
 # Claude Code
-claude mcp add aidememo -- aidememo mcp
+claude mcp add aidememo -- aidememo --backend libsqlite mcp
 
 # Codex CLI: ~/.codex/config.toml
 [mcp_servers.aidememo]
 command = "aidememo"
-args = ["mcp"]
+args = ["--backend", "libsqlite", "mcp"]
 ```
 
 ## Agent Entry Points
@@ -184,12 +184,14 @@ commands. SQLite is the default shared-store path. If the optional redb backend
 is selected, the CLI fallback retries short lock collisions; for heavier
 multi-agent redb writes, run one `aidememo mcp-serve` and point agents at it.
 
-For MCP agents, install with `--source-id` to set `AIDEMEMO_SOURCE_ID` once in the
-server environment. That namespace becomes the default for reads and writes;
-explicit `source_id` tool arguments still override it.
+For MCP agents, install with `--source-id` to set `AIDEMEMO_SOURCE_ID` once in
+the server environment. Pass `--backend` before `mcp-install` to pin the same
+storage backend in the installed MCP command. That namespace becomes the
+default for reads and writes; explicit `source_id` tool arguments still
+override it.
 
 ```bash
-aidememo mcp-install --target codex --source-id agent-a
+aidememo --backend libsqlite mcp-install --target codex --source-id agent-a
 ```
 
 ### Compose memory in Python when the agent can run code
@@ -281,7 +283,7 @@ parallel.
 | Optional-redb serverless lock-retry sweep, retry `5000` | smooth through 4 writers; 8 writers persisted 79/80 |
 | HTTP shared `mcp-serve`, 2 clients x 10 writes | p50 `18.4ms`, p95 `41.8ms`, 20/20 persisted |
 | Zero-token workflow demo | decision + lesson + error surfaced in `128ms` |
-| MCP source-default install Scenario M | 12/12 invariants; installed `AIDEMEMO_SOURCE_ID` scoped MCP write/search in `323.97ms` |
+| MCP source/backend-default install Scenario M | 21/21 invariants; installed `AIDEMEMO_SOURCE_ID` + `--backend libsqlite` scoped MCP write/search in `111.6ms` |
 | Hermes Memory-as-Code Scenario N | 9/9 invariants; SDK fanout/dedupe/coverage/aggregate excluded beta-source rows |
 | `aidememo-agent-sdk` pack smoke | wheel install + `Memory` / `AideMemoClient` / `AideMemoMemorySDK` first-use checks passed in `3.20s` |
 | SkillOpt-lite profile gate | validates candidate memory-profile tokens, `aidememo skill check`, workflow demo, and SDK promotion gate |

@@ -46,7 +46,7 @@ aidememo query "release train" --source-id team-a
 For MCP installs:
 
 ```bash
-aidememo mcp-install --target codex --source-id team-a
+aidememo --backend libsqlite mcp-install --target codex --source-id team-a
 ```
 
 ## Avoid local store write contention

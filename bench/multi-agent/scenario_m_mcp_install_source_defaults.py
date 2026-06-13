@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
-"""Scenario M - installed MCP source defaults are usable.
+"""Scenario M - installed MCP source/backend defaults are usable.
 
-P3.38/P3.39 made `aidememo mcp-install --source-id` the smooth path for shared-store
-MCP agents. This zero-token scenario validates the install contract at the
-product boundary:
+P3.38/P3.39 made `aidememo --backend libsqlite mcp-install --source-id` the
+smooth path for shared-store MCP agents. This zero-token scenario validates the
+install contract at the product boundary:
 
   1. Install file-edit MCP targets into an isolated HOME.
-  2. Verify Codex / Cursor / OpenCode configs contain AIDEMEMO_SOURCE_ID.
-  3. Verify shell-out targets report the env injection in --print mode.
-  4. Feed the installed Codex env into `aidememo mcp` and prove writes/searches are
-     source-scoped without explicit source_id tool arguments.
+  2. Verify Codex / Cursor / OpenCode configs contain AIDEMEMO_SOURCE_ID and
+     the resolved storage backend selector.
+  3. Verify shell-out targets report env injection and backend args in --print mode.
+  4. Feed the installed Codex env/args into `aidememo mcp` and prove writes/searches
+     are source-scoped without explicit source_id tool arguments.
 """
 
 from __future__ import annotations
@@ -36,6 +37,7 @@ BASE = Path(os.environ.get("AIDEMEMO_E2E_BASE", str(Path(tempfile.gettempdir()) 
 HOME = BASE / "home"
 STORE = str(BASE / "install-source-defaults.sqlite")
 SOURCE_ID = "agent-alpha"
+BACKEND = "libsqlite"
 
 
 def run(
@@ -74,6 +76,8 @@ def reset() -> None:
 def install(target: str, *, print_only: bool = False) -> dict[str, Any]:
     cmd = [
         WG,
+        "--backend",
+        BACKEND,
         "--json",
         "mcp-install",
         "--target",
@@ -91,27 +95,27 @@ def read_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text())
 
 
-def read_codex_source_id() -> str | None:
+def read_codex_entry() -> dict[str, Any]:
     path = HOME / ".codex" / "config.toml"
     text = path.read_text()
     if tomllib is not None:
         return (
-            tomllib.loads(text)
-            .get("mcp_servers", {})
-            .get("aidememo", {})
-            .get("env", {})
-            .get("AIDEMEMO_SOURCE_ID")
+            tomllib.loads(text).get("mcp_servers", {}).get("aidememo", {})
         )
+    entry: dict[str, Any] = {}
     for line in text.splitlines():
         if line.strip().startswith("AIDEMEMO_SOURCE_ID"):
-            return line.split("=", 1)[1].strip().strip('"')
-    return None
+            entry.setdefault("env", {})["AIDEMEMO_SOURCE_ID"] = (
+                line.split("=", 1)[1].strip().strip('"')
+            )
+    return entry
 
 
 def mcp_tool_call(
     name: str,
     args: dict[str, Any],
     *,
+    command_args: list[str],
     env: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     calls = [
@@ -129,7 +133,7 @@ def mcp_tool_call(
         },
     ]
     proc = run(
-        [WG, "--store", STORE, "mcp"],
+        [WG, "--store", STORE, *command_args],
         input_text="".join(json.dumps(call) + "\n" for call in calls),
         env=env,
     )
@@ -155,7 +159,13 @@ def main() -> int:
         for target in ["claude", "hermes", "openclaw"]
     }
 
-    codex_source_id = read_codex_source_id()
+    codex_entry = read_codex_entry()
+    codex_source_id = (
+        codex_entry.get("env", {}).get("AIDEMEMO_SOURCE_ID")
+        if isinstance(codex_entry.get("env"), dict)
+        else None
+    )
+    codex_args = [str(arg) for arg in codex_entry.get("args", [])]
     cursor = read_json(HOME / ".cursor" / "mcp.json")
     opencode = read_json(HOME / ".config" / "opencode" / "opencode.json")
 
@@ -167,6 +177,7 @@ def main() -> int:
             "fact_type": "decision",
             "entities": ["McpInstallDefaults"],
         },
+        command_args=codex_args,
         env=env,
     )
     search_payload = mcp_tool_call(
@@ -176,6 +187,7 @@ def main() -> int:
             "bm25_only": True,
             "limit": 5,
         },
+        command_args=codex_args,
         env=env,
     )
 
@@ -191,12 +203,27 @@ def main() -> int:
         == SOURCE_ID,
         "opencode_config_has_source_id": opencode["mcp"]["aidememo"]["env"]["AIDEMEMO_SOURCE_ID"]
         == SOURCE_ID,
+        "codex_config_has_backend_args": codex_args == ["--backend", BACKEND, "mcp"],
+        "cursor_config_has_backend_args": cursor["mcpServers"]["aidememo"]["args"]
+        == ["--backend", BACKEND, "mcp"],
+        "opencode_config_has_backend_args": opencode["mcp"]["aidememo"]["command"]
+        == ["aidememo", "--backend", BACKEND, "mcp"],
+        "codex_report_has_backend": file_reports["codex"].get("storage_backend") == BACKEND,
+        "cursor_report_has_backend": file_reports["cursor"].get("storage_backend") == BACKEND,
+        "opencode_report_has_backend": file_reports["opencode"].get("storage_backend") == BACKEND,
         "claude_print_has_env": "AIDEMEMO_SOURCE_ID=agent-alpha"
         in shell_reports["claude"].get("detail", ""),
         "hermes_print_has_env": "--env AIDEMEMO_SOURCE_ID=agent-alpha"
         in shell_reports["hermes"].get("detail", ""),
         "openclaw_print_has_env": "AIDEMEMO_SOURCE_ID"
         in shell_reports["openclaw"].get("detail", ""),
+        "claude_print_has_backend": "--backend libsqlite mcp"
+        in shell_reports["claude"].get("detail", ""),
+        "hermes_print_has_backend": "--args=--backend --args=libsqlite --args=mcp"
+        in shell_reports["hermes"].get("detail", ""),
+        "openclaw_print_has_backend": "--backend"
+        in shell_reports["openclaw"].get("detail", "")
+        and "libsqlite" in shell_reports["openclaw"].get("detail", ""),
         "mcp_write_used_installed_source_id": add_payload.get("source_id") == SOURCE_ID,
         "mcp_search_used_installed_source_id": any(
             row.get("source_id") == SOURCE_ID
@@ -207,13 +234,14 @@ def main() -> int:
     }
 
     out = {
-        "scenario": "M - installed MCP source defaults are usable",
+        "scenario": "M - installed MCP source/backend defaults are usable",
         "home": str(HOME),
         "store": STORE,
         "latency_ms": round(elapsed_ms, 2),
         "file_reports": file_reports,
         "shell_reports": shell_reports,
         "installed_env": {"AIDEMEMO_SOURCE_ID": codex_source_id},
+        "installed_args": {"codex": codex_args, "backend": BACKEND},
         "mcp": {
             "add_source_id": add_payload.get("source_id"),
             "search_hit_count": len(results),

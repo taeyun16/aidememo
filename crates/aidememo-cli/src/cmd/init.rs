@@ -126,7 +126,11 @@ pub fn run_init(
     };
 
     if let Some(target) = agent.as_deref() {
-        steps.extend(run_agent_setup(target, agent_force));
+        steps.extend(run_agent_setup(
+            target,
+            agent_force,
+            config.store.backend.as_str(),
+        ));
     }
 
     let report = InitReport {
@@ -194,7 +198,7 @@ struct InitReport {
     elapsed_ms: u64,
 }
 
-fn run_agent_setup(target: &str, force: bool) -> Vec<InitStep> {
+fn run_agent_setup(target: &str, force: bool, storage_backend: &str) -> Vec<InitStep> {
     let mut steps = Vec::new();
 
     let skill_supported = crate::cmd::skill::target_skills_dir(target).is_some()
@@ -239,6 +243,7 @@ fn run_agent_setup(target: &str, force: bool) -> Vec<InitStep> {
                 source_id: None,
             },
             false,
+            storage_backend,
         );
         steps.push(step_from_result("agent_mcp_install", result, t0));
     }

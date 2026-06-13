@@ -660,7 +660,7 @@ fn install_into_agents_md(
         );
     } else {
         out.push_str(&format!(
-            "Next: register the MCP server with `aidememo mcp-install --target {target}`; add `--source-id <namespace>` when sharing one store.\n"
+            "Next: register the MCP server with `aidememo --backend libsqlite mcp-install --target {target}`; add `--source-id <namespace>` when sharing one store (replace libsqlite if you selected another backend).\n"
         ));
     }
     Ok(out)
@@ -779,10 +779,12 @@ fn run_install(
         resolved_dest.display()
     );
     out.push_str("  SKILL.md\n  REFERENCE.md\n\n");
-    out.push_str("Next: register the MCP server with `aidememo mcp-install --target ");
+    out.push_str(
+        "Next: register the MCP server with `aidememo --backend libsqlite mcp-install --target ",
+    );
     out.push_str(&target);
     out.push_str(
-        "`; add `--source-id <namespace>` when sharing one store (or run `aidememo mcp` directly from your agent's tool config).\n",
+        "`; add `--source-id <namespace>` when sharing one store, and replace libsqlite if you selected another backend (or run `aidememo --backend libsqlite mcp` directly from your agent's tool config).\n",
     );
     Ok(out)
 }

@@ -72,7 +72,8 @@ AIDEMEMO_SKILLOPT_RUN_SCENARIOS=1 scripts/skillopt-lite-check.sh
 The optional scenario gate runs:
 
 - Scenario L: self-extraction typed batch -> workflow recall;
-- Scenario M: `aidememo mcp-install --source-id` -> scoped MCP write/search;
+- Scenario M: `aidememo --backend libsqlite mcp-install --source-id` -> scoped
+  backend-pinned MCP write/search;
 - Scenario N: `aidememo_agent.Memory` fanout/dedupe/coverage/aggregate path.
 
 ## Periodic Cycle

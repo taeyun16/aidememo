@@ -22,7 +22,7 @@ Example Codex config:
 ```toml
 [mcp_servers.aidememo]
 command = "aidememo"
-args = ["mcp"]
+args = ["--backend", "libsqlite", "mcp"]
 ```
 
 Example Claude Code command:
@@ -105,11 +105,12 @@ Use `source_id` when a shared store contains multiple teams, projects, users, or
 agents.
 
 ```bash
-aidememo mcp-install --target codex --source-id team-a
+aidememo --backend libsqlite mcp-install --target codex --source-id team-a
 ```
 
 MCP tools then default to that source namespace when the client does not pass an
-explicit `source_id`.
+explicit `source_id`. The installed command also pins the selected storage
+backend so an agent process does not drift back to a different config default.
 
 ## Troubleshooting
 

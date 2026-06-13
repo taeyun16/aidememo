@@ -14,7 +14,7 @@ prompt, then inspects both:
 Expected agents:
 
   - Claude Code via a temporary project ``.mcp.json`` with AIDEMEMO_SOURCE_ID
-  - Codex CLI via an isolated ``aidememo mcp-install --source-id`` config
+  - Codex CLI via an isolated ``aidememo --backend libsqlite mcp-install --source-id`` config
   - Hermes via the aidememo plugin, explicit ``aidememo`` toolset, and AIDEMEMO_SOURCE_ID override
 
 This burns model tokens. Do not put it in default CI.
@@ -48,6 +48,7 @@ SETUP_ONLY = os.environ.get("AIDEMEMO_E2E_SETUP_ONLY") == "1"
 
 SOURCE_ID = "workflow-alpha"
 FORBIDDEN_SOURCE_ID = "workflow-beta"
+BACKEND = "libsqlite"
 
 SEED = [
     (
@@ -191,7 +192,7 @@ def write_claude_project(tmpdir: Path) -> None:
                     "aidememo": {
                         "type": "stdio",
                         "command": WG,
-                        "args": ["--store", STORE, "mcp"],
+                        "args": ["--backend", BACKEND, "--store", STORE, "mcp"],
                         "env": {"AIDEMEMO_SOURCE_ID": SOURCE_ID},
                     }
                 }
@@ -234,6 +235,8 @@ def prepare_hermes_home(tmpdir: Path) -> Path:
                 "  aidememo:",
                 f"    command: {WG}",
                 "    args:",
+                "      - --backend",
+                f"      - {BACKEND}",
                 "      - --store",
                 f"      - {STORE}",
                 "      - mcp",
@@ -278,6 +281,8 @@ def prepare_codex_home(tmpdir: Path) -> tuple[Path, Path, dict[str, Any]]:
         run_with_env(
             [
                 WG,
+                "--backend",
+                BACKEND,
                 "--json",
                 "mcp-install",
                 "--target",

@@ -149,7 +149,7 @@ run_timed "sdk promotion gate" env GITHUB_STEP_SUMMARY= "$ROOT_DIR/scripts/sdk-p
 
 if [[ "$RUN_SCENARIOS" == "1" ]]; then
     run_timed "scenario L self extraction" python3 bench/multi-agent/scenario_l_self_extraction.py
-    run_timed "scenario M source defaults" python3 bench/multi-agent/scenario_m_mcp_install_source_defaults.py
+    run_timed "scenario M source/backend defaults" python3 bench/multi-agent/scenario_m_mcp_install_source_defaults.py
     run_timed "scenario N memory as code" python3 bench/multi-agent/scenario_n_hermes_memory_as_code.py
 else
     record ready 0.00 "optional scenarios L/M/N" "set AIDEMEMO_SKILLOPT_RUN_SCENARIOS=1"
