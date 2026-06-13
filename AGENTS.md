@@ -591,24 +591,24 @@ args = ["mcp"]
 
 ### Multi-agent shared store
 
-SQLite is the default backend. The optional redb backend holds an **exclusive
-file lock per process**. Two agents that each spawn their own `aidememo mcp`
-against the same redb store will fight over the lock — one wins, the other gets
-`Database already open. Cannot acquire lock.` Two ways to handle this:
+SQLite is the default backend and uses `store.lock_retry_ms` as its busy timeout
+for short write collisions. The optional redb backend holds an **exclusive file
+lock per process** and uses the same setting to retry opening the store while
+another process holds that lock. Two ways to handle shared writes:
 
 1. **Single shared `aidememo mcp-serve` instance** (recommended for shared
    writes). Run one HTTP/SSE server, point every agent at the same
    URL. Each agent's MCP client sees the same tools, the same store,
    no lock contention.
    ```bash
-   aidememo mcp-serve --port 3000 --store ~/.aidememo/team.redb &
+   aidememo mcp-serve --port 3000 --store ~/.aidememo/team.sqlite &
    # In each agent's MCP config: type=http, url=http://localhost:3000/mcp
    ```
 2. **Brief opportunistic contention** is fine: set
-   `store.lock_retry_ms` so transient locks (one agent's `aidememo mcp`
-   briefly holds while you run a one-off `aidememo fact add`) auto-resolve.
+   `store.lock_retry_ms` so transient local-store write contention can wait
+   instead of failing immediately.
    ```bash
-   aidememo config set store.lock_retry_ms 5000   # 5s budget, polls every 100ms
+   aidememo config set store.lock_retry_ms 5000   # 5s budget
    ```
    `lock_retry_ms = 0` (default) preserves the old fail-fast behaviour.
    Scenario J (`python3 bench/multi-agent/scenario_j_lock_retry_sweep.py`)

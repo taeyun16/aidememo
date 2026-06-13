@@ -8,9 +8,10 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, ErrorCode, OptionalExtension, params};
 use ulid::Ulid;
 
 use crate::backend::StoreBackend;
@@ -44,6 +45,8 @@ impl SqliteStore {
             path: path.to_path_buf(),
             source: Box::new(source),
         })?;
+        conn.busy_timeout(Duration::from_millis(config.store.lock_retry_ms))
+            .map_err(|source| sqlite_write("pragma", "busy_timeout", source))?;
         let store = Self {
             conn: Mutex::new(conn),
             config: Arc::new(config),
@@ -527,31 +530,43 @@ impl StoreBackend for SqliteStore {
 
     fn set_last_ingest_at(&self) -> Result<()> {
         let now = crate::time::current_epoch_ms();
-        let conn = self.conn.lock();
-        conn.execute(
-            "INSERT INTO meta (key, value) VALUES (?1, ?2)
-                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            params!["last_ingest_at", now.to_string().into_bytes()],
-        )
-        .map_err(|source| sqlite_write("meta", "last_ingest_at", source))?;
-        Ok(())
+        let lock_retry_ms = self.config.store.lock_retry_ms;
+        sqlite_lock_retry(lock_retry_ms, || {
+            let conn = self.conn.lock();
+            conn.execute(
+                "INSERT INTO meta (key, value) VALUES (?1, ?2)
+                     ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                params!["last_ingest_at", now.to_string().into_bytes()],
+            )
+            .map_err(|source| sqlite_write("meta", "last_ingest_at", source))?;
+            Ok(())
+        })
     }
 
     fn entity_add(&mut self, input: EntityInput) -> Result<EntityId> {
-        let mut record =
-            EntityRecord::new(input.name, input.entity_type.unwrap_or(EntityType::Unknown));
-        if let Some(aliases) = input.aliases {
-            record.aliases = aliases;
-        }
-        if let Some(tags) = input.tags {
-            record.tags = tags;
-        }
-        if let Some(source_page) = input.source_page {
-            record.source_page = Some(source_page);
-        }
-        let conn = self.conn.lock();
-        Self::insert_entity_record(&conn, &record)?;
-        Ok(record.id)
+        let lock_retry_ms = self.config.store.lock_retry_ms;
+        sqlite_lock_retry(lock_retry_ms, || {
+            let input = input.clone();
+            let mut record =
+                EntityRecord::new(input.name, input.entity_type.unwrap_or(EntityType::Unknown));
+            if let Some(aliases) = input.aliases {
+                record.aliases = aliases;
+            }
+            if let Some(tags) = input.tags {
+                record.tags = tags;
+            }
+            if let Some(source_page) = input.source_page {
+                record.source_page = Some(source_page);
+            }
+            let mut conn = self.conn.lock();
+            let tx = conn
+                .transaction()
+                .map_err(|source| sqlite_write("entities", "begin", source))?;
+            Self::insert_entity_record(&tx, &record)?;
+            tx.commit()
+                .map_err(|source| sqlite_write("entities", "commit", source))?;
+            Ok(record.id)
+        })
     }
 
     fn entity_get(&self, name: &str) -> Result<EntityRecord> {
@@ -584,10 +599,20 @@ impl StoreBackend for SqliteStore {
     }
 
     fn entity_update(&mut self, name: &str, input: EntityUpdate) -> Result<()> {
-        let mut record = self.entity_get(name)?;
-        record.update(input);
-        let conn = self.conn.lock();
-        Self::update_entity_record(&conn, &record)
+        let name = name.to_string();
+        let lock_retry_ms = self.config.store.lock_retry_ms;
+        sqlite_lock_retry(lock_retry_ms, || {
+            let mut record = self.entity_get(&name)?;
+            record.update(input.clone());
+            let mut conn = self.conn.lock();
+            let tx = conn
+                .transaction()
+                .map_err(|source| sqlite_write("entities", "begin", source))?;
+            Self::update_entity_record(&tx, &record)?;
+            tx.commit()
+                .map_err(|source| sqlite_write("entities", "commit", source))?;
+            Ok(())
+        })
     }
 
     fn entity_list(&self, opts: ListOpts) -> Result<Vec<EntitySummary>> {
@@ -646,50 +671,63 @@ impl StoreBackend for SqliteStore {
     }
 
     fn entity_delete(&mut self, name: &str) -> Result<()> {
-        let record = self.entity_get(name)?;
-        let id = record.id.to_string();
-        let mut conn = self.conn.lock();
-        let tx = conn
-            .transaction()
-            .map_err(|source| sqlite_write("entities", "begin", source))?;
-        tx.execute("DELETE FROM entity_names WHERE entity_id = ?1", params![id])
-            .map_err(|source| sqlite_write("entity_names", &id, source))?;
-        tx.execute(
-            "DELETE FROM relations WHERE source_id = ?1 OR target_id = ?1",
-            params![id],
-        )
-        .map_err(|source| sqlite_write("relations", &id, source))?;
-        tx.execute(
-            "DELETE FROM fact_entities WHERE entity_id = ?1",
-            params![id],
-        )
-        .map_err(|source| sqlite_write("fact_entities", &id, source))?;
-        tx.execute("DELETE FROM entities WHERE id = ?1", params![id])
-            .map_err(|source| sqlite_write("entities", &id, source))?;
-        tx.commit()
-            .map_err(|source| sqlite_write("entities", "commit", source))?;
-        Ok(())
+        let name = name.to_string();
+        let lock_retry_ms = self.config.store.lock_retry_ms;
+        sqlite_lock_retry(lock_retry_ms, || {
+            let record = self.entity_get(&name)?;
+            let id = record.id.to_string();
+            let mut conn = self.conn.lock();
+            let tx = conn
+                .transaction()
+                .map_err(|source| sqlite_write("entities", "begin", source))?;
+            tx.execute("DELETE FROM entity_names WHERE entity_id = ?1", params![id])
+                .map_err(|source| sqlite_write("entity_names", &id, source))?;
+            tx.execute(
+                "DELETE FROM relations WHERE source_id = ?1 OR target_id = ?1",
+                params![id],
+            )
+            .map_err(|source| sqlite_write("relations", &id, source))?;
+            tx.execute(
+                "DELETE FROM fact_entities WHERE entity_id = ?1",
+                params![id],
+            )
+            .map_err(|source| sqlite_write("fact_entities", &id, source))?;
+            tx.execute("DELETE FROM entities WHERE id = ?1", params![id])
+                .map_err(|source| sqlite_write("entities", &id, source))?;
+            tx.commit()
+                .map_err(|source| sqlite_write("entities", "commit", source))?;
+            Ok(())
+        })
     }
 
     fn entity_upsert_record(&mut self, record: EntityRecord) -> Result<bool> {
-        if let Ok(local) = self.entity_get_by_id(record.id) {
-            if local.updated_at >= record.updated_at {
-                return Ok(false);
+        let lock_retry_ms = self.config.store.lock_retry_ms;
+        sqlite_lock_retry(lock_retry_ms, || {
+            let record = record.clone();
+            if let Ok(local) = self.entity_get_by_id(record.id) {
+                if local.updated_at >= record.updated_at {
+                    return Ok(false);
+                }
+            } else if let Ok(existing_id) = self.resolve_entity(&record.name) {
+                if existing_id != record.id {
+                    return Ok(false);
+                }
             }
-        } else if let Ok(existing_id) = self.resolve_entity(&record.name) {
-            if existing_id != record.id {
-                return Ok(false);
-            }
-        }
 
-        let exists = self.entity_get_by_id(record.id).is_ok();
-        let conn = self.conn.lock();
-        if exists {
-            Self::update_entity_record(&conn, &record)?;
-        } else {
-            Self::insert_entity_record(&conn, &record)?;
-        }
-        Ok(true)
+            let exists = self.entity_get_by_id(record.id).is_ok();
+            let mut conn = self.conn.lock();
+            let tx = conn
+                .transaction()
+                .map_err(|source| sqlite_write("entities", "begin", source))?;
+            if exists {
+                Self::update_entity_record(&tx, &record)?;
+            } else {
+                Self::insert_entity_record(&tx, &record)?;
+            }
+            tx.commit()
+                .map_err(|source| sqlite_write("entities", "commit", source))?;
+            Ok(true)
+        })
     }
 
     fn suggest_similar_entities(&self, name: &str) -> Result<Vec<String>> {
@@ -738,53 +776,10 @@ impl StoreBackend for SqliteStore {
     }
 
     fn fact_add_many(&mut self, inputs: Vec<FactInput>) -> Result<Vec<FactId>> {
-        if inputs.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let mut conn = self.conn.lock();
-        let tx = conn
-            .transaction()
-            .map_err(|source| sqlite_write("facts", "begin", source))?;
-        let mut ids = Vec::with_capacity(inputs.len());
-
-        for input in inputs {
-            let content_hash = sha256_hex(&input.content);
-            if let Some(existing_id) = Self::fact_id_by_hash(&tx, &content_hash)? {
-                if let Some(entity_ids) = input.entity_ids {
-                    Self::merge_fact_entities(&tx, existing_id, entity_ids)?;
-                }
-                ids.push(existing_id);
-                continue;
-            }
-
-            let mut record = FactRecord::new(
-                input.content,
-                input.fact_type.unwrap_or(FactType::Unknown),
-                input.entity_ids.unwrap_or_default(),
-            );
-            if let Some(tags) = input.tags {
-                record.tags = tags;
-            }
-            if let Some(source) = input.source {
-                record.source = Some(source);
-            }
-            if let Some(source_id) = input.source_id {
-                record.source_id = Some(source_id);
-            }
-            if let Some(confidence) = input.source_confidence {
-                record.source_confidence = confidence;
-            }
-            if let Some(observed_at) = input.observed_at {
-                record.observed_at = Some(observed_at);
-            }
-            Self::insert_fact_record(&tx, &record, &content_hash)?;
-            ids.push(record.id);
-        }
-
-        tx.commit()
-            .map_err(|source| sqlite_write("facts", "commit", source))?;
-        Ok(ids)
+        let lock_retry_ms = self.config.store.lock_retry_ms;
+        sqlite_lock_retry(lock_retry_ms, || {
+            sqlite_fact_add_many_once(self, inputs.clone())
+        })
     }
 
     fn fact_get(&self, id: &FactId) -> Result<FactRecord> {
@@ -863,58 +858,81 @@ impl StoreBackend for SqliteStore {
     }
 
     fn fact_update(&mut self, id: &FactId, input: FactUpdate) -> Result<()> {
-        let conn = self.conn.lock();
-        let mut record = Self::get_fact_record(&conn, id)?;
-        record.update(input);
-        Self::update_fact_record(&conn, &record)
+        let id = *id;
+        let lock_retry_ms = self.config.store.lock_retry_ms;
+        sqlite_lock_retry(lock_retry_ms, || {
+            let mut conn = self.conn.lock();
+            let tx = conn
+                .transaction()
+                .map_err(|source| sqlite_write("facts", "begin", source))?;
+            let mut record = Self::get_fact_record(&tx, &id)?;
+            record.update(input.clone());
+            Self::update_fact_record(&tx, &record)?;
+            tx.commit()
+                .map_err(|source| sqlite_write("facts", "commit", source))?;
+            Ok(())
+        })
     }
 
     fn fact_delete(&mut self, id: &FactId) -> Result<()> {
-        let raw_id = id.to_string();
-        let mut conn = self.conn.lock();
-        let tx = conn
-            .transaction()
-            .map_err(|source| sqlite_write("facts", "begin", source))?;
-        tx.execute("DELETE FROM facts_fts WHERE fact_id = ?1", params![raw_id])
-            .map_err(|source| sqlite_write("facts_fts", &raw_id, source))?;
-        tx.execute(
-            "DELETE FROM fact_entities WHERE fact_id = ?1",
-            params![raw_id],
-        )
-        .map_err(|source| sqlite_write("fact_entities", &raw_id, source))?;
-        let removed = tx
-            .execute("DELETE FROM facts WHERE id = ?1", params![raw_id])
-            .map_err(|source| sqlite_write("facts", &raw_id, source))?;
-        tx.commit()
-            .map_err(|source| sqlite_write("facts", "commit", source))?;
-        if removed == 0 {
-            return Err(AideMemoError::FactNotFound(raw_id));
-        }
-        Ok(())
+        let id = *id;
+        let lock_retry_ms = self.config.store.lock_retry_ms;
+        sqlite_lock_retry(lock_retry_ms, || {
+            let raw_id = id.to_string();
+            let mut conn = self.conn.lock();
+            let tx = conn
+                .transaction()
+                .map_err(|source| sqlite_write("facts", "begin", source))?;
+            tx.execute("DELETE FROM facts_fts WHERE fact_id = ?1", params![raw_id])
+                .map_err(|source| sqlite_write("facts_fts", &raw_id, source))?;
+            tx.execute(
+                "DELETE FROM fact_entities WHERE fact_id = ?1",
+                params![raw_id],
+            )
+            .map_err(|source| sqlite_write("fact_entities", &raw_id, source))?;
+            let removed = tx
+                .execute("DELETE FROM facts WHERE id = ?1", params![raw_id])
+                .map_err(|source| sqlite_write("facts", &raw_id, source))?;
+            tx.commit()
+                .map_err(|source| sqlite_write("facts", "commit", source))?;
+            if removed == 0 {
+                return Err(AideMemoError::FactNotFound(raw_id));
+            }
+            Ok(())
+        })
     }
 
     fn fact_upsert_record(&mut self, record: FactRecord) -> Result<bool> {
-        if let Ok(local) = self.fact_get(&record.id) {
-            if local.updated_at >= record.updated_at {
+        let lock_retry_ms = self.config.store.lock_retry_ms;
+        sqlite_lock_retry(lock_retry_ms, || {
+            let record = record.clone();
+            let content_hash = sha256_hex(&record.content);
+            let mut conn = self.conn.lock();
+            let tx = conn
+                .transaction()
+                .map_err(|source| sqlite_write("facts", "begin", source))?;
+
+            if let Ok(local) = Self::get_fact_record(&tx, &record.id)
+                && local.updated_at >= record.updated_at
+            {
                 return Ok(false);
             }
-        }
+            if let Some(existing_id) = Self::fact_id_by_hash(&tx, &content_hash)?
+                && existing_id != record.id
+            {
+                return Ok(false);
+            }
 
-        let content_hash = sha256_hex(&record.content);
-        let conn = self.conn.lock();
-        if let Some(existing_id) = Self::fact_id_by_hash(&conn, &content_hash)?
-            && existing_id != record.id
-        {
-            return Ok(false);
-        }
-
-        if Self::get_fact_record(&conn, &record.id).is_ok() {
-            Self::update_fact_record(&conn, &record)?;
-            Self::replace_fact_entities(&conn, &record)?;
-        } else {
-            Self::insert_fact_record(&conn, &record, &content_hash)?;
-        }
-        Ok(true)
+            if Self::get_fact_record(&tx, &record.id).is_ok() {
+                Self::update_fact_record(&tx, &record)?;
+                Self::replace_fact_entities(&tx, &record)?;
+            } else {
+                Self::insert_fact_record(&tx, &record, &content_hash)?;
+            }
+            tx.commit()
+                .map_err(|source| sqlite_write("facts", "commit", source))?;
+            Ok(true)
+        })
     }
 
     fn pinned_facts(&self, limit: usize) -> Result<Vec<FactRecord>> {
@@ -930,53 +948,71 @@ impl StoreBackend for SqliteStore {
     }
 
     fn fact_feedback(&mut self, id: &FactId, helpful: bool) -> Result<()> {
-        let conn = self.conn.lock();
-        let mut record = Self::get_fact_record(&conn, id)?;
-        if helpful {
-            record.relevance_score = (record.relevance_score + 0.10).min(1.0);
-        } else {
-            record.relevance_score = (record.relevance_score - 0.15).max(0.0);
-        }
-        Self::update_fact_record(&conn, &record)
+        let id = *id;
+        let lock_retry_ms = self.config.store.lock_retry_ms;
+        sqlite_lock_retry(lock_retry_ms, || {
+            let mut conn = self.conn.lock();
+            let tx = conn
+                .transaction()
+                .map_err(|source| sqlite_write("facts", "begin", source))?;
+            let mut record = Self::get_fact_record(&tx, &id)?;
+            if helpful {
+                record.relevance_score = (record.relevance_score + 0.10).min(1.0);
+            } else {
+                record.relevance_score = (record.relevance_score - 0.15).max(0.0);
+            }
+            Self::update_fact_record(&tx, &record)?;
+            tx.commit()
+                .map_err(|source| sqlite_write("facts", "commit", source))?;
+            Ok(())
+        })
     }
 
     fn search_session_add(&mut self, session: &SearchSession) -> Result<()> {
-        let bytes = serde_json::to_vec(session).map_err(|source| AideMemoError::Serialize {
+        let session = session.clone();
+        let bytes = serde_json::to_vec(&session).map_err(|source| AideMemoError::Serialize {
             context: "search_session".to_string(),
             source,
         })?;
-        let conn = self.conn.lock();
-        conn.execute(
-            "INSERT OR REPLACE INTO search_sessions (id, record_json) VALUES (?1, ?2)",
-            params![session.id, bytes],
-        )
-        .map_err(|source| sqlite_write("search_sessions", &session.id, source))?;
-        Ok(())
+        let lock_retry_ms = self.config.store.lock_retry_ms;
+        sqlite_lock_retry(lock_retry_ms, || {
+            let conn = self.conn.lock();
+            conn.execute(
+                "INSERT OR REPLACE INTO search_sessions (id, record_json) VALUES (?1, ?2)",
+                params![session.id, bytes],
+            )
+            .map_err(|source| sqlite_write("search_sessions", &session.id, source))?;
+            Ok(())
+        })
     }
 
     fn search_feedback_add(&mut self, feedback: &SearchFeedback) -> Result<()> {
+        let feedback = feedback.clone();
         let key = format!("{}:{}", feedback.session_id, feedback.fact_id);
-        let bytes = serde_json::to_vec(feedback).map_err(|source| AideMemoError::Serialize {
+        let bytes = serde_json::to_vec(&feedback).map_err(|source| AideMemoError::Serialize {
             context: "search_feedback".to_string(),
             source,
         })?;
-        let conn = self.conn.lock();
-        conn.execute(
-            "INSERT OR REPLACE INTO search_feedback (
-                    key, session_id, fact_id, helpful, timestamp, record_json
-                 )
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![
-                key,
-                feedback.session_id,
-                feedback.fact_id.to_string(),
-                if feedback.helpful { 1 } else { 0 },
-                feedback.timestamp as i64,
-                bytes
-            ],
-        )
-        .map_err(|source| sqlite_write("search_feedback", &key, source))?;
-        Ok(())
+        let lock_retry_ms = self.config.store.lock_retry_ms;
+        sqlite_lock_retry(lock_retry_ms, || {
+            let conn = self.conn.lock();
+            conn.execute(
+                "INSERT OR REPLACE INTO search_feedback (
+                        key, session_id, fact_id, helpful, timestamp, record_json
+                     )
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    key,
+                    feedback.session_id,
+                    feedback.fact_id.to_string(),
+                    if feedback.helpful { 1 } else { 0 },
+                    feedback.timestamp as i64,
+                    bytes
+                ],
+            )
+            .map_err(|source| sqlite_write("search_feedback", &key, source))?;
+            Ok(())
+        })
     }
 
     fn search_feedback_count(&self) -> Result<usize> {
@@ -989,8 +1025,13 @@ impl StoreBackend for SqliteStore {
         let pairs = self.feedback_pairs()?;
         let mut adapter = crate::adapt::DomainAdapter::new();
         let result = adapter.train(&pairs);
-        let conn = self.conn.lock();
-        meta_set_bytes(&conn, "adapter_state", &adapter.to_bytes()?)?;
+        let bytes = adapter.to_bytes()?;
+        let lock_retry_ms = self.config.store.lock_retry_ms;
+        sqlite_lock_retry(lock_retry_ms, || {
+            let conn = self.conn.lock();
+            meta_set_bytes(&conn, "adapter_state", &bytes)?;
+            Ok(())
+        })?;
         Ok(result)
     }
 
@@ -1028,51 +1069,69 @@ impl StoreBackend for SqliteStore {
             evidence: input.evidence.unwrap_or_default(),
             created_at: crate::time::current_epoch_ms(),
         };
-        let conn = self.conn.lock();
-        Self::insert_relation_record(&conn, &record)
+        let lock_retry_ms = self.config.store.lock_retry_ms;
+        sqlite_lock_retry(lock_retry_ms, || {
+            let conn = self.conn.lock();
+            Self::insert_relation_record(&conn, &record)
+        })
     }
 
     fn relation_upsert_record(&mut self, record: RelationRecord) -> Result<bool> {
-        let conn = self.conn.lock();
-        let exists: Option<Vec<u8>> = conn
-            .query_row(
-                "SELECT record_json FROM relations
-                 WHERE source_id = ?1 AND relation_type = ?2 AND target_id = ?3",
-                params![
-                    record.source_id.to_string(),
-                    record.relation_type.to_string(),
-                    record.target_id.to_string()
-                ],
-                |row| row.get(0),
-            )
-            .optional()
-            .map_err(|source| sqlite_read("relations", &relation_key(&record), source))?;
-        if exists.is_some() {
-            return Ok(false);
-        }
-        Self::insert_relation_record(&conn, &record)?;
-        Ok(true)
+        let lock_retry_ms = self.config.store.lock_retry_ms;
+        sqlite_lock_retry(lock_retry_ms, || {
+            let record = record.clone();
+            let mut conn = self.conn.lock();
+            let tx = conn
+                .transaction()
+                .map_err(|source| sqlite_write("relations", "begin", source))?;
+            let exists: Option<Vec<u8>> = tx
+                .query_row(
+                    "SELECT record_json FROM relations
+                     WHERE source_id = ?1 AND relation_type = ?2 AND target_id = ?3",
+                    params![
+                        record.source_id.to_string(),
+                        record.relation_type.to_string(),
+                        record.target_id.to_string()
+                    ],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(|source| sqlite_read("relations", &relation_key(&record), source))?;
+            if exists.is_some() {
+                return Ok(false);
+            }
+            Self::insert_relation_record(&tx, &record)?;
+            tx.commit()
+                .map_err(|source| sqlite_write("relations", "commit", source))?;
+            Ok(true)
+        })
     }
 
     fn relation_remove(&mut self, source: &str, target: &str, rel_type: &str) -> Result<()> {
         let source_id = self.resolve_entity(source)?;
         let target_id = self.resolve_entity(target)?;
-        let conn = self.conn.lock();
-        let removed = conn
-            .execute(
-                "DELETE FROM relations
-                 WHERE source_id = ?1 AND relation_type = ?2 AND target_id = ?3",
-                params![source_id.to_string(), rel_type, target_id.to_string()],
-            )
-            .map_err(|source| sqlite_write("relations", rel_type, source))?;
-        if removed == 0 {
-            return Err(AideMemoError::RelationNotFound {
-                source_name: source.to_string(),
-                rel_type: rel_type.to_string(),
-                target: target.to_string(),
-            });
-        }
-        Ok(())
+        let source_name = source.to_string();
+        let target_name = target.to_string();
+        let rel_type = rel_type.to_string();
+        let lock_retry_ms = self.config.store.lock_retry_ms;
+        sqlite_lock_retry(lock_retry_ms, || {
+            let conn = self.conn.lock();
+            let removed = conn
+                .execute(
+                    "DELETE FROM relations
+                     WHERE source_id = ?1 AND relation_type = ?2 AND target_id = ?3",
+                    params![source_id.to_string(), rel_type, target_id.to_string()],
+                )
+                .map_err(|source| sqlite_write("relations", &rel_type, source))?;
+            if removed == 0 {
+                return Err(AideMemoError::RelationNotFound {
+                    source_name: source_name.clone(),
+                    rel_type: rel_type.clone(),
+                    target: target_name.clone(),
+                });
+            }
+            Ok(())
+        })
     }
 
     fn relations_get(
@@ -1229,6 +1288,101 @@ fn sqlite_write(table: &'static str, key: &str, source: rusqlite::Error) -> Aide
     }
 }
 
+fn sqlite_fact_add_many_once(
+    store: &mut SqliteStore,
+    inputs: Vec<FactInput>,
+) -> Result<Vec<FactId>> {
+    if inputs.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut conn = store.conn.lock();
+    let tx = conn
+        .transaction()
+        .map_err(|source| sqlite_write("facts", "begin", source))?;
+    let mut ids = Vec::with_capacity(inputs.len());
+
+    for input in inputs {
+        let content_hash = sha256_hex(&input.content);
+        if let Some(existing_id) = SqliteStore::fact_id_by_hash(&tx, &content_hash)? {
+            if let Some(entity_ids) = input.entity_ids {
+                SqliteStore::merge_fact_entities(&tx, existing_id, entity_ids)?;
+            }
+            ids.push(existing_id);
+            continue;
+        }
+
+        let mut record = FactRecord::new(
+            input.content,
+            input.fact_type.unwrap_or(FactType::Unknown),
+            input.entity_ids.unwrap_or_default(),
+        );
+        if let Some(tags) = input.tags {
+            record.tags = tags;
+        }
+        if let Some(source) = input.source {
+            record.source = Some(source);
+        }
+        if let Some(source_id) = input.source_id {
+            record.source_id = Some(source_id);
+        }
+        if let Some(confidence) = input.source_confidence {
+            record.source_confidence = confidence;
+        }
+        if let Some(observed_at) = input.observed_at {
+            record.observed_at = Some(observed_at);
+        }
+        SqliteStore::insert_fact_record(&tx, &record, &content_hash)?;
+        ids.push(record.id);
+    }
+
+    tx.commit()
+        .map_err(|source| sqlite_write("facts", "commit", source))?;
+    Ok(ids)
+}
+
+fn sqlite_lock_retry<T>(lock_retry_ms: u64, mut op: impl FnMut() -> Result<T>) -> Result<T> {
+    if lock_retry_ms == 0 {
+        return op();
+    }
+    let budget = Duration::from_millis(lock_retry_ms);
+    let started = Instant::now();
+    loop {
+        match op() {
+            Ok(value) => return Ok(value),
+            Err(err) if is_sqlite_lock_contention(&err) && started.elapsed() < budget => {
+                let remaining = budget.saturating_sub(started.elapsed());
+                let sleep_for = if remaining < Duration::from_millis(100) {
+                    remaining
+                } else {
+                    Duration::from_millis(100)
+                };
+                if !sleep_for.is_zero() {
+                    std::thread::sleep(sleep_for);
+                }
+            }
+            Err(err) => return Err(err),
+        }
+    }
+}
+
+fn is_sqlite_lock_contention(err: &AideMemoError) -> bool {
+    let source = match err {
+        AideMemoError::StoreRead { source, .. }
+        | AideMemoError::StoreWrite { source, .. }
+        | AideMemoError::StoreOpen { source, .. }
+        | AideMemoError::TransactionBegin { source } => source,
+        _ => return false,
+    };
+    let Some(sqlite) = source.downcast_ref::<rusqlite::Error>() else {
+        return false;
+    };
+    matches!(
+        sqlite.sqlite_error_code(),
+        Some(ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked)
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1245,6 +1399,21 @@ mod tests {
         let path = dir.path().join("wiki.sqlite");
         let store = SqliteStore::open(&path, Config::default()).expect("open sqlite");
         (dir, store)
+    }
+
+    #[test]
+    fn sqlite_store_applies_lock_retry_as_busy_timeout() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("wiki.sqlite");
+        let mut config = Config::default();
+        config.store.lock_retry_ms = 2500;
+
+        let store = SqliteStore::open(&path, config).expect("open sqlite");
+        let conn = store.conn.lock();
+        let busy_timeout: i64 = conn
+            .query_row("PRAGMA busy_timeout", [], |row| row.get(0))
+            .expect("busy timeout");
+        assert_eq!(busy_timeout, 2500);
     }
 
     #[test]

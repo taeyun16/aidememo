@@ -42,7 +42,7 @@ plugins:
     auto_record: true               # session_end fact auto-recorder
     dry_run: false                  # if true, log detections to aidememo-pending.jsonl instead of writing
     confidence_floor: 0.85          # higher = stricter (fewer false positives)
-    lock_retry_ms: 5000             # smooth over short CLI write contention; useful for optional redb
+    lock_retry_ms: 5000             # smooth over short local-store write contention
     default_entities: []            # entities to attach to auto-recorded facts
     pending_log: ~/.hermes/state/aidememo-pending.jsonl  # dry-run audit log
 ```
@@ -123,7 +123,7 @@ floor, modest 7-day window, auto-record on).
 | `auto_record` | `true` | Toggle the `on_session_end` recorder. |
 | `dry_run` | `false` | When `true`, detections are appended to `pending_log` instead of being written to AideMemo. Useful for auditing precision before trusting writes. |
 | `confidence_floor` | `0.85` | 0.7–1.0; lower = more captures (and more noise). |
-| `lock_retry_ms` | `5000` | CLI fallback retries short write-lock collisions for this long. Mostly useful when opting into redb; set `0` for fail-fast debugging. |
+| `lock_retry_ms` | `5000` | CLI fallback waits this long for short local-store write collisions. For SQLite this is the busy timeout; for redb this retries the exclusive open lock. Set `0` for fail-fast debugging. |
 | `default_entities` | `[]` | Entities to attach to auto-recorded facts. |
 | `pending_log` | `~/.hermes/state/aidememo-pending.jsonl` | Override the dry-run audit log path. |
 

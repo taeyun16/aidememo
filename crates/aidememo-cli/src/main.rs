@@ -389,8 +389,7 @@ fn handle_fact(
                 None => None,
             };
             // Daemon discovery — if a `aidememo daemon` is running on the
-            // same store, dispatch through it. Otherwise we'd hit the
-            // single-writer redb lock on the daemon's open handle.
+            // same store, dispatch through it and reuse the warm backend.
             // The daemon has aidememo_fact_add as a first-class MCP tool so
             // the path is symmetric with read commands.
             if let Some(via) = cmd::daemon::registered_endpoint(path) {
@@ -1456,8 +1455,8 @@ fn handle_search(
         return run_search_via_daemon(via, &sub, default_limit, json);
     }
     // Opportunistic discovery: if a `aidememo daemon` is running and serving
-    // the same store, dispatch through it so we skip the local redb
-    // open + (for hybrid) model load. Set AIDEMEMO_NO_DAEMON=1 to bypass.
+    // the same store, dispatch through it so we skip a local backend open and
+    // (for hybrid) model load. Set AIDEMEMO_NO_DAEMON=1 to bypass.
     if let Some(via) = cmd::daemon::registered_endpoint(path) {
         tracing::debug!(via = %via, "auto-discovered daemon");
         return run_search_via_daemon(&via, &sub, default_limit, json);

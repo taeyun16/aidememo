@@ -55,7 +55,7 @@ title: AideMemo 전체 API 참조
 
 | 구성 요소 | 기술 |
 |---------|------|
-| 저장소 | redb 2.x (embedded KV, single-writer file lock) |
+| 저장소 | SQLite 기본 로컬 backend, optional redb backend |
 | 풀텍스트 검색 | bm25 crate (lazy inverted index) |
 | 시맨틱 검색 | model2vec-native (정적 임베딩) + instant-distance (HNSW) — `feature = "semantic"` |
 | Reranker | TEI cross-encoder (BGE-reranker, etc.) — `rerank.provider = "tei"` |

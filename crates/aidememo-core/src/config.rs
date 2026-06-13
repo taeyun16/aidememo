@@ -74,14 +74,10 @@ pub struct StoreConfig {
     /// commit, which is too easy to misuse.
     #[serde(default = "default_durability")]
     pub durability: String,
-    /// How long (in milliseconds) to keep retrying when another process
-    /// is holding the redb file lock. redb is single-process by design,
-    /// so two `aidememo` invocations against the same store fail-fast with
-    /// `Database already open. Cannot acquire lock.` Setting this to a
-    /// non-zero value polls the lock every 100 ms up to the configured
-    /// budget, which smooths over short-lived contention from agent
-    /// orchestrators that briefly spawn `aidememo` while another long-lived
-    /// `aidememo mcp` instance holds the lock. Default 0 = current behaviour.
+    /// How long (in milliseconds) to wait on transient local-store contention.
+    /// For SQLite this maps to the connection busy timeout. For redb this
+    /// retries open when another process is holding the exclusive file lock.
+    /// Default 0 keeps fail-fast behaviour.
     #[serde(default)]
     pub lock_retry_ms: u64,
 }

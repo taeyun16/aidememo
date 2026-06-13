@@ -5,8 +5,16 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BASE="${AIDEMEMO_SQLITE_ADVANCED_SURFACE_BASE:-$(mktemp -d "${TMPDIR:-/tmp}/aidememo-sqlite-advanced-surface.XXXXXX")}"
 BIN="$ROOT_DIR/target/debug/aidememo"
+SQLITE_LOCK_PID=""
+SQLITE_FACT_PID=""
 
 cleanup() {
+    if [[ -n "${SQLITE_FACT_PID:-}" ]] && kill -0 "$SQLITE_FACT_PID" 2>/dev/null; then
+        kill "$SQLITE_FACT_PID" 2>/dev/null || true
+    fi
+    if [[ -n "${SQLITE_LOCK_PID:-}" ]] && kill -0 "$SQLITE_LOCK_PID" 2>/dev/null; then
+        kill "$SQLITE_LOCK_PID" 2>/dev/null || true
+    fi
     if [[ "${AIDEMEMO_SQLITE_ADVANCED_SURFACE_KEEP_TMP:-0}" != "1" ]]; then
         rm -rf "$BASE"
     else
@@ -89,15 +97,113 @@ am_json() {
 }
 
 HOME="$HOME_DIR" "$BIN" config set store.backend sqlite >/dev/null
+HOME="$HOME_DIR" "$BIN" config set store.lock_retry_ms 3000 >/dev/null
 backend="$(HOME="$HOME_DIR" "$BIN" config get store.backend)"
 if [[ "$backend" != "sqlite" ]]; then
     echo "expected sqlite backend, got $backend" >&2
+    exit 1
+fi
+lock_retry_ms="$(HOME="$HOME_DIR" "$BIN" config get store.lock_retry_ms)"
+if [[ "$lock_retry_ms" != "3000" ]]; then
+    echo "expected lock_retry_ms=3000, got $lock_retry_ms" >&2
     exit 1
 fi
 
 am init --no-ingest "$WIKI_DIR" >/dev/null
 am entity add SQLite --type technology >/dev/null
 am entity add AdvancedSurface --type project >/dev/null
+
+LOCK_READY="$BASE/sqlite-lock-ready"
+LOCK_RELEASE="$BASE/sqlite-lock-release"
+LOCK_RESULT="$BASE/sqlite-lock-result"
+LOCK_FACT_OUT="$BASE/sqlite-lock-fact.out"
+LOCK_FACT_ERR="$BASE/sqlite-lock-fact.err"
+
+python3 - "$STORE" "$LOCK_READY" "$LOCK_RELEASE" "$LOCK_RESULT" <<'PY' &
+import pathlib
+import sqlite3
+import sys
+import time
+import traceback
+
+store, ready, release, result = sys.argv[1:]
+try:
+    conn = sqlite3.connect(store, timeout=5.0, isolation_level=None)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("BEGIN IMMEDIATE")
+    conn.execute(
+        "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
+        ("sqlite_busy_timeout_gate", b"held"),
+    )
+    pathlib.Path(ready).write_text("locked")
+    deadline = time.time() + 10
+    while time.time() < deadline and not pathlib.Path(release).exists():
+        time.sleep(0.05)
+    if not pathlib.Path(release).exists():
+        raise TimeoutError("timed out waiting for release signal")
+    conn.commit()
+    pathlib.Path(result).write_text("released")
+except Exception:
+    pathlib.Path(result).write_text(traceback.format_exc())
+    raise
+finally:
+    try:
+        conn.close()
+    except Exception:
+        pass
+PY
+SQLITE_LOCK_PID=$!
+
+for _ in {1..100}; do
+    if [[ -f "$LOCK_READY" ]]; then
+        break
+    fi
+    if ! kill -0 "$SQLITE_LOCK_PID" 2>/dev/null; then
+        cat "$LOCK_RESULT" >&2 2>/dev/null || true
+        echo "sqlite lock holder exited before acquiring lock" >&2
+        exit 1
+    fi
+    sleep 0.05
+done
+if [[ ! -f "$LOCK_READY" ]]; then
+    echo "sqlite lock holder did not report ready" >&2
+    exit 1
+fi
+
+am fact add \
+    "SQLite lock retry waited for a busy writer" \
+    --entities SQLite,AdvancedSurface \
+    --type lesson \
+    --source-id advanced-smoke \
+    >"$LOCK_FACT_OUT" 2>"$LOCK_FACT_ERR" &
+SQLITE_FACT_PID=$!
+sleep 0.3
+if ! kill -0 "$SQLITE_FACT_PID" 2>/dev/null; then
+    echo "fact add exited before SQLite busy lock was released" >&2
+    cat "$LOCK_FACT_OUT" >&2 || true
+    cat "$LOCK_FACT_ERR" >&2 || true
+    exit 1
+fi
+touch "$LOCK_RELEASE"
+if ! wait "$SQLITE_FACT_PID"; then
+    SQLITE_FACT_PID=""
+    cat "$LOCK_FACT_OUT" >&2 || true
+    cat "$LOCK_FACT_ERR" >&2 || true
+    exit 1
+fi
+SQLITE_FACT_PID=""
+if ! wait "$SQLITE_LOCK_PID"; then
+    SQLITE_LOCK_PID=""
+    cat "$LOCK_RESULT" >&2 || true
+    exit 1
+fi
+SQLITE_LOCK_PID=""
+expect_contains "sqlite busy timeout fact add" \
+    "$(cat "$LOCK_FACT_OUT")" \
+    "Added fact"
+expect_contains "sqlite busy timeout search" \
+    "$(am search "busy writer" --limit 5)" \
+    "SQLite lock retry waited for a busy writer"
 
 feedback_fact_out="$(am fact add \
     "SQLite advanced smoke records feedback and adapter state" \
@@ -114,8 +220,88 @@ ttl_fact_out="$(am fact add \
 TTL_FACT="$(fact_id_from_output "$ttl_fact_out")"
 sleep 0.02
 
-expect_contains "fact feedback" \
-    "$(am fact feedback "$FEEDBACK_FACT" --helpful)" \
+LOCK_READY="$BASE/sqlite-feedback-lock-ready"
+LOCK_RELEASE="$BASE/sqlite-feedback-lock-release"
+LOCK_RESULT="$BASE/sqlite-feedback-lock-result"
+LOCK_FEEDBACK_OUT="$BASE/sqlite-lock-feedback.out"
+LOCK_FEEDBACK_ERR="$BASE/sqlite-lock-feedback.err"
+
+python3 - "$STORE" "$LOCK_READY" "$LOCK_RELEASE" "$LOCK_RESULT" <<'PY' &
+import pathlib
+import sqlite3
+import sys
+import time
+import traceback
+
+store, ready, release, result = sys.argv[1:]
+try:
+    conn = sqlite3.connect(store, timeout=5.0, isolation_level=None)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("BEGIN IMMEDIATE")
+    conn.execute(
+        "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
+        ("sqlite_feedback_retry_gate", b"held"),
+    )
+    pathlib.Path(ready).write_text("locked")
+    deadline = time.time() + 10
+    while time.time() < deadline and not pathlib.Path(release).exists():
+        time.sleep(0.05)
+    if not pathlib.Path(release).exists():
+        raise TimeoutError("timed out waiting for release signal")
+    conn.commit()
+    pathlib.Path(result).write_text("released")
+except Exception:
+    pathlib.Path(result).write_text(traceback.format_exc())
+    raise
+finally:
+    try:
+        conn.close()
+    except Exception:
+        pass
+PY
+SQLITE_LOCK_PID=$!
+
+for _ in {1..100}; do
+    if [[ -f "$LOCK_READY" ]]; then
+        break
+    fi
+    if ! kill -0 "$SQLITE_LOCK_PID" 2>/dev/null; then
+        cat "$LOCK_RESULT" >&2 2>/dev/null || true
+        echo "sqlite feedback lock holder exited before acquiring lock" >&2
+        exit 1
+    fi
+    sleep 0.05
+done
+if [[ ! -f "$LOCK_READY" ]]; then
+    echo "sqlite feedback lock holder did not report ready" >&2
+    exit 1
+fi
+
+am fact feedback "$FEEDBACK_FACT" --helpful >"$LOCK_FEEDBACK_OUT" 2>"$LOCK_FEEDBACK_ERR" &
+SQLITE_FACT_PID=$!
+sleep 0.3
+if ! kill -0 "$SQLITE_FACT_PID" 2>/dev/null; then
+    echo "fact feedback exited before SQLite busy lock was released" >&2
+    cat "$LOCK_FEEDBACK_OUT" >&2 || true
+    cat "$LOCK_FEEDBACK_ERR" >&2 || true
+    exit 1
+fi
+touch "$LOCK_RELEASE"
+if ! wait "$SQLITE_FACT_PID"; then
+    SQLITE_FACT_PID=""
+    cat "$LOCK_FEEDBACK_OUT" >&2 || true
+    cat "$LOCK_FEEDBACK_ERR" >&2 || true
+    exit 1
+fi
+SQLITE_FACT_PID=""
+if ! wait "$SQLITE_LOCK_PID"; then
+    SQLITE_LOCK_PID=""
+    cat "$LOCK_RESULT" >&2 || true
+    exit 1
+fi
+SQLITE_LOCK_PID=""
+expect_contains "fact feedback busy timeout" \
+    "$(cat "$LOCK_FEEDBACK_OUT")" \
     "Recorded helpful feedback"
 expect_contains "search feedback" \
     "$(am feedback --helpful advanced-session "$FEEDBACK_FACT")" \
@@ -185,4 +371,4 @@ expect_contains "ttl fact get" \
     "$(am fact get "$TTL_FACT")" \
     "SQLite advanced smoke TTL expiry candidate"
 
-echo "sqlite advanced-surface ok: feedback/adapt/extract/pending/consolidate"
+echo "sqlite advanced-surface ok: busy-timeout/feedback/adapt/extract/pending/consolidate"

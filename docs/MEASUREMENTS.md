@@ -262,9 +262,10 @@ Runtime promotion status:
   in.
 * `scripts/storage-backend-sqlite-advanced-surface.sh` is the SQLite-only
   advanced-surface smoke: it builds the same SQLite CLI and verifies
-  fact-level feedback, search feedback, adapter train/status/eval, heuristic
-  extract preview/apply, pending approve/reject, and TTL-only consolidate
-  without model downloads. The TTL gate explicitly runs with
+  CLI-level `store.lock_retry_ms` busy-timeout behaviour under a held SQLite
+  writer lock, fact-level feedback, search feedback, adapter train/status/eval,
+  heuristic extract preview/apply, pending approve/reject, and TTL-only
+  consolidate without model downloads. The TTL gate explicitly runs with
   `--semantic-threshold 0`, proving expiry is independent from semantic dedup.
 * `fact_archive_preserves_mcp_fact_get_for_cold_tier` is the MCP archive
   invariant gate: archived facts leave the hot store, `aidememo_fact_get` still
@@ -343,7 +344,7 @@ The sharing contract is:
 
 | Field | Meaning |
 |---|---|
-| `sharing.lock_retry_ms` | Current serverless redb lock retry budget. |
+| `sharing.lock_retry_ms` | Current local-store contention wait budget: SQLite busy timeout and redb open retry. |
 | `sharing.serverless_recommended_writers` | Measured smooth same-host writer envelope, currently 4. |
 | `sharing.high_concurrency_writers` | Stress point used by Scenario J, currently 8. |
 | `sharing.daemon.state` | `healthy`, `stale_registry`, or `none`. |

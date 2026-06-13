@@ -20,7 +20,7 @@ adding scratch note files.
 | `workflow-release-smoke.sh` | Release-oriented workflow memory smoke with an always-printed timing summary: builds `aidememo`, runs the first-run demo plus Scenario F + I, then asserts `aidememo doctor --json` workflow readiness on a fixture store. |
 | `storage-backend-feature-gate.sh` | Storage feature boundary gate: checks SQLite-only and S3-only builds omit `redb`, while redb still builds only through the explicit `redb` feature. |
 | `storage-backend-sqlite-full-surface.sh` | SQLite-only storage smoke: builds the CLI with `--features sqlite`, then verifies init, ingest, entity/fact writes, search/query, graph traversal, sessions, workflow start, archive, export, and import against a single SQLite store. |
-| `storage-backend-sqlite-advanced-surface.sh` | SQLite-only advanced smoke: verifies feedback/adapt, heuristic extract preview/apply, pending approve/reject, and TTL consolidate against a single SQLite store without requiring model downloads. |
+| `storage-backend-sqlite-advanced-surface.sh` | SQLite-only advanced smoke: verifies CLI busy-timeout behaviour, feedback/adapt, heuristic extract preview/apply, pending approve/reject, and TTL consolidate against a single SQLite store without requiring model downloads. |
 | `aidememo-release-version.sh` | Verify or update the release version across Cargo, Python, npm, and Elixir/NIF packages. |
 | `aidememo-python-version.sh` | Verify or update `aidememo-python` package version pins across the Rust workspace version and Python `pyproject.toml`. |
 | `uv.sh` / `uvx.sh` | Repo-pinned `uv` runners: execute `uvx --from "$AIDEMEMO_UV_SPEC" uv|uvx`, defaulting to `uv==0.11.21`. |

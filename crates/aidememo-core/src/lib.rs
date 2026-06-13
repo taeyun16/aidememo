@@ -2683,7 +2683,7 @@ mod query_tests {
 
     fn fresh_wiki() -> (AideMemo, tempfile::TempDir) {
         let dir = tempdir().unwrap();
-        let wiki = AideMemo::open(&dir.path().join("test.redb"), Config::default()).unwrap();
+        let wiki = AideMemo::open(&dir.path().join("test.sqlite"), Config::default()).unwrap();
         (wiki, dir)
     }
 

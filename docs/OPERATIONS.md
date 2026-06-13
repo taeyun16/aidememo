@@ -44,19 +44,20 @@ For MCP installs:
 aidememo mcp-install --target codex --source-id team-a
 ```
 
-## Avoid redb store lock issues
+## Avoid local store write contention
 
-SQLite is the default backend. The optional redb backend is a single-writer
-embedded database; if several processes open the same redb store and write at
-the same time, one process may need to wait or fail.
+SQLite is the default backend and uses `store.lock_retry_ms` as its busy
+timeout for short write collisions. The optional redb backend uses the same
+setting to retry opening the store when another process holds redb's exclusive
+file lock.
 
 For shared writes, run one daemon:
 
 ```bash
-aidememo mcp-serve --port 3000 --store ~/.aidememo/team.redb
+aidememo mcp-serve --port 3000 --store ~/.aidememo/team.sqlite
 ```
 
-For brief local contention, configure retry:
+For brief local contention, configure the wait budget:
 
 ```bash
 aidememo config set store.lock_retry_ms 5000
