@@ -294,9 +294,13 @@ Runtime promotion status:
   ULIDs/timestamps, compares entity/fact/relation exports, then compares
   BM25 search results across representative queries.
 * `scripts/storage-backend-sqlite-mcp-soak.sh` builds the same no-default
-  SQLite CLI and runs the SQLite `mcp-serve` write path under concurrent load.
-  The default local gate writes 200 facts through 16 parallel HTTP MCP callers,
-  verifies unique fact IDs, final stats, and BM25 visibility for a tail write.
+  SQLite CLI and runs representative SQLite-backed MCP tools before the load
+  soak: batch add, entity describe/get/list, fact edit/get/list/pin/supersede/
+  archive, search/query/context/recent/session_start, overview/doctor,
+  traverse/path, aggregate, extract preview, workflow_start, and
+  include-archive search. It then writes 200 facts through 16 parallel HTTP MCP
+  callers, verifies unique fact IDs, final stats, and BM25 visibility for a
+  tail write.
 * `scripts/storage-backend-sdk-bindings-check.sh` verifies the SDK/binding
   surface: default SQLite builds, explicit SQLite-only builds, `libsqlite`
   alias opens in native binding tests, and redb-only Cargo feature builds
