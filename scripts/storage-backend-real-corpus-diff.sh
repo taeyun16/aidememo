@@ -20,12 +20,15 @@ cargo build -p aidememo-cli --features sqlite,redb
 
 REDB_HOME="$BASE/home-redb"
 SQLITE_HOME="$BASE/home-sqlite"
+LIBSQLITE_HOME="$BASE/home-libsqlite"
 CORPUS_DIR="$BASE/corpus"
 REDB_STORE="$BASE/real.redb"
 SQLITE_STORE="$BASE/real.sqlite"
+LIBSQLITE_STORE="$BASE/real.libsqlite"
 REDB_EXPORT="$BASE/redb.jsonl"
 SQLITE_EXPORT="$BASE/sqlite.jsonl"
-mkdir -p "$REDB_HOME" "$SQLITE_HOME" "$CORPUS_DIR"
+LIBSQLITE_EXPORT="$BASE/libsqlite.jsonl"
+mkdir -p "$REDB_HOME" "$SQLITE_HOME" "$LIBSQLITE_HOME" "$CORPUS_DIR"
 
 HOME="$REDB_HOME" "$BIN" config set store.backend redb >/dev/null
 
@@ -63,27 +66,33 @@ PY
 HOME="$REDB_HOME" "$BIN" --store "$REDB_STORE" ingest "$CORPUS_DIR" >/dev/null
 HOME="$SQLITE_HOME" "$BIN" config set store.backend sqlite >/dev/null
 HOME="$SQLITE_HOME" "$BIN" --store "$SQLITE_STORE" ingest "$CORPUS_DIR" >/dev/null
+HOME="$LIBSQLITE_HOME" "$BIN" config set store.backend libsqlite >/dev/null
+HOME="$LIBSQLITE_HOME" "$BIN" --store "$LIBSQLITE_STORE" ingest "$CORPUS_DIR" >/dev/null
 
 redb_stats="$(HOME="$REDB_HOME" "$BIN" --store "$REDB_STORE" --json stats)"
 sqlite_stats="$(HOME="$SQLITE_HOME" "$BIN" --store "$SQLITE_STORE" --json stats)"
-python3 - "$redb_stats" "$sqlite_stats" <<'PY'
+libsqlite_stats="$(HOME="$LIBSQLITE_HOME" "$BIN" --store "$LIBSQLITE_STORE" --json stats)"
+python3 - "$redb_stats" "$sqlite_stats" "$libsqlite_stats" <<'PY'
 from collections import Counter
 import json
 import sys
 
 redb = json.loads(sys.argv[1])
 sqlite = json.loads(sys.argv[2])
-for key in ("entity_count", "fact_count", "relation_count"):
-    if redb[key] != sqlite[key]:
-        raise SystemExit(f"{key} mismatch: redb={redb[key]} sqlite={sqlite[key]}")
-if sqlite["entity_count"] < 10 or sqlite["fact_count"] < 40:
-    raise SystemExit(f"corpus too small for parity gate: {sqlite}")
+libsqlite = json.loads(sys.argv[3])
+for label, stats in (("sqlite", sqlite), ("libsqlite", libsqlite)):
+    for key in ("entity_count", "fact_count", "relation_count"):
+        if redb[key] != stats[key]:
+            raise SystemExit(f"{key} mismatch: redb={redb[key]} {label}={stats[key]}")
+    if stats["entity_count"] < 10 or stats["fact_count"] < 40:
+        raise SystemExit(f"corpus too small for parity gate ({label}): {stats}")
 PY
 
 HOME="$REDB_HOME" "$BIN" --store "$REDB_STORE" export --output "$REDB_EXPORT" >/dev/null
 HOME="$SQLITE_HOME" "$BIN" --store "$SQLITE_STORE" export --output "$SQLITE_EXPORT" >/dev/null
+HOME="$LIBSQLITE_HOME" "$BIN" --store "$LIBSQLITE_STORE" export --output "$LIBSQLITE_EXPORT" >/dev/null
 
-python3 - "$REDB_EXPORT" "$SQLITE_EXPORT" <<'PY'
+python3 - "$REDB_EXPORT" "$SQLITE_EXPORT" "$LIBSQLITE_EXPORT" <<'PY'
 from collections import Counter
 from pathlib import Path
 import json
@@ -153,26 +162,27 @@ def load(path):
 
 
 left = load(sys.argv[1])
-right = load(sys.argv[2])
-for bucket in ("entities", "facts", "relations"):
-    if left[bucket] != right[bucket]:
-        missing = left[bucket] - right[bucket]
-        extra = right[bucket] - left[bucket]
-        raise SystemExit(
-            f"{bucket} mismatch\n"
-            f"missing from sqlite: {missing.most_common(5)}\n"
-            f"extra in sqlite: {extra.most_common(5)}"
-        )
+for label, path in (("sqlite", sys.argv[2]), ("libsqlite", sys.argv[3])):
+    right = load(path)
+    for bucket in ("entities", "facts", "relations"):
+        if left[bucket] != right[bucket]:
+            missing = left[bucket] - right[bucket]
+            extra = right[bucket] - left[bucket]
+            raise SystemExit(
+                f"{bucket} mismatch against {label}\n"
+                f"missing from {label}: {missing.most_common(5)}\n"
+                f"extra in {label}: {extra.most_common(5)}"
+            )
 PY
 
-python3 - "$BIN" "$REDB_HOME" "$REDB_STORE" "$SQLITE_HOME" "$SQLITE_STORE" <<'PY'
+python3 - "$BIN" "$REDB_HOME" "$REDB_STORE" "$SQLITE_HOME" "$SQLITE_STORE" "$LIBSQLITE_HOME" "$LIBSQLITE_STORE" <<'PY'
 from collections import Counter
 import json
 import os
 import subprocess
 import sys
 
-bin_path, redb_home, redb_store, sqlite_home, sqlite_store = sys.argv[1:]
+bin_path, redb_home, redb_store, sqlite_home, sqlite_store, libsqlite_home, libsqlite_store = sys.argv[1:]
 queries = [
     "MCP server",
     "SQLite backend",
@@ -212,13 +222,17 @@ def run_search(home, store, query):
 
 for query in queries:
     redb = run_search(redb_home, redb_store, query)
-    sqlite = run_search(sqlite_home, sqlite_store, query)
-    if redb[0] != sqlite[0] or Counter(redb) != Counter(sqlite):
-        raise SystemExit(
-            f"search mismatch for {query!r}\n"
-            f"redb={redb[:5]}\n"
-            f"sqlite={sqlite[:5]}"
-        )
+    for label, home, store in (
+        ("sqlite", sqlite_home, sqlite_store),
+        ("libsqlite", libsqlite_home, libsqlite_store),
+    ):
+        rows = run_search(home, store, query)
+        if redb[0] != rows[0] or Counter(redb) != Counter(rows):
+            raise SystemExit(
+                f"search mismatch for {query!r} against {label}\n"
+                f"redb={redb[:5]}\n"
+                f"{label}={rows[:5]}"
+            )
 PY
 
-echo "storage backend real-corpus diff ok: docs corpus ingest/export/search parity"
+echo "storage backend real-corpus diff ok: docs corpus ingest/export/search parity across redb/sqlite/libsqlite"

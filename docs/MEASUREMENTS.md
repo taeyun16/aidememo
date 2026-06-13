@@ -295,9 +295,10 @@ Runtime promotion status:
   resolves them from the backend-specific cold tier, default search hides them,
   and `include_archive:true` search returns them.
 * `scripts/storage-backend-real-corpus-diff.sh` ingests the repo's real docs
-  corpus into redb and SQLite independently, normalizes away backend-specific
-  ULIDs/timestamps, compares entity/fact/relation exports, then compares
-  BM25 search results across representative queries.
+  corpus into redb, canonical SQLite, and the `libsqlite` alias independently,
+  normalizes away backend-specific ULIDs/timestamps, compares entity/fact/
+  relation exports, then compares BM25 search results across representative
+  queries.
 * `scripts/storage-backend-sqlite-mcp-soak.sh` builds the same no-default
   SQLite CLI, defaults `store.backend` to the `libsqlite` alias, and runs
   representative SQLite-backed MCP tools before the load soak: batch add,
