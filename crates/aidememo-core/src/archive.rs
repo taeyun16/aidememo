@@ -123,20 +123,34 @@ impl Store {
     }
 }
 
-#[cfg(all(test, feature = "redb"))]
+#[cfg(all(test, any(feature = "sqlite", feature = "redb")))]
 mod tests {
     use super::*;
-    use crate::config::Config;
-    use crate::types::{EntityInput, EntityType, FactInput, FactType};
+    use crate::types::{EntityInput, EntityType, FactId, FactInput, FactListOpts, FactType};
+    use crate::{AideMemo, Config};
+    use std::path::PathBuf;
     use tempfile::TempDir;
 
-    fn make_store() -> (TempDir, Store) {
-        let dir = TempDir::new().unwrap();
-        let path = dir.path().join("hot.redb");
-        let mut config = Config::default();
+    fn test_store_path(dir: &TempDir, stem: &str, mut config: Config) -> (PathBuf, Config) {
+        if cfg!(all(feature = "redb", not(feature = "sqlite"))) {
+            config.store.backend = "redb".to_string();
+        }
+        let suffix = if config.store.backend == "redb" {
+            "redb"
+        } else {
+            "sqlite"
+        };
+        let path = dir.path().join(format!("{stem}.{suffix}"));
         config.store.path = path.to_string_lossy().into_owned();
-        let store = Store::open(&path, config).unwrap();
-        (dir, store)
+        (path, config)
+    }
+
+    fn make_wiki() -> (TempDir, AideMemo, PathBuf, String) {
+        let dir = TempDir::new().unwrap();
+        let (path, config) = test_store_path(&dir, "hot", Config::default());
+        let backend = config.store.backend.clone();
+        let wiki = AideMemo::open(&path, config).unwrap();
+        (dir, wiki, path, backend)
     }
 
     #[test]
@@ -166,8 +180,8 @@ mod tests {
 
     #[test]
     fn archive_facts_moves_records_hot_to_cold() {
-        let (_dir, mut store) = make_store();
-        let entity_id = store
+        let (_dir, wiki, _path, _backend) = make_wiki();
+        let entity_id = wiki
             .entity_add(EntityInput {
                 name: "Topic".into(),
                 entity_type: Some(EntityType::Custom("topic".into())),
@@ -183,41 +197,49 @@ mod tests {
                 ..Default::default()
             })
             .collect();
-        let ids = store.fact_add_many(inputs).unwrap();
-        assert_eq!(store.fact_count().unwrap(), 5);
+        let ids = wiki.fact_add_many(inputs).unwrap();
+        assert_eq!(wiki.stats().unwrap().fact_count, 5);
 
         // Archive the first three.
         let to_archive = &ids[..3];
-        let moved = store.archive_facts(to_archive).unwrap();
+        let moved = wiki.archive_facts(to_archive).unwrap();
         assert_eq!(moved, 3);
 
         // Hot now has 2.
-        assert_eq!(store.fact_count().unwrap(), 2);
+        assert_eq!(wiki.stats().unwrap().fact_count, 2);
 
         // Cold has 3, with content + ids preserved.
-        let cold = store.open_cold().unwrap();
-        assert_eq!(cold.fact_count().unwrap(), 3);
+        let cold = wiki.cold().unwrap().expect("cold sibling");
+        assert_eq!(cold.stats().unwrap().fact_count, 3);
         for id in to_archive {
             let parsed = cold.fact_get(id).unwrap();
             assert_eq!(parsed.id, *id);
             assert!(parsed.content.starts_with("fact "));
+            let via_hot = wiki.fact_get(id).unwrap();
+            assert_eq!(via_hot.id, *id);
         }
 
-        // Hot's per-entity index should now report only the 2 remaining.
-        assert_eq!(store.count_entity_facts(&entity_id).unwrap(), 2);
+        // Hot's per-entity list should now report only the 2 remaining.
+        let hot_entity_facts = wiki
+            .fact_list(FactListOpts {
+                entity_id: Some(entity_id),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(hot_entity_facts.len(), 2);
     }
 
     #[test]
     fn archive_facts_is_idempotent() {
-        let (_dir, mut store) = make_store();
-        let entity_id = store
+        let (_dir, wiki, _path, _backend) = make_wiki();
+        let entity_id = wiki
             .entity_add(EntityInput {
                 name: "T".into(),
                 entity_type: Some(EntityType::Custom("topic".into())),
                 ..Default::default()
             })
             .unwrap();
-        let id = store
+        let id = wiki
             .fact_add(FactInput {
                 content: "lonely fact".into(),
                 fact_type: Some(FactType::Note),
@@ -225,11 +247,12 @@ mod tests {
                 ..Default::default()
             })
             .unwrap();
-        assert_eq!(store.archive_facts(&[id]).unwrap(), 1);
+        assert_eq!(wiki.archive_facts(&[id]).unwrap(), 1);
         // Second call: id no longer in hot, so 0 moved (not an error).
-        assert_eq!(store.archive_facts(&[id]).unwrap(), 0);
+        assert_eq!(wiki.archive_facts(&[id]).unwrap(), 0);
         // And cold still has exactly one fact.
-        assert_eq!(store.open_cold().unwrap().fact_count().unwrap(), 1);
+        let cold = wiki.cold().unwrap().expect("cold sibling");
+        assert_eq!(cold.stats().unwrap().fact_count, 1);
     }
 
     #[cfg(feature = "semantic")]
@@ -240,12 +263,7 @@ mod tests {
         // cold sibling lifecycle lives there. Build a small wiki, ingest
         // 6 facts, archive 3, then search hot-only vs include_archive
         // and assert the cold facts only show up in the latter.
-        use crate::AideMemo;
-        let dir = TempDir::new().unwrap();
-        let path = dir.path().join("hot.redb");
-        let mut config = crate::Config::default();
-        config.store.path = path.to_string_lossy().into_owned();
-        let wiki = AideMemo::open(&path, config).unwrap();
+        let (_dir, wiki, _path, _backend) = make_wiki();
         let entity_id = wiki
             .entity_add(EntityInput {
                 name: "T".into(),
@@ -306,10 +324,11 @@ mod tests {
 
     #[test]
     fn archive_facts_skips_unknown_ids() {
-        let (_dir, mut store) = make_store();
+        let (_dir, wiki, path, backend) = make_wiki();
         let unknown = FactId::new();
-        assert_eq!(store.archive_facts(&[unknown]).unwrap(), 0);
+        assert_eq!(wiki.archive_facts(&[unknown]).unwrap(), 0);
         // Cold file isn't even created in this case (no records to write).
-        assert_eq!(store.fact_count().unwrap(), 0);
+        assert_eq!(wiki.stats().unwrap().fact_count, 0);
+        assert!(!cold_path_for_backend(&path, &backend).exists());
     }
 }

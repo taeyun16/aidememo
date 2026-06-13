@@ -13,7 +13,7 @@ import aidememo_python as aidememo
 
 def main() -> None:
     tmp = tempfile.mkdtemp(prefix="aidememo-py-smoke-")
-    db = os.path.join(tmp, "test.redb")
+    db = os.path.join(tmp, "test.sqlite")
     try:
         g = aidememo.AideMemo(db)
 
@@ -67,7 +67,7 @@ def main() -> None:
         assert len(facts) == 1
         assert all(f["source_id"] == "team-a" for f in facts)
 
-        # Batch insert — single redb write txn for the whole list.
+        # Batch insert — single backend transaction for the whole list.
         many_ids = g.fact_add_many([
             {"content": "Redis worker timeout lesson: DNS resolution caused queue stalls",
              "entity_ids": [eid_redis], "fact_type": "lesson", "source_id": "team-a"},

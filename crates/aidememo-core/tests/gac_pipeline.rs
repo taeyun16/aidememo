@@ -21,6 +21,21 @@ use aidememo_core::types::{FactType, GacOpts, VectorRebuildOpts};
 use aidememo_core::{AideMemo, Config, FactInput};
 use tempfile::tempdir;
 
+fn open_temp_wiki(dir: &tempfile::TempDir) -> AideMemo {
+    let mut config = Config::default();
+    if cfg!(all(feature = "redb", not(feature = "sqlite"))) {
+        config.store.backend = "redb".to_string();
+    }
+    let suffix = if config.store.backend == "redb" {
+        "redb"
+    } else {
+        "sqlite"
+    };
+    let store_path = dir.path().join(format!("test.{suffix}"));
+    config.store.path = store_path.to_string_lossy().into_owned();
+    AideMemo::open(&store_path, config).unwrap()
+}
+
 fn add(wiki: &AideMemo, content: &str) {
     wiki.fact_add(FactInput {
         content: content.into(),
@@ -70,8 +85,7 @@ fn seed_store(wiki: &AideMemo) {
 #[ignore = "downloads model2vec weights from HuggingFace — local only"]
 fn gac_pipeline_supersede_then_current_only_rebuild_shrinks_index() {
     let dir = tempdir().unwrap();
-    let store_path = dir.path().join("test.redb");
-    let wiki = AideMemo::open(&store_path, Config::default()).unwrap();
+    let wiki = open_temp_wiki(&dir);
 
     seed_store(&wiki);
     let total = wiki.stats().unwrap().fact_count;
@@ -179,8 +193,7 @@ fn protected_types_pass_through_gac_unchanged() {
     // personalisation tier should be untouched even when its
     // members would otherwise form a tight cluster.
     let dir = tempdir().unwrap();
-    let store_path = dir.path().join("test.redb");
-    let wiki = AideMemo::open(&store_path, Config::default()).unwrap();
+    let wiki = open_temp_wiki(&dir);
 
     // 3 Preference paraphrases — would absolutely cluster tight at
     // θ=0.85 if not protected.
