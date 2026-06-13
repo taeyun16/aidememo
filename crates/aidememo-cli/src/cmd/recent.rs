@@ -61,7 +61,9 @@ pub fn run_recent(
     // in-process path below because the tool doesn't expose it
     // (the tool is the daemon's surface, not a 1:1 of the CLI).
     if sub.fact_type.is_none() {
-        if let Some(via) = crate::cmd::daemon::registered_endpoint(store_path) {
+        if let Some(via) =
+            crate::cmd::daemon::registered_endpoint(store_path, &config.store.backend)
+        {
             tracing::debug!(via = %via, "auto-discovered daemon for recent");
             return run_recent_via_daemon(&via, sub.limit.unwrap_or(20), &last);
         }

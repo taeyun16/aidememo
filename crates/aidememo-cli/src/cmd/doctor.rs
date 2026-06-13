@@ -595,6 +595,7 @@ pub(crate) struct DaemonStatus {
     pub port: Option<u16>,
     pub pid: Option<u32>,
     pub store: Option<String>,
+    pub backend: Option<String>,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -606,24 +607,27 @@ pub(crate) struct SharingHint {
 }
 
 pub(crate) fn collect_sharing_status(store_path: &Path, config: &Config) -> SharingReport {
-    let daemon = match daemon::registry_state(store_path) {
+    let daemon = match daemon::registry_state(store_path, &config.store.backend) {
         RegistryState::Healthy(reg) => DaemonStatus {
             state: "healthy",
             port: Some(reg.port),
             pid: Some(reg.pid),
             store: Some(reg.store.display().to_string()),
+            backend: reg.backend.clone(),
         },
         RegistryState::StaleRegistry => DaemonStatus {
             state: "stale_registry",
             port: None,
             pid: None,
             store: None,
+            backend: None,
         },
         RegistryState::None => DaemonStatus {
             state: "none",
             port: None,
             pid: None,
             store: None,
+            backend: None,
         },
     };
 
@@ -642,7 +646,7 @@ pub(crate) fn collect_sharing_status(store_path: &Path, config: &Config) -> Shar
         hints.push(SharingHint {
             code: "sharing_stale_daemon_registry",
             severity: "warn",
-            message: "daemon registry exists but the daemon is not healthy for this store"
+            message: "daemon registry exists but the daemon is not healthy for this store/backend"
                 .to_string(),
             action: "aidememo daemon status".to_string(),
         });
@@ -742,7 +746,10 @@ fn format_sharing(sharing: &SharingReport) -> String {
         sharing.daemon.pid,
     ) {
         ("healthy", Some(port), Some(pid)) => {
-            out.push_str(&format!("  daemon: healthy (pid={pid}, port={port})\n"));
+            let backend = sharing.daemon.backend.as_deref().unwrap_or("unknown");
+            out.push_str(&format!(
+                "  daemon: healthy (pid={pid}, port={port}, backend={backend})\n"
+            ));
         }
         ("stale_registry", _, _) => out.push_str("  daemon: stale registry\n"),
         _ => out.push_str("  daemon: not running\n"),
@@ -1416,6 +1423,7 @@ mod tests {
                 port: None,
                 pid: None,
                 store: None,
+                backend: None,
             },
             recommended_mode: "serverless_fail_fast",
             hints: Vec::new(),
@@ -1442,6 +1450,7 @@ mod tests {
                 port: Some(3000),
                 pid: Some(123),
                 store: Some("/tmp/wiki.sqlite".to_string()),
+                backend: Some("sqlite".to_string()),
             },
             recommended_mode: "daemon",
             hints: Vec::new(),

@@ -59,8 +59,12 @@ file lock.
 For shared writes, run one daemon:
 
 ```bash
-aidememo mcp-serve --port 3000 --store ~/.aidememo/team.sqlite
+aidememo --backend libsqlite daemon start --store ~/.aidememo/team.sqlite --port 3000
 ```
+
+Daemon auto-discovery is backend-aware. A daemon started for the same path with
+`redb` will not be reused by a CLI invocation configured for `sqlite` /
+`libsqlite`, and vice versa.
 
 For brief local contention, configure the wait budget:
 

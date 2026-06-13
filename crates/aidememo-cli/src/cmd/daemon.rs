@@ -10,7 +10,7 @@
 //! -----------
 //!   aidememo daemon start [--port N] [--store PATH]
 //!       Spawn `aidememo --backend <resolved> mcp-serve` in the background;
-//!       record port + PID + store path in ~/.aidememo/daemon.json.
+//!       record port + PID + store path + backend in ~/.aidememo/daemon.json.
 //!       Idempotent: if a healthy daemon is already registered, return its info.
 //!
 //!   aidememo daemon stop
@@ -25,14 +25,14 @@
 //! ---------
 //! Read CLI commands (`aidememo search`, `aidememo query`, …) consult the
 //! registry first. If a healthy daemon is registered AND its store
-//! matches the resolved store path, the CLI dispatches over HTTP
+//! and backend match the resolved CLI context, the CLI dispatches over HTTP
 //! instead of opening the store in-process. Set `AIDEMEMO_NO_DAEMON=1` to opt
 //! out for one invocation. See `daemon::registered_endpoint()`.
 
 use aidememo_core::AideMemoError;
 use bpaf::*;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command as ProcCommand, Stdio};
 use std::time::{Duration, Instant};
 
@@ -53,6 +53,8 @@ pub struct DaemonRegistry {
     pub port: u16,
     pub pid: u32,
     pub store: PathBuf,
+    #[serde(default)]
+    pub backend: Option<String>,
     pub started_at: u64, // epoch ms
 }
 
@@ -139,24 +141,24 @@ fn probe_health(port: u16) -> bool {
 
 /// Return a daemon URL the CLI should dispatch through, or None if
 /// no daemon is healthy / no registry exists / the daemon's store
-/// doesn't match the requested store. `AIDEMEMO_NO_DAEMON=1` short-circuits
-/// to None.
-pub fn registered_endpoint(want_store: &std::path::Path) -> Option<String> {
+/// and backend don't match the requested context. `AIDEMEMO_NO_DAEMON=1`
+/// short-circuits to None.
+pub fn registered_endpoint(want_store: &Path, want_backend: &str) -> Option<String> {
     if std::env::var("AIDEMEMO_NO_DAEMON").is_ok() {
         return None;
     }
-    daemon_for_hint(want_store).map(|reg| format!("http://127.0.0.1:{}", reg.port))
+    daemon_for_hint(want_store, want_backend).map(|reg| format!("http://127.0.0.1:{}", reg.port))
 }
 
 /// Discovery info used by error-hint code on the failure path.
 /// Ignores `AIDEMEMO_NO_DAEMON` — when the user opts out of dispatch they
 /// still need the diagnostic ("daemon is the one holding the lock").
-/// Returns the registry only if the recorded store matches AND
+/// Returns the registry only if the recorded store/backend match AND
 /// /health responds. Use `registry_state` if you also want to
 /// distinguish "no registry" from "stale registry".
-pub fn daemon_for_hint(want_store: &std::path::Path) -> Option<DaemonRegistry> {
+pub fn daemon_for_hint(want_store: &Path, want_backend: &str) -> Option<DaemonRegistry> {
     let reg = load_registry()?;
-    if reg.store != want_store {
+    if !registry_matches_request(&reg, want_store, want_backend) {
         return None;
     }
     if !probe_health(reg.port) {
@@ -166,8 +168,8 @@ pub fn daemon_for_hint(want_store: &std::path::Path) -> Option<DaemonRegistry> {
 }
 
 /// Three-way classification for error-hint code:
-///   - `Healthy(reg)`  : registry exists, store matches, /health OK
-///   - `StaleRegistry` : registry exists but isn't responding
+///   - `Healthy(reg)`  : registry exists, store/backend match, /health OK
+///   - `StaleRegistry` : registry exists but isn't usable for this request
 ///   - `None`          : no registry on disk
 pub enum RegistryState {
     Healthy(DaemonRegistry),
@@ -175,14 +177,32 @@ pub enum RegistryState {
     None,
 }
 
-pub fn registry_state(want_store: &std::path::Path) -> RegistryState {
+pub fn registry_state(want_store: &Path, want_backend: &str) -> RegistryState {
     let Some(reg) = load_registry() else {
         return RegistryState::None;
     };
-    if reg.store == want_store && probe_health(reg.port) {
+    if registry_matches_request(&reg, want_store, want_backend) && probe_health(reg.port) {
         RegistryState::Healthy(reg)
     } else {
         RegistryState::StaleRegistry
+    }
+}
+
+fn registry_matches_request(reg: &DaemonRegistry, want_store: &Path, want_backend: &str) -> bool {
+    reg.store == want_store && registry_backend_matches(reg.backend.as_deref(), want_backend)
+}
+
+fn registry_backend_matches(recorded_backend: Option<&str>, want_backend: &str) -> bool {
+    let Some(recorded_backend) = recorded_backend else {
+        return false;
+    };
+    canonical_backend(recorded_backend) == canonical_backend(want_backend)
+}
+
+fn canonical_backend(backend: &str) -> String {
+    match backend.trim().to_ascii_lowercase().as_str() {
+        "" | "sqlite" | "libsqlite" => "sqlite".to_string(),
+        other => other.to_string(),
     }
 }
 
@@ -213,7 +233,7 @@ pub fn run_daemon(
             start_daemon(port, store.unwrap_or(store_path), store_backend)
         }
         DaemonSub::Stop => stop_daemon(),
-        DaemonSub::Status => status_daemon(store_path),
+        DaemonSub::Status => status_daemon(store_path, store_backend),
     }
 }
 
@@ -222,14 +242,16 @@ fn start_daemon(
     store: PathBuf,
     store_backend: String,
 ) -> Result<String, AideMemoError> {
+    let daemon_backend = canonical_backend(&store_backend);
     // Fast path — already running and healthy.
     if let Some(reg) = load_registry() {
-        if reg.store == store && probe_health(reg.port) {
+        if registry_matches_request(&reg, &store, &daemon_backend) && probe_health(reg.port) {
             return Ok(format!(
-                "aidememo daemon already running (pid={}, port={}, store={})",
+                "aidememo daemon already running (pid={}, port={}, store={}, backend={})",
                 reg.pid,
                 reg.port,
-                reg.store.display()
+                reg.store.display(),
+                reg.backend.as_deref().unwrap_or("unknown"),
             ));
         }
         // Stale registry. Best-effort cleanup.
@@ -254,7 +276,7 @@ fn start_daemon(
 
     let child = ProcCommand::new(&exe)
         .arg("--backend")
-        .arg(store_backend)
+        .arg(&store_backend)
         .arg("mcp-serve")
         .arg("--port")
         .arg(port.to_string())
@@ -280,12 +302,14 @@ fn start_daemon(
                 port,
                 pid,
                 store: store.clone(),
+                backend: Some(daemon_backend.clone()),
                 started_at: now_ms(),
             };
             save_registry(&reg)?;
             return Ok(format!(
-                "aidememo daemon started (pid={pid}, port={port}, store={}, log={})",
+                "aidememo daemon started (pid={pid}, port={port}, store={}, backend={}, log={})",
                 store.display(),
+                daemon_backend,
                 log_path.display()
             ));
         }
@@ -330,23 +354,26 @@ fn stop_daemon() -> Result<String, AideMemoError> {
     Ok(format!("aidememo daemon stopped (pid was {})", reg.pid))
 }
 
-fn status_daemon(cli_store: PathBuf) -> Result<String, AideMemoError> {
+fn status_daemon(cli_store: PathBuf, cli_backend: String) -> Result<String, AideMemoError> {
     match load_registry() {
         None => Ok("aidememo daemon: not running (no registry at ~/.aidememo/daemon.json)".into()),
         Some(reg) => {
             let healthy = probe_health(reg.port);
-            let match_str = if reg.store == cli_store {
-                "matches CLI default store"
+            let match_str = if registry_matches_request(&reg, &cli_store, &cli_backend) {
+                "matches CLI store/backend"
+            } else if reg.store == cli_store {
+                "same store but DIFFERENT/unknown backend (CLI will not auto-discover)"
             } else {
-                "DIFFERENT from CLI default store (CLI may not auto-discover)"
+                "DIFFERENT from CLI store/backend (CLI will not auto-discover)"
             };
             Ok(format!(
-                "aidememo daemon: pid={}, port={}, store={}\n\
+                "aidememo daemon: pid={}, port={}, store={}, backend={}\n\
                  health: {}\n\
                  store match: {}",
                 reg.pid,
                 reg.port,
                 reg.store.display(),
+                reg.backend.as_deref().unwrap_or("unknown"),
                 if healthy {
                     "OK (responding)"
                 } else {
@@ -355,5 +382,52 @@ fn status_daemon(cli_store: PathBuf) -> Result<String, AideMemoError> {
                 match_str,
             ))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn registry(store: &str, backend: Option<&str>) -> DaemonRegistry {
+        DaemonRegistry {
+            port: 3000,
+            pid: 123,
+            store: PathBuf::from(store),
+            backend: backend.map(str::to_string),
+            started_at: 0,
+        }
+    }
+
+    #[test]
+    fn registry_match_requires_store_and_backend() {
+        let reg = registry("/tmp/wiki.sqlite", Some("sqlite"));
+
+        assert!(registry_matches_request(
+            &reg,
+            Path::new("/tmp/wiki.sqlite"),
+            "libsqlite"
+        ));
+        assert!(!registry_matches_request(
+            &reg,
+            Path::new("/tmp/wiki.sqlite"),
+            "redb"
+        ));
+        assert!(!registry_matches_request(
+            &reg,
+            Path::new("/tmp/other.sqlite"),
+            "sqlite"
+        ));
+    }
+
+    #[test]
+    fn legacy_registry_without_backend_does_not_auto_match() {
+        let reg = registry("/tmp/wiki.sqlite", None);
+
+        assert!(!registry_matches_request(
+            &reg,
+            Path::new("/tmp/wiki.sqlite"),
+            "sqlite"
+        ));
     }
 }

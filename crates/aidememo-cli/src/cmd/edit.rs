@@ -93,7 +93,9 @@ pub fn run_edit(
             // Daemon discovery — aidememo_fact_edit MCP tool takes the same
             // append/prepend/find+replace/content shape, so the args
             // forward 1:1.
-            if let Some(via) = crate::cmd::daemon::registered_endpoint(store_path) {
+            if let Some(via) =
+                crate::cmd::daemon::registered_endpoint(store_path, &config.store.backend)
+            {
                 tracing::debug!(via = %via, "auto-discovered daemon for fact edit");
                 return run_fact_edit_via_daemon(
                     &via,

@@ -79,6 +79,7 @@ fn main() {
     } else {
         config.default_store_path()
     };
+    let store_backend = config.store.backend.clone();
 
     let json = args.json;
 
@@ -170,7 +171,7 @@ fn main() {
             let msg = e.to_string();
             if msg.contains("Database already open") || msg.contains("Cannot acquire lock") {
                 use cmd::daemon::RegistryState;
-                match cmd::daemon::registry_state(&store_path) {
+                match cmd::daemon::registry_state(&store_path, &store_backend) {
                     RegistryState::Healthy(reg) => {
                         eprintln!(
                             "Hint: an AideMemo daemon is running on port {} and is holding this \
@@ -279,7 +280,7 @@ fn handle_entity(
             // We forward the JSON directly so the user gets a single
             // self-contained record; the local table view of an entity
             // doesn't carry meaningfully more than the JSON does.
-            if let Some(via) = cmd::daemon::registered_endpoint(path) {
+            if let Some(via) = cmd::daemon::registered_endpoint(path, &config.store.backend) {
                 tracing::debug!(via = %via, "auto-discovered daemon for entity get");
                 return run_entity_get_via_daemon(&via, &name);
             }
@@ -294,7 +295,7 @@ fn handle_entity(
             min_facts,
             limit,
         } => {
-            if let Some(via) = cmd::daemon::registered_endpoint(path) {
+            if let Some(via) = cmd::daemon::registered_endpoint(path, &config.store.backend) {
                 tracing::debug!(via = %via, "auto-discovered daemon for entity list");
                 let url = format!("{}/mcp", via.trim_end_matches('/'));
                 let mut args = serde_json::json!({});
@@ -413,7 +414,7 @@ fn handle_fact(
             // same store, dispatch through it and reuse the warm backend.
             // The daemon has aidememo_fact_add as a first-class MCP tool so
             // the path is symmetric with read commands.
-            if let Some(via) = cmd::daemon::registered_endpoint(path) {
+            if let Some(via) = cmd::daemon::registered_endpoint(path, &config.store.backend) {
                 tracing::debug!(via = %via, "auto-discovered daemon for fact add");
                 return run_fact_add_via_daemon(
                     &via,
@@ -612,7 +613,7 @@ fn handle_fact(
         cmd::FactSub::Get { id } => {
             // Same daemon-aware fast path as entity get — aidememo_fact_get
             // tool returns a JSON Fact record we forward verbatim.
-            if let Some(via) = cmd::daemon::registered_endpoint(path) {
+            if let Some(via) = cmd::daemon::registered_endpoint(path, &config.store.backend) {
                 tracing::debug!(via = %via, "auto-discovered daemon for fact get");
                 return run_fact_get_via_daemon(&via, &id);
             }
@@ -652,7 +653,7 @@ fn handle_fact(
                 && until_ms.is_none()
                 && as_of_ms.is_none();
             if simple {
-                if let Some(via) = cmd::daemon::registered_endpoint(path) {
+                if let Some(via) = cmd::daemon::registered_endpoint(path, &config.store.backend) {
                     tracing::debug!(via = %via, "auto-discovered daemon for fact list");
                     let url = format!("{}/mcp", via.trim_end_matches('/'));
                     let mut args = serde_json::json!({"limit": limit.unwrap_or(20)});
@@ -709,7 +710,7 @@ fn handle_fact(
         }),
         cmd::FactSub::Supersede { old_id, new_id } => {
             // Daemon discovery — aidememo_fact_supersede MCP tool exists.
-            if let Some(via) = cmd::daemon::registered_endpoint(path) {
+            if let Some(via) = cmd::daemon::registered_endpoint(path, &config.store.backend) {
                 tracing::debug!(via = %via, "auto-discovered daemon for fact supersede");
                 return run_fact_supersede_via_daemon(&via, &old_id, &new_id);
             }
@@ -1356,7 +1357,7 @@ fn handle_traverse(
     sub: cmd::TraverseSub,
     json: bool,
 ) -> Result<String, AideMemoError> {
-    if let Some(via) = cmd::daemon::registered_endpoint(path) {
+    if let Some(via) = cmd::daemon::registered_endpoint(path, &config.store.backend) {
         tracing::debug!(via = %via, "auto-discovered daemon for traverse");
         let url = format!("{}/mcp", via.trim_end_matches('/'));
         let body = serde_json::json!({
@@ -1388,7 +1389,7 @@ fn handle_path(
     sub: cmd::PathSub,
     json: bool,
 ) -> Result<String, AideMemoError> {
-    if let Some(via) = cmd::daemon::registered_endpoint(path) {
+    if let Some(via) = cmd::daemon::registered_endpoint(path, &config.store.backend) {
         tracing::debug!(via = %via, "auto-discovered daemon for path");
         let url = format!("{}/mcp", via.trim_end_matches('/'));
         let body = serde_json::json!({
@@ -1478,7 +1479,7 @@ fn handle_search(
     // Opportunistic discovery: if a `aidememo daemon` is running and serving
     // the same store, dispatch through it so we skip a local backend open and
     // (for hybrid) model load. Set AIDEMEMO_NO_DAEMON=1 to bypass.
-    if let Some(via) = cmd::daemon::registered_endpoint(path) {
+    if let Some(via) = cmd::daemon::registered_endpoint(path, &config.store.backend) {
         tracing::debug!(via = %via, "auto-discovered daemon");
         return run_search_via_daemon(&via, &sub, default_limit, json);
     }
@@ -1739,7 +1740,7 @@ fn handle_query(
     // pretty-print whatever the daemon returned (the formatter expects
     // an in-memory QueryResult, but a JSON dump is the next-best thing
     // for a one-shot CLI use of `--via`).
-    if let Some(via) = cmd::daemon::registered_endpoint(path) {
+    if let Some(via) = cmd::daemon::registered_endpoint(path, &config.store.backend) {
         tracing::debug!(via = %via, "auto-discovered daemon for query");
         return run_query_via_daemon(&via, &sub);
     }
@@ -1942,7 +1943,7 @@ fn handle_lint(
     sub: cmd::LintSub,
     json: bool,
 ) -> Result<String, AideMemoError> {
-    if let Some(via) = cmd::daemon::registered_endpoint(path) {
+    if let Some(via) = cmd::daemon::registered_endpoint(path, &config.store.backend) {
         tracing::debug!(via = %via, "auto-discovered daemon for lint");
         let url = format!("{}/mcp", via.trim_end_matches('/'));
         let body = serde_json::json!({
