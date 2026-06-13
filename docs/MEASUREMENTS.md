@@ -239,7 +239,10 @@ Runtime promotion status:
 * `aidememo-cli` defaults to SQLite and exposes a `redb` Cargo feature that
   forwards `aidememo-core/redb`; build with
   `cargo build -p aidememo-cli --features redb` before setting
-  `aidememo config set store.backend redb`.
+  `aidememo config set store.backend redb`. Redb-only builds
+  (`--no-default-features --features redb`) default to `store.backend = "redb"`
+  and `./_meta/wiki.redb`, so the optional backend remains directly usable
+  without a SQLite feature compiled in.
 * The Python, Node, Elixir, and C native binding crates share the same default
   SQLite backend and optional `redb` feature. This keeps the SDK replacement
   path aligned with CLI/MCP instead of making backend choice a CLI-only spike.

@@ -49,12 +49,14 @@ pub struct ProjectConfig {
 pub struct StoreConfig {
     /// Storage backend. Supported values:
     ///
-    /// - `"sqlite"` (default): bundled local SQLite backend.
+    /// - `"sqlite"` (default when compiled with SQLite): bundled local SQLite backend.
     /// - `"libsqlite"`: alias for the bundled local SQLite backend.
-    /// - `"redb"`: optional embedded redb backend behind the `redb` Cargo feature.
+    /// - `"redb"`: optional embedded redb backend behind the `redb` Cargo feature
+    ///   (default in redb-only builds).
     #[serde(default = "default_backend")]
     pub backend: String,
     /// Path to the store file (relative to wiki root or absolute).
+    #[serde(default = "default_store_file_path")]
     pub path: String,
     /// redb commit durability. Ignored by SQLite. Two options:
     ///
@@ -88,14 +90,26 @@ fn default_durability() -> String {
 }
 
 fn default_backend() -> String {
-    "sqlite".to_string()
+    if cfg!(all(feature = "redb", not(feature = "sqlite"))) {
+        "redb".to_string()
+    } else {
+        "sqlite".to_string()
+    }
+}
+
+fn default_store_file_path() -> String {
+    if cfg!(all(feature = "redb", not(feature = "sqlite"))) {
+        "./_meta/wiki.redb".to_string()
+    } else {
+        "./_meta/wiki.sqlite".to_string()
+    }
 }
 
 impl Default for StoreConfig {
     fn default() -> Self {
         Self {
             backend: default_backend(),
-            path: "./_meta/wiki.sqlite".to_string(),
+            path: default_store_file_path(),
             durability: default_durability(),
             lock_retry_ms: 0,
         }
@@ -1018,7 +1032,7 @@ mod tests {
     #[test]
     fn test_config_default() {
         let config = Config::default();
-        assert_eq!(config.store.path, "./_meta/wiki.sqlite");
+        assert_eq!(config.store.path, default_store_file_path());
         assert_eq!(config.model.name, "minishlab/potion-multilingual-128M");
         assert_eq!(config.model.download_dir, "~/.aidememo/models/downloads");
         assert_eq!(config.search.default_limit, 10);
@@ -1053,10 +1067,10 @@ mod tests {
     }
 
     #[test]
-    fn store_backend_default_is_sqlite() {
+    fn store_backend_default_matches_enabled_backends() {
         let config = Config::default();
-        assert_eq!(config.store.backend, "sqlite");
-        assert_eq!(config.get("store.backend"), Some("sqlite".to_string()));
+        assert_eq!(config.store.backend, default_backend());
+        assert_eq!(config.get("store.backend"), Some(default_backend()));
     }
 
     #[test]
