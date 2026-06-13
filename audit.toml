@@ -7,13 +7,6 @@
 
 [advisories]
 ignore = [
-    # pyo3 0.23.x — buffer-overflow risk in PyString::from_object on huge
-    # inputs. We're on the 0.23 line because pythonize/maturin still pin it;
-    # 0.24 needs a coordinated aidememo-python rewrite (Bound API changes).
-    # We don't accept >>4 GB Python strings into PyString from untrusted
-    # callers anyway. Remove on pyo3 0.24 bump.
-    "RUSTSEC-2025-0020",
-
     # rustls-webpki transitive (pulled in by ureq/reqwest's TLS stack).
     # Both panic and name-constraint advisories are about server-cert
     # validation paths; aidememo only uses TLS as a *client* against pinned

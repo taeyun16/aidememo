@@ -21,7 +21,7 @@ use aidememo_core::{
 use pyo3::create_exception;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyModule};
+use pyo3::types::{PyAny, PyDict, PyModule};
 use pythonize::pythonize;
 use std::path::Path;
 use std::sync::Arc;
@@ -140,7 +140,7 @@ fn attach_session_entity(
     Ok(())
 }
 
-fn to_py<T: serde::Serialize>(py: Python<'_>, value: &T) -> PyResult<PyObject> {
+fn to_py<T: serde::Serialize>(py: Python<'_>, value: &T) -> PyResult<Py<PyAny>> {
     pythonize(py, value)
         .map(|b| b.into())
         .map_err(|e| err(e.to_string()))
@@ -151,10 +151,11 @@ fn to_py<T: serde::Serialize>(py: Python<'_>, value: &T) -> PyResult<PyObject> {
 /// match arm. Returns `Err` on extraction failure (wrong type).
 fn dict_opt<'py, T>(item: &Bound<'py, PyDict>, key: &str) -> PyResult<Option<T>>
 where
-    T: pyo3::FromPyObject<'py>,
+    T: pyo3::conversion::FromPyObjectOwned<'py>,
+    for<'a> <T as pyo3::FromPyObject<'a, 'py>>::Error: std::fmt::Display,
 {
     match item.get_item(key)? {
-        Some(v) if !v.is_none() => Ok(Some(v.extract::<T>()?)),
+        Some(v) if !v.is_none() => Ok(Some(v.extract::<T>().map_err(|e| err(e.to_string()))?)),
         _ => Ok(None),
     }
 }
@@ -275,7 +276,7 @@ impl PyAideMemo {
         min_confidence: Option<f32>,
         current_only: bool,
         source_id: Option<String>,
-    ) -> PyResult<PyObject> {
+    ) -> PyResult<Py<PyAny>> {
         let opts = SearchOpts {
             limit,
             min_confidence,
@@ -302,7 +303,7 @@ impl PyAideMemo {
         current_only: bool,
         mode: Option<String>,
         source_id: Option<String>,
-    ) -> PyResult<PyObject> {
+    ) -> PyResult<Py<PyAny>> {
         let opts = QueryOpts {
             search_limit: limit,
             depth,
@@ -334,7 +335,7 @@ impl PyAideMemo {
         depth: u32,
         recent_limit: usize,
         bm25_only: bool,
-    ) -> PyResult<PyObject> {
+    ) -> PyResult<Py<PyAny>> {
         let result = self
             .0
             .workflow_start(
@@ -363,7 +364,7 @@ impl PyAideMemo {
         entity: String,
         depth: u32,
         direction: Option<String>,
-    ) -> PyResult<PyObject> {
+    ) -> PyResult<Py<PyAny>> {
         let opts = TraverseOpts {
             depth,
             relation_types: None,
@@ -374,7 +375,7 @@ impl PyAideMemo {
     }
 
     /// Find a path between two entities. Returns a list of steps or `None`.
-    fn path_find(&self, py: Python<'_>, from: String, to: String) -> PyResult<PyObject> {
+    fn path_find(&self, py: Python<'_>, from: String, to: String) -> PyResult<Py<PyAny>> {
         let result = self.0.path_find(&from, &to).map_err(map_err)?;
         to_py(py, &result)
     }
@@ -403,7 +404,7 @@ impl PyAideMemo {
     }
 
     /// Get a single entity by name (or alias).
-    fn entity_get(&self, py: Python<'_>, name: String) -> PyResult<PyObject> {
+    fn entity_get(&self, py: Python<'_>, name: String) -> PyResult<Py<PyAny>> {
         let entity = self.0.entity_get(&name).map_err(map_err)?;
         to_py(py, &entity)
     }
@@ -416,7 +417,7 @@ impl PyAideMemo {
         limit: Option<usize>,
         entity_type: Option<String>,
         min_facts: Option<u32>,
-    ) -> PyResult<PyObject> {
+    ) -> PyResult<Py<PyAny>> {
         let opts = ListOpts {
             entity_type: entity_type.as_deref().and_then(parse_entity_type),
             min_facts,
@@ -505,7 +506,7 @@ impl PyAideMemo {
     }
 
     /// Get a fact by ID.
-    fn fact_get(&self, py: Python<'_>, fact_id: String) -> PyResult<PyObject> {
+    fn fact_get(&self, py: Python<'_>, fact_id: String) -> PyResult<Py<PyAny>> {
         let id = parse_fact_id(&fact_id)?;
         let fact = self.0.fact_get(&id).map_err(map_err)?;
         to_py(py, &fact)
@@ -536,7 +537,7 @@ impl PyAideMemo {
         since_epoch_ms: Option<u64>,
         until_epoch_ms: Option<u64>,
         source_id: Option<String>,
-    ) -> PyResult<PyObject> {
+    ) -> PyResult<Py<PyAny>> {
         let entity_id = match entity {
             Some(name) => Some(self.0.resolve_entity(&name).map_err(map_err)?),
             None => None,
@@ -565,7 +566,7 @@ impl PyAideMemo {
 
     /// Return currently pinned facts, sorted by recency.
     #[pyo3(signature = (limit=10))]
-    fn pinned_facts(&self, py: Python<'_>, limit: usize) -> PyResult<PyObject> {
+    fn pinned_facts(&self, py: Python<'_>, limit: usize) -> PyResult<Py<PyAny>> {
         let facts = self.0.pinned_facts(limit).map_err(map_err)?;
         to_py(py, &facts)
     }
@@ -611,7 +612,7 @@ impl PyAideMemo {
         py: Python<'_>,
         entity: String,
         direction: Option<String>,
-    ) -> PyResult<PyObject> {
+    ) -> PyResult<Py<PyAny>> {
         let dir = parse_direction(direction.as_deref());
         let relations = self.0.relations_get(&entity, dir).map_err(map_err)?;
         to_py(py, &relations)
@@ -621,7 +622,7 @@ impl PyAideMemo {
 
     /// Ingest a markdown wiki into the graph.
     #[pyo3(signature = (wiki_root, incremental=false))]
-    fn ingest(&self, py: Python<'_>, wiki_root: String, incremental: bool) -> PyResult<PyObject> {
+    fn ingest(&self, py: Python<'_>, wiki_root: String, incremental: bool) -> PyResult<Py<PyAny>> {
         let stats = self
             .0
             .ingest(Path::new(&wiki_root), incremental)
@@ -630,13 +631,13 @@ impl PyAideMemo {
     }
 
     /// Run lint checks; returns a list of issues.
-    fn lint(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn lint(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let issues = self.0.lint().map_err(map_err)?;
         to_py(py, &issues)
     }
 
     /// Store statistics (entity/fact/relation count, size, last ingest time).
-    fn stats(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn stats(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let stats = self.0.stats().map_err(map_err)?;
         to_py(py, &stats)
     }

@@ -72,9 +72,9 @@ gate, docs-site build, binding smoke, workflow smoke, and SDK promotion check.
 `maturin` is intentionally run through `uvx` using the pinned spec from
 `mise.toml`, not from whichever `maturin` happens to be on `PATH`.
 
-The Python binding uses PyO3 0.23, so release smoke scripts select a Python
-3.9-3.13 interpreter for native builds. If your default `python3` is newer,
-set the interpreter explicitly:
+The Python binding uses PyO3 0.29. Release smoke scripts prefer the same
+Python 3.13 interpreter used by CI, while accepting PyO3-supported local
+interpreters. To force a specific interpreter, set it explicitly:
 
 ```bash
 AIDEMEMO_PYO3_PYTHON=python3.13 scripts/release-preflight.sh

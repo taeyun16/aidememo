@@ -98,10 +98,7 @@ jobs:
         os: [ubuntu-latest, macos-latest]
       fail-fast: false
     runs-on: ${{ matrix.os }}
-    # Pin Python to a version PyO3 0.23 supports (max 3.13). The
-    # macos-latest runner ships 3.14 by default, which makes pyo3-ffi's
-    # build script abort with "configured Python interpreter version
-    # is newer than PyO3's maximum supported version".
+    # Pin Python for reproducible PyO3 builds across ubuntu/macos runners.
     env:
       PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
     steps:
@@ -155,7 +152,6 @@ jobs:
       # an audit.toml in repo root).
       - run: |
           cargo audit \
-            --ignore RUSTSEC-2025-0020 \
             --ignore RUSTSEC-2026-0104 \
             --ignore RUSTSEC-2026-0098 \
             --ignore RUSTSEC-2026-0099 \

@@ -2120,6 +2120,10 @@ fn tool_context(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, String>
         .and_then(|v| v.as_u64())
         .unwrap_or(7);
     let depth = args.get("depth").and_then(|v| v.as_u64()).unwrap_or(2) as u32;
+    let bm25_only = args
+        .get("bm25_only")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     let source_id = mcp_source_id(args);
     let source_id = source_id.as_deref();
 
@@ -2170,7 +2174,7 @@ fn tool_context(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, String>
             since: None,
             current_only: true,
             mode: aidememo_core::QueryMode::default(),
-            bm25_only: false,
+            bm25_only,
             source_id: source_id.map(str::to_string),
         };
         let qres = wiki.query(t, q_opts).map_err(|e| e.to_string())?;
@@ -3882,7 +3886,8 @@ mod tests {
             &json!({
                 "topic": "Redis worker timeout cache policy",
                 "source_id": "alpha",
-                "limit": 10
+                "limit": 10,
+                "bm25_only": true
             }),
             &wiki,
         )
