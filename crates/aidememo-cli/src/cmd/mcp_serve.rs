@@ -256,14 +256,9 @@ pub fn run_mcp_serve(
     bind: Option<String>,
     auth_token: Option<String>,
     auth_token_file: Option<PathBuf>,
-    wiki_root: Option<PathBuf>,
+    store_path: PathBuf,
+    config: Config,
 ) -> Result<String, aidememo_core::AideMemoError> {
-    let config = Config::load().unwrap_or_default();
-    let store_path = match wiki_root {
-        Some(p) => p,
-        None => PathBuf::from(&config.store.path),
-    };
-
     let port: u16 = port.unwrap_or(3000);
     // Default to loopback so a casual `aidememo mcp-serve` doesn't expose
     // the store on every network interface. Operators who want

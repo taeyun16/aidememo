@@ -4,7 +4,7 @@
 //! to `.md` files and triggers an incremental re-ingest when files change.
 
 use bpaf::*;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::cmd::Command;
@@ -50,6 +50,8 @@ pub fn watch_command() -> impl Parser<Command> {
 /// ingest and prints the top-5 hits.
 pub fn run_watch(
     wiki_root: PathBuf,
+    store_path: &Path,
+    config: Config,
     interval_secs: Option<u64>,
     search_query: Option<String>,
 ) -> Result<String, AideMemoError> {
@@ -69,12 +71,8 @@ pub fn run_watch(
 
     let interval = Duration::from_secs(interval_secs.unwrap_or(5));
 
-    // Load config
-    let config = Config::load().unwrap_or_default();
-    let store_path = PathBuf::from(&config.store.path);
-
     // Open the store
-    let wiki = AideMemo::open(&store_path, config)?;
+    let wiki = AideMemo::open(store_path, config)?;
 
     // Do an initial ingest
     println!("Initial ingest...");

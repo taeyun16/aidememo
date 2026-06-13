@@ -9,9 +9,9 @@
 //! Subcommands
 //! -----------
 //!   aidememo daemon start [--port N] [--store PATH]
-//!       Spawn `aidememo mcp-serve` in the background; record port + PID +
-//!       store path in ~/.aidememo/daemon.json. Idempotent: if a healthy
-//!       daemon is already registered, return its info.
+//!       Spawn `aidememo --backend <resolved> mcp-serve` in the background;
+//!       record port + PID + store path in ~/.aidememo/daemon.json.
+//!       Idempotent: if a healthy daemon is already registered, return its info.
 //!
 //!   aidememo daemon stop
 //!       Read the registry, send SIGTERM to the recorded PID, delete
@@ -29,7 +29,7 @@
 //! instead of opening the store in-process. Set `AIDEMEMO_NO_DAEMON=1` to opt
 //! out for one invocation. See `daemon::registered_endpoint()`.
 
-use aidememo_core::{AideMemoError, Config};
+use aidememo_core::AideMemoError;
 use bpaf::*;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -203,15 +203,25 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
-pub fn run_daemon(sub: DaemonSub, store_path: PathBuf) -> Result<String, AideMemoError> {
+pub fn run_daemon(
+    sub: DaemonSub,
+    store_path: PathBuf,
+    store_backend: String,
+) -> Result<String, AideMemoError> {
     match sub {
-        DaemonSub::Start { port, store } => start_daemon(port, store.unwrap_or(store_path)),
+        DaemonSub::Start { port, store } => {
+            start_daemon(port, store.unwrap_or(store_path), store_backend)
+        }
         DaemonSub::Stop => stop_daemon(),
-        DaemonSub::Status => status_daemon(),
+        DaemonSub::Status => status_daemon(store_path),
     }
 }
 
-fn start_daemon(port: Option<u16>, store: PathBuf) -> Result<String, AideMemoError> {
+fn start_daemon(
+    port: Option<u16>,
+    store: PathBuf,
+    store_backend: String,
+) -> Result<String, AideMemoError> {
     // Fast path — already running and healthy.
     if let Some(reg) = load_registry() {
         if reg.store == store && probe_health(reg.port) {
@@ -230,8 +240,8 @@ fn start_daemon(port: Option<u16>, store: PathBuf) -> Result<String, AideMemoErr
         .or_else(pick_free_port)
         .ok_or_else(|| AideMemoError::Internal("no free port available".into()))?;
 
-    // Spawn `aidememo mcp-serve --port PORT <store>` detached. We use the
-    // current binary so a `cargo run` build path works just as well
+    // Spawn `aidememo --backend BACKEND mcp-serve --port PORT <store>`
+    // detached. We use the current binary so a `cargo run` build path works just as well
     // as an installed `aidememo`.
     let exe = std::env::current_exe()
         .map_err(|e| AideMemoError::Internal(format!("current_exe: {e}")))?;
@@ -243,6 +253,8 @@ fn start_daemon(port: Option<u16>, store: PathBuf) -> Result<String, AideMemoErr
         .map_err(|e| AideMemoError::Internal(format!("dup log fd: {e}")))?;
 
     let child = ProcCommand::new(&exe)
+        .arg("--backend")
+        .arg(store_backend)
         .arg("mcp-serve")
         .arg("--port")
         .arg(port.to_string())
@@ -318,13 +330,11 @@ fn stop_daemon() -> Result<String, AideMemoError> {
     Ok(format!("aidememo daemon stopped (pid was {})", reg.pid))
 }
 
-fn status_daemon() -> Result<String, AideMemoError> {
+fn status_daemon(cli_store: PathBuf) -> Result<String, AideMemoError> {
     match load_registry() {
         None => Ok("aidememo daemon: not running (no registry at ~/.aidememo/daemon.json)".into()),
         Some(reg) => {
             let healthy = probe_health(reg.port);
-            let config = Config::load().unwrap_or_default();
-            let cli_store = PathBuf::from(&config.store.path);
             let match_str = if reg.store == cli_store {
                 "matches CLI default store"
             } else {

@@ -116,7 +116,9 @@ fn main() {
             config,
             json,
         ),
-        cmd::Command::Watch(sub) => cmd::watch::run_watch(sub.wiki_root, sub.interval, sub.search),
+        cmd::Command::Watch(sub) => {
+            cmd::watch::run_watch(sub.wiki_root, &store_path, config, sub.interval, sub.search)
+        }
         cmd::Command::McpServe(sub) => {
             // Mirror the Mcp arm — honour --store / --project unless
             // the user passed a positional WIKI_ROOT.
@@ -126,20 +128,23 @@ fn main() {
                 sub.bind,
                 sub.auth_token,
                 sub.auth_token_file,
-                Some(path),
+                path,
+                config,
             )
         }
         cmd::Command::Mcp(sub) => {
             // Honour the global --store / --project resolution if the
             // user didn't pass an explicit positional WIKI_ROOT.
             let path = sub.wiki_root.unwrap_or_else(|| store_path.clone());
-            cmd::mcp_stdio::run_mcp(Some(path))
+            cmd::mcp_stdio::run_mcp(path, config)
         }
         cmd::Command::McpInstall(sub) => cmd::mcp_install::run_mcp_install(sub, json),
         cmd::Command::Completions(sub) => cmd::completions::run_completions(sub),
         cmd::Command::Pending(sub) => cmd::pending::run_pending(sub, &store_path, config, json),
         cmd::Command::VectorRebuild(sub) => handle_vector_rebuild(&store_path, config, sub),
-        cmd::Command::Daemon(sub) => cmd::daemon::run_daemon(sub, store_path.clone()),
+        cmd::Command::Daemon(sub) => {
+            cmd::daemon::run_daemon(sub, store_path.clone(), config.store.backend.clone())
+        }
         cmd::Command::Extract(sub) => handle_extract(&store_path, config, sub, json),
         cmd::Command::Session(sub) => handle_session(&store_path, config, sub, json),
         cmd::Command::Workflow(sub) => handle_workflow(&store_path, config, sub, json),

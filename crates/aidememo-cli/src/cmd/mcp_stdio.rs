@@ -36,13 +36,10 @@ pub fn mcp_command() -> impl Parser<Command> {
         .help("Start MCP server over stdio (for Claude Code / Codex CLI)")
 }
 
-pub fn run_mcp(wiki_root: Option<PathBuf>) -> Result<String, aidememo_core::AideMemoError> {
-    let config = Config::load().unwrap_or_default();
-    let store_path = match wiki_root {
-        Some(p) => p,
-        None => PathBuf::from(&config.store.path),
-    };
-
+pub fn run_mcp(
+    store_path: PathBuf,
+    config: Config,
+) -> Result<String, aidememo_core::AideMemoError> {
     let wiki = AideMemo::open(store_path.as_ref(), config)?;
 
     let runtime = tokio::runtime::Runtime::new().map_err(|e| {
