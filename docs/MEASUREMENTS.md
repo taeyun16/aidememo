@@ -295,6 +295,7 @@ Validation added in the runtime spike:
 
 ```bash
 cargo test -p aidememo-core
+cargo test -p aidememo-core --no-default-features --features sqlite
 cargo test -p aidememo-core --no-default-features --features redb
 cargo test -p aidememo-core --features sqlite,redb archive_contract_matches_redb_and_sqlite_public_api
 cargo test -p aidememo-core --features sqlite,semantic,semantic-adapt

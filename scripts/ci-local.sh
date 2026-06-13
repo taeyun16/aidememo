@@ -111,6 +111,7 @@ lint() {
 }
 
 tests() {
+    run "${cargo_cmd[@]}" test -p aidememo-core --no-default-features --features sqlite
     run "${cargo_cmd[@]}" test -p aidememo-core --no-default-features --features redb
     run "${cargo_cmd[@]}" check -p aidememo-core --no-default-features --features s3
     run "$ROOT_DIR/scripts/storage-backend-feature-gate.sh"

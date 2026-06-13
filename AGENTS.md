@@ -31,6 +31,7 @@ cargo check -p aidememo-python
 cargo check -p aidememo-napi
 cargo check -p aidememo-nif
 cargo check -p aidememo-ffi
+cargo test -p aidememo-core --no-default-features --features sqlite
 cargo check -p aidememo-core --no-default-features --features redb
 cargo test -p aidememo-core --features semantic
 cargo test -p aidememo-cli --bin aidememo
