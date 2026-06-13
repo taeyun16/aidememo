@@ -5,6 +5,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BASE="${AIDEMEMO_SQLITE_MCP_SOAK_BASE:-$(mktemp -d "${TMPDIR:-/tmp}/aidememo-sqlite-mcp-soak.XXXXXX")}"
 BIN="$ROOT_DIR/target/debug/aidememo"
+BACKEND="${AIDEMEMO_SQLITE_MCP_SOAK_BACKEND:-libsqlite}"
 WRITES="${AIDEMEMO_SQLITE_MCP_SOAK_WRITES:-200}"
 WORKERS="${AIDEMEMO_SQLITE_MCP_SOAK_WORKERS:-16}"
 
@@ -47,8 +48,13 @@ WIKI_DIR="$BASE/wiki"
 LOG="$BASE/mcp.log"
 mkdir -p "$HOME_DIR" "$WIKI_DIR"
 
-HOME="$HOME_DIR" "$BIN" config set store.backend sqlite >/dev/null
+HOME="$HOME_DIR" "$BIN" config set store.backend "$BACKEND" >/dev/null
 HOME="$HOME_DIR" "$BIN" config set search.semantic_weight 0 >/dev/null
+backend="$(HOME="$HOME_DIR" "$BIN" config get store.backend)"
+if [[ "$backend" != "$BACKEND" ]]; then
+    echo "expected $BACKEND backend, got $backend" >&2
+    exit 1
+fi
 cat > "$WIKI_DIR/McpPlatform.md" <<'MD'
 # McpPlatform
 
@@ -435,8 +441,9 @@ if stats["entity_count"] < 1:
     raise SystemExit(f"expected at least one entity, got {stats['entity_count']}: {stats}")
 PY
 
-search_out="$(HOME="$HOME_DIR" "$BIN" --store "$STORE" search "soak fact 0199" --limit 5)"
-if [[ "$search_out" != *"SQLite MCP soak fact 0199"* ]]; then
+TAIL_INDEX="$(printf '%04d' "$((WRITES - 1))")"
+search_out="$(HOME="$HOME_DIR" "$BIN" --store "$STORE" search "soak fact $TAIL_INDEX" --limit 5)"
+if [[ "$search_out" != *"SQLite MCP soak fact $TAIL_INDEX"* ]]; then
     echo "soak search did not return the tail fact" >&2
     echo "$search_out" >&2
     exit 1
@@ -445,4 +452,4 @@ fi
 mcp_cleanup
 trap cleanup EXIT
 
-echo "sqlite mcp soak ok: ${WRITES} writes across ${WORKERS} workers"
+echo "sqlite mcp soak ok (${BACKEND}): ${WRITES} writes across ${WORKERS} workers"
