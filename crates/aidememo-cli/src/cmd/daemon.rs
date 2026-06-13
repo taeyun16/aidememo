@@ -268,6 +268,10 @@ fn start_daemon(
     let exe = std::env::current_exe()
         .map_err(|e| AideMemoError::Internal(format!("current_exe: {e}")))?;
     let log_path = registry_path()?.with_file_name("daemon.log");
+    if let Some(parent) = log_path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| AideMemoError::Internal(format!("create {}: {e}", parent.display())))?;
+    }
     let log = std::fs::File::create(&log_path)
         .map_err(|e| AideMemoError::Internal(format!("create {}: {e}", log_path.display())))?;
     let log_err = log

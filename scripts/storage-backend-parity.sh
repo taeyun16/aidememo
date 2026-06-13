@@ -50,7 +50,9 @@ REDB_STORE="$BASE/source.redb"
 SQLITE_STORE="$BASE/target.sqlite"
 EXPORT="$BASE/export.jsonl"
 MCP_STORE="$BASE/mcp.sqlite"
-mkdir -p "$REDB_HOME" "$SQLITE_HOME" "$WIKI_DIR"
+DAEMON_HOME="$BASE/home-daemon"
+DAEMON_STORE="$BASE/daemon.sqlite"
+mkdir -p "$REDB_HOME" "$SQLITE_HOME" "$DAEMON_HOME" "$WIKI_DIR"
 
 HOME="$REDB_HOME" "$BIN" config set store.backend redb >/dev/null
 
@@ -214,4 +216,53 @@ PY
 mcp_cleanup
 trap cleanup EXIT
 
-echo "storage backend parity ok: redb/SQLite/libsqlite mutation/feedback/sync + redb export/import -> SQLite/libsqlite + relation + archive + MCP concurrency"
+DAEMON_PORT="$(find_port)"
+HOME="$DAEMON_HOME" "$BIN" --backend libsqlite daemon start \
+    --store "$DAEMON_STORE" \
+    --port "$DAEMON_PORT" >/dev/null
+daemon_cleanup() {
+    HOME="$DAEMON_HOME" "$BIN" --backend libsqlite daemon stop >/dev/null 2>&1 || true
+}
+trap 'daemon_cleanup; cleanup' EXIT
+
+python3 - "$DAEMON_HOME/.aidememo/daemon.json" "$DAEMON_STORE" <<'PY'
+import json
+import pathlib
+import sys
+
+registry_path = pathlib.Path(sys.argv[1])
+expected_store = pathlib.Path(sys.argv[2])
+registry = json.loads(registry_path.read_text())
+if registry.get("backend") != "sqlite":
+    raise SystemExit(f"expected daemon registry backend=sqlite, got {registry.get('backend')!r}")
+if pathlib.Path(registry.get("store", "")) != expected_store:
+    raise SystemExit(
+        f"expected daemon registry store {expected_store}, got {registry.get('store')!r}"
+    )
+PY
+
+daemon_same="$(HOME="$DAEMON_HOME" "$BIN" --backend sqlite --store "$DAEMON_STORE" daemon status)"
+if [[ "$daemon_same" != *"matches CLI store/backend"* ]]; then
+    echo "expected sqlite daemon status to match backend" >&2
+    echo "$daemon_same" >&2
+    exit 1
+fi
+
+daemon_alias="$(HOME="$DAEMON_HOME" "$BIN" --backend libsqlite --store "$DAEMON_STORE" daemon status)"
+if [[ "$daemon_alias" != *"matches CLI store/backend"* ]]; then
+    echo "expected libsqlite daemon status to match sqlite backend alias" >&2
+    echo "$daemon_alias" >&2
+    exit 1
+fi
+
+daemon_mismatch="$(HOME="$DAEMON_HOME" "$BIN" --backend redb --store "$DAEMON_STORE" daemon status)"
+if [[ "$daemon_mismatch" != *"same store but DIFFERENT/unknown backend"* ]]; then
+    echo "expected redb daemon status to reject sqlite backend registry" >&2
+    echo "$daemon_mismatch" >&2
+    exit 1
+fi
+
+daemon_cleanup
+trap cleanup EXIT
+
+echo "storage backend parity ok: redb/SQLite/libsqlite mutation/feedback/sync + redb export/import -> SQLite/libsqlite + relation + archive + MCP concurrency + daemon backend registry"

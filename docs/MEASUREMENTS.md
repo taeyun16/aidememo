@@ -273,7 +273,9 @@ Runtime promotion status:
   mutation and feedback parity, redb export/import into canonical SQLite and
   the `libsqlite` alias, redb/SQLite/libsqlite sync compatibility, relation
   preservation, SQLite cold-tier archive/search, and 24 concurrent MCP writes
-  through `mcp-serve`.
+  through `mcp-serve`. It also starts a `libsqlite` daemon and verifies the
+  registry records the canonical SQLite backend, accepts the `sqlite` /
+  `libsqlite` aliases, and rejects same-path redb discovery.
 * `scripts/storage-backend-sqlite-full-surface.sh` is the SQLite-only
   full-surface smoke: it builds the CLI with `--no-default-features --features
   sqlite` and exercises init, ingest, entity/fact writes, entity rename/delete,
