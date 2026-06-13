@@ -40,9 +40,15 @@ use crate::store::{FACTS_TABLE, Store};
 use crate::types::FactId;
 
 /// Compute the cold-tier db path for a hot db file. Both files sit
-/// side by side so user backups copy them together.
+/// side by side so user backups copy them together. This follows the compiled
+/// default backend: SQLite in normal builds, redb in redb-only builds.
 pub fn cold_path_for(hot_path: &std::path::Path) -> PathBuf {
-    cold_path_for_backend(hot_path, "redb")
+    let backend = if cfg!(all(feature = "redb", not(feature = "sqlite"))) {
+        "redb"
+    } else {
+        "sqlite"
+    };
+    cold_path_for_backend(hot_path, backend)
 }
 
 /// Compute the cold-tier db path for a hot db file and selected backend.
@@ -60,7 +66,10 @@ pub fn cold_path_for_backend(hot_path: &std::path::Path, backend: &str) -> PathB
 impl Store {
     /// Where this store's cold-tier file lives.
     pub fn cold_path(&self) -> PathBuf {
-        cold_path_for(std::path::Path::new(&self.config().store.path))
+        cold_path_for_backend(
+            std::path::Path::new(&self.config().store.path),
+            &self.config().store.backend,
+        )
     }
 
     /// Open (creating if missing) the cold-tier `Store` sibling. The
@@ -154,10 +163,21 @@ mod tests {
     }
 
     #[test]
-    fn cold_path_sits_next_to_hot() {
+    fn cold_path_uses_compiled_default_backend() {
+        let p = std::path::Path::new("/tmp/x.redb");
+        let expected = if cfg!(all(feature = "redb", not(feature = "sqlite"))) {
+            std::path::PathBuf::from("/tmp/x.redb.cold.redb")
+        } else {
+            std::path::PathBuf::from("/tmp/x.redb.cold.sqlite")
+        };
+        assert_eq!(cold_path_for(p), expected);
+    }
+
+    #[test]
+    fn cold_path_backend_specific_redb_sits_next_to_hot() {
         let p = std::path::Path::new("/tmp/x.redb");
         assert_eq!(
-            cold_path_for(p),
+            cold_path_for_backend(p, "redb"),
             std::path::PathBuf::from("/tmp/x.redb.cold.redb")
         );
     }
