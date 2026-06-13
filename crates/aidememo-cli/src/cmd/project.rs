@@ -39,7 +39,7 @@ pub fn project_command() -> impl Parser<Command> {
         .help("Show project details (default: current default project)");
 
     let path = long("path")
-        .help("Path to the wiki.redb store file")
+        .help("Path to the AideMemo store file")
         .argument::<PathBuf>("PATH");
     let name = positional::<String>("NAME");
     let create = construct!(ProjectSub::Create { path, name })

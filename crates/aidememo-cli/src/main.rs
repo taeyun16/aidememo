@@ -1507,7 +1507,7 @@ fn handle_search(
 
 /// `aidememo search --via http://host:port` — dispatch the search as a
 /// JSON-RPC `aidememo_search` tool call against a running `aidememo mcp-serve`
-/// daemon. The daemon keeps the redb store and the embedding model
+/// daemon. The daemon keeps the store and the embedding model
 /// warm, so the round-trip is dominated by HTTP latency (typically
 /// ~10–20 ms on localhost).
 ///

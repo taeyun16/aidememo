@@ -188,7 +188,7 @@ cmd_env() {
     fi
     cat <<EOF
 export HERMES_HOME="$TEST_HOME"
-export AIDEMEMO_STORE="$TEST_HOME/wiki.redb"
+export AIDEMEMO_STORE="$TEST_HOME/wiki.sqlite"
 export PATH="$AIDEMEMO_BIN_DIR:\$PATH"
 EOF
 }
@@ -206,24 +206,24 @@ cmd_seed() {
         err "aidememo binary missing at $AIDEMEMO_BIN — re-run setup"
         exit 1
     fi
-    log "seeding wiki at $TEST_HOME/wiki.redb"
-    "$AIDEMEMO_BIN" --store "$TEST_HOME/wiki.redb" fact add \
+    log "seeding wiki at $TEST_HOME/wiki.sqlite"
+    "$AIDEMEMO_BIN" --store "$TEST_HOME/wiki.sqlite" fact add \
         "HNSW is the default semantic index in aidememo" \
         --entities aidememo,hnsw --type decision > /dev/null 2>&1 || true
-    "$AIDEMEMO_BIN" --store "$TEST_HOME/wiki.redb" fact add \
+    "$AIDEMEMO_BIN" --store "$TEST_HOME/wiki.sqlite" fact add \
         "Hermes plugin auto-records decisions on session_end" \
         --entities aidememo,hermes --type convention > /dev/null 2>&1 || true
-    "$AIDEMEMO_BIN" --store "$TEST_HOME/wiki.redb" fact add \
+    "$AIDEMEMO_BIN" --store "$TEST_HOME/wiki.sqlite" fact add \
         "Tool handlers must return strings — Hermes slice-checks results" \
         --entities aidememo,hermes --type pattern > /dev/null 2>&1 || true
-    "$AIDEMEMO_BIN" --store "$TEST_HOME/wiki.redb" fact add \
+    "$AIDEMEMO_BIN" --store "$TEST_HOME/wiki.sqlite" fact add \
         "agentskills.io SKILL.md format makes the skill portable across 6 agents" \
         --entities aidememo,agentskills --type convention > /dev/null 2>&1 || true
-    "$AIDEMEMO_BIN" --store "$TEST_HOME/wiki.redb" fact add \
+    "$AIDEMEMO_BIN" --store "$TEST_HOME/wiki.sqlite" fact add \
         "aidememo pending review TUI is the human-driven promotion path" \
         --entities aidememo,tui --type pattern > /dev/null 2>&1 || true
     local count
-    count="$("$AIDEMEMO_BIN" --store "$TEST_HOME/wiki.redb" --json stats | grep -o '"fact_count": *[0-9]*' | grep -o '[0-9]*')"
+    count="$("$AIDEMEMO_BIN" --store "$TEST_HOME/wiki.sqlite" --json stats | grep -o '"fact_count": *[0-9]*' | grep -o '[0-9]*')"
     ok "seeded — wiki now has $count fact(s)"
 }
 

@@ -35,7 +35,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 WG = os.environ.get("AIDEMEMO_BIN", "/Users/mixlink/.local/bin/aidememo")
-STORE = os.environ.get("AIDEMEMO_E2E_STORE", "/tmp/aidememo-e2e-e/wiki.redb")
+STORE = os.environ.get("AIDEMEMO_E2E_STORE", "/tmp/aidememo-e2e-e/wiki.sqlite")
 PORT = int(os.environ.get("AIDEMEMO_E2E_PORT", "3939"))
 M_CLIENTS = int(os.environ.get("AIDEMEMO_E2E_CLIENTS", "4"))
 N_PER_CLIENT = int(os.environ.get("AIDEMEMO_E2E_N_PER_CLIENT", "25"))

@@ -36,7 +36,7 @@ jobs:
       - name: scenario C
         env:
           AIDEMEMO_BIN: ${{ github.workspace }}/target/release/aidememo
-          AIDEMEMO_E2E_STORE: ${{ runner.temp }}/aidememo-e2e-c/wiki.redb
+          AIDEMEMO_E2E_STORE: ${{ runner.temp }}/aidememo-e2e-c/wiki.sqlite
           # Override these on the runner if the binaries live elsewhere.
           CLAUDE_BIN: ${{ env.CLAUDE_BIN || '/Users/mixlink/.local/bin/claude' }}
           CODEX_BIN: ${{ env.CODEX_BIN || '/opt/homebrew/bin/codex' }}

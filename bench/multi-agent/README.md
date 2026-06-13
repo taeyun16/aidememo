@@ -67,7 +67,7 @@ AIDEMEMO_BIN=/path/to/aidememo \
 CLAUDE_BIN=/path/to/claude \
 CODEX_BIN=/path/to/codex \
 HERMES_BIN=/path/to/hermes \
-AIDEMEMO_E2E_STORE=/tmp/aidememo-e2e/wiki.redb \
+AIDEMEMO_E2E_STORE=/tmp/aidememo-e2e/wiki.sqlite \
 python3 bench/multi-agent/scenario_c_natural_prompt.py
 ```
 

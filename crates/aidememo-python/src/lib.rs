@@ -8,7 +8,7 @@
 //!
 //! ```python
 //! import aidememo_python as aidememo
-//! g = aidememo.AideMemo("./_meta/wiki.redb")
+//! g = aidememo.AideMemo("./_meta/wiki.sqlite")
 //! results = g.search("rust", limit=5)
 //! ctx = g.query("Redis")
 //! ```
@@ -211,9 +211,9 @@ fn fact_input_from_dict(
 // PyAideMemo
 // ---------------------------------------------------------------------------
 
-/// Local knowledge-graph wiki backed by redb.
+/// Local knowledge-graph wiki backed by SQLite by default.
 ///
-/// Construct with a path to the store file (`.redb`). Optional keyword
+/// Construct with a path to the store file. Optional keyword
 /// arguments override the corresponding `Config` fields *before* the
 /// store is opened — useful for selecting a different embedding model,
 /// flipping HNSW vs BM25, or relaxing durability for high-frequency
@@ -224,11 +224,10 @@ fn fact_input_from_dict(
 /// ```python
 /// import aidememo_python as aidememo
 /// g = aidememo.AideMemo(
-///     "./_meta/wiki.redb",
+///     "./_meta/wiki.sqlite",
 ///     model="minishlab/potion-base-8M",
 ///     semantic_index="hnsw",
 ///     durability="eventual",
-///     backend="redb",
 /// )
 /// ```
 #[pyclass(name = "AideMemo")]
@@ -490,7 +489,7 @@ impl PyAideMemo {
         Ok(id.to_string())
     }
 
-    /// Insert many facts in one redb write transaction.
+    /// Insert many facts in one backend transaction when supported.
     ///
     /// Each item is a dict with the same keys `fact_add` accepts:
     /// `content` (required), `entity_ids`, `fact_type`, `tags`,

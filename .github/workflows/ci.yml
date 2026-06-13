@@ -179,7 +179,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-      - run: cargo build -p aidememo-cli --release
+      - run: cargo build -p aidememo-cli --release --features redb
       - name: scenario D
         env:
           AIDEMEMO_BIN: ${{ github.workspace }}/target/release/aidememo
@@ -341,7 +341,7 @@ jobs:
           from hermes_aidememo.client import AideMemoClient
           tmp = tempfile.mkdtemp(prefix="aidememo-ci-")
           try:
-              c = AideMemoClient(store_path=os.path.join(tmp, "wiki.redb"))
+              c = AideMemoClient(store_path=os.path.join(tmp, "wiki.sqlite"))
               assert c.backend == "cli", f"expected cli backend, got {c.backend}"
               fid = c.fact_add("CI smoke fact", entities=["ci"], fact_type="note")
               assert len(fid) == 26, f"expected 26-char ULID, got {fid!r}"

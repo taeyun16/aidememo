@@ -80,7 +80,7 @@ export PATH="$AIDEMEMO_BIN_DIR:$PATH"
 export HERMES_HOME="$TEST_HOME"
 # Force the plugin's AideMemoClient to use the test wiki (not whatever the
 # operator's aidememo config defaults to).
-export AIDEMEMO_STORE="$TEST_HOME/wiki.redb"
+export AIDEMEMO_STORE="$TEST_HOME/wiki.sqlite"
 
 # ----------------------------------------------------------------------
 # 1. Plugin shows up in `hermes plugins list`
@@ -121,7 +121,7 @@ log "loading plugin via Hermes's PluginManager"
 "$HERMES_VENV_PY" - <<PY
 import os, sys
 os.environ.setdefault("HERMES_HOME", "$TEST_HOME")
-os.environ.setdefault("AIDEMEMO_STORE", "$TEST_HOME/wiki.redb")
+os.environ.setdefault("AIDEMEMO_STORE", "$TEST_HOME/wiki.sqlite")
 sys.path.insert(0, "$HERMES_AGENT_ROOT")
 
 from hermes_cli.plugins import discover_plugins, get_plugin_manager

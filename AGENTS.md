@@ -18,7 +18,7 @@ vectors) and exposes it to LLM agents via CLI, MCP server, and native bindings
 |---|---|
 | `aidememo-core` | SQLite default store, optional redb store, ingest, search, traverse, lint, validity windows |
 | `aidememo-cli` | `aidememo` binary (CLI + stdio/HTTP MCP) |
-| `aidememo-napi`, `aidememo-python`, `aidememo-nif`, `aidememo-ffi` | language bindings (full API; optional `sqlite` Cargo feature) |
+| `aidememo-napi`, `aidememo-python`, `aidememo-nif`, `aidememo-ffi` | language bindings (full API; SQLite default, optional `redb` Cargo feature) |
 
 ## Setup commands
 
@@ -281,17 +281,18 @@ to the daemon over HTTP (no `--via` needed). Measured warm:
 | `aidememo search redis` (no daemon, fresh CLI)   | ~70-300 ms |
 
 Set `AIDEMEMO_NO_DAEMON=1` to bypass discovery for one invocation. Note:
-because redb is single-writer, an in-process `aidememo` cannot open the
-store while the daemon holds it — the bypass mode is only useful
-when no daemon is running (e.g. running CI scripts on the same
-store path).
+for optional redb stores, an in-process `aidememo` cannot open the store while
+the daemon holds it because redb is single-writer. For SQLite stores, bypassing
+is mainly useful when you explicitly want a fresh process instead of the warm
+daemon path.
 
 ## Code map
 
 ```
 crates/aidememo-core/src/
   lib.rs        AideMemo public API (re-exports)
-  store.rs      redb CRUD (entity/fact/relation/alias index, current_only filter)
+  sqlite_store.rs SQLite CRUD (default backend)
+  store.rs      redb CRUD (optional backend; entity/fact/relation/alias index)
   graph.rs      traverse / path_find
   search.rs     BM25 + semantic hybrid (current_only filter, time windows)
   ingest.rs     markdown → entity/fact/relation parser (frontmatter dates)
@@ -702,7 +703,7 @@ aidememo sync pull http://team-host:3000 --token "$AIDEMEMO_TEAM_TOKEN"
 # → "+0 entities, +0 facts, +0 relations"
 ```
 
-Cursor state lives at `<store>.sync.json` next to the redb file,
+Cursor state lives at `<store>.sync.json` next to the store file,
 keyed by upstream URL. Pull is incremental from the cursor; the
 upstream emits a trailing `cursor` line on every batch so the
 downstream knows where to resume.

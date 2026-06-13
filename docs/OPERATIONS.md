@@ -20,7 +20,7 @@ quickstart.
 For scripts and CI, prefer explicit store paths:
 
 ```bash
-aidememo --store ./project.redb query "release checklist"
+aidememo --store ./project.sqlite query "release checklist"
 ```
 
 ## Use source scoping

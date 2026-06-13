@@ -532,7 +532,7 @@ mod tests {
     #[test]
     fn sync_status_report_loads_cursor_file_without_secrets() {
         let dir = tempfile::tempdir().unwrap();
-        let store = dir.path().join("team.redb");
+        let store = dir.path().join("team.sqlite");
         let cursor = dir.path().join("team.sync.json");
         std::fs::write(
             &cursor,
@@ -564,7 +564,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let status = ServerStatus {
             started_at_ms: aidememo_core::time::current_epoch_ms(),
-            store_path: dir.path().join("wiki.redb"),
+            store_path: dir.path().join("wiki.sqlite"),
             bind_addr: "127.0.0.1".to_string(),
             port: 3000,
             auth_mode: "bearer",

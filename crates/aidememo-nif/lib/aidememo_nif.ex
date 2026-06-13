@@ -1,12 +1,12 @@
 defmodule AideMemoNif do
   @moduledoc """
   Elixir bindings for AideMemo (`aidememo`) — a local knowledge-graph wiki backed
-  by redb by default, with an experimental SQLite backend when the NIF is built
-  with the `sqlite` Cargo feature.
+  by SQLite by default, with an optional redb backend when the NIF is built with
+  the `redb` Cargo feature.
 
   ## Quick start
 
-      g = AideMemoNif.open!("./_meta/wiki.redb")
+      g = AideMemoNif.open!("./_meta/wiki.sqlite")
 
       ctx = AideMemoNif.query(g, "Redis")          # unified context fetch
       hits = AideMemoNif.search(g, "high availability", limit: 10)
@@ -117,7 +117,7 @@ defmodule AideMemoNif do
   end
 
   @doc """
-  Insert N facts in one redb write transaction.
+  Insert N facts in one backend transaction when supported.
 
   `items` is a list of maps with the same keys as `fact_add/3`'s opts
   (`content`, `entity_ids`, `fact_type`, `tags`, `source`,

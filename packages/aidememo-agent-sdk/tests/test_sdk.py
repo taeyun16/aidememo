@@ -57,10 +57,10 @@ def test_open_builds_default_client(monkeypatch) -> None:
 
     monkeypatch.setattr("aidememo_agent.sdk.AideMemoClient", RecordingClient)
 
-    sdk = AideMemoMemorySDK.open(store_path="/tmp/wiki.redb", source_id="team-a", lock_retry_ms=250)
+    sdk = AideMemoMemorySDK.open(store_path="/tmp/wiki.sqlite", source_id="team-a", lock_retry_ms=250)
 
     assert isinstance(sdk.client, RecordingClient)
-    assert created == {"store_path": "/tmp/wiki.redb", "source_id": "team-a", "lock_retry_ms": 250}
+    assert created == {"store_path": "/tmp/wiki.sqlite", "source_id": "team-a", "lock_retry_ms": 250}
 
 
 def test_flatten_dedupe_group_and_coverage() -> None:
@@ -191,7 +191,7 @@ def test_pyo3_backend_preserves_session_and_context_scope() -> None:
 
     backend = FakePyBackend()
     client = AideMemoClient.__new__(AideMemoClient)
-    client.store_path = "/tmp/wiki.redb"
+    client.store_path = "/tmp/wiki.sqlite"
     client.lock_retry_ms = 5000
     client.default_source_id = None
     client._py = backend

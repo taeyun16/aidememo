@@ -267,7 +267,7 @@ fn init_agent_codex_initializes_store_and_mcp_config() {
     let wiki = root.path().join("wiki");
     std::fs::create_dir_all(&wiki).unwrap();
     std::fs::write(wiki.join("redis.md"), "# Redis\n\nRedis note.\n").unwrap();
-    let store = root.path().join("wiki.redb");
+    let store = root.path().join("wiki.sqlite");
 
     let out = run_with_home(
         home.path(),
@@ -309,7 +309,7 @@ fn init_agent_codex_initializes_store_and_mcp_config() {
         parsed["mcp_servers"]["aidememo"]["command"].as_str(),
         Some("aidememo")
     );
-    assert!(store.exists(), "init should create the redb store");
+    assert!(store.exists(), "init should create the store");
 }
 
 #[test]
@@ -457,7 +457,7 @@ fn doctor_json(home: &Path, store_path: &Path) -> serde_json::Value {
 #[test]
 fn doctor_reports_agent_matrix_with_no_installs() {
     let home = tempfile::tempdir().unwrap();
-    let store = home.path().join("wiki.redb");
+    let store = home.path().join("wiki.sqlite");
     let payload = doctor_json(home.path(), &store);
 
     let agents = payload["agents"].as_array().unwrap();
@@ -505,7 +505,7 @@ fn doctor_reports_agent_matrix_with_no_installs() {
 #[test]
 fn doctor_detects_codex_and_cursor_after_mcp_install() {
     let home = tempfile::tempdir().unwrap();
-    let store = home.path().join("wiki.redb");
+    let store = home.path().join("wiki.sqlite");
 
     // Pre-install both file-edit targets.
     let codex = run_with_home(home.path(), &["mcp-install", "--target", "codex"]);
@@ -524,7 +524,7 @@ fn doctor_detects_codex_and_cursor_after_mcp_install() {
 #[test]
 fn doctor_detects_skill_installation() {
     let home = tempfile::tempdir().unwrap();
-    let store = home.path().join("wiki.redb");
+    let store = home.path().join("wiki.sqlite");
     let dest = home.path().join(".hermes/skills/aidememo");
 
     // Use --dest so the test isn't sensitive to where dirs::home_dir
@@ -566,7 +566,7 @@ fn doctor_fix_lists_install_commands_for_gaps() {
     // file-edit targets confirmed missing (Some(false)). Only the
     // confirmed-missing ones should produce suggestions.
     let home = tempfile::tempdir().unwrap();
-    let store = home.path().join("wiki.redb");
+    let store = home.path().join("wiki.sqlite");
 
     let out = Command::new(aidememo_bin())
         .env_remove("AIDEMEMO_STORE")
@@ -600,7 +600,7 @@ fn doctor_fix_lists_install_commands_for_gaps() {
 #[test]
 fn doctor_without_fix_emits_tip_when_gaps_present() {
     let home = tempfile::tempdir().unwrap();
-    let store = home.path().join("wiki.redb");
+    let store = home.path().join("wiki.sqlite");
     let out = Command::new(aidememo_bin())
         .env_remove("AIDEMEMO_STORE")
         .env("HOME", home.path())
@@ -622,7 +622,7 @@ fn doctor_without_fix_emits_tip_when_gaps_present() {
 #[test]
 fn doctor_json_includes_fixes_array() {
     let home = tempfile::tempdir().unwrap();
-    let store = home.path().join("wiki.redb");
+    let store = home.path().join("wiki.sqlite");
     let payload = doctor_json(home.path(), &store);
     let fixes = payload["fixes"].as_array().expect("fixes must be an array");
     let kinds: Vec<&str> = fixes.iter().map(|f| f["kind"].as_str().unwrap()).collect();
@@ -658,7 +658,7 @@ fn doctor_json_includes_fixes_array() {
 #[test]
 fn doctor_json_includes_workflow_readiness_hints() {
     let home = tempfile::tempdir().unwrap();
-    let store = home.path().join("wiki.redb");
+    let store = home.path().join("wiki.sqlite");
     let payload = doctor_json(home.path(), &store);
     let workflow = &payload["workflow"];
 
@@ -682,7 +682,7 @@ fn doctor_json_includes_workflow_readiness_hints() {
 #[test]
 fn doctor_json_includes_shared_store_guidance() {
     let home = tempfile::tempdir().unwrap();
-    let store = home.path().join("wiki.redb");
+    let store = home.path().join("wiki.sqlite");
     let payload = doctor_json(home.path(), &store);
     let sharing = &payload["sharing"];
 
@@ -717,7 +717,7 @@ fn doctor_fix_shell_emits_only_commands_one_per_line() {
     // exercise the same isolated home as the gap-suggestion test
     // so the expected command set is stable.
     let home = tempfile::tempdir().unwrap();
-    let store = home.path().join("wiki.redb");
+    let store = home.path().join("wiki.sqlite");
 
     let out = Command::new(aidememo_bin())
         .env_remove("AIDEMEMO_STORE")
@@ -777,7 +777,7 @@ fn doctor_fix_shell_emits_only_commands_one_per_line() {
 #[test]
 fn doctor_human_output_includes_agent_section() {
     let home = tempfile::tempdir().unwrap();
-    let store = home.path().join("wiki.redb");
+    let store = home.path().join("wiki.sqlite");
     let out = Command::new(aidememo_bin())
         .env_remove("AIDEMEMO_STORE")
         .env("HOME", home.path())

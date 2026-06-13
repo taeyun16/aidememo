@@ -442,7 +442,7 @@ impl AideMemoStore {
         Ok(id.to_string())
     }
 
-    /// Insert many facts in one redb write transaction. Returns the
+    /// Insert many facts in one backend transaction when supported. Returns the
     /// new fact ULIDs in input order. All-or-nothing — if any item
     /// fails to validate, no facts land.
     #[napi]

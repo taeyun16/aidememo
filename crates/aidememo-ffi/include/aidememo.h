@@ -26,8 +26,8 @@ typedef struct AideMemoStore aidememo_store_t;
 
 /* Lifecycle. */
 aidememo_store_t* aidememo_open(const char* path);
-/* Open with an explicit backend: "redb" (default) or "sqlite" when the
- * library was built with the `sqlite` Cargo feature. Pass NULL or "" for the
+/* Open with an explicit backend: "sqlite" (default) or "redb" when the
+ * library was built with the `redb` Cargo feature. Pass NULL or "" for the
  * default backend. */
 aidememo_store_t* aidememo_open_with_backend(const char* path, const char* backend);
 void        aidememo_close(aidememo_store_t* store);
@@ -83,7 +83,7 @@ char* aidememo_fact_add(const aidememo_store_t* store,
                   const char* tags_json,        /* may be NULL */
                   const char* source,           /* may be NULL */
                   float       confidence);      /* 0.0 = unset */
-/* Insert many facts in one redb write transaction. items_json is a
+/* Insert many facts in one backend transaction when supported. items_json is a
  * JSON array of objects matching aidememo_fact_add's args:
  *   content (required), entity_ids, fact_type, tags, source, confidence
  * Returns {"ids":[...]} on success. */

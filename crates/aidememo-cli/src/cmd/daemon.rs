@@ -2,7 +2,7 @@
 //!
 //! Why this exists: a fresh `aidememo search` CLI spawn pays ~70 ms (BM25)
 //! to ~1 s (hybrid + cold model load) every invocation. A daemon
-//! amortises both the redb open and the embedding model load so the
+//! amortises both the store open and the embedding model load so the
 //! same query takes ~5 ms (BM25) or ~43 ms (HNSW) — see
 //! `bench/beads-vs-aidememo/scenario_5_daemon_warm.py`.
 //!
@@ -26,7 +26,7 @@
 //! Read CLI commands (`aidememo search`, `aidememo query`, …) consult the
 //! registry first. If a healthy daemon is registered AND its store
 //! matches the resolved store path, the CLI dispatches over HTTP
-//! instead of opening redb in-process. Set `AIDEMEMO_NO_DAEMON=1` to opt
+//! instead of opening the store in-process. Set `AIDEMEMO_NO_DAEMON=1` to opt
 //! out for one invocation. See `daemon::registered_endpoint()`.
 
 use aidememo_core::{AideMemoError, Config};

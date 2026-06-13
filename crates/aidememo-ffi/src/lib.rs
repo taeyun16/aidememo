@@ -145,8 +145,8 @@ pub extern "C" fn aidememo_open(path: *const c_char) -> *mut AideMemoStore {
 }
 
 /// Open or create a store at `path` using an explicit backend.
-/// `backend` may be NULL or empty for the default redb backend.
-/// Use "sqlite" only when this library was built with the `sqlite` Cargo feature.
+/// `backend` may be NULL or empty for the default SQLite backend.
+/// Use "redb" only when this library was built with the `redb` Cargo feature.
 #[unsafe(no_mangle)]
 pub extern "C" fn aidememo_open_with_backend(
     path: *const c_char,
@@ -530,7 +530,7 @@ pub extern "C" fn aidememo_fact_add(
     })
 }
 
-/// Insert many facts in one redb write transaction. `items_json` is a
+/// Insert many facts in one backend transaction when supported. `items_json` is a
 /// JSON array of objects with the same keys as `aidememo_fact_add`'s args:
 /// `content` (required), `entity_ids`, `fact_type`, `tags`, `source`,
 /// `confidence`. Returns `{"ids":[...]}` on success.

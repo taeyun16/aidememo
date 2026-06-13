@@ -101,7 +101,7 @@ run env \
 
 run env \
     AIDEMEMO_BIN="$AIDEMEMO_BIN" \
-    AIDEMEMO_E2E_STORE="$BASE/scenario-f/workflow.redb" \
+    AIDEMEMO_E2E_STORE="$BASE/scenario-f/workflow.sqlite" \
     PYTHONPATH="$PYTHONPATH_LOCAL" \
     python3 bench/multi-agent/scenario_f_workflow_triggers.py
 
@@ -111,7 +111,7 @@ run env \
     PYTHONPATH="$PYTHONPATH_LOCAL" \
     python3 bench/multi-agent/scenario_i_workflow_doctor.py
 
-FIXTURE_STORE="$BASE/doctor-fixture/wiki.redb"
+FIXTURE_STORE="$BASE/doctor-fixture/wiki.sqlite"
 FIXTURE_HOME="$BASE/home"
 mkdir -p "$FIXTURE_HOME/.codex"
 cat > "$FIXTURE_HOME/.codex/config.toml" <<EOF

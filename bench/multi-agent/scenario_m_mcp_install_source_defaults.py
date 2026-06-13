@@ -34,7 +34,7 @@ REPO = Path(__file__).resolve().parents[2]
 WG = os.environ.get("AIDEMEMO_BIN", str(REPO / "target" / "debug" / "aidememo"))
 BASE = Path(os.environ.get("AIDEMEMO_E2E_BASE", str(Path(tempfile.gettempdir()) / "aidememo-e2e-m")))
 HOME = BASE / "home"
-STORE = str(BASE / "install-source-defaults.redb")
+STORE = str(BASE / "install-source-defaults.sqlite")
 SOURCE_ID = "agent-alpha"
 
 

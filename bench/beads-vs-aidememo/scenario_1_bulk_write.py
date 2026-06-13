@@ -162,7 +162,7 @@ def main() -> int:
     bd_dir = Path("/tmp/aidememo-vs-beads/beads")
     reset_dir(aidememo_dir)
     reset_dir(bd_dir)
-    aidememo_store = aidememo_dir / "wiki.redb"
+    aidememo_store = aidememo_dir / "wiki.sqlite"
 
     print(f"# aidememo bulk insert (N={n_records}) via aidememo_fact_add_many…",
           file=sys.stderr)

@@ -1,12 +1,12 @@
 {
-  "store_path": "/tmp/aidememo-agent-test/wiki.redb",
+  "store_path": "/tmp/aidememo-agent-test/wiki.sqlite",
   "store_description": "aidememo repo (.md files: AGENTS.md, CLAUDE.md, docs/*, aidememo-skill/*) ingested 2026-05-06 with AIDEMEMO_NOW_MS=1735689600000. Historical note files have since been consolidated into docs/MEASUREMENTS.md; refresh this fixture before treating counts as current.",
   "scoring": "Each scenario is graded by (1) keyword overlap on the model's hypothesis text, (2) whether the expected aidememo tool was called at least once. LLM-judge layer optional.",
   "scenarios": [
     {
       "id": "s01-simple-recall",
       "shape": "simple_recall",
-      "prompt": "Use the aidememo MCP tools to answer this question against the wiki at /tmp/aidememo-agent-test/wiki.redb: in the AGENTS guide, what does aidememo_aggregate's `sum_currency` operation do? One sentence.",
+      "prompt": "Use the aidememo MCP tools to answer this question against the wiki at /tmp/aidememo-agent-test/wiki.sqlite: in the AGENTS guide, what does aidememo_aggregate's `sum_currency` operation do? One sentence.",
       "gold_keywords": ["sum", "currency", "matching"],
       "expected_tool": "aidememo_search|aidememo_query",
       "notes": "AGENTS.md describes sum_currency."

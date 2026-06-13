@@ -30,7 +30,7 @@ import urllib.request
 from pathlib import Path
 
 WG = os.environ.get("AIDEMEMO_BIN", "/Users/mixlink/.local/bin/aidememo")
-AIDEMEMO_STORE = "/tmp/aidememo-vs-beads/aidememo/wiki.redb"
+AIDEMEMO_STORE = "/tmp/aidememo-vs-beads/aidememo/wiki.sqlite"
 DATA = Path("bench/beads-vs-aidememo/data")
 RESULTS = Path("bench/beads-vs-aidememo/results")
 N_QUERIES = 50

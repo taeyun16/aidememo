@@ -88,7 +88,7 @@ pub struct AideMemo {
         parking_lot::RwLock<std::collections::HashMap<types::FactId, search::QuantizedEmbedding>>,
     >,
     /// Tier 8: HNSW ANN index over fact embeddings. Loaded lazily
-    /// from `wiki.hnsw.bin` next to the redb store on first
+    /// from `wiki.hnsw.bin` next to the store file on first
     /// search; rebuilt on demand via `vector_index_rebuild()` or
     /// when the sidecar's model name doesn't match the active
     /// provider. `None` means "not built yet" → fall back to the
@@ -251,7 +251,7 @@ impl AideMemo {
             .clone())
     }
 
-    /// Where the HNSW sidecar lives. Sits next to the redb store
+    /// Where the HNSW sidecar lives. Sits next to the store file
     /// (using the path the caller passed to `open`, not the config
     /// path which may be a default placeholder).
     #[cfg(feature = "semantic")]
@@ -658,9 +658,9 @@ impl AideMemo {
         self.add_fact(input)
     }
 
-    /// Insert N facts in one redb write transaction. Use this for
-    /// bulk imports — the per-commit fsync (≈3-5 ms on macOS APFS)
-    /// is paid once for the batch instead of once per fact.
+    /// Insert N facts in one backend transaction when supported. Use this for
+    /// bulk imports so commit overhead is paid once for the batch instead of
+    /// once per fact.
     /// All-or-nothing: a serialization or write failure aborts the
     /// transaction and no facts land. Returned ids are in the same
     /// order as the inputs.
@@ -842,8 +842,8 @@ impl AideMemo {
     /// ingest, not a per-fact-add hook (the per-add cost would be
     /// prohibitive on big wikis).
     ///
-    /// Idempotent — re-running just refreshes existing edges (the redb
-    /// key is `{source}\0{rel_type}\0{target}` so writes overwrite).
+    /// Idempotent — re-running just refreshes existing edges using the
+    /// backend's relation uniqueness key `{source}\0{rel_type}\0{target}`.
     /// Pure same-entity pairs are skipped; pairs already linked by a
     /// non-`related` relation are also skipped so domain-specific
     /// edges (`uses`, `decided_by`, …) don't get downgraded.
@@ -865,7 +865,7 @@ impl AideMemo {
         };
 
         // Cache existing relations so repeated lookups don't re-query
-        // redb per pair. Set of (source_id, target_id) regardless of
+        // the backend per pair. Set of (source_id, target_id) regardless of
         // rel_type — aidememo's auto-relate refuses to overwrite a richer
         // edge with a generic `related`.
         let mut existing: HashSet<(types::EntityId, types::EntityId)> = HashSet::new();
@@ -2013,7 +2013,7 @@ impl AideMemo {
         &self.config
     }
 
-    /// Get the redb store path captured when this graph was opened.
+    /// Get the store path captured when this graph was opened.
     pub fn store_path(&self) -> &std::path::Path {
         &self.store_path
     }

@@ -4,7 +4,7 @@ defmodule AideMemoNifTest do
   setup do
     tmp = System.tmp_dir!() |> Path.join("aidememo-nif-#{System.unique_integer([:positive])}")
     File.mkdir_p!(tmp)
-    db = Path.join(tmp, "test.redb")
+    db = Path.join(tmp, "test.sqlite")
     on_exit(fn -> File.rm_rf!(tmp) end)
     {:ok, db: db}
   end
@@ -48,7 +48,7 @@ defmodule AideMemoNifTest do
     facts = AideMemoNif.fact_list(g, entity: "Redis", limit: 10)
     assert length(facts) == 1
 
-    # Batch insert — single redb write txn for the whole list.
+    # Batch insert — single backend transaction for the whole list.
     eid_postgres = AideMemoNif.resolve_entity(g, "Postgres")
 
     many_ids =

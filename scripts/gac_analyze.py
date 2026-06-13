@@ -21,7 +21,7 @@ on the table before we go build Stage 2 (`aidememo consolidate
 
 Usage:
   python3 scripts/gac_analyze.py \
-      --store /tmp/aidememo-agent-test/wiki.redb \
+      --store /tmp/aidememo-agent-test/wiki.sqlite \
       --thetas 0.85 0.90 0.95
 """
 from __future__ import annotations
@@ -191,7 +191,7 @@ def report_for_theta(
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--store", required=True, help="Path to wiki.redb")
+    ap.add_argument("--store", required=True, help="Path to an AideMemo store")
     ap.add_argument("--thetas", type=float, nargs="+", default=[0.85, 0.90, 0.95])
     ap.add_argument("--model", default="minishlab/potion-multilingual-128M",
                     help="model2vec model name (must match aidememo's embed config)")

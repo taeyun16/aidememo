@@ -917,7 +917,7 @@ fn collect_memory(store_path: &Path, config: &Config) -> MemoryReport {
     let mut disk: Vec<MemoryEntry> = Vec::new();
     if let Ok(meta) = std::fs::metadata(store_path) {
         disk.push(MemoryEntry {
-            name: "redb store".into(),
+            name: "store".into(),
             bytes: meta.len(),
             detail: store_path.display().to_string(),
         });
@@ -1134,7 +1134,7 @@ mod tests {
     #[test]
     fn collect_memory_advises_rebuild_for_missing_hnsw_sidecar() {
         let dir = TempDir::new().unwrap();
-        let store_path: PathBuf = dir.path().join("wiki.redb");
+        let store_path: PathBuf = dir.path().join("wiki.sqlite");
         std::fs::write(&store_path, vec![0u8; 64]).unwrap();
         let cfg = config_with_model("minishlab/potion-multilingual-128M", false, "hnsw");
         let mem = collect_memory(&store_path, &cfg).with_counts(0, 0);
@@ -1150,7 +1150,7 @@ mod tests {
     #[test]
     fn collect_memory_no_advisory_for_small_model() {
         let dir = TempDir::new().unwrap();
-        let store_path = dir.path().join("wiki.redb");
+        let store_path = dir.path().join("wiki.sqlite");
         std::fs::write(&store_path, vec![0u8; 64]).unwrap();
         let cfg = config_with_model("minishlab/potion-base-8M", false, "bm25");
         let mem = collect_memory(&store_path, &cfg).with_counts(0, 0);
@@ -1395,7 +1395,7 @@ mod tests {
                 state: "healthy",
                 port: Some(3000),
                 pid: Some(123),
-                store: Some("/tmp/wiki.redb".to_string()),
+                store: Some("/tmp/wiki.sqlite".to_string()),
             },
             recommended_mode: "daemon",
             hints: Vec::new(),
@@ -1410,7 +1410,7 @@ mod tests {
     #[test]
     fn stale_hnsw_advisory_fires_when_superseded_facts_present() {
         let dir = TempDir::new().unwrap();
-        let store_path = dir.path().join("wiki.redb");
+        let store_path = dir.path().join("wiki.sqlite");
         std::fs::write(&store_path, vec![0u8; 64]).unwrap();
         // Sidecar present + 7 superseded facts → advise --current-only.
         std::fs::write(dir.path().join("wiki.hnsw.bin"), vec![0u8; 16]).unwrap();
@@ -1430,7 +1430,7 @@ mod tests {
     #[test]
     fn stale_hnsw_advisory_silent_without_superseded_facts() {
         let dir = TempDir::new().unwrap();
-        let store_path = dir.path().join("wiki.redb");
+        let store_path = dir.path().join("wiki.sqlite");
         std::fs::write(&store_path, vec![0u8; 64]).unwrap();
         std::fs::write(dir.path().join("wiki.hnsw.bin"), vec![0u8; 16]).unwrap();
         let cfg = config_with_model("minishlab/potion-base-8M", false, "hnsw");
@@ -1446,7 +1446,7 @@ mod tests {
     #[test]
     fn stale_hnsw_advisory_silent_without_sidecar() {
         let dir = TempDir::new().unwrap();
-        let store_path = dir.path().join("wiki.redb");
+        let store_path = dir.path().join("wiki.sqlite");
         std::fs::write(&store_path, vec![0u8; 64]).unwrap();
         // No sidecar file present even though hnsw is configured.
         let cfg = config_with_model("minishlab/potion-base-8M", false, "hnsw");
@@ -1463,7 +1463,7 @@ mod tests {
     #[test]
     fn collect_memory_with_counts_sums_per_fact_estimates() {
         let dir = TempDir::new().unwrap();
-        let store_path = dir.path().join("wiki.redb");
+        let store_path = dir.path().join("wiki.sqlite");
         std::fs::write(&store_path, vec![0u8; 64]).unwrap();
         // hnsw sidecar present so the runtime row contributes.
         std::fs::write(dir.path().join("wiki.hnsw.bin"), vec![0u8; 16]).unwrap();

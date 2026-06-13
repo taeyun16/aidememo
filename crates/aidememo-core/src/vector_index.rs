@@ -12,8 +12,8 @@
 //!
 //! Design notes:
 //!
-//! - **Sidecar persistence.** The index lives next to the redb
-//!   store as `wiki.hnsw.bin`. Header carries the model name and
+//! - **Sidecar persistence.** The index lives next to the store file
+//!   as `wiki.hnsw.bin`. Header carries the model name and
 //!   dimension; load aborts (and triggers rebuild) if the active
 //!   model has changed since the index was built. Same pattern as
 //!   the i8 quantized weights sidecar.

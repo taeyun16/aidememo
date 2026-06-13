@@ -1,7 +1,7 @@
-//! Storage backend trait shared by the redb store and experimental backends.
+//! Storage backend trait shared by SQLite and redb stores.
 //!
 //! This captures the store surface that higher-level graph, ingest, search, and
-//! lint code need in order to run against redb or an experimental backend.
+//! lint code need in order to run against either persisted backend.
 
 use std::path::Path;
 
@@ -72,7 +72,7 @@ impl StoreKind {
     }
 }
 
-/// Storage contract shared by redb and experimental backends.
+/// Storage contract shared by SQLite and redb backends.
 pub trait StoreBackend {
     /// Open or create a backend store at `path`.
     fn open(path: &Path, config: Config) -> Result<Self>

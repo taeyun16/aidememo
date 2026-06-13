@@ -27,7 +27,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-STORE = "/Users/mixlink/.aidememo-e2e/wiki.redb"
+STORE = "/Users/mixlink/.aidememo-e2e/wiki.sqlite"
 
 
 @dataclass

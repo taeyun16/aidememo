@@ -3,9 +3,9 @@
 //! Learns a simple linear re-ranking model: given feedback signals, adjusts
 //! the relevance score for each fact entity to improve precision over time.
 //!
-//! Wiring: `aidememo adapt train` persists adapter state under the redb meta key
-//! `adapter_state`, and `rrf_fusion` (search.rs) loads it via
-//! `Store::load_adapter` to multiply each fused entry's weight by
+//! Wiring: `aidememo adapt train` persists adapter state under the backend meta
+//! key `adapter_state`, and `rrf_fusion` (search.rs) loads it via
+//! `StoreBackend::load_adapter` to multiply each fused entry's weight by
 //! `weight_factor(fact_id)`. Toggle with `config.search.use_adapter`.
 //!
 //! ## Model

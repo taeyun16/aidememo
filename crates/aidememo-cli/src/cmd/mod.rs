@@ -316,7 +316,7 @@ pub struct SearchSub {
     pub hybrid: bool,
     /// Optional `aidememo mcp-serve` endpoint (e.g. `http://localhost:3000`).
     /// When set, dispatch the search via `aidememo_search` JSON-RPC against
-    /// that daemon instead of opening the redb store in-process.
+    /// that daemon instead of opening the store in-process.
     /// Trades the ~70 ms `aidememo --bm25` cold-start for ~10–20 ms warm
     /// over a single HTTP round-trip — the daemon keeps the model
     /// loaded.
@@ -414,7 +414,7 @@ pub enum ConfigSub {
 pub fn build_cli() -> OptionParser<Args> {
     let store_path = long("store")
         .short('s')
-        .help("Path to wiki.redb store (overrides --project and config)")
+        .help("Path to the AideMemo store file (overrides --project and config)")
         .argument::<PathBuf>("PATH")
         .optional();
 
@@ -1098,7 +1098,7 @@ fn search_command() -> impl Parser<Command> {
     let via = long("via")
         .help(
             "Dispatch via a running `aidememo mcp-serve` daemon at this URL \
-             (e.g. http://localhost:3000). Skips the local redb open + \
+             (e.g. http://localhost:3000). Skips the local store open + \
              model load entirely; the daemon keeps both warm. Use when \
              multiple agents share a store.",
         )

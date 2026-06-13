@@ -875,9 +875,8 @@ this is not json
 
     #[test]
     fn apply_review_keeps_unselected_and_failed_commits() {
-        // We can't easily open a real AideMemo in a unit test
-        // without a redb store, so verify the bookkeeping by
-        // building expectations purely from the state inputs.
+        // Verify the bookkeeping by building expectations from the
+        // state inputs and a real temporary store.
         let entries = vec![
             entry("commit me", "decision", 0.9),
             entry("discard me", "note", 0.5),

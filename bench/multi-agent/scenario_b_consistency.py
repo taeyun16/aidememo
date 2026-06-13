@@ -22,7 +22,7 @@ What this proves
 ----------------
 Three different agent integration paths (one in-process via mcp_stdio
 called from a subagent's stdio JSON-RPC, one Codex-shaped invocation,
-one Python plugin path) all see the same redb store and round-trip
+one Python plugin path) all see the same store and round-trip
 data faithfully — i.e. an agent on this machine can write something
 that another agent reads back.
 """
@@ -37,13 +37,13 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-STORE = "/Users/mixlink/.aidememo-e2e/wiki.redb"
+STORE = "/Users/mixlink/.aidememo-e2e/wiki.sqlite"
 AIDEMEMO_DEBUG = "/Users/mixlink/dev/aidememo/target/debug/aidememo"
 AIDEMEMO_RELEASE = "/Users/mixlink/.local/bin/aidememo"
 
 
 def reset_store() -> None:
-    """Wipe redb files so each run starts clean."""
+    """Wipe store files so each run starts clean."""
     p = Path(STORE)
     p.parent.mkdir(parents=True, exist_ok=True)
     for sibling in p.parent.iterdir():

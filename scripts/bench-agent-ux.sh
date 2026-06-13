@@ -22,14 +22,14 @@ run python3 -m pytest plugins/hermes/tests -q
 
 run env \
     AIDEMEMO_BIN="$AIDEMEMO_BIN" \
-    AIDEMEMO_E2E_STORE="/tmp/aidememo-agent-ux-d/wiki.redb" \
+    AIDEMEMO_E2E_STORE="/tmp/aidememo-agent-ux-d/wiki.sqlite" \
     AIDEMEMO_E2E_PROCESSES="$PROCESSES" \
     AIDEMEMO_E2E_N_PER_PROC="$N_PER_PROC" \
     python3 bench/multi-agent/scenario_d_concurrent_writers.py
 
 run env \
     AIDEMEMO_BIN="$AIDEMEMO_BIN" \
-    AIDEMEMO_E2E_STORE="/tmp/aidememo-agent-ux-e/wiki.redb" \
+    AIDEMEMO_E2E_STORE="/tmp/aidememo-agent-ux-e/wiki.sqlite" \
     AIDEMEMO_E2E_CLIENTS="$CLIENTS" \
     AIDEMEMO_E2E_N_PER_CLIENT="$N_PER_CLIENT" \
     python3 bench/multi-agent/scenario_e_http_shared.py

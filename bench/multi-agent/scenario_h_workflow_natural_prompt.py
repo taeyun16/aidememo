@@ -33,7 +33,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-STORE = os.environ.get("AIDEMEMO_E2E_STORE", "/Users/mixlink/.aidememo-e2e/wiki.redb")
+STORE = os.environ.get("AIDEMEMO_E2E_STORE", "/Users/mixlink/.aidememo-e2e/wiki.sqlite")
 WG = os.environ.get("AIDEMEMO_BIN", "/Users/mixlink/dev/aidememo/target/debug/aidememo")
 CLAUDE_BIN = os.environ.get("CLAUDE_BIN", "/Users/mixlink/.local/bin/claude")
 CODEX_BIN = os.environ.get("CODEX_BIN", "/opt/homebrew/bin/codex")

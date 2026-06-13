@@ -36,8 +36,27 @@ STORE = os.environ.get(
     "AIDEMEMO_E2E_STORE", "/Users/mixlink/.aidememo-e2e/wiki.redb-concurrent"
 )
 WG = os.environ.get("AIDEMEMO_BIN", "/Users/mixlink/.local/bin/aidememo")
+E2E_HOME = os.environ.get("AIDEMEMO_E2E_HOME", str(Path(STORE).parent / "home-redb"))
 M_PROCESSES = int(os.environ.get("AIDEMEMO_E2E_PROCESSES", "4"))
 N_PER_PROC = int(os.environ.get("AIDEMEMO_E2E_N_PER_PROC", "25"))
+
+
+def aidememo_env() -> dict[str, str]:
+    env = os.environ.copy()
+    env["HOME"] = E2E_HOME
+    return env
+
+
+def configure_redb_backend() -> None:
+    Path(E2E_HOME).mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        [WG, "config", "set", "store.backend", "redb"],
+        env=aidememo_env(),
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=20,
+    )
 
 
 def reset_store() -> None:
@@ -59,6 +78,7 @@ def cli_write_one(args: tuple[int, int]) -> dict:
         out = subprocess.run(
             [WG, "--store", STORE, "fact", "add", content,
              "--entities", f"E{proc_idx}", "--json"],
+            env=aidememo_env(),
             capture_output=True, text=True, timeout=20,
         )
     except subprocess.TimeoutExpired:
@@ -96,6 +116,7 @@ def mcp_writer_proc(proc_idx: int) -> list[dict]:
     payload = "".join(json.dumps(c) + "\n" for c in calls)
     t = time.perf_counter_ns()
     proc = subprocess.run([WG, "mcp", STORE], input=payload,
+                          env=aidememo_env(),
                           capture_output=True, text=True, timeout=60)
     elapsed = (time.perf_counter_ns() - t) / 1e6
     out = []
@@ -170,6 +191,7 @@ def run_mode(name: str, worker) -> ModeResult:
     # Cross-check with the store: list every fact that landed.
     out = subprocess.run(
         [WG, "--store", STORE, "fact", "list", "-l", "1000", "--json"],
+        env=aidememo_env(),
         capture_output=True, text=True, timeout=15,
     )
     persisted = []
@@ -193,6 +215,7 @@ def run_mode(name: str, worker) -> ModeResult:
 
 
 def main() -> int:
+    configure_redb_backend()
     cli_res = run_mode("cli", cli_writer_proc)
     mcp_res = run_mode("mcp", mcp_writer_proc)
 

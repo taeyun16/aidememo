@@ -38,9 +38,9 @@ static int has_error(const char* json) {
 
 int main(void) {
     /* Use a temp file path. */
-    char db_path[] = "/tmp/aidememo-ffi-smoke-XXXXXX.redb";
+    char db_path[] = "/tmp/aidememo-ffi-smoke-XXXXXX.sqlite";
     /* mkstemps not portable — just use a fixed path and unlink at end. */
-    const char* path = "/tmp/aidememo-ffi-smoke.redb";
+    const char* path = "/tmp/aidememo-ffi-smoke.sqlite";
     unlink(path); (void)db_path;
 
     aidememo_store_t* g = aidememo_open(path);

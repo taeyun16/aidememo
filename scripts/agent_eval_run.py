@@ -38,7 +38,7 @@ def run_claude(prompt: str, mcp_config: str, timeout: int = 120) -> dict:
     """
     sys_prompt = (
         "You have access to aidememo MCP tools (server name 'aidememo-test') over "
-        "the wiki at /tmp/aidememo-agent-test/wiki.redb. Use those tools to "
+        "the wiki at /tmp/aidememo-agent-test/wiki.sqlite. Use those tools to "
         "answer the user's question. Be concise. If the wiki doesn't "
         "have the answer, say so explicitly — do not guess."
     )
@@ -86,7 +86,7 @@ def run_codex(prompt: str, mcp_config: str, timeout: int = 120) -> dict:
     """
     sys_prompt = (
         "Use the aidememo MCP tools (server 'aidememo-test') against the wiki at "
-        "/tmp/aidememo-agent-test/wiki.redb to answer. Be concise. Don't guess."
+        "/tmp/aidememo-agent-test/wiki.sqlite to answer. Be concise. Don't guess."
     )
     full = f"{sys_prompt}\n\nQuestion: {prompt}"
     cmd = [
@@ -131,7 +131,7 @@ def run_hermes(prompt: str, mcp_config: str, timeout: int = 120) -> dict:
     message if the aidememo-test MCP isn't registered with hermes."""
     sys_prompt = (
         "Use the aidememo MCP tools (server 'aidememo-test') against the wiki at "
-        "/tmp/aidememo-agent-test/wiki.redb to answer. Be concise. Don't guess."
+        "/tmp/aidememo-agent-test/wiki.sqlite to answer. Be concise. Don't guess."
     )
     full = f"{sys_prompt}\n\nQuestion: {prompt}"
     cmd = ["hermes", "--yolo", "chat", "-Q", "-q", full]

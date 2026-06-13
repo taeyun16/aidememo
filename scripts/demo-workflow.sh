@@ -23,7 +23,7 @@ if [[ -z "$WG" || ! -x "$WG" ]]; then
 fi
 
 BASE="${AIDEMEMO_DEMO_BASE:-$(mktemp -d "${TMPDIR:-/tmp}/aidememo-demo-workflow.XXXXXX")}"
-STORE="$BASE/wiki.redb"
+STORE="$BASE/wiki.sqlite"
 
 cleanup() {
     if [[ "${AIDEMEMO_DEMO_KEEP:-0}" != "1" ]]; then

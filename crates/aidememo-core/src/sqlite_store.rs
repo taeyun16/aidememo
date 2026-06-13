@@ -1,10 +1,10 @@
-//! Experimental SQLite storage backend.
+//! SQLite storage backend.
 //!
-//! This module is gated behind the `sqlite` Cargo feature and can be selected at
-//! runtime with `store.backend = "sqlite"`. It implements the `StoreBackend`
-//! surface so we can validate schema shape, query semantics, and performance
-//! before deciding whether to promote SQLite to the default backend. Remote
-//! libSQL/Turso semantics are intentionally out of scope for this local backend.
+//! This is the default local backend and can be selected explicitly at runtime
+//! with `store.backend = "sqlite"` or `store.backend = "libsqlite"`. It
+//! implements the `StoreBackend` surface shared with the optional redb backend.
+//! Remote libSQL/Turso semantics are intentionally out of scope for this local
+//! backend.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -22,7 +22,7 @@ use crate::types::{
     RelationRecord, SearchFeedback, SearchSession, StoreStats, TraverseDirection,
 };
 
-/// SQLite-backed store prototype.
+/// SQLite-backed store.
 pub struct SqliteStore {
     conn: Mutex<Connection>,
     config: Arc<Config>,

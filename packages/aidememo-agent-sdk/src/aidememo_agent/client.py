@@ -46,8 +46,8 @@ CLIENT_ERRORS: tuple[type[BaseException], ...] = (
 class AideMemoClient:
     """Bidirectional adapter for aidememo.
 
-    Pass an explicit ``store_path`` to pin the redb store; otherwise
-    we trust the default resolution aidememo performs (``~/.aidememo/wiki.redb``
+    Pass an explicit ``store_path`` to pin the local store; otherwise
+    we trust the default resolution aidememo performs (``~/.aidememo/wiki.sqlite``
     or whatever ``aidememo config`` says).
     """
 

@@ -10,7 +10,7 @@ const { AideMemoStore, version } = require('..');
 
 function main() {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'aidememo-napi-smoke-'));
-  const db = path.join(tmp, 'test.redb');
+  const db = path.join(tmp, 'test.sqlite');
 
   try {
     const g = new AideMemoStore(db);
@@ -63,7 +63,7 @@ function main() {
     const facts = JSON.parse(g.factList({ entity: 'Redis', limit: 10, sourceId: 'alpha' }));
     if (facts.length !== 1) throw new Error(`expected 1 fact, got ${facts.length}`);
 
-    // Batch insert — single redb write txn for the whole array.
+    // Batch insert — single backend transaction for the whole array.
     const manyIds = g.factAddMany([
       { content: 'Redis worker timeout lesson: DNS resolution caused queue stalls',
         entityIds: [eidRedis], factType: 'lesson', sourceId: 'alpha' },
