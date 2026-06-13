@@ -452,4 +452,34 @@ fi
 mcp_cleanup
 trap cleanup EXIT
 
-echo "sqlite mcp soak ok (${BACKEND}): ${WRITES} writes across ${WORKERS} workers"
+DAEMON_PORT="$(find_port)"
+HOME="$HOME_DIR" "$BIN" --backend "$BACKEND" --store "$STORE" daemon start \
+    --port "$DAEMON_PORT" >/dev/null
+daemon_cleanup() {
+    HOME="$HOME_DIR" "$BIN" --backend "$BACKEND" --store "$STORE" daemon stop >/dev/null 2>&1 || true
+}
+trap 'daemon_cleanup; cleanup' EXIT
+
+daemon_status="$(HOME="$HOME_DIR" "$BIN" --backend "$BACKEND" --store "$STORE" daemon status)"
+if [[ "$daemon_status" != *"matches CLI store/backend"* ]]; then
+    echo "SQLite-only daemon did not report a matching backend" >&2
+    echo "$daemon_status" >&2
+    exit 1
+fi
+
+daemon_search="$(HOME="$HOME_DIR" "$BIN" --backend "$BACKEND" --store "$STORE" search "SQLite MCP soak seed" --limit 5)"
+if [[ "$daemon_search" != *"SQLite MCP soak seed"* ]]; then
+    echo "SQLite-only daemon-discovered search did not return the seed fact" >&2
+    echo "$daemon_search" >&2
+    exit 1
+fi
+
+daemon_stop="$(HOME="$HOME_DIR" "$BIN" --backend "$BACKEND" --store "$STORE" daemon stop)"
+if [[ "$daemon_stop" != *"aidememo daemon stopped"* ]]; then
+    echo "SQLite-only daemon stop did not report success" >&2
+    echo "$daemon_stop" >&2
+    exit 1
+fi
+trap cleanup EXIT
+
+echo "sqlite mcp soak ok (${BACKEND}): ${WRITES} writes across ${WORKERS} workers + daemon lifecycle"

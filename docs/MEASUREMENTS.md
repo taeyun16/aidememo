@@ -308,7 +308,8 @@ Runtime promotion status:
   search/query/context/recent/session_start, overview/doctor, traverse/path,
   aggregate, extract preview, workflow_start, and include-archive search. It
   then writes 200 facts through 16 parallel HTTP MCP callers, verifies unique
-  fact IDs, final stats, and BM25 visibility for a tail write. Set
+  fact IDs, final stats, and BM25 visibility for a tail write. It also starts
+  and stops a SQLite-only daemon and checks daemon-discovered BM25 search. Set
   `AIDEMEMO_SQLITE_MCP_SOAK_BACKEND=sqlite` to exercise the canonical spelling.
 * `scripts/storage-backend-sdk-bindings-check.sh` verifies the SDK/binding
   surface: default SQLite builds, explicit SQLite-only builds, omitted/empty
