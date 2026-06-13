@@ -33,7 +33,7 @@ REPO = Path(__file__).resolve().parents[2]
 WG = os.environ.get("AIDEMEMO_BIN", str(REPO / "target" / "debug" / "aidememo"))
 STORE = os.environ.get(
     "AIDEMEMO_E2E_STORE",
-    str(Path(tempfile.gettempdir()) / "aidememo-e2e-l" / "self-extraction.redb"),
+    str(Path(tempfile.gettempdir()) / "aidememo-e2e-l" / "self-extraction.sqlite"),
 )
 
 SELF_EXTRACTED_FACTS: list[dict[str, Any]] = [

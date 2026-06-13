@@ -26,17 +26,21 @@ agents installed on this machine: Claude Code, Codex, and Hermes.
 cargo build -p aidememo-cli --release
 ln -sf "$PWD/target/release/aidememo" ~/.local/bin/aidememo
 
-# zero-cost scenarios
+# zero-cost default SQLite scenarios
 python3 bench/multi-agent/scenario_a_mcp_smoke.py
 python3 bench/multi-agent/scenario_b_consistency.py
-python3 bench/multi-agent/scenario_d_concurrent_writers.py
 python3 bench/multi-agent/scenario_e_http_shared.py
 python3 bench/multi-agent/scenario_f_workflow_triggers.py
 python3 bench/multi-agent/scenario_i_workflow_doctor.py
-python3 bench/multi-agent/scenario_j_lock_retry_sweep.py
 python3 bench/multi-agent/scenario_l_self_extraction.py
 python3 bench/multi-agent/scenario_m_mcp_install_source_defaults.py
 python3 bench/multi-agent/scenario_n_hermes_memory_as_code.py
+
+# optional-redb lock scenarios
+cargo build -p aidememo-cli --release --features redb
+ln -sf "$PWD/target/release/aidememo" ~/.local/bin/aidememo
+python3 bench/multi-agent/scenario_d_concurrent_writers.py
+python3 bench/multi-agent/scenario_j_lock_retry_sweep.py
 
 # binding / SDK comparisons (require local native packages)
 (cd crates/aidememo-python && maturin build --release -o /tmp/aidememo-python-wheel)

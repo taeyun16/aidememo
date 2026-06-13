@@ -31,7 +31,7 @@ REPO = Path(__file__).resolve().parents[2]
 WG = os.environ.get("AIDEMEMO_BIN", str(REPO / "target" / "debug" / "aidememo"))
 STORE = os.environ.get(
     "AIDEMEMO_E2E_STORE",
-    str(Path(tempfile.gettempdir()) / "aidememo-e2e-n" / "hermes-memory-as-code.redb"),
+    str(Path(tempfile.gettempdir()) / "aidememo-e2e-n" / "hermes-memory-as-code.sqlite"),
 )
 AGENT_SDK_SRC = REPO / "packages" / "aidememo-agent-sdk" / "src"
 SOURCE_ID = "hermes-research-alpha"

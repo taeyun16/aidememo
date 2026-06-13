@@ -33,9 +33,9 @@ REPO = Path(__file__).resolve().parents[2]
 WG = os.environ.get("AIDEMEMO_BIN", str(REPO / "target" / "debug" / "aidememo"))
 BASE = Path(os.environ.get("AIDEMEMO_E2E_BASE", str(Path(tempfile.gettempdir()) / "aidememo-e2e-k")))
 STORES = {
-    "cli": str(BASE / "workflow-cli.redb"),
-    "python": str(BASE / "workflow-python.redb"),
-    "node": str(BASE / "workflow-node.redb"),
+    "cli": str(BASE / "workflow-cli.sqlite"),
+    "python": str(BASE / "workflow-python.sqlite"),
+    "node": str(BASE / "workflow-node.sqlite"),
 }
 
 NODE_SCRIPT = r"""

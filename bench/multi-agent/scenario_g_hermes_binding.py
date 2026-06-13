@@ -36,8 +36,9 @@ from typing import Any
 REPO = Path(__file__).resolve().parents[2]
 WG = os.environ.get("AIDEMEMO_BIN", str(REPO / "target" / "debug" / "aidememo"))
 BASE = Path(os.environ.get("AIDEMEMO_E2E_BASE", str(Path(tempfile.gettempdir()) / "aidememo-e2e-g")))
-CLI_STORE = str(BASE / "workflow-cli.redb")
-PY_STORE = str(BASE / "workflow-py.redb")
+AGENT_SDK_SRC = REPO / "packages" / "aidememo-agent-sdk" / "src"
+CLI_STORE = str(BASE / "workflow-cli.sqlite")
+PY_STORE = str(BASE / "workflow-py.sqlite")
 
 
 @dataclass
@@ -235,6 +236,7 @@ def main() -> int:
         print(f"import error: {exc}", file=sys.stderr)
         return 2
 
+    sys.path.insert(0, str(AGENT_SDK_SRC))
     sys.path.insert(0, str(REPO / "plugins" / "hermes" / "src"))
     os.environ["PATH"] = f"{Path(WG).parent}:{os.environ.get('PATH', '')}"
     from hermes_aidememo.client import AideMemoClient

@@ -36,9 +36,10 @@ from typing import Any
 
 REPO = Path(__file__).resolve().parents[2]
 WG = os.environ.get("AIDEMEMO_BIN", str(REPO / "target" / "debug" / "aidememo"))
+AGENT_SDK_SRC = REPO / "packages" / "aidememo-agent-sdk" / "src"
 STORE = os.environ.get(
     "AIDEMEMO_E2E_STORE",
-    str(Path(tempfile.gettempdir()) / "aidememo-e2e-f" / "workflow.redb"),
+    str(Path(tempfile.gettempdir()) / "aidememo-e2e-f" / "workflow.sqlite"),
 )
 
 
@@ -214,6 +215,7 @@ def workflow_mcp(ticket: Ticket) -> dict[str, Any]:
 
 
 def workflow_hermes(ticket: Ticket) -> dict[str, Any]:
+    sys.path.insert(0, str(AGENT_SDK_SRC))
     sys.path.insert(0, str(REPO / "plugins" / "hermes" / "src"))
     os.environ["PATH"] = f"{Path(WG).parent}:{os.environ.get('PATH', '')}"
     from hermes_aidememo.client import AideMemoClient
