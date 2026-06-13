@@ -29,8 +29,8 @@
 //!      type-detection boost into a `[0.0, 1.0]` confidence.
 //! 4. Sort by confidence and return the top `max_candidates`.
 
+use crate::backend::StoreBackend;
 use crate::error::Result;
-use crate::store::Store;
 use crate::types::{EntitySort, FactType, ListOpts};
 
 /// One proposed fact the agent can choose to commit.
@@ -57,7 +57,7 @@ pub struct ExtractCandidate {
 /// bound large wikis) and reuse it across every sentence.
 pub fn extract_candidates(
     text: &str,
-    store: &Store,
+    store: &(impl StoreBackend + ?Sized),
     max_candidates: usize,
 ) -> Result<Vec<ExtractCandidate>> {
     if text.trim().is_empty() {
@@ -272,7 +272,7 @@ fn detect_fact_type(lowered: &str) -> FactType {
 #[cfg(feature = "semantic")]
 pub fn extract_candidates_llm(
     text: &str,
-    store: &Store,
+    store: &(impl StoreBackend + ?Sized),
     cfg: &crate::config::ExtractConfig,
     max_candidates: usize,
 ) -> Result<Vec<ExtractCandidate>> {
@@ -559,6 +559,7 @@ mod tests {
         // run extraction. Top result should be the decision sentence
         // mentioning the entity.
         use crate::config::Config;
+        use crate::store::Store;
         use crate::types::{EntityInput, EntityType};
         use tempfile::TempDir;
 

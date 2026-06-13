@@ -1337,6 +1337,66 @@ impl Store {
         Ok(record)
     }
 
+    fn fact_matches_list_opts(record: &FactRecord, opts: &FactListOpts) -> bool {
+        if let Some(ref fact_type) = opts.fact_type {
+            if &record.fact_type != fact_type {
+                return false;
+            }
+        }
+
+        if let Some(min_confidence) = opts.min_confidence {
+            if record.source_confidence < min_confidence {
+                return false;
+            }
+        }
+
+        if let Some(entity_id) = opts.entity_id {
+            if !record.entity_ids.contains(&entity_id) {
+                return false;
+            }
+        }
+
+        if let Some(ref source_id) = opts.source_id {
+            if record.source_id.as_deref() != Some(source_id.as_str()) {
+                return false;
+            }
+        }
+
+        // Time filter: prefer observed_at (real-world time) over created_at (DB insertion).
+        if opts.since.is_some() || opts.until.is_some() {
+            let ts = record.observed_at.unwrap_or(record.created_at);
+            if let Some(since) = opts.since {
+                if ts < since {
+                    return false;
+                }
+            }
+            if let Some(until) = opts.until {
+                if ts > until {
+                    return false;
+                }
+            }
+        }
+
+        if opts.current_only && record.superseded_at.is_some() {
+            return false;
+        }
+
+        // As-of filter: include this fact only if it (a) existed at the
+        // as_of time and (b) wasn't superseded yet then.
+        if let Some(as_of) = opts.as_of {
+            if record.created_at > as_of {
+                return false;
+            }
+            if let Some(superseded_at) = record.superseded_at
+                && superseded_at <= as_of
+            {
+                return false;
+            }
+        }
+
+        true
+    }
+
     /// Update a fact.
     pub fn fact_update(&mut self, id: &FactId, input: FactUpdate) -> Result<()> {
         let read_txn = self
@@ -1553,82 +1613,84 @@ impl Store {
 
         let mut results: Vec<FactRecord> = Vec::new();
 
-        for entry in facts.iter().map_err(|e| AideMemoError::StoreRead {
-            table: "facts",
-            key: "<iter>".to_string(),
-            source: Box::new(e),
-        })? {
-            let (_key, value) = entry.map_err(|e| AideMemoError::StoreRead {
-                table: "facts",
-                key: "<entry>".to_string(),
-                source: Box::new(e),
+        if let Some(entity_id) = opts.entity_id {
+            let fact_by_entity = read_txn.open_table(FACT_BY_ENTITY_TABLE).map_err(|e| {
+                AideMemoError::StoreRead {
+                    table: "fact_by_entity",
+                    key: entity_id.to_string(),
+                    source: Box::new(e),
+                }
             })?;
+            let lower = format!("{}\0", entity_id);
+            let upper = format!("{}\u{1}", entity_id);
 
-            let record: FactRecord =
-                serde_json::from_slice(value.value()).map_err(|e| AideMemoError::Deserialize {
-                    context: "fact list".to_string(),
-                    source: e,
+            for entry in fact_by_entity
+                .range::<&str>(lower.as_str()..upper.as_str())
+                .map_err(|e| AideMemoError::StoreRead {
+                    table: "fact_by_entity",
+                    key: "<range>".to_string(),
+                    source: Box::new(e),
+                })?
+            {
+                let (_key, value) = entry.map_err(|e| AideMemoError::StoreRead {
+                    table: "fact_by_entity",
+                    key: "<entry>".to_string(),
+                    source: Box::new(e),
+                })?;
+                let id_bytes = value.value();
+                if id_bytes.len() != 16 {
+                    continue;
+                }
+                let mut raw_id = [0u8; 16];
+                raw_id.copy_from_slice(id_bytes);
+                let fact_id = FactId(Ulid::from_bytes(raw_id));
+
+                let Some(record_bytes) = facts.get(fact_id.as_bytes().as_slice()).map_err(|e| {
+                    AideMemoError::StoreRead {
+                        table: "facts",
+                        key: fact_id.to_string(),
+                        source: Box::new(e),
+                    }
+                })?
+                else {
+                    continue;
+                };
+
+                let record: FactRecord =
+                    serde_json::from_slice(record_bytes.value()).map_err(|e| {
+                        AideMemoError::Deserialize {
+                            context: "fact list".to_string(),
+                            source: e,
+                        }
+                    })?;
+
+                if Self::fact_matches_list_opts(&record, &opts) {
+                    results.push(record);
+                }
+            }
+        } else {
+            for entry in facts.iter().map_err(|e| AideMemoError::StoreRead {
+                table: "facts",
+                key: "<iter>".to_string(),
+                source: Box::new(e),
+            })? {
+                let (_key, value) = entry.map_err(|e| AideMemoError::StoreRead {
+                    table: "facts",
+                    key: "<entry>".to_string(),
+                    source: Box::new(e),
                 })?;
 
-            // Apply filters
-            if let Some(ref fact_type) = opts.fact_type {
-                if &record.fact_type != fact_type {
-                    continue;
-                }
-            }
-
-            if let Some(min_confidence) = opts.min_confidence {
-                if record.source_confidence < min_confidence {
-                    continue;
-                }
-            }
-
-            if let Some(entity_id) = opts.entity_id {
-                if !record.entity_ids.contains(&entity_id) {
-                    continue;
-                }
-            }
-
-            if let Some(ref source_id) = opts.source_id {
-                if record.source_id.as_deref() != Some(source_id.as_str()) {
-                    continue;
-                }
-            }
-
-            // Time filter: prefer observed_at (real-world time) over created_at (DB insertion).
-            if opts.since.is_some() || opts.until.is_some() {
-                let ts = record.observed_at.unwrap_or(record.created_at);
-                if let Some(since) = opts.since {
-                    if ts < since {
-                        continue;
+                let record: FactRecord = serde_json::from_slice(value.value()).map_err(|e| {
+                    AideMemoError::Deserialize {
+                        context: "fact list".to_string(),
+                        source: e,
                     }
-                }
-                if let Some(until) = opts.until {
-                    if ts > until {
-                        continue;
-                    }
+                })?;
+
+                if Self::fact_matches_list_opts(&record, &opts) {
+                    results.push(record);
                 }
             }
-
-            // Current-only filter: skip facts that have been superseded.
-            if opts.current_only && record.superseded_at.is_some() {
-                continue;
-            }
-
-            // As-of filter: include this fact only if it (a) existed
-            // at the as_of time and (b) wasn't superseded yet then.
-            if let Some(as_of) = opts.as_of {
-                if record.created_at > as_of {
-                    continue;
-                }
-                if let Some(superseded_at) = record.superseded_at
-                    && superseded_at <= as_of
-                {
-                    continue;
-                }
-            }
-
-            results.push(record);
         }
 
         // Apply pagination
@@ -2772,6 +2834,111 @@ mod tests {
         assert_eq!(records.len(), 2);
         assert_eq!(records[0].id, ids[0]);
         assert_eq!(records[1].id, ids[1]);
+    }
+
+    #[test]
+    fn fact_list_entity_filter_preserves_existing_filters() {
+        let mut store = create_test_store();
+        store
+            .entity_add(EntityInput {
+                name: "Redis".to_string(),
+                entity_type: Some(EntityType::Technology),
+                ..Default::default()
+            })
+            .unwrap();
+        store
+            .entity_add(EntityInput {
+                name: "Postgres".to_string(),
+                entity_type: Some(EntityType::Technology),
+                ..Default::default()
+            })
+            .unwrap();
+        let redis_id = store.resolve_entity("Redis").unwrap();
+        let postgres_id = store.resolve_entity("Postgres").unwrap();
+
+        let redis_alpha = store
+            .fact_add(FactInput {
+                content: "redis alpha note".to_string(),
+                fact_type: Some(FactType::Note),
+                entity_ids: Some(vec![redis_id]),
+                source_id: Some("alpha".to_string()),
+                source_confidence: Some(0.9),
+                ..Default::default()
+            })
+            .unwrap();
+        let redis_decision = store
+            .fact_add(FactInput {
+                content: "redis alpha decision".to_string(),
+                fact_type: Some(FactType::Decision),
+                entity_ids: Some(vec![redis_id]),
+                source_id: Some("alpha".to_string()),
+                source_confidence: Some(0.9),
+                ..Default::default()
+            })
+            .unwrap();
+        let redis_beta = store
+            .fact_add(FactInput {
+                content: "redis beta note".to_string(),
+                fact_type: Some(FactType::Note),
+                entity_ids: Some(vec![redis_id]),
+                source_id: Some("beta".to_string()),
+                source_confidence: Some(0.9),
+                ..Default::default()
+            })
+            .unwrap();
+        store
+            .fact_add(FactInput {
+                content: "postgres alpha note".to_string(),
+                fact_type: Some(FactType::Note),
+                entity_ids: Some(vec![postgres_id]),
+                source_id: Some("alpha".to_string()),
+                source_confidence: Some(0.9),
+                ..Default::default()
+            })
+            .unwrap();
+
+        let filtered = store
+            .fact_list(FactListOpts {
+                entity_id: Some(redis_id),
+                fact_type: Some(FactType::Note),
+                source_id: Some("alpha".to_string()),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].id, redis_alpha);
+
+        store
+            .fact_update(
+                &redis_beta,
+                FactUpdate {
+                    superseded_at: Some(crate::time::current_epoch_ms()),
+                    superseded_by: Some(redis_decision),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let current = store
+            .fact_list(FactListOpts {
+                entity_id: Some(redis_id),
+                current_only: true,
+                ..Default::default()
+            })
+            .unwrap();
+        let current_ids: std::collections::HashSet<_> = current.iter().map(|f| f.id).collect();
+        assert!(current_ids.contains(&redis_alpha));
+        assert!(current_ids.contains(&redis_decision));
+        assert!(!current_ids.contains(&redis_beta));
+
+        let paged = store
+            .fact_list(FactListOpts {
+                entity_id: Some(redis_id),
+                limit: Some(1),
+                offset: 1,
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(paged.len(), 1);
     }
 
     #[test]

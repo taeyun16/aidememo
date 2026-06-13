@@ -35,6 +35,18 @@ AideMemoNif.fact_add(g, "Redis Sentinel provides HA",
 )
 ```
 
+To use the experimental local SQLite backend, compile the NIF with the Cargo
+`sqlite` feature and pass `backend: "sqlite"`:
+
+```bash
+cd crates/aidememo-nif
+AIDEMEMO_NIF_CARGO_FEATURES=sqlite mix compile
+```
+
+```elixir
+g = AideMemoNif.open!("./_meta/wiki.sqlite", backend: "sqlite")
+```
+
 Read methods that return complex shapes (search, query, traverse, lint, …)
 auto-decode JSON; you receive plain Elixir maps and lists. Write methods
 return atoms or ULID strings.
@@ -42,7 +54,7 @@ return atoms or ULID strings.
 ## API surface
 
 `AideMemoNif` (high-level, JSON-decoding) wraps `AideMemoNif.Native` (raw NIF). 21 functions:
-`open!/1`, `version/0`, `search/3`, `query/3`, `traverse/3`, `path_find/3`,
+`open!/1`, `open!/2`, `version/0`, `search/3`, `query/3`, `traverse/3`, `path_find/3`,
 `entity_add/3`, `entity_get/2`, `entity_list/2`, `entity_delete/2`,
 `resolve_entity/2`, `fact_add/3`, `fact_get/2`, `fact_list/2`, `fact_delete/2`,
 `relation_add/4`, `relation_remove/4`, `relations_get/3`, `ingest/3`,

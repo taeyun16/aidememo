@@ -12,6 +12,10 @@ version.workspace = true
 name = "aidememo_python"
 crate-type = ["cdylib"]
 
+[features]
+default = []
+sqlite = ["aidememo-core/sqlite"]
+
 [dependencies]
 aidememo-core = { version = "0.1.0", path = "../aidememo-core", features = ["semantic"] }
 pyo3 = { version = "0.29", features = ["extension-module"] }

@@ -1,7 +1,8 @@
 defmodule AideMemoNif do
   @moduledoc """
   Elixir bindings for AideMemo (`aidememo`) — a local knowledge-graph wiki backed
-  by redb with hybrid BM25 + semantic search.
+  by redb by default, with an experimental SQLite backend when the NIF is built
+  with the `sqlite` Cargo feature.
 
   ## Quick start
 
@@ -19,8 +20,17 @@ defmodule AideMemoNif do
   alias AideMemoNif.Native
 
   @doc "Open a wiki store. Returns a NIF resource handle."
-  def open!(path) do
-    case Native.open(path) do
+  def open!(path, opts \\ []) do
+    backend = Keyword.get(opts, :backend, "")
+
+    result =
+      if backend in ["", nil] do
+        Native.open(path)
+      else
+        Native.open_with_backend(path, to_string(backend))
+      end
+
+    case result do
       ref when is_reference(ref) -> ref
       handle -> handle
     end

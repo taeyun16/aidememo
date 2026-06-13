@@ -228,6 +228,7 @@ fn fact_input_from_dict(
 ///     model="minishlab/potion-base-8M",
 ///     semantic_index="hnsw",
 ///     durability="eventual",
+///     backend="redb",
 /// )
 /// ```
 #[pyclass(name = "AideMemo")]
@@ -242,12 +243,14 @@ impl PyAideMemo {
         model = None,
         semantic_index = None,
         durability = None,
+        backend = None,
     ))]
     fn new(
         store_path: String,
         model: Option<String>,
         semantic_index: Option<String>,
         durability: Option<String>,
+        backend: Option<String>,
     ) -> PyResult<Self> {
         let mut config = Config::default();
         if let Some(model) = model {
@@ -258,6 +261,9 @@ impl PyAideMemo {
         }
         if let Some(dur) = durability {
             config.set("store.durability", &dur).map_err(map_err)?;
+        }
+        if let Some(backend) = backend {
+            config.set("store.backend", &backend).map_err(map_err)?;
         }
         let wiki = AideMemo::open(Path::new(&store_path), config).map_err(map_err)?;
         Ok(Self(Arc::new(wiki)))

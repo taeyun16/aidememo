@@ -11,9 +11,9 @@ use memchr::memchr;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
+use crate::backend::StoreBackend;
 use crate::error::AideMemoError;
 use crate::relations::{TypedRelation, extract_typed_relations};
-use crate::store::Store;
 use crate::types::{EntityInput, EntityType, FactInput, FactType, RelationInput, RelationType};
 
 /// Result of a complete ingest operation.
@@ -84,9 +84,9 @@ pub struct Section {
 ///
 /// Setting `incremental` to true is currently equivalent to a full ingest
 /// (mtime-based incremental logic is planned for a future release).
-pub fn ingest_wiki(
+pub fn ingest_wiki<B: StoreBackend>(
     wiki_root: &Path,
-    store: &mut Store,
+    store: &mut B,
     _incremental: bool,
 ) -> Result<IngestStats, AideMemoError> {
     let wiki_root = wiki_root.to_path_buf();
@@ -152,7 +152,7 @@ pub fn ingest_wiki(
                     std::collections::HashSet::new();
 
                 // Helper: ensure an entity exists (auto-create as Unknown if missing).
-                let ensure_entity = |store: &mut Store, name: &str, stats: &mut IngestStats| {
+                let ensure_entity = |store: &mut B, name: &str, stats: &mut IngestStats| {
                     if store.resolve_entity(name).is_err() {
                         let _ = store.entity_add(EntityInput {
                             name: name.to_string(),

@@ -1,7 +1,7 @@
 //! Cold-tier archive support.
 //!
-//! Old / decayed facts can be moved out of the hot redb file into a
-//! sibling `.cold.redb` file so the hot store stays bounded. Search
+//! Old / decayed facts can be moved out of the hot store file into a
+//! sibling cold-tier file so the hot store stays bounded. Search
 //! reads hot only by default; an opt-in `include_archive` flag (added
 //! in stage 2) opens the cold file on demand and merges results.
 //!
@@ -22,7 +22,8 @@
 //!   re-runs the cold write (idempotent via content hash) and
 //!   completes the hot delete.
 //!
-//! Cold path is derived from the hot store path: `<hot>.cold.redb`.
+//! Cold path is derived from the hot store path. redb stores use
+//! `<hot>.cold.redb`; SQLite stores use `<hot>.cold.sqlite`.
 
 use std::path::PathBuf;
 
@@ -35,8 +36,17 @@ use crate::types::{FactId, FactRecord};
 /// Compute the cold-tier db path for a hot db file. Both files sit
 /// side by side so user backups copy them together.
 pub fn cold_path_for(hot_path: &std::path::Path) -> PathBuf {
+    cold_path_for_backend(hot_path, "redb")
+}
+
+/// Compute the cold-tier db path for a hot db file and selected backend.
+pub fn cold_path_for_backend(hot_path: &std::path::Path, backend: &str) -> PathBuf {
     let mut s = hot_path.as_os_str().to_os_string();
-    s.push(".cold.redb");
+    let suffix = match backend.trim().to_lowercase().as_str() {
+        "sqlite" | "libsqlite" => ".cold.sqlite",
+        _ => ".cold.redb",
+    };
+    s.push(suffix);
     PathBuf::from(s)
 }
 
@@ -286,6 +296,22 @@ mod tests {
         assert_eq!(
             cold_path_for(p),
             std::path::PathBuf::from("/tmp/x.redb.cold.redb")
+        );
+    }
+
+    #[test]
+    fn cold_path_uses_backend_specific_suffix() {
+        assert_eq!(
+            cold_path_for_backend(std::path::Path::new("/tmp/x.redb"), "redb"),
+            std::path::PathBuf::from("/tmp/x.redb.cold.redb")
+        );
+        assert_eq!(
+            cold_path_for_backend(std::path::Path::new("/tmp/x.sqlite"), "sqlite"),
+            std::path::PathBuf::from("/tmp/x.sqlite.cold.sqlite")
+        );
+        assert_eq!(
+            cold_path_for_backend(std::path::Path::new("/tmp/x.db"), "libsqlite"),
+            std::path::PathBuf::from("/tmp/x.db.cold.sqlite")
         );
     }
 

@@ -2,6 +2,7 @@
 
 pub mod adapt;
 pub mod archive;
+pub mod backend;
 pub mod config;
 pub mod embedding;
 pub mod error;
@@ -19,6 +20,8 @@ pub mod rerank;
 #[cfg(feature = "s3")]
 pub mod s3;
 pub mod search;
+#[cfg(feature = "sqlite")]
+pub mod sqlite_store;
 pub mod store;
 pub mod sync;
 pub mod time;
@@ -43,8 +46,8 @@ pub use ingest::{IngestStats, ParsedFile, Section, Wikilink};
 pub use ulid;
 
 // Re-export store and graph components
+use backend::{StoreBackend, StoreKind};
 use graph::Graph;
-use store::Store;
 
 /// AideMemo instance.
 ///
@@ -52,8 +55,8 @@ use store::Store;
 pub struct AideMemo {
     // Use interior mutability pattern - Store itself uses Arc<Database>
     // For mutable operations, we use RwLock
-    store: Arc<RwLock<Store>>,
-    /// Absolute path to the redb file. Captured at `open` time so
+    store: Arc<RwLock<StoreKind>>,
+    /// Absolute path to the store file. Captured at `open` time so
     /// sidecars (HNSW index, i8 quant cache, etc.) live next to it
     /// regardless of how the caller spelled the path.
     store_path: std::path::PathBuf,
@@ -112,13 +115,13 @@ pub struct AideMemo {
     /// hot AideMemos that have never archived anything yet.
     cold_sibling: parking_lot::Mutex<Option<Arc<AideMemo>>>,
     /// True for cold-tier AideMemos so they refuse to recursively
-    /// open another cold (would create `<x>.cold.redb.cold.redb`).
+    /// open another cold (would create nested cold-tier files).
     is_cold: bool,
 }
 
 impl AideMemo {
     /// Access the store (read-only or write via RwLock).
-    pub fn store(&self) -> &Arc<RwLock<Store>> {
+    pub fn store(&self) -> &Arc<RwLock<StoreKind>> {
         &self.store
     }
 }
@@ -132,7 +135,7 @@ impl AideMemo {
     }
 
     fn open_inner(path: &Path, config: Config, is_cold: bool) -> Result<Self> {
-        let store = Store::open(path, config.clone())?;
+        let store = StoreKind::open(path, config.clone())?;
         Ok(Self {
             store: Arc::new(RwLock::new(store)),
             store_path: path.to_path_buf(),
@@ -156,7 +159,7 @@ impl AideMemo {
     }
 
     /// Lazy-open the cold-tier sibling AideMemo. Returns the same
-    /// `Arc<AideMemo>` on every call; opens the cold redb file
+    /// `Arc<AideMemo>` on every call; opens the backend-specific cold file
     /// and runs schema init the first time. Returns `None` when
     /// called on a cold AideMemo (cold's-cold is forbidden).
     pub fn cold(&self) -> Result<Option<Arc<AideMemo>>> {
@@ -169,7 +172,10 @@ impl AideMemo {
         }
         let cold_path = {
             let store = self.store.read();
-            archive::cold_path_for(std::path::Path::new(&store.config().store.path))
+            archive::cold_path_for_backend(
+                std::path::Path::new(&store.config().store.path),
+                &store.config().store.backend,
+            )
         };
         let mut cfg = (*self.config).clone();
         cfg.store.path = cold_path.to_string_lossy().into_owned();
@@ -218,7 +224,7 @@ impl AideMemo {
     /// Hand the inner store Arc to a same-crate caller. Today only
     /// `sync::sync_export` / `sync::sync_import` reach in here;
     /// nothing outside the crate gets a Store handle.
-    pub(crate) fn store_handle(&self) -> &Arc<RwLock<store::Store>> {
+    pub(crate) fn store_handle(&self) -> &Arc<RwLock<StoreKind>> {
         &self.store
     }
 
@@ -528,7 +534,8 @@ impl AideMemo {
         text: &str,
         max_candidates: usize,
     ) -> Result<Vec<extract::ExtractCandidate>> {
-        extract::extract_candidates(text, &self.store.read(), max_candidates)
+        let store = self.store.read();
+        extract::extract_candidates(text, &*store, max_candidates)
     }
 
     /// LLM-aided extractor — same return shape as
@@ -542,12 +549,8 @@ impl AideMemo {
         text: &str,
         max_candidates: usize,
     ) -> Result<Vec<extract::ExtractCandidate>> {
-        extract::extract_candidates_llm(
-            text,
-            &self.store.read(),
-            &self.config.extract,
-            max_candidates,
-        )
+        let store = self.store.read();
+        extract::extract_candidates_llm(text, &*store, &self.config.extract, max_candidates)
     }
 
     /// Top-N currently-pinned (`pinned=true` AND not superseded)
@@ -705,8 +708,9 @@ impl AideMemo {
         self.store.write().fact_feedback(id, helpful)
     }
 
-    /// Move facts from the hot store to the cold-tier archive
-    /// (`<store>.cold.redb`). Returns the number actually moved
+    /// Move facts from the hot store to the cold-tier archive. redb stores use
+    /// `<store>.cold.redb`; SQLite stores use `<store>.cold.sqlite`. Returns
+    /// the number actually moved
     /// (silently skips ids not in hot — they may already be archived).
     /// See `crates/aidememo-core/src/archive.rs` for the design notes
     /// (cold preserves FactId, content-hash dedup, hot delete after
@@ -719,10 +723,36 @@ impl AideMemo {
                 "archive_facts called on a cold AideMemo (no nested archives)".into(),
             ));
         }
-        let moved = {
+        let mut to_move = Vec::new();
+        {
+            let store = self.store.read();
+            for id in fact_ids {
+                if let Ok(fact) = store.fact_get(id) {
+                    to_move.push(fact);
+                }
+            }
+        }
+        if to_move.is_empty() {
+            return Ok(0);
+        }
+        let cold = self.cold()?.ok_or_else(|| {
+            AideMemoError::InvalidInput("archive_facts called without a cold sibling".into())
+        })?;
+        {
+            let mut cold_store = cold.store.write();
+            for fact in &to_move {
+                let _ = cold_store.fact_upsert_record(fact.clone())?;
+            }
+        }
+        let mut moved = 0usize;
+        {
             let mut store = self.store.write();
-            store.archive_facts(fact_ids)?
-        };
+            for fact in &to_move {
+                if store.fact_delete(&fact.id).is_ok() {
+                    moved += 1;
+                }
+            }
+        }
         if moved > 0 {
             self.bm25_mark_dirty();
             // Cold's BM25 / semantic indexes need a rebuild too — the
@@ -731,9 +761,7 @@ impl AideMemo {
             // bit. Open the sibling lazily so single-archive workflows
             // don't pay the open cost when search-with-archive isn't
             // used.
-            if let Ok(Some(cold)) = self.cold() {
-                cold.bm25_mark_dirty();
-            }
+            cold.bm25_mark_dirty();
         }
         Ok(moved)
     }
@@ -1349,14 +1377,14 @@ impl AideMemo {
     /// Traverse the graph from a starting entity.
     pub fn traverse(&self, start: &str, opts: TraverseOpts) -> Result<TraverseResult> {
         let store = self.store.read();
-        let graph = Graph::new(&store);
+        let graph = Graph::new(&*store);
         graph.traverse(start, opts)
     }
 
     /// Find a path between two entities.
     pub fn path_find(&self, from: &str, to: &str) -> Result<Option<Vec<PathStep>>> {
         let store = self.store.read();
-        let graph = Graph::new(&store);
+        let graph = Graph::new(&*store);
         graph.path_find(from, to)
     }
 
@@ -1369,7 +1397,7 @@ impl AideMemo {
     pub fn ingest(&self, wiki_root: &Path, incremental: bool) -> Result<ingest::IngestStats> {
         let stats = {
             let mut store = self.store.write();
-            ingest::ingest_wiki(wiki_root, &mut store, incremental)?
+            ingest::ingest_wiki(wiki_root, &mut *store, incremental)?
         };
         self.bm25_mark_dirty();
         // Auto-rebuild the HNSW index if the user opted into the
@@ -1396,7 +1424,7 @@ impl AideMemo {
         let limit = opts.limit.unwrap_or(self.config.search.default_limit);
         let mut results = {
             let store = self.store.read();
-            let engine = SearchEngine::new(&store, &self.config, &self.bm25_index);
+            let engine = SearchEngine::new(&*store, &self.config, &self.bm25_index);
             engine.search(query, opts.clone())?
         };
         if want_archive {
@@ -1506,7 +1534,7 @@ impl AideMemo {
             let idx = guard.as_ref().expect("checked is_some above");
             let store = self.store.read();
             search::hybrid_search_with_hnsw(
-                &store,
+                &*store,
                 query,
                 opts,
                 provider.as_ref(),
@@ -1527,7 +1555,7 @@ impl AideMemo {
             }
             let store = self.store.read();
             search::hybrid_search_with_ctx(
-                &store,
+                &*store,
                 query,
                 opts,
                 provider.as_ref(),
@@ -1577,7 +1605,7 @@ impl AideMemo {
     ) -> Result<Vec<SearchResult>> {
         use search::SearchEngine;
         let store = self.store.read();
-        let engine = SearchEngine::new(&store, &self.config, &self.bm25_index);
+        let engine = SearchEngine::new(&*store, &self.config, &self.bm25_index);
         engine.search_with_traverse(query, start, depth, opts)
     }
 
@@ -1807,7 +1835,7 @@ impl AideMemo {
     pub fn lint(&self) -> Result<Vec<LintIssue>> {
         use crate::lint::LintEngine;
         let store = self.store.read();
-        let engine = LintEngine::new(&store);
+        let engine = LintEngine::new(&*store);
         Ok(engine.lint()?.issues)
     }
 
@@ -1844,7 +1872,7 @@ impl AideMemo {
     ) -> Result<ExportStats> {
         use crate::migrate::Exporter;
         let store = self.store.read();
-        let exporter = Exporter::new(&store);
+        let exporter = Exporter::new(&*store);
         exporter.export_jsonl(writer, scope)
     }
 
@@ -1852,7 +1880,7 @@ impl AideMemo {
     pub fn import_jsonl(&mut self, reader: &mut dyn std::io::Read) -> Result<ImportStats> {
         use crate::migrate::Importer;
         let mut store = self.store.write();
-        let mut importer = Importer::new(&mut store);
+        let mut importer = Importer::new(&mut *store);
         importer.import_jsonl(reader)
     }
 
@@ -2025,6 +2053,447 @@ pub use types::{
 
 #[cfg(feature = "semantic")]
 pub use types::VectorRecord;
+
+#[cfg(all(test, feature = "sqlite"))]
+mod sqlite_backend_tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    fn sqlite_config(path: &std::path::Path) -> Config {
+        let mut config = Config::default();
+        config.store.backend = "sqlite".to_string();
+        config.store.path = path.to_string_lossy().into_owned();
+        config
+    }
+
+    fn fresh_sqlite() -> (AideMemo, tempfile::TempDir) {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("wiki.sqlite");
+        let wiki = AideMemo::open(&path, sqlite_config(&path)).unwrap();
+        (wiki, dir)
+    }
+
+    #[test]
+    fn aidememo_sqlite_runs_core_public_api() {
+        let (wiki, _dir) = fresh_sqlite();
+        let redis = wiki
+            .entity_add(EntityInput {
+                name: "Redis".to_string(),
+                entity_type: Some(EntityType::Technology),
+                aliases: Some(vec!["redis-server".to_string()]),
+                tags: Some(vec!["cache".to_string()]),
+                ..Default::default()
+            })
+            .unwrap();
+        let sentinel = wiki
+            .entity_add(EntityInput {
+                name: "Sentinel".to_string(),
+                entity_type: Some(EntityType::Technology),
+                ..Default::default()
+            })
+            .unwrap();
+        wiki.relation_add(RelationInput {
+            source: "Sentinel".to_string(),
+            target: "Redis".to_string(),
+            relation_type: RelationType::new("monitors"),
+            weight: Some(1.0),
+            evidence: Some(vec!["sqlite-test".to_string()]),
+        })
+        .unwrap();
+        let fact = wiki
+            .fact_add(FactInput {
+                content: "Redis stores hot cache keys".to_string(),
+                fact_type: Some(FactType::Decision),
+                entity_ids: Some(vec![redis, sentinel]),
+                source_confidence: Some(1.0),
+                ..Default::default()
+            })
+            .unwrap();
+
+        assert_eq!(wiki.entity_get("redis-server").unwrap().id, redis);
+        assert_eq!(wiki.fact_get(&fact).unwrap().fact_type, FactType::Decision);
+        assert_eq!(wiki.stats().unwrap().relation_count, 1);
+
+        let traversed = wiki
+            .traverse(
+                "Sentinel",
+                TraverseOpts {
+                    depth: 1,
+                    direction: TraverseDirection::Forward,
+                    relation_types: None,
+                },
+            )
+            .unwrap();
+        assert!(
+            traversed
+                .entities
+                .iter()
+                .any(|entity| entity.name == "Redis")
+        );
+        assert!(wiki.lint().unwrap().is_empty());
+        let overview = wiki.overview(OverviewOpts::default()).unwrap();
+        assert_eq!(overview.stats.fact_count, 1);
+
+        let moved = wiki.archive_facts(&[fact]).unwrap();
+        assert_eq!(moved, 1);
+        assert!(wiki.fact_get(&fact).is_err());
+        let cold = wiki.cold().unwrap().unwrap();
+        assert!(cold.store_path.ends_with("wiki.sqlite.cold.sqlite"));
+        assert_eq!(
+            cold.fact_get(&fact).unwrap().content,
+            "Redis stores hot cache keys"
+        );
+    }
+
+    #[test]
+    fn aidememo_sqlite_exports_imports_and_syncs() {
+        let (wiki, dir) = fresh_sqlite();
+        let redis = wiki
+            .entity_add(EntityInput {
+                name: "Redis".to_string(),
+                entity_type: Some(EntityType::Technology),
+                ..Default::default()
+            })
+            .unwrap();
+        let fact = wiki
+            .fact_add(FactInput {
+                content: "Redis import export fixture".to_string(),
+                fact_type: Some(FactType::Note),
+                entity_ids: Some(vec![redis]),
+                source_confidence: Some(1.0),
+                ..Default::default()
+            })
+            .unwrap();
+
+        let mut exported = Vec::new();
+        let export_stats = wiki
+            .export_jsonl(&mut exported, ExportScope::All)
+            .expect("export");
+        assert_eq!(export_stats.entities_exported, 1);
+        assert_eq!(export_stats.facts_exported, 1);
+
+        let import_path = dir.path().join("import.sqlite");
+        let mut imported = AideMemo::open(&import_path, sqlite_config(&import_path)).unwrap();
+        let mut reader = exported.as_slice();
+        let import_stats = imported.import_jsonl(&mut reader).expect("import");
+        assert_eq!(import_stats.entities_imported, 1);
+        assert_eq!(import_stats.facts_imported, 1);
+        assert_eq!(imported.entity_get_by_id(redis).unwrap().name, "Redis");
+        let imported_fact = imported.fact_get(&fact).unwrap();
+        assert_eq!(imported_fact.content, "Redis import export fixture");
+        assert_eq!(imported_fact.entity_ids, vec![redis]);
+
+        let mut replay = exported.as_slice();
+        let replay_stats = imported.import_jsonl(&mut replay).expect("re-import");
+        assert_eq!(replay_stats.entities_imported, 0);
+        assert_eq!(replay_stats.relations_imported, 0);
+        assert_eq!(replay_stats.facts_imported, 0);
+        assert_eq!(replay_stats.errors, 0);
+
+        let mut delta = Vec::new();
+        let emitted = wiki
+            .sync_export(
+                sync::SyncExportOpts {
+                    include_relations: true,
+                    ..Default::default()
+                },
+                &mut delta,
+            )
+            .expect("sync export");
+        assert!(emitted >= 2);
+        let sync_path = dir.path().join("sync.sqlite");
+        let synced = AideMemo::open(&sync_path, sqlite_config(&sync_path)).unwrap();
+        let sync_stats = synced
+            .sync_import(std::str::from_utf8(&delta).unwrap())
+            .expect("sync import");
+        assert_eq!(sync_stats.entities_inserted, 1);
+        assert_eq!(sync_stats.facts_inserted, 1);
+    }
+
+    #[test]
+    fn aidememo_sqlite_ingests_markdown() {
+        let (wiki, dir) = fresh_sqlite();
+        let wiki_root = dir.path().join("wiki");
+        std::fs::create_dir_all(&wiki_root).unwrap();
+        std::fs::write(
+            wiki_root.join("Redis.md"),
+            "Redis references [[Sentinel]].\n\n## Decision: Cache\n\nUse Redis for cache.\n",
+        )
+        .unwrap();
+
+        let stats = wiki.ingest(&wiki_root, false).unwrap();
+        assert_eq!(stats.files_scanned, 1);
+        assert_eq!(stats.facts_added, 1);
+        assert_eq!(wiki.stats().unwrap().last_ingest_at.is_some(), true);
+    }
+}
+
+#[cfg(all(test, feature = "sqlite", feature = "semantic"))]
+mod sqlite_backend_search_tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    fn seed_backend(wiki: &AideMemo) {
+        let redis = wiki
+            .entity_add(EntityInput {
+                name: "Redis".to_string(),
+                entity_type: Some(EntityType::Technology),
+                aliases: Some(vec!["redis-server".to_string()]),
+                tags: Some(vec!["cache".to_string()]),
+                ..Default::default()
+            })
+            .unwrap();
+        let sentinel = wiki
+            .entity_add(EntityInput {
+                name: "Sentinel".to_string(),
+                entity_type: Some(EntityType::Technology),
+                ..Default::default()
+            })
+            .unwrap();
+        wiki.relation_add(RelationInput {
+            source: "Sentinel".to_string(),
+            target: "Redis".to_string(),
+            relation_type: RelationType::new("monitors"),
+            weight: Some(1.0),
+            evidence: Some(vec!["parity".to_string()]),
+        })
+        .unwrap();
+        wiki.fact_add(FactInput {
+            content: "Redis handles hot cache keys".to_string(),
+            fact_type: Some(FactType::Claim),
+            entity_ids: Some(vec![redis]),
+            source_confidence: Some(1.0),
+            ..Default::default()
+        })
+        .unwrap();
+        wiki.fact_add(FactInput {
+            content: "Sentinel monitors Redis availability".to_string(),
+            fact_type: Some(FactType::Note),
+            entity_ids: Some(vec![sentinel]),
+            source_confidence: Some(1.0),
+            ..Default::default()
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn aidememo_sqlite_runs_bm25_search_and_query() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("wiki.sqlite");
+        let mut config = Config::default();
+        config.store.backend = "sqlite".to_string();
+        config.search.semantic_weight = 0.0;
+        let wiki = AideMemo::open(&path, config).unwrap();
+        let redis = wiki
+            .entity_add(EntityInput {
+                name: "Redis".to_string(),
+                entity_type: Some(EntityType::Technology),
+                ..Default::default()
+            })
+            .unwrap();
+        wiki.fact_add(FactInput {
+            content: "Redis handles hot cache keys".to_string(),
+            fact_type: Some(FactType::Claim),
+            entity_ids: Some(vec![redis]),
+            source_confidence: Some(1.0),
+            ..Default::default()
+        })
+        .unwrap();
+
+        let hits = wiki
+            .search(
+                "hot cache",
+                SearchOpts {
+                    limit: Some(5),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(hits[0].entity_names, vec!["Redis".to_string()]);
+
+        let result = wiki
+            .query(
+                "Redis",
+                QueryOpts {
+                    bm25_only: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert!(result.entity.is_some());
+        assert_eq!(result.recent_facts.len(), 1);
+    }
+
+    #[test]
+    fn sqlite_matches_redb_for_core_public_api_fixture() {
+        let dir = tempdir().unwrap();
+        let redb_path = dir.path().join("wiki.redb");
+        let sqlite_path = dir.path().join("wiki.sqlite");
+
+        let mut redb_config = Config::default();
+        redb_config.search.semantic_weight = 0.0;
+        let redb = AideMemo::open(&redb_path, redb_config).unwrap();
+
+        let mut sqlite_config = Config::default();
+        sqlite_config.store.backend = "sqlite".to_string();
+        sqlite_config.search.semantic_weight = 0.0;
+        let sqlite = AideMemo::open(&sqlite_path, sqlite_config).unwrap();
+
+        seed_backend(&redb);
+        seed_backend(&sqlite);
+
+        assert_eq!(
+            redb.stats().unwrap().entity_count,
+            sqlite.stats().unwrap().entity_count
+        );
+        assert_eq!(
+            redb.stats().unwrap().fact_count,
+            sqlite.stats().unwrap().fact_count
+        );
+        assert_eq!(
+            redb.stats().unwrap().relation_count,
+            sqlite.stats().unwrap().relation_count
+        );
+
+        let fact_contents = |wiki: &AideMemo| {
+            let mut contents: Vec<String> = wiki
+                .fact_list(FactListOpts {
+                    limit: None,
+                    ..Default::default()
+                })
+                .unwrap()
+                .into_iter()
+                .map(|fact| fact.content)
+                .collect();
+            contents.sort();
+            contents
+        };
+        assert_eq!(fact_contents(&redb), fact_contents(&sqlite));
+
+        let traverse_names = |wiki: &AideMemo| {
+            let mut names: Vec<String> = wiki
+                .traverse(
+                    "Sentinel",
+                    TraverseOpts {
+                        depth: 1,
+                        direction: TraverseDirection::Forward,
+                        relation_types: None,
+                    },
+                )
+                .unwrap()
+                .entities
+                .into_iter()
+                .map(|entity| entity.name)
+                .collect();
+            names.sort();
+            names
+        };
+        assert_eq!(traverse_names(&redb), traverse_names(&sqlite));
+
+        let search_contents = |wiki: &AideMemo| {
+            wiki.search(
+                "hot cache",
+                SearchOpts {
+                    limit: Some(3),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .into_iter()
+            .map(|hit| hit.content)
+            .collect::<Vec<_>>()
+        };
+        assert_eq!(search_contents(&redb), search_contents(&sqlite));
+    }
+
+    #[test]
+    fn sqlite_import_preserves_redb_export_ids_for_migration_gate() {
+        let dir = tempdir().unwrap();
+        let redb_path = dir.path().join("source.redb");
+        let sqlite_path = dir.path().join("target.sqlite");
+
+        let mut redb_config = Config::default();
+        redb_config.search.semantic_weight = 0.0;
+        let redb = AideMemo::open(&redb_path, redb_config).unwrap();
+        seed_backend(&redb);
+
+        let mut exported = Vec::new();
+        redb.export_jsonl(&mut exported, ExportScope::All)
+            .expect("redb export");
+
+        let mut sqlite_config = Config::default();
+        sqlite_config.store.backend = "sqlite".to_string();
+        sqlite_config.search.semantic_weight = 0.0;
+        let mut sqlite = AideMemo::open(&sqlite_path, sqlite_config).unwrap();
+        let mut reader = exported.as_slice();
+        let import_stats = sqlite.import_jsonl(&mut reader).expect("sqlite import");
+        assert_eq!(import_stats.entities_imported, 2);
+        assert_eq!(import_stats.facts_imported, 2);
+        assert_eq!(import_stats.errors, 0);
+
+        let redb_stats = redb.stats().unwrap();
+        let sqlite_stats = sqlite.stats().unwrap();
+        assert_eq!(sqlite_stats.entity_count, redb_stats.entity_count);
+        assert_eq!(sqlite_stats.fact_count, redb_stats.fact_count);
+        assert_eq!(sqlite_stats.relation_count, redb_stats.relation_count);
+
+        for summary in redb.entity_list(ListOpts::default()).unwrap() {
+            let redb_entity = redb.entity_get_by_id(summary.id).unwrap();
+            let sqlite_entity = sqlite.entity_get_by_id(summary.id).unwrap();
+            assert_eq!(sqlite_entity.name, redb_entity.name);
+            assert_eq!(sqlite_entity.aliases, redb_entity.aliases);
+        }
+
+        for fact in redb.fact_list(FactListOpts::default()).unwrap() {
+            let imported = sqlite.fact_get(&fact.id).unwrap();
+            assert_eq!(imported.content, fact.content);
+            assert_eq!(imported.entity_ids, fact.entity_ids);
+            assert_eq!(imported.fact_type, fact.fact_type);
+        }
+
+        let traverse_names = |wiki: &AideMemo| {
+            let mut names: Vec<String> = wiki
+                .traverse(
+                    "Sentinel",
+                    TraverseOpts {
+                        depth: 1,
+                        direction: TraverseDirection::Forward,
+                        relation_types: None,
+                    },
+                )
+                .unwrap()
+                .entities
+                .into_iter()
+                .map(|entity| entity.name)
+                .collect();
+            names.sort();
+            names
+        };
+        assert_eq!(traverse_names(&redb), traverse_names(&sqlite));
+
+        let search_contents = |wiki: &AideMemo| {
+            wiki.search(
+                "hot cache",
+                SearchOpts {
+                    limit: Some(3),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .into_iter()
+            .map(|hit| hit.content)
+            .collect::<Vec<_>>()
+        };
+        assert_eq!(search_contents(&redb), search_contents(&sqlite));
+
+        let mut replay = exported.as_slice();
+        let replay_stats = sqlite.import_jsonl(&mut replay).expect("re-import");
+        assert_eq!(replay_stats.entities_imported, 0);
+        assert_eq!(replay_stats.relations_imported, 0);
+        assert_eq!(replay_stats.facts_imported, 0);
+        assert_eq!(replay_stats.errors, 0);
+    }
+}
 
 #[cfg(all(test, feature = "semantic"))]
 mod query_tests {

@@ -2,18 +2,18 @@
 //!
 //! Provides BFS/DFS traversal, path finding, and graph health checks.
 
+use crate::backend::StoreBackend;
 use crate::error::{AideMemoError, Result};
-use crate::store::Store;
 use crate::types::*;
 
 /// Graph traversal engine.
-pub struct Graph<'a> {
-    store: &'a Store,
+pub struct Graph<'a, B: StoreBackend + ?Sized> {
+    store: &'a B,
 }
 
-impl<'a> Graph<'a> {
+impl<'a, B: StoreBackend + ?Sized> Graph<'a, B> {
     /// Create a new graph traversal engine.
-    pub fn new(store: &'a Store) -> Self {
+    pub fn new(store: &'a B) -> Self {
         Self { store }
     }
 
@@ -268,22 +268,11 @@ impl<'a> Graph<'a> {
     }
 }
 
-impl Store {
-    /// Get relations for an entity by ID.
-    pub fn relations_get_by_id(
-        &self,
-        entity_id: &EntityId,
-        direction: TraverseDirection,
-    ) -> Result<Vec<RelationRecord>> {
-        let entity = self.entity_get_by_id(*entity_id)?;
-        self.relations_get(&entity.name, direction)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::config::Config;
+    use crate::store::Store;
     use tempfile::tempdir;
 
     fn create_test_store() -> (Store, tempfile::TempDir) {

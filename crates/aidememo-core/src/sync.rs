@@ -22,6 +22,7 @@
 //! local read cache. Multi-master writes with conflict resolution are
 //! Phase 3 — not in this module.
 
+use crate::backend::StoreBackend;
 use crate::error::{AideMemoError, Result};
 use crate::types::{EntityId, EntityRecord, FactId, FactListOpts, FactRecord, ListOpts};
 use crate::{AideMemo, TraverseDirection};

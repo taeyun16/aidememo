@@ -198,6 +198,12 @@ pub struct FactListArgs {
     pub current_only: Option<bool>,
 }
 
+#[napi(object)]
+pub struct StoreOpenArgs {
+    pub backend: Option<String>,
+    pub durability: Option<String>,
+}
+
 // ---------------------------------------------------------------------------
 // AideMemoStore — the napi class
 // ---------------------------------------------------------------------------
@@ -210,8 +216,19 @@ pub struct AideMemoStore {
 #[napi]
 impl AideMemoStore {
     #[napi(constructor)]
-    pub fn new(store_path: String) -> napi::Result<Self> {
-        let wiki = AideMemo::open(Path::new(&store_path), Config::default()).map_err(map_err)?;
+    pub fn new(store_path: String, args: Option<StoreOpenArgs>) -> napi::Result<Self> {
+        let mut config = Config::default();
+        if let Some(args) = args {
+            if let Some(backend) = args.backend {
+                config.set("store.backend", &backend).map_err(map_err)?;
+            }
+            if let Some(durability) = args.durability {
+                config
+                    .set("store.durability", &durability)
+                    .map_err(map_err)?;
+            }
+        }
+        let wiki = AideMemo::open(Path::new(&store_path), config).map_err(map_err)?;
         Ok(Self {
             wiki: Arc::new(wiki),
         })
@@ -590,4 +607,58 @@ impl AideMemoStore {
 #[napi]
 pub fn version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
+}
+
+#[cfg(all(test, feature = "sqlite"))]
+mod sqlite_binding_tests {
+    use super::*;
+
+    fn temp_store_path(name: &str) -> std::path::PathBuf {
+        let unique = format!(
+            "aidememo-napi-{name}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock")
+                .as_nanos()
+        );
+        let dir = std::env::temp_dir().join(unique);
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        dir.join("wiki.sqlite")
+    }
+
+    #[test]
+    fn constructor_opens_sqlite_backend() {
+        let path = temp_store_path("sqlite-open");
+        let store = AideMemoStore::new(
+            path.to_string_lossy().into_owned(),
+            Some(StoreOpenArgs {
+                backend: Some("sqlite".to_string()),
+                durability: None,
+            }),
+        )
+        .expect("open sqlite backend");
+
+        let entity_id = store
+            .wiki
+            .entity_add(EntityInput {
+                name: "NodeSQLite".to_string(),
+                entity_type: Some(EntityType::Technology),
+                ..Default::default()
+            })
+            .expect("entity add");
+        store
+            .wiki
+            .fact_add(FactInput {
+                content: "Node binding opened a SQLite backend".to_string(),
+                entity_ids: Some(vec![entity_id]),
+                fact_type: Some(FactType::Note),
+                ..Default::default()
+            })
+            .expect("fact add");
+
+        let stats = store.wiki.stats().expect("stats");
+        assert_eq!(stats.entity_count, 1);
+        assert_eq!(stats.fact_count, 1);
+    }
 }

@@ -2,11 +2,11 @@
 //!
 //! Provides BM25 keyword search and hybrid semantic search.
 
+use crate::backend::StoreBackend;
 use crate::config::Config;
 use crate::error::Result;
 use crate::graph::Graph;
 use crate::index::{Bm25IndexState, build_bm25_index};
-use crate::store::Store;
 use crate::types::*;
 use parking_lot::RwLock;
 
@@ -17,15 +17,15 @@ use parking_lot::RwLock;
 /// `AideMemo`'s lifetime share the same cached inverted index.
 /// `ensure_index` rebuilds only when the cache is marked dirty by a
 /// preceding mutation.
-pub struct SearchEngine<'a> {
-    store: &'a Store,
+pub struct SearchEngine<'a, B: StoreBackend + ?Sized> {
+    store: &'a B,
     config: &'a Config,
     index: &'a RwLock<Bm25IndexState>,
 }
 
-impl<'a> SearchEngine<'a> {
+impl<'a, B: StoreBackend + ?Sized> SearchEngine<'a, B> {
     /// Create a new search engine bound to a caller-owned BM25 cache.
-    pub fn new(store: &'a Store, config: &'a Config, index: &'a RwLock<Bm25IndexState>) -> Self {
+    pub fn new(store: &'a B, config: &'a Config, index: &'a RwLock<Bm25IndexState>) -> Self {
         Self {
             store,
             config,
@@ -187,7 +187,7 @@ fn matches_as_of(fact: &FactRecord, as_of: Option<u64>) -> bool {
 
 #[cfg(feature = "semantic")]
 fn build_search_result(
-    store: &Store,
+    store: &(impl StoreBackend + ?Sized),
     fact: FactRecord,
     fact_id: FactId,
     score: f32,
@@ -218,7 +218,7 @@ fn build_search_result(
 
 #[cfg(not(feature = "semantic"))]
 fn build_search_result(
-    store: &Store,
+    store: &(impl StoreBackend + ?Sized),
     fact: FactRecord,
     fact_id: FactId,
     score: f32,
@@ -310,8 +310,8 @@ mod semantic {
     /// from `AideMemo::hybrid_search`, which reuses a singleton provider +
     /// query-embedding cache. This convenience wrapper exists for tests and
     /// one-off callers (bindings, scripts) that don't want to plumb a context.
-    pub fn hybrid_search(
-        store: &Store,
+    pub fn hybrid_search<B: StoreBackend + ?Sized>(
+        store: &B,
         query: &str,
         opts: SearchOpts,
     ) -> Result<Vec<SearchResult>> {
@@ -335,8 +335,8 @@ mod semantic {
     /// Hybrid search with a caller-owned provider + query-embedding cache.
     /// Used by `AideMemo` to avoid reloading the Model2Vec model on every
     /// search and to memoize repeated queries.
-    pub fn hybrid_search_with_ctx(
-        store: &Store,
+    pub fn hybrid_search_with_ctx<B: StoreBackend + ?Sized>(
+        store: &B,
         query: &str,
         opts: SearchOpts,
         provider: &dyn EmbeddingProvider,
@@ -442,8 +442,8 @@ mod semantic {
     /// re-rank, RRF, graph prefilter) still applies. Same accuracy
     /// as `prefilter=0` (brute force) at lower latency, which is
     /// the whole point.
-    pub fn hybrid_search_with_hnsw(
-        store: &Store,
+    pub fn hybrid_search_with_hnsw<B: StoreBackend + ?Sized>(
+        store: &B,
         query: &str,
         opts: SearchOpts,
         provider: &dyn EmbeddingProvider,
@@ -532,8 +532,8 @@ mod semantic {
         ))
     }
 
-    fn semantic_search(
-        store: &Store,
+    fn semantic_search<B: StoreBackend + ?Sized>(
+        store: &B,
         query: &str,
         opts: &SearchOpts,
         provider: &dyn EmbeddingProvider,
@@ -737,8 +737,8 @@ mod semantic {
     ///
     /// Returns FactIds **excluding** anything already in `existing`,
     /// so the caller can append without dedup work downstream.
-    fn graph_expand_candidates(
-        store: &Store,
+    fn graph_expand_candidates<B: StoreBackend + ?Sized>(
+        store: &B,
         bm25_results: &[SearchResult],
         depth: u32,
         fact_cap: usize,
@@ -830,8 +830,8 @@ mod semantic {
         }
     }
 
-    fn rrf_fusion(
-        store: &Store,
+    fn rrf_fusion<B: StoreBackend + ?Sized>(
+        store: &B,
         bm25_results: &[SearchResult],
         semantic_results: Option<&[SearchResult]>,
         bm25_weight: f32,
@@ -1019,6 +1019,7 @@ pub use semantic::{hybrid_search, hybrid_search_with_ctx, hybrid_search_with_hns
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::store::Store;
     use tempfile::tempdir;
 
     fn create_test_store() -> (Store, tempfile::TempDir) {

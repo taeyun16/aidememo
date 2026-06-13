@@ -93,7 +93,22 @@ fn opt_vec(v: Vec<String>) -> Option<Vec<String>> {
 
 #[rustler::nif]
 fn open(env: Env, store_path: String) -> Return {
-    match AideMemo::open(Path::new(&store_path), Config::default()) {
+    open_with_config(env, store_path, None)
+}
+
+#[rustler::nif]
+fn open_with_backend(env: Env, store_path: String, backend: String) -> Return {
+    open_with_config(env, store_path, opt_str(backend))
+}
+
+fn open_with_config(env: Env, store_path: String, backend: Option<String>) -> Return {
+    let mut config = Config::default();
+    if let Some(backend) = backend {
+        if config.set("store.backend", &backend).is_err() {
+            return Return::Error(rustler::Error::BadArg);
+        }
+    }
+    match AideMemo::open(Path::new(&store_path), config) {
         Ok(wiki) => {
             let resource = ResourceArc::new(AideMemoNif {
                 wiki: Arc::new(wiki),

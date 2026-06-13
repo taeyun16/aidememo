@@ -82,6 +82,7 @@ mach2 = "0.4"
 
 [features]
 default = []
+sqlite = ["aidememo-core/sqlite"]
 # Replace the GlobalAlloc with dhat's instrumented allocator. The bin
 # emits dhat-heap.json on exit (or when the Profiler guard drops),
 # which https://nnethercote.github.io/dh_view/dh_view.html renders

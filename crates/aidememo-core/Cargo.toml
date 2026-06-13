@@ -23,6 +23,7 @@ fastembed = ["semantic", "dep:fastembed"]
 parallel = ["rayon"]
 remote = ["oneio"]
 s3 = ["aws-sdk-s3", "aws-credential-types", "tokio/full", "zstd"]
+sqlite = ["dep:rusqlite"]
 
 [dependencies]
 # CLI 파싱
@@ -37,6 +38,7 @@ toml = "0.8"
 
 # 영속 스토리지
 redb = "2.0"
+rusqlite = { version = "0.40.1", default-features = false, features = ["bundled"], optional = true }
 
 # 검색 엔진
 bm25 = "0.2"

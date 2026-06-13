@@ -21,6 +21,7 @@ defmodule AideMemoNif.Native do
   end
 
   def open(_path), do: :erlang.nif_error(:nif_not_loaded)
+  def open_with_backend(_path, _backend), do: :erlang.nif_error(:nif_not_loaded)
   def search(_h, _query, _limit, _current_only), do: :erlang.nif_error(:nif_not_loaded)
 
   def query(_h, _topic, _limit, _depth, _recent_limit, _current_only, _mode),

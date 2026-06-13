@@ -13,6 +13,10 @@ build = "build.rs"
 name = "aidememo_napi"
 crate-type = ["cdylib"]
 
+[features]
+default = []
+sqlite = ["aidememo-core/sqlite"]
+
 [dependencies]
 aidememo-core = { version = "0.1.0", path = "../aidememo-core", features = ["semantic"] }
 napi = { version = "2", features = ["napi6"] }

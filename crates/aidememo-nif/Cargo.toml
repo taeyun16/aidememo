@@ -12,6 +12,10 @@ version.workspace = true
 name = "aidememo_nif"
 crate-type = ["cdylib"]
 
+[features]
+default = []
+sqlite = ["aidememo-core/sqlite"]
+
 [dependencies]
 aidememo-core = { version = "0.1.0", path = "../aidememo-core", features = ["semantic"] }
 rustler = "0.36"

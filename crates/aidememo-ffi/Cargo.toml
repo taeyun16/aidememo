@@ -12,6 +12,10 @@ version.workspace = true
 name = "aidememo_ffi"
 crate-type = ["cdylib", "staticlib"]
 
+[features]
+default = []
+sqlite = ["aidememo-core/sqlite"]
+
 [dependencies]
 aidememo-core = { version = "0.1.0", path = "../aidememo-core", features = ["semantic"] }
 serde = { version = "1.0", features = ["derive"] }

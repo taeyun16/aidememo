@@ -1,6 +1,6 @@
 //! BM25 in-memory index builder and state.
 
-use crate::store::Store;
+use crate::backend::StoreBackend;
 use crate::types::{FactId, FactListOpts};
 
 /// In-memory BM25 index state.
@@ -41,7 +41,7 @@ impl Default for Bm25IndexState {
 }
 
 /// Build the BM25 index from all facts in the store.
-pub(crate) fn build_bm25_index(store: &Store) -> Bm25IndexState {
+pub(crate) fn build_bm25_index<B: StoreBackend + ?Sized>(store: &B) -> Bm25IndexState {
     let mut state = Bm25IndexState::new();
 
     let facts = match store.fact_list(FactListOpts {

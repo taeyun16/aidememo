@@ -72,6 +72,18 @@ fn ptr_to_str(p: *const c_char) -> Result<&'static str, String> {
     cstr.to_str().map_err(|e| e.to_string())
 }
 
+fn ptr_to_optional_str(p: *const c_char) -> Result<Option<&'static str>, String> {
+    if p.is_null() {
+        return Ok(None);
+    }
+    let value = ptr_to_str(p)?;
+    if value.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(value))
+    }
+}
+
 fn store_ref<'a>(p: *const AideMemoStore) -> Result<&'a AideMemoStore, String> {
     unsafe { p.as_ref() }.ok_or_else(|| "null store handle".into())
 }
@@ -129,11 +141,36 @@ fn json_serialize<T: serde::Serialize>(value: &T) -> Result<String, String> {
 /// Free with `aidememo_close`.
 #[unsafe(no_mangle)]
 pub extern "C" fn aidememo_open(path: *const c_char) -> *mut AideMemoStore {
+    open_with_backend(path, ptr::null())
+}
+
+/// Open or create a store at `path` using an explicit backend.
+/// `backend` may be NULL or empty for the default redb backend.
+/// Use "sqlite" only when this library was built with the `sqlite` Cargo feature.
+#[unsafe(no_mangle)]
+pub extern "C" fn aidememo_open_with_backend(
+    path: *const c_char,
+    backend: *const c_char,
+) -> *mut AideMemoStore {
+    open_with_backend(path, backend)
+}
+
+fn open_with_backend(path: *const c_char, backend: *const c_char) -> *mut AideMemoStore {
     let path = match ptr_to_str(path) {
         Ok(s) => s,
         Err(_) => return ptr::null_mut(),
     };
-    match AideMemo::open(std::path::Path::new(path), Config::default()) {
+    let backend = match ptr_to_optional_str(backend) {
+        Ok(value) => value,
+        Err(_) => return ptr::null_mut(),
+    };
+    let mut config = Config::default();
+    if let Some(backend) = backend {
+        if config.set("store.backend", backend).is_err() {
+            return ptr::null_mut();
+        }
+    }
+    match AideMemo::open(std::path::Path::new(path), config) {
         Ok(wiki) => Box::into_raw(Box::new(AideMemoStore {
             wiki: Arc::new(wiki),
         })),
@@ -787,4 +824,38 @@ pub extern "C" fn aidememo_stats(store: *const AideMemoStore) -> *mut c_char {
         let stats = s.wiki.stats().map_err(|e| e.to_string())?;
         json_serialize(&stats)
     })
+}
+
+#[cfg(all(test, feature = "sqlite"))]
+mod sqlite_binding_tests {
+    use super::*;
+
+    fn temp_store_path(name: &str) -> std::path::PathBuf {
+        let unique = format!(
+            "aidememo-ffi-{name}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock")
+                .as_nanos()
+        );
+        let dir = std::env::temp_dir().join(unique);
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        dir.join("wiki.sqlite")
+    }
+
+    #[test]
+    fn open_with_backend_opens_sqlite_backend() {
+        let path =
+            std::ffi::CString::new(temp_store_path("sqlite-open").to_string_lossy().as_ref())
+                .expect("path cstring");
+        let backend = std::ffi::CString::new("sqlite").expect("backend cstring");
+        let store = aidememo_open_with_backend(path.as_ptr(), backend.as_ptr());
+        assert!(!store.is_null());
+
+        let stats = aidememo_stats(store);
+        assert!(!stats.is_null());
+        aidememo_free_string(stats);
+        aidememo_close(store);
+    }
 }

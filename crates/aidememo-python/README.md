@@ -66,6 +66,18 @@ stats = g.ingest("./my-wiki", incremental=False)
 print(stats)  # {entities_added, facts_added, ...}
 ```
 
+To use the experimental local SQLite backend from the native binding, build the
+extension with the Cargo `sqlite` feature and pass `backend="sqlite"`:
+
+```bash
+cd crates/aidememo-python
+../../scripts/maturin.sh develop --release --features sqlite
+```
+
+```python
+g = aidememo.AideMemo("./_meta/wiki.sqlite", backend="sqlite")
+```
+
 ## Workflow start
 
 Use `workflow_start` when an automation trigger only gives the agent a sparse
@@ -149,7 +161,7 @@ Exception classes:
 
 | Method | Returns |
 |---|---|
-| `AideMemo(path)` | constructor |
+| `AideMemo(path, backend?, durability?, model?, semantic_index?)` | constructor |
 | `search(query, limit?, min_confidence?)` | `list[dict]` |
 | `query(topic, limit?, depth?, recent_limit?)` | `dict` |
 | `workflow_start(title, body?, source?, source_id?, limit?, depth?, recent_limit?, bm25_only?)` | `dict` |

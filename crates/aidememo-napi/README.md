@@ -50,6 +50,18 @@ const hits = JSON.parse(g.search('high availability', {
 console.log(factId, hits.map((hit) => hit.content));
 ```
 
+To use the experimental local SQLite backend, build the native package with the
+Cargo `sqlite` feature and pass `backend: 'sqlite'` when opening the store:
+
+```bash
+cd crates/aidememo-napi
+npm run build -- --features sqlite
+```
+
+```js
+const g = new AideMemoStore('./_meta/wiki.sqlite', { backend: 'sqlite' });
+```
+
 ## Workflow start
 
 Use `workflowStart` when an automation trigger only gives the agent a sparse
@@ -122,7 +134,7 @@ try {
 
 | Method | Returns |
 |---|---|
-| `new AideMemoStore(path)` | store handle |
+| `new AideMemoStore(path, args?)` | store handle; `args.backend` may be `"sqlite"` when built with the Cargo `sqlite` feature |
 | `search(query, args?)` | JSON string: `SearchResult[]` |
 | `query(topic, args?)` | JSON string: `QueryResult` |
 | `workflowStart(title, args?)` | JSON string: workflow context pack |

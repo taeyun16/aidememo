@@ -3053,7 +3053,7 @@ pub fn list_tools() -> Vec<Tool> {
                     "include_archive": {
                         "type": "boolean",
                         "default": false,
-                        "description": "Also search the cold-tier archive (`<store>.cold.redb`) and merge any matches in to fill remaining slots up to `limit`. Off by default — most callers want only live facts. Use when an `audit / what-did-I-once-say-about-X` shape needs to reach archived content."
+                        "description": "Also search the cold-tier archive (`<store>.cold.redb` for redb, `<store>.cold.sqlite` for SQLite) and merge any matches in to fill remaining slots up to `limit`. Off by default — most callers want only live facts. Use when an `audit / what-did-I-once-say-about-X` shape needs to reach archived content."
                     },
                     "format": {"type": "string", "enum": ["full", "compact", "text"], "default": "full", "description": "full = JSON results array. compact = JSON with each content truncated to preview_chars. text = markdown bullet list (~4× smaller, no JSON envelope, drops session_id from rendered output but the agent still gets it via the underlying record). Use text for prompt injection, full when piping to a downstream parser, compact for budget-sensitive JSON."},
                     "preview_chars": {"type": "number", "default": 200, "description": "Per-hit content cap when format ∈ {compact, text}. Agent drills in via aidememo_fact_get for full content."},
@@ -3437,7 +3437,8 @@ pub fn list_tools() -> Vec<Tool> {
         Tool {
             name: "aidememo_fact_archive".into(),
             description: "Move facts from the hot store into the cold-tier \
-                archive (`<store>.cold.redb`). The hot store shrinks; cold \
+                archive (`<store>.cold.redb` for redb, `<store>.cold.sqlite` \
+                for SQLite). The hot store shrinks; cold \
                 preserves the FactId so `aidememo_fact_get` keeps resolving the \
                 archived fact for audit / soft-recovery. Archived facts drop \
                 out of `aidememo_search` / `aidememo_query` results by default — pass \

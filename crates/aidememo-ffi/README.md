@@ -35,6 +35,17 @@ cc your.c \
 
 (On Linux: drop the `-framework` flags; add `-lpthread -ldl -lm` if your linker needs them.)
 
+To use the experimental local SQLite backend, build the library with the Cargo
+`sqlite` feature and open with an explicit backend:
+
+```bash
+cargo build -p aidememo-ffi --features sqlite
+```
+
+```c
+aidememo_store_t* g = aidememo_open_with_backend("./_meta/wiki.sqlite", "sqlite");
+```
+
 ## API
 
 All read functions return a heap-allocated, NUL-terminated UTF-8 JSON string.

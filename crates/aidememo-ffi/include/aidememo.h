@@ -26,6 +26,10 @@ typedef struct AideMemoStore aidememo_store_t;
 
 /* Lifecycle. */
 aidememo_store_t* aidememo_open(const char* path);
+/* Open with an explicit backend: "redb" (default) or "sqlite" when the
+ * library was built with the `sqlite` Cargo feature. Pass NULL or "" for the
+ * default backend. */
+aidememo_store_t* aidememo_open_with_backend(const char* path, const char* backend);
 void        aidememo_close(aidememo_store_t* store);
 void        aidememo_free_string(char* s);
 char*       aidememo_version(void);

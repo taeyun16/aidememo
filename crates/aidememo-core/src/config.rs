@@ -47,6 +47,12 @@ pub struct ProjectConfig {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct StoreConfig {
+    /// Storage backend. Supported values:
+    ///
+    /// - `"redb"` (default): existing embedded redb file.
+    /// - `"sqlite"`: experimental SQLite backend behind the `sqlite` Cargo feature.
+    #[serde(default = "default_backend")]
+    pub backend: String,
     /// Path to the redb file (relative to wiki root or absolute).
     pub path: String,
     /// redb commit durability. Two options:
@@ -84,9 +90,14 @@ fn default_durability() -> String {
     "immediate".to_string()
 }
 
+fn default_backend() -> String {
+    "redb".to_string()
+}
+
 impl Default for StoreConfig {
     fn default() -> Self {
         Self {
+            backend: default_backend(),
             path: "./_meta/wiki.redb".to_string(),
             durability: default_durability(),
             lock_retry_ms: 0,
@@ -741,6 +752,7 @@ impl Config {
 impl StoreConfig {
     fn get(&self, key: &str) -> Option<String> {
         match key {
+            "backend" => Some(self.backend.clone()),
             "path" => Some(self.path.clone()),
             "durability" => Some(self.durability.clone()),
             "lock_retry_ms" => Some(self.lock_retry_ms.to_string()),
@@ -750,6 +762,22 @@ impl StoreConfig {
 
     fn set(&mut self, key: &str, value: &str) -> Result<()> {
         match key {
+            "backend" => {
+                let normalized = value.to_lowercase();
+                match normalized.as_str() {
+                    "redb" | "sqlite" | "libsqlite" => {
+                        self.backend = normalized;
+                        Ok(())
+                    }
+                    "libsql" => Err(AideMemoError::InvalidInput(
+                        "store.backend = libsql is not supported yet; use 'sqlite' for the local SQLite backend".to_string(),
+                    )),
+                    _ => Err(AideMemoError::InvalidInput(format!(
+                        "store.backend must be 'redb', 'sqlite', or 'libsqlite', got '{}'",
+                        value
+                    ))),
+                }
+            }
             "path" => {
                 self.path = value.to_string();
                 Ok(())
@@ -1025,6 +1053,40 @@ mod tests {
             config.get("store.durability"),
             Some("immediate".to_string())
         );
+    }
+
+    #[test]
+    fn store_backend_default_is_redb() {
+        let config = Config::default();
+        assert_eq!(config.store.backend, "redb");
+        assert_eq!(config.get("store.backend"), Some("redb".to_string()));
+    }
+
+    #[test]
+    fn store_backend_accepts_sqlite_aliases() {
+        let mut config = Config::default();
+        config.set("store.backend", "SQLite").unwrap();
+        assert_eq!(config.store.backend, "sqlite");
+        config.set("store.backend", "libsqlite").unwrap();
+        assert_eq!(config.store.backend, "libsqlite");
+    }
+
+    #[test]
+    fn store_backend_rejects_remote_libsql_until_supported() {
+        let mut config = Config::default();
+        let err = config
+            .set("store.backend", "libsql")
+            .expect_err("remote libSQL should be rejected until implemented");
+        assert!(format!("{err}").contains("not supported yet"));
+    }
+
+    #[test]
+    fn store_backend_rejects_unknown_values() {
+        let mut config = Config::default();
+        let err = config
+            .set("store.backend", "postgres")
+            .expect_err("unknown backend should be rejected");
+        assert!(format!("{err}").contains("redb"));
     }
 
     #[test]

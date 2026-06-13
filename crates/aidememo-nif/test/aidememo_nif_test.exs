@@ -135,4 +135,27 @@ defmodule AideMemoNifTest do
   test "version is exposed" do
     assert is_binary(AideMemoNif.version())
   end
+
+  test "sqlite backend opens when cargo feature is enabled", %{db: db} do
+    features = System.get_env("AIDEMEMO_NIF_CARGO_FEATURES", "")
+
+    if String.contains?(features, "sqlite") do
+      sqlite_db = Path.rootname(db) <> ".sqlite"
+      g = AideMemoNif.open!(sqlite_db, backend: "sqlite")
+      assert is_reference(g)
+
+      eid = AideMemoNif.entity_add(g, "ElixirSQLite", entity_type: "technology")
+
+      fid =
+        AideMemoNif.fact_add(g, "Elixir NIF opened a SQLite backend",
+          entity_ids: [eid],
+          fact_type: "note"
+        )
+
+      assert is_binary(fid)
+      stats = AideMemoNif.stats(g)
+      assert stats["entity_count"] == 1
+      assert stats["fact_count"] == 1
+    end
+  end
 end

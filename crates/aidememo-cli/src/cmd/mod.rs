@@ -330,9 +330,10 @@ pub struct SearchSub {
     pub last: Option<String>,
     pub as_of: Option<String>,
     pub limit: Option<usize>,
-    /// Also search the cold-tier archive (`<store>.cold.redb`) and
-    /// merge any matches in to fill out the result list. Off by
-    /// default — most callers want only the live (hot) facts.
+    /// Also search the cold-tier archive (`<store>.cold.redb` or
+    /// `<store>.cold.sqlite`) and merge any matches in to fill out
+    /// the result list. Off by default — most callers want only the
+    /// live (hot) facts.
     pub include_archive: bool,
     pub query: String,
 }
@@ -991,7 +992,7 @@ fn fact_command() -> impl Parser<Command> {
     .to_options()
     .command("archive")
     .help(
-        "Move facts to the cold-tier archive (<store>.cold.redb). \
+        "Move facts to the cold-tier archive (<store>.cold.redb or <store>.cold.sqlite). \
          Hot store shrinks; cold preserves FactId so aidememo_fact_get \
          keeps working. Use `aidememo search --include-archive` when you \
          want archived hits merged back into retrieval.",
@@ -1106,7 +1107,7 @@ fn search_command() -> impl Parser<Command> {
 
     let include_archive = long("include-archive")
         .help(
-            "Also search the cold-tier archive (`<store>.cold.redb`) \
+            "Also search the cold-tier archive (`<store>.cold.redb` or `<store>.cold.sqlite`) \
              and merge matches in to fill out the result list. Off by \
              default; cold facts only surface when this flag is set.",
         )
@@ -1371,9 +1372,10 @@ fn consolidate_command() -> impl Parser<Command> {
         .optional();
     let gac_cold_tier = long("gac-cold-tier")
         .help(
-            "Move non-representative cluster members to <store>.cold.redb \
-             instead of superseding. FactId is preserved so aidememo_fact_get \
-             still resolves. Off by default (supersede semantics).",
+            "Move non-representative cluster members to the backend-specific \
+             cold tier instead of superseding. FactId is preserved so \
+             aidememo_fact_get still resolves. Off by default \
+             (supersede semantics).",
         )
         .switch();
     let gac_protect = long("gac-protect")

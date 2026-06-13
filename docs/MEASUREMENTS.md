@@ -13,6 +13,7 @@ cargo test -p aidememo-cli --bin aidememo
 python3 -m pytest plugins/hermes/tests -q
 
 cargo run --release --bin performance
+cargo run --release -p aidememo-benchmarks --bin storage_backend_probe
 python3 bench/multi-agent/scenario_d_concurrent_writers.py
 python3 bench/multi-agent/scenario_e_http_shared.py
 python3 bench/multi-agent/scenario_f_workflow_triggers.py
@@ -177,6 +178,118 @@ synthetic wiki, p95 latency, default config:
 
 `fact_add` is limited by the OS fsync floor under immediate durability. Use
 `fact_add_many` or `store.durability = eventual` when ingest throughput matters.
+
+### Storage Backend Probe
+
+`benchmarks/src/bin/storage_backend_probe.rs` compares the current redb-backed
+AideMemo API path with a SQLite schema. The SQLite backend now also exists as a
+feature-gated runtime backend (`store.backend = "sqlite"`, `--features sqlite`)
+with normalized `entities`, `facts`, `fact_entities`, `relations`, feedback
+tables, secondary indexes, JSON record payloads, and FTS5. Results are written
+to `benchmarks/results/storage_backend_probe.json`.
+
+Local macOS arm64 run on 2026-06-13:
+
+```bash
+cargo run --release -p aidememo-benchmarks --bin storage_backend_probe
+```
+
+10,000-fact synthetic store, p95 latency after the redb
+`fact_list(entity_id=...)` fast path started using the existing
+`fact_by_entity` prefix index:
+
+| Backend | Build | Single `fact_add` | Batch per fact | All facts scan | Entity facts | Search | Open existing |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| redb immediate | 3086.79 ms | 6.38 ms | 0.122 ms | 30.00 ms | 6.12 ms | BM25 0.92 ms | 38.23 ms |
+| redb eventual | 425.35 ms | 1.23 ms | 0.050 ms | 30.04 ms | 6.04 ms | BM25 0.96 ms | 32.90 ms |
+| SQLite WAL FULL | 95.23 ms | 0.25 ms | 0.022 ms | 1.66 ms | 0.022 ms | FTS5 0.12 ms | 1.53 ms |
+| SQLite WAL NORMAL | 89.24 ms | 0.19 ms | 0.023 ms | 1.59 ms | 0.017 ms | FTS5 0.13 ms | 0.77 ms |
+
+Interpretation:
+
+* SQLite is a serious backend candidate if AideMemo moves toward a relational
+  store abstraction. It naturally fits entity/fact joins, indexed filtered
+  lists, migrations, introspection, and persistent FTS.
+* The redb `fact_list_entity` path improved from the earlier all-scan result
+  (`~29 ms`) to `~6 ms` after using `fact_by_entity`. The remaining gap is no
+  longer from total-store scanning; it is the cost of point-hydrating JSON facts
+  through the redb table path versus SQLite's join/index cursor.
+* redb immediate write latency is dominated by per-transaction fsync. The
+  existing `store.durability = eventual` knob narrows single-write cost, but
+  SQLite still wins this synthetic write path while also maintaining FTS rows.
+* SQLite FTS5 is not directly equivalent to the current in-memory BM25 index,
+  but the persistent-index result supports a deeper local SQLite spike.
+
+Runtime promotion status:
+
+* `crates/aidememo-core/src/backend.rs` defines `StoreBackend` plus `StoreKind`,
+  so `AideMemo::open` can select redb or SQLite from `config.store.backend`.
+* `crates/aidememo-core/src/sqlite_store.rs` implements the same public store
+  surface used by entity/fact CRUD, relation graph traversal, lint, ingest,
+  BM25 search, query, archive/cold-tier moves, JSONL import/export, pull sync,
+  feedback, and semantic-adapt adapter state.
+* JSONL import now uses the same ID-preserving upsert path as sync import.
+  This makes `aidememo export` from a redb store followed by `aidememo import`
+  into a SQLite store a usable migration primitive instead of allocating fresh
+  ULIDs.
+* `aidememo-cli` exposes a `sqlite` Cargo feature that forwards
+  `aidememo-core/sqlite`; build with
+  `cargo build -p aidememo-cli --features sqlite` before setting
+  `aidememo config set store.backend sqlite`.
+* The Python, Node, Elixir, and C native binding crates expose the same
+  `sqlite` Cargo feature and runtime backend selector. This keeps the SDK
+  replacement path aligned with CLI/MCP instead of making SQLite a CLI-only
+  spike.
+* `sqlite_matches_redb_for_core_public_api_fixture` seeds the same fixture into
+  redb and SQLite, then compares stats, fact contents, traversal output, and
+  BM25 search results. This is the current semantic parity gate for backend
+  promotion.
+* `sqlite_import_preserves_redb_export_ids_for_migration_gate` exports a redb
+  fixture, imports it into SQLite, verifies entity/fact IDs and graph/search
+  parity, then replays the same JSONL to prove the migration path is
+  idempotent.
+* `scripts/storage-backend-parity.sh` is the CLI/MCP gate: redb export/import
+  into SQLite, relation preservation, SQLite cold-tier archive/search, and 24
+  concurrent MCP writes through `mcp-serve`.
+* `scripts/storage-backend-real-corpus-diff.sh` ingests the repo's real docs
+  corpus into redb and SQLite independently, normalizes away backend-specific
+  ULIDs/timestamps, compares entity/fact/relation exports, then compares
+  BM25 search results across representative queries.
+* `scripts/storage-backend-sqlite-mcp-soak.sh` runs the SQLite `mcp-serve`
+  write path under concurrent load. The default local gate writes 200 facts
+  through 16 parallel HTTP MCP callers, verifies unique fact IDs, final stats,
+  and BM25 visibility for a tail write.
+* `scripts/storage-backend-sdk-bindings-check.sh` verifies the SDK/binding
+  surface: Python compiles with `--features sqlite`, Node and C run SQLite
+  open smoke tests through their binding APIs, and Elixir runs `mix test` with
+  `AIDEMEMO_NIF_CARGO_FEATURES=sqlite`.
+
+Validation added in the runtime spike:
+
+```bash
+cargo test -p aidememo-core --features sqlite
+cargo test -p aidememo-core --features sqlite,semantic,semantic-adapt
+cargo check -p aidememo-cli --features sqlite
+./scripts/storage-backend-parity.sh
+./scripts/storage-backend-real-corpus-diff.sh
+./scripts/storage-backend-sqlite-mcp-soak.sh
+./scripts/storage-backend-sdk-bindings-check.sh
+```
+
+Current replacement read:
+
+* SQLite is viable enough to keep behind a feature flag and run through the
+  full public `AideMemo` API surface in tests. The main replacement blockers
+  are no longer graph/search/lint/ingest wiring.
+* Remaining promotion gate before making SQLite the default: a deliberate
+  default-backend migration policy for existing users. Archive siblings already
+  use backend-specific suffixes (`.cold.redb` for redb, `.cold.sqlite` for
+  SQLite), the docs corpus parity gate covers a representative real markdown
+  corpus, and the local MCP soak covers concurrent SQLite write traffic.
+* libSQL/Turso or S3-style remote operation is still a separate decision. The
+  current implementation uses bundled SQLite through rusqlite; it proves
+  relational schema fit and local runtime replaceability, not remote
+  replication semantics.
 
 ## Workflow Doctor Readiness
 

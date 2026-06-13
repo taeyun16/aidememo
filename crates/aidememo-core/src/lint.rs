@@ -6,18 +6,18 @@
 //! `fact_list` and `relations_get` calls — at 10K facts that meant
 //! ~500 full scans of the facts table per lint.
 
+use crate::backend::StoreBackend;
 use crate::error::{AideMemoError, Result};
-use crate::store::Store;
 use crate::types::*;
 use std::collections::{HashMap, HashSet};
 
 /// Lint engine for checking graph health.
-pub struct LintEngine<'a> {
-    store: &'a Store,
+pub struct LintEngine<'a, B: StoreBackend + ?Sized> {
+    store: &'a B,
 }
 
-impl<'a> LintEngine<'a> {
-    pub fn new(store: &'a Store) -> Self {
+impl<'a, B: StoreBackend + ?Sized> LintEngine<'a, B> {
+    pub fn new(store: &'a B) -> Self {
         Self { store }
     }
 
@@ -371,6 +371,7 @@ fn check_conflicts(entities: &[EntitySummary], facts: &[FactRecord]) -> Vec<Lint
 mod tests {
     use super::*;
     use crate::config::Config;
+    use crate::store::Store;
     use tempfile::tempdir;
 
     fn fresh_store() -> (Store, tempfile::TempDir) {

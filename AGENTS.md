@@ -10,14 +10,15 @@ Codex, Cursor, Aider, Jules, and any agent that follows the
 ## What this project is
 
 AideMemo (`aidememo`) ingests a markdown wiki into a structured knowledge graph
-(redb + BM25 + semantic vectors) and exposes it to LLM agents via CLI, MCP
-server, and native bindings (Python / Node / Elixir / C).
+(redb by default, experimental SQLite behind a feature flag, plus BM25 and
+semantic vectors) and exposes it to LLM agents via CLI, MCP server, and native
+bindings (Python / Node / Elixir / C).
 
 | Crate | Purpose |
 |---|---|
-| `aidememo-core` | redb store, ingest, search, traverse, lint, validity windows |
+| `aidememo-core` | redb store, experimental SQLite backend, ingest, search, traverse, lint, validity windows |
 | `aidememo-cli` | `aidememo` binary (CLI + stdio/HTTP MCP) |
-| `aidememo-napi`, `aidememo-python`, `aidememo-nif`, `aidememo-ffi` | language bindings (full API) |
+| `aidememo-napi`, `aidememo-python`, `aidememo-nif`, `aidememo-ffi` | language bindings (full API; optional `sqlite` Cargo feature) |
 
 ## Setup commands
 
@@ -26,6 +27,10 @@ mise install                                      # sync local tool versions wit
 cargo check -p aidememo-core -p aidememo-cli       # fast verify
 cargo build -p aidememo-cli                   # debug binary at target/debug/aidememo
 cargo build -p aidememo-cli --release         # release binary
+cargo check -p aidememo-python --features sqlite
+cargo check -p aidememo-napi --features sqlite
+cargo check -p aidememo-nif --features sqlite
+cargo check -p aidememo-ffi --features sqlite
 cargo test -p aidememo-core --features semantic
 cargo test -p aidememo-cli --bin aidememo
 ./scripts/ci-local.sh lint
@@ -80,7 +85,8 @@ aidememo search <query> [-l N] [--current] [--hybrid] [--source-id ID] [--includ
                                                    BM25 by default (no model load — fast path).
                                                    --hybrid = also run semantic re-rank (loads
                                                    model). --include-archive = also search the
-                                                   cold-tier `<store>.cold.redb` and merge any
+                                                   backend-specific cold tier (`<store>.cold.redb`
+                                                   or `<store>.cold.sqlite`) and merge any
                                                    matches in. --via = dispatch via running
                                                    `aidememo mcp-serve` daemon (warm model, ~5-50 ms)
                                                    --source-id scopes retrieval to one source /
@@ -102,7 +108,9 @@ aidememo fact add <content> --entities A,B [--type T] [--source-id ID]
                                                    auto-creates missing entities; optional
                                                    source_id scopes shared-store retrieval.
 aidememo fact supersede <OLD_ID> <NEW_ID>                 validity-window invalidate
-aidememo fact archive --ids <ID,…>                        move to <store>.cold.redb (preserves FactId)
+aidememo fact archive --ids <ID,…>                        move to backend-specific cold tier
+                                                   (`<store>.cold.redb` or `<store>.cold.sqlite`;
+                                                   preserves FactId)
 aidememo fact archive --older-than 30d [--type note]      bulk move by age (+ optional type filter)
 aidememo edit fact <ID> --append/--prepend/--find+--replace/--content
 aidememo entity add <name> [--type service]               custom types accepted
@@ -144,7 +152,7 @@ aidememo consolidate --gac [--gac-theta 0.85] [--gac-spread-budget N] [--gac-col
                                             paper: tight clusters (d̄ < 1-θ) collapse to
                                             newest fact; spread clusters keep medoid +
                                             budget residuals. --gac-cold-tier moves losers
-                                            to <store>.cold.redb (preserves FactId) instead
+                                            to the backend-specific cold tier (preserves FactId) instead
                                             of superseding. --gac-protect skips named fact
                                             types entirely (use `preference,lesson,error`
                                             on personalisation-tier stores — LongMemEval-S
@@ -381,7 +389,7 @@ should lead with the core 4; the rest are there when needed.
 | `aidememo_fact_add_many` | Bulk fact insert in one transaction. |
 | `aidememo_fact_supersede` | Mark an old fact replaced by a new one (validity-window invalidate). |
 | `aidememo_fact_edit` | Patch fact content (append/prepend/find+replace/content). |
-| `aidememo_fact_archive` | Move facts to cold-tier (`<store>.cold.redb`) — hot store shrinks, FactId preserved for `aidememo_fact_get`. Pass `include_archive:true` on `aidememo_search` / `aidememo_query` to merge cold matches back in. |
+| `aidememo_fact_archive` | Move facts to cold-tier (`<store>.cold.redb` for redb, `<store>.cold.sqlite` for SQLite) — hot store shrinks, FactId preserved for `aidememo_fact_get`. Pass `include_archive:true` on `aidememo_search` / `aidememo_query` to merge cold matches back in. |
 | `aidememo_fact_pin` | Pin / unpin a fact for the always-on tier. |
 | `aidememo_fact_list` | Paginated fact list with filters. |
 | `aidememo_pinned_context` | Just the pinned tier (subset of aidememo_context). |

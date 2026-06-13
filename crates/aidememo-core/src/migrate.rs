@@ -1,17 +1,17 @@
 //! Import/Export functionality for JSONL format.
 
+use crate::backend::StoreBackend;
 use crate::error::{AideMemoError, Result};
-use crate::store::Store;
 use crate::types::*;
 use std::io::{Read, Write};
 
 /// Exporter for JSONL format.
-pub struct Exporter<'a> {
-    store: &'a Store,
+pub struct Exporter<'a, B: StoreBackend + ?Sized> {
+    store: &'a B,
 }
 
-impl<'a> Exporter<'a> {
-    pub fn new(store: &'a Store) -> Self {
+impl<'a, B: StoreBackend + ?Sized> Exporter<'a, B> {
+    pub fn new(store: &'a B) -> Self {
         Self { store }
     }
 
@@ -100,12 +100,12 @@ impl<'a> Exporter<'a> {
 }
 
 /// Importer for JSONL format.
-pub struct Importer<'a> {
-    store: &'a mut Store,
+pub struct Importer<'a, B: StoreBackend + ?Sized> {
+    store: &'a mut B,
 }
 
-impl<'a> Importer<'a> {
-    pub fn new(store: &'a mut Store) -> Self {
+impl<'a, B: StoreBackend + ?Sized> Importer<'a, B> {
+    pub fn new(store: &'a mut B) -> Self {
         Self { store }
     }
 
@@ -146,20 +146,10 @@ impl<'a> Importer<'a> {
             match (record_type, data) {
                 (Some("entity"), Some(data)) => {
                     if let Ok(record) = serde_json::from_value::<EntityRecord>(data.clone()) {
-                        // Check if entity already exists
-                        if self.store.entity_get(&record.name).is_err() {
-                            let input = EntityInput {
-                                name: record.name,
-                                entity_type: Some(record.entity_type),
-                                aliases: Some(record.aliases),
-                                tags: Some(record.tags),
-                                source_page: record.source_page,
-                            };
-                            if self.store.entity_add(input).is_ok() {
-                                stats.entities_imported += 1;
-                            } else {
-                                stats.errors += 1;
-                            }
+                        match self.store.entity_upsert_record(record) {
+                            Ok(true) => stats.entities_imported += 1,
+                            Ok(false) => {}
+                            Err(_) => stats.errors += 1,
                         }
                     } else {
                         stats.errors += 1;
@@ -167,27 +157,10 @@ impl<'a> Importer<'a> {
                 }
                 (Some("relation"), Some(data)) => {
                     if let Ok(record) = serde_json::from_value::<RelationRecord>(data.clone()) {
-                        let input = RelationInput {
-                            source: self
-                                .store
-                                .entity_get_by_id(record.source_id)
-                                .map(|e| e.name)
-                                .unwrap_or_default(),
-                            target: self
-                                .store
-                                .entity_get_by_id(record.target_id)
-                                .map(|e| e.name)
-                                .unwrap_or_default(),
-                            relation_type: record.relation_type,
-                            weight: Some(record.weight),
-                            evidence: Some(record.evidence),
-                        };
-                        if input.source.is_empty() || input.target.is_empty() {
-                            stats.errors += 1;
-                        } else if self.store.relation_add(input).is_ok() {
-                            stats.relations_imported += 1;
-                        } else {
-                            stats.errors += 1;
+                        match self.store.relation_upsert_record(record) {
+                            Ok(true) => stats.relations_imported += 1,
+                            Ok(false) => {}
+                            Err(_) => stats.errors += 1,
                         }
                     } else {
                         stats.errors += 1;
@@ -195,20 +168,10 @@ impl<'a> Importer<'a> {
                 }
                 (Some("fact"), Some(data)) => {
                     if let Ok(record) = serde_json::from_value::<FactRecord>(data.clone()) {
-                        let input = FactInput {
-                            content: record.content,
-                            fact_type: Some(record.fact_type),
-                            entity_ids: Some(record.entity_ids),
-                            tags: Some(record.tags),
-                            source: record.source,
-                            source_id: record.source_id,
-                            source_confidence: Some(record.source_confidence),
-                            observed_at: record.observed_at,
-                        };
-                        if self.store.fact_add(input).is_ok() {
-                            stats.facts_imported += 1;
-                        } else {
-                            stats.errors += 1;
+                        match self.store.fact_upsert_record(record) {
+                            Ok(true) => stats.facts_imported += 1,
+                            Ok(false) => {}
+                            Err(_) => stats.errors += 1,
                         }
                     } else {
                         stats.errors += 1;

@@ -8,9 +8,14 @@ defmodule Mix.Tasks.Compile.Cargo do
     workspace = Path.expand("../..", __DIR__)
     profile_args = if Mix.env() == :prod, do: ["--release"], else: []
     target_dir = if Mix.env() == :prod, do: "release", else: "debug"
+    feature_args =
+      case System.get_env("AIDEMEMO_NIF_CARGO_FEATURES", "") |> String.trim() do
+        "" -> []
+        features -> ["--features", features]
+      end
 
     {output, status} =
-      System.cmd("cargo", ["build", "-p", "aidememo-nif"] ++ profile_args,
+      System.cmd("cargo", ["build", "-p", "aidememo-nif"] ++ profile_args ++ feature_args,
         cd: workspace,
         stderr_to_stdout: true
       )

@@ -721,7 +721,8 @@ pub struct GacOpts {
     /// guidance. Default 0 — medoid carries the cluster.
     pub spread_residual_budget: usize,
     /// When true, non-representative members move to the cold-tier
-    /// archive (`<store>.cold.redb`) instead of being marked superseded.
+    /// archive (`<store>.cold.redb` or `<store>.cold.sqlite`) instead
+    /// of being marked superseded.
     /// Cold preserves FactId so aidememo_fact_get still resolves.
     /// When false, supersede semantics match `consolidate_semantic`,
     /// just cluster-routed instead of pairwise. Default false
@@ -895,9 +896,9 @@ pub struct SearchOpts {
     /// `false` (default) preserves the previous hybrid behaviour.
     pub bm25_only: bool,
     /// When `true`, also search the cold-tier sibling
-    /// (`<store>.cold.redb`) and merge its results in. Hot results
-    /// keep their original ranks; cold results fill any remaining
-    /// slots up to `limit`. Default `false` — most callers don't
+    /// (`<store>.cold.redb` or `<store>.cold.sqlite`) and merge its
+    /// results in. Hot results keep their original ranks; cold results fill any
+    /// remaining slots up to `limit`. Default `false` — most callers don't
     /// want archived facts surfacing in the live answer.
     pub include_archive: bool,
 }

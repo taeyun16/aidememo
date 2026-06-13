@@ -3,7 +3,7 @@
   <h1 align="center">AideMemo</h1>
   <p><strong>Agent-friendly SDK memory for coding agents.</strong></p>
   <p>
-    One Rust binary. One redb store. A code-first SDK, MCP tools, CLI, and native bindings for agents that need memory with facts, graph traversal, and history.
+    One Rust binary. One embedded store. A code-first SDK, MCP tools, CLI, and native bindings for agents that need memory with facts, graph traversal, and history.
   </p>
   <p>
     <a href="https://github.com/taeyun16/aidememo/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/taeyun16/aidememo/actions/workflows/ci.yml/badge.svg?branch=main"></a>
@@ -44,7 +44,7 @@ flowchart LR
     MCP --> Core["aidememo-core"]
     CLI --> Core
     API --> Core
-    Core --> Store[("redb + BM25 + HNSW")]
+    Core --> Store[("redb default / SQLite experimental + BM25 + HNSW")]
 ```
 
 ## Why AideMemo
@@ -327,13 +327,23 @@ aidememo config set store.lock_retry_ms 5000     # smooth short redb lock conten
 aidememo doctor --json                           # includes sharing.mode and daemon guidance
 aidememo config set model.provider fastembed
 aidememo config set model.name bge-small-en-v1.5
+
+# Experimental local SQLite backend. Build the CLI with `--features sqlite` first.
+aidememo config set store.backend sqlite
+```
+
+Native bindings use the same backend selector when they are built with their
+Cargo `sqlite` feature:
+
+```python
+g = aidememo.AideMemo("./_meta/wiki.sqlite", backend="sqlite")
 ```
 
 ## Architecture
 
 | Crate | Purpose |
 |---|---|
-| `aidememo-core` | redb store, ingest, BM25, semantic search, graph, lint, lifecycle |
+| `aidememo-core` | redb store, experimental SQLite backend, ingest, BM25, semantic search, graph, lint, lifecycle |
 | `aidememo-cli` | `aidememo` binary: CLI, stdio MCP, HTTP/SSE MCP |
 | `aidememo-agent-sdk` | Python composition layer for code-executing agents (Codex, Claude Code, Hermes, CI); uses `aidememo-python` or CLI fallback |
 | `aidememo-python` | PyO3 bindings |
@@ -354,7 +364,7 @@ and local coding-agent tools:
 | [SkillOps](https://arxiv.org/abs/2605.13716) | Adjacent framing for periodic skill-library maintenance. AideMemo keeps the lighter single-profile loop for now instead of a full skill ecosystem graph. |
 | [SkillMOO](https://arxiv.org/abs/2604.09297) | Adjacent multi-objective skill tuning work. AideMemo currently gates correctness and workflow invariants first; cost/runtime trade-offs are future optimizer inputs. |
 | [LongMemEval](https://arxiv.org/abs/2410.10813) and [LongMemEval-V2](https://arxiv.org/abs/2605.12493) | Benchmark shape for long-term personal / agent memory. AideMemo uses these results to calibrate retrieval, aggregation, and reader-side caveats without leading with SOTA claims. |
-| [Graphiti](https://github.com/getzep/graphiti) / [Zep](https://www.getzep.com/) | Temporal knowledge-graph semantics and validity-window comparisons. AideMemo keeps similar history semantics but uses a single local redb store. |
+| [Graphiti](https://github.com/getzep/graphiti) / [Zep](https://www.getzep.com/) | Temporal knowledge-graph semantics and validity-window comparisons. AideMemo keeps similar history semantics but uses one embedded local store. |
 | [Mem0](https://github.com/mem0ai/mem0) and [Letta](https://github.com/letta-ai/letta) | Cloud/default extraction and memory-OS alternatives. AideMemo intentionally stays bring-your-own-agent, explicit, and local-first. |
 | [Mastra Observational Memory](https://mastra.ai/research/observational-memory) and [OMEGA](https://omegamax.co/docs/benchmark-report) | High-scoring memory-system references. AideMemo uses them as benchmark context while prioritizing SDK ergonomics and zero-token default ingest. |
 | [beads](https://gastownhall.github.io/beads/) | Agent-oriented local task graph and `bd ready` workflow. AideMemo borrows the agent-local tool ergonomics, but focuses on typed memory retrieval rather than issue dependency tracking. |

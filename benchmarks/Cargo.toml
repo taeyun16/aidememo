@@ -13,6 +13,7 @@ publish = false
 criterion = "0.5"
 parking_lot = "0.12"
 redb = "2.6"
+rusqlite = { version = "0.40.1", default-features = false, features = ["bundled"] }
 tempfile = "3.10"
 aidememo-core = { version = "0.1.0", path = "../crates/aidememo-core", features = ["semantic", "fastembed"] }
 
@@ -53,6 +54,10 @@ path = "src/bin/lint_profile.rs"
 [[bin]]
 name = "fsync_probe"
 path = "src/bin/fsync_probe.rs"
+
+[[bin]]
+name = "storage_backend_probe"
+path = "src/bin/storage_backend_probe.rs"
 
 [[bin]]
 name = "search_profile"
