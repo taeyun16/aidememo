@@ -9,7 +9,7 @@ agents installed on this machine: Claude Code, Codex, and Hermes.
 | `scenario_b_consistency.py` | Three clients write/read against one store, agree on the data they see. | 0 |
 | `scenario_c_natural_prompt.py` | Each agent receives the same natural-language prompt; verifies it actually called aidememo and quoted the seeded fact contents. | ~50–100k tokens (claude+codex+hermes) |
 | `scenario_d_concurrent_writers.py` | Multi-process write contention; verifies lock failures are explicit and non-destructive. | 0 |
-| `scenario_e_http_shared.py` | One `aidememo mcp-serve` + 4 HTTP clients × 25 inserts; the recommended shared-write pattern. | 0 |
+| `scenario_e_http_shared.py` | One default SQLite `aidememo mcp-serve` + 4 HTTP clients × 25 inserts; the recommended shared-write pattern. | 0 |
 | `scenario_f_workflow_triggers.py` | Starts multiple unrelated sparse tickets through CLI, MCP, and Hermes plugin paths; verifies unique sessions, ticket facts, topical priors, and `source_id` isolation. | 0 |
 | `scenario_g_hermes_binding.py` | Compares Hermes workflow-start CLI fallback vs `aidememo-python` in-process path for shape parity, leakage, and latency. Requires local `aidememo-python` install. | 0 |
 | `scenario_h_workflow_natural_prompt.py` | Sends sparse-ticket chat prompts to Claude, Codex, and Hermes; verifies workflow-start side effects, prior-memory reflection, and forbidden-source leakage with source defaults configured per runtime. | token-burning |

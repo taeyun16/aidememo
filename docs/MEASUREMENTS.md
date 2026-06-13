@@ -14,12 +14,13 @@ python3 -m pytest plugins/hermes/tests -q
 
 cargo run --release --bin performance
 cargo run --release -p aidememo-benchmarks --bin storage_backend_probe
-python3 bench/multi-agent/scenario_d_concurrent_writers.py
 python3 bench/multi-agent/scenario_e_http_shared.py
 python3 bench/multi-agent/scenario_f_workflow_triggers.py
 python3 bench/multi-agent/scenario_g_hermes_binding.py
 python3 bench/multi-agent/scenario_h_workflow_natural_prompt.py
 AIDEMEMO_E2E_SETUP_ONLY=1 python3 bench/multi-agent/scenario_h_workflow_natural_prompt.py
+cargo build -p aidememo-cli --release --features redb
+python3 bench/multi-agent/scenario_d_concurrent_writers.py
 python3 bench/multi-agent/scenario_j_lock_retry_sweep.py
 python3 bench/multi-agent/scenario_k_sdk_workflow_parity.py
 python3 bench/multi-agent/scenario_l_self_extraction.py
@@ -60,7 +61,7 @@ with current scorecards in
 | Scenario H source-default setup | 5/5 setup invariants; Codex config created through `aidememo mcp-install --source-id workflow-alpha`; Claude project MCP and Hermes plugin config both carry `AIDEMEMO_SOURCE_ID` / `source_id`; no model calls | The token-burning natural prompt scenario can now run without asking agents to pass `source_id` per tool call; setup itself is zero-cost and regression-testable. |
 | MCP workflow session attachment | `cargo test -p aidememo-cli --bin aidememo workflow_start_creates_session_ticket_and_scoped_context` and `cargo test -p aidememo-cli --bin aidememo fact_add_many_attaches_top_level_session_id_to_each_item` passed | MCP agents can pass `session_id` from `aidememo_workflow_start` into `aidememo_fact_add` / `aidememo_fact_add_many`, keeping follow-up facts on the workflow thread without relying on CLI-only `AIDEMEMO_SESSION_ID`. |
 | Zero-token workflow demo | decision + lesson + error surfaced; search hits 4; workflow latency 128ms | `scripts/demo-workflow.sh` demonstrates the product position without an agent, model call, or persistent store. It uses CLI `workflow start --bm25-only` for deterministic first-run behaviour. `scripts/ci-local.sh demo` wraps the same smoke for daily local checks in about 0.91s warm. |
-| Natural workflow adoption Scenario H, 3 agents | 4/4 invariants; 3/3 agents passed; each created 1 scoped workflow fact; prior reflection Claude 3/3, Codex 2/3, Hermes 3/3; forbidden leakage 0 | Sparse-ticket prompts can drive the workflow entry point across Claude, Codex, and Hermes when each runtime gets an isolated, deterministic MCP config. Hermes uses MCP-only here to avoid redb lock contention with the in-process plugin. |
+| Natural workflow adoption Scenario H, 3 agents | 4/4 invariants; 3/3 agents passed; each created 1 scoped workflow fact; prior reflection Claude 3/3, Codex 2/3, Hermes 3/3; forbidden leakage 0 | Sparse-ticket prompts can drive the workflow entry point across Claude, Codex, and Hermes when each runtime gets an isolated, deterministic MCP config. The fixture uses the default SQLite store path and MCP source defaults for scoped sharing. |
 | Hermes native core parity | `python3 -m pytest plugins/hermes/tests -q`; `cargo test -p aidememo-cli --bin aidememo mcp_tools::` | Hermes now exposes `aidememo_context`, `aidememo_aggregate`, `aidememo_fact_add_many`, and `aidememo_doctor` through native tools/slash commands, and source-scoped aggregate calls honor explicit `source_id` / `AIDEMEMO_SOURCE_ID` instead of mixing shared-store facts. |
 | Hermes Memory-as-Code Scenario N | `python3 bench/multi-agent/scenario_n_hermes_memory_as_code.py`: 9/9 invariants; fanout search + dedupe + coverage + derived batch + aggregate completed with beta source excluded from scoped rows | The Hermes research profile now has a zero-token, code-first regression through the shared `aidememo_agent.Memory` API: intermediate candidate sets stay in Python and only compact coverage/aggregate artifacts need to reach model context. |
 | aidememo-agent-sdk wheel install smoke | `scripts/aidememo-agent-sdk-pack-smoke.sh`: built `aidememo_agent_sdk-0.1.0-py3-none-any.whl`, installed it into a temp venv, verified `Memory`, `AideMemoClient`, `AideMemoMemorySDK`, and first-use methods; total 3.20s | The code-first SDK path is installable independently of Hermes, so Codex / Claude Code / CI scripts do not need the Hermes plugin package. |
@@ -385,7 +386,7 @@ Validation:
 | `cargo test -p aidememo-cli doctor_json_includes_shared_store_guidance` | fixture CLI smoke validates JSON `sharing.lock_retry_ms`, `serverless_recommended_writers=4`, `daemon.state`, `recommended_mode`, and actionable hints. |
 | `cargo test -p aidememo-cli doctor_groups_by_code_with_action_hints` | MCP `aidememo_doctor` unit validates lint grouping plus `sharing.serverless_recommended_writers=4`, `recommended_mode=serverless_fail_fast`, and `sharing_retry_disabled`. |
 | `python3 bench/multi-agent/scenario_i_workflow_doctor.py` | 10/10 invariants; CLI/MCP/Hermes each created a workflow ticket; doctor reported `workflow.ready=true`, `recent_ticket_count=3`, and no false no-MCP/no-recent-ticket hints. |
-| `python3 bench/multi-agent/scenario_j_lock_retry_sweep.py` | 7/7 invariants; `store.lock_retry_ms=5000` stayed smooth through 4 concurrent serverless writers and mostly recovered 8-writer contention. |
+| `cargo build -p aidememo-cli --release --features redb && python3 bench/multi-agent/scenario_j_lock_retry_sweep.py` | 7/7 invariants; optional-redb `store.lock_retry_ms=5000` stayed smooth through 4 concurrent serverless writers and mostly recovered 8-writer contention. |
 | `scripts/workflow-release-smoke.sh` | Bundles the first-run workflow demo, Scenario F + I, and a fresh fixture `aidememo doctor --json` assert for release checks. Latest run: demo recovered decision/lesson/error, Scenario F 13/13, Scenario I 10/10, fixture doctor `workflow_ready=true`, `recent_ticket_count=1`, total 13.40s. The timing table includes `ok`/`fail` status and is printed from an EXIT trap so partial failures still leave context; forced `AIDEMEMO_BIN=/bin/false` failure records `fail ... exit 1`. |
 | CI `workflow-release-smoke` job | Runs the same script on Ubuntu after lint with Python 3.13 and a 10-minute timeout. |
 | CI `workflow-lint` job | Runs `actionlint@v1.7.1` across `.github/workflows/*.yml` before heavier Rust checks. Local `actionlint .github/workflows/*.yml`: 0 issues. |

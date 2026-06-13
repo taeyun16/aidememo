@@ -1,21 +1,18 @@
 #!/usr/bin/env python3
 """Scenario E — `aidememo mcp-serve` HTTP mode + concurrent clients.
 
-Companion to scenario D. D showed that multi-process stdio `aidememo mcp`
-clients fight over redb's per-process file lock. The recommended
-shared-store pattern is one long-lived `aidememo mcp-serve` HTTP server
-with every agent talking to the same endpoint. This scenario
-verifies that pattern: a single server, M concurrent HTTP clients,
-each sending N JSON-RPC tools/call aidememo_fact_add — every insert must
-land, with no IDs collisions and no lock errors (the server's redb
-handle is single-process, so contention is internal serialization).
+This is the default SQLite shared-write smoke. The recommended multi-agent
+pattern is one long-lived `aidememo mcp-serve` HTTP server with every agent
+talking to the same endpoint. This scenario verifies that pattern: a single
+server, M concurrent HTTP clients, each sending N JSON-RPC tools/call
+aidememo_fact_add — every insert must land, with no ID collisions and no lock
+or HTTP errors.
 
-Compared to D:
-  - D (stdio, default lock_retry_ms=0):  only the process that wins
-    the redb lock writes successfully; others fail explicitly.
-  - D (stdio, lock_retry_ms=5000):       short collisions can smooth
-    out for ordinary local sharing.
-  - E (mcp-serve, no retry needed):      M*N/M*N, lower wall.
+Compared to the optional-redb lock scenarios:
+  - D/J (redb stdio/serverless): independent processes contend for redb's
+    exclusive file lock unless retry is configured.
+  - E (default SQLite mcp-serve): one shared server owns the store and
+    serializes concurrent HTTP writes behind a warm process.
 
 E is what the docs (AGENTS.md "Multi-agent shared store") recommend
 for actual multi-agent setups.
