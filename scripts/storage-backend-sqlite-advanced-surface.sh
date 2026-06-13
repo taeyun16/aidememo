@@ -4,6 +4,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BASE="${AIDEMEMO_SQLITE_ADVANCED_SURFACE_BASE:-$(mktemp -d "${TMPDIR:-/tmp}/aidememo-sqlite-advanced-surface.XXXXXX")}"
+BACKEND="${AIDEMEMO_SQLITE_ADVANCED_SURFACE_BACKEND:-libsqlite}"
 BIN="$ROOT_DIR/target/debug/aidememo"
 SQLITE_LOCK_PID=""
 SQLITE_FACT_PID=""
@@ -96,11 +97,11 @@ am_json() {
     HOME="$HOME_DIR" "$BIN" --store "$STORE" --json "$@"
 }
 
-HOME="$HOME_DIR" "$BIN" config set store.backend sqlite >/dev/null
+HOME="$HOME_DIR" "$BIN" config set store.backend "$BACKEND" >/dev/null
 HOME="$HOME_DIR" "$BIN" config set store.lock_retry_ms 3000 >/dev/null
 backend="$(HOME="$HOME_DIR" "$BIN" config get store.backend)"
-if [[ "$backend" != "sqlite" ]]; then
-    echo "expected sqlite backend, got $backend" >&2
+if [[ "$backend" != "$BACKEND" ]]; then
+    echo "expected $BACKEND backend, got $backend" >&2
     exit 1
 fi
 lock_retry_ms="$(HOME="$HOME_DIR" "$BIN" config get store.lock_retry_ms)"
@@ -371,4 +372,4 @@ expect_contains "ttl fact get" \
     "$(am fact get "$TTL_FACT")" \
     "SQLite advanced smoke TTL expiry candidate"
 
-echo "sqlite advanced-surface ok: busy-timeout/feedback/adapt/extract/pending/consolidate"
+echo "sqlite advanced-surface ok ($BACKEND): busy-timeout/feedback/adapt/extract/pending/consolidate"

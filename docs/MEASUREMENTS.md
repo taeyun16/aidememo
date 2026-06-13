@@ -273,8 +273,9 @@ Runtime promotion status:
   CLI-level `store.lock_retry_ms` busy-timeout behaviour under a held SQLite
   writer lock, fact-level feedback, search feedback, adapter train/status/eval,
   heuristic extract preview/apply, pending approve/reject, and TTL-only
-  consolidate without model downloads. The TTL gate explicitly runs with
-  `--semantic-threshold 0`, proving expiry is independent from semantic dedup.
+  consolidate without model downloads. It also defaults `store.backend` to the
+  `libsqlite` alias. The TTL gate explicitly runs with `--semantic-threshold
+  0`, proving expiry is independent from semantic dedup.
 * `fact_archive_preserves_mcp_fact_get_for_cold_tier` is the MCP archive
   invariant gate: archived facts leave the hot store, `aidememo_fact_get` still
   resolves them from the backend-specific cold tier, default search hides them,
