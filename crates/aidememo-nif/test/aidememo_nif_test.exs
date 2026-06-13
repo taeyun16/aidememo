@@ -136,7 +136,7 @@ defmodule AideMemoNifTest do
     assert is_binary(AideMemoNif.version())
   end
 
-  defp assert_backend_file(path, "sqlite") do
+  defp assert_backend_file(path, backend) when backend in ["sqlite", "libsqlite"] do
     assert File.exists?(path)
     assert File.read!(path) |> binary_part(0, 16) == "SQLite format 3\0"
   end
@@ -169,6 +169,10 @@ defmodule AideMemoNifTest do
 
   test "sqlite backend opens when cargo feature is enabled", %{db: db} do
     assert_backend_opens(db, "sqlite")
+  end
+
+  test "libsqlite backend alias opens SQLite when cargo feature is enabled", %{db: db} do
+    assert_backend_opens(db, "libsqlite")
   end
 
   test "redb backend opens when cargo feature is enabled", %{db: db} do

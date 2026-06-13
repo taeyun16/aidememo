@@ -287,8 +287,8 @@ Runtime promotion status:
   through 16 parallel HTTP MCP callers, verifies unique fact IDs, final stats,
   and BM25 visibility for a tail write.
 * `scripts/storage-backend-sdk-bindings-check.sh` verifies the SDK/binding
-  surface: default SQLite builds plus redb-only Cargo feature builds across
-  Python, Node, Elixir, and C.
+  surface: default SQLite builds, `libsqlite` alias opens in native binding
+  tests, and redb-only Cargo feature builds across Python, Node, Elixir, and C.
 * `s3` no longer enables the `redb` feature. Its local WAL staging path uses
   SQLite (`wal.sqlite`), so `cargo check -p aidememo-core --no-default-features
   --features s3` proves the S3/manifest code can build without compiling the

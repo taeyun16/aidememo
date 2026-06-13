@@ -844,9 +844,19 @@ mod backend_binding_tests {
         dir.join(format!("wiki.{suffix}"))
     }
 
+    fn assert_backend_file(path: &std::path::Path, backend: &str) {
+        let header = std::fs::read(path).expect("read backend file");
+        match backend {
+            "sqlite" | "libsqlite" => assert_eq!(&header[..16], b"SQLite format 3\0"),
+            "redb" => assert_ne!(&header[..16], b"SQLite format 3\0"),
+            other => panic!("unsupported backend in test: {other}"),
+        }
+    }
+
     fn assert_open_with_backend_opens_backend(name: &str, backend: &str, suffix: &str) {
-        let path = std::ffi::CString::new(temp_store_path(name, suffix).to_string_lossy().as_ref())
-            .expect("path cstring");
+        let store_path = temp_store_path(name, suffix);
+        let path =
+            std::ffi::CString::new(store_path.to_string_lossy().as_ref()).expect("path cstring");
         let backend = std::ffi::CString::new(backend).expect("backend cstring");
         let store = aidememo_open_with_backend(path.as_ptr(), backend.as_ptr());
         assert!(!store.is_null());
@@ -859,6 +869,7 @@ mod backend_binding_tests {
         let stats = aidememo_stats(store);
         assert!(!stats.is_null());
         aidememo_free_string(stats);
+        assert_backend_file(&store_path, backend.to_str().expect("backend utf8"));
         aidememo_close(store);
     }
 
@@ -866,6 +877,12 @@ mod backend_binding_tests {
     #[test]
     fn open_with_backend_opens_sqlite_backend() {
         assert_open_with_backend_opens_backend("sqlite-open", "sqlite", "sqlite");
+    }
+
+    #[cfg(feature = "sqlite")]
+    #[test]
+    fn open_with_backend_opens_libsqlite_alias() {
+        assert_open_with_backend_opens_backend("libsqlite-open", "libsqlite", "libsqlite");
     }
 
     #[cfg(feature = "redb")]

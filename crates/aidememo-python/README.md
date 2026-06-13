@@ -66,8 +66,9 @@ stats = g.ingest("./my-wiki", incremental=False)
 print(stats)  # {entities_added, facts_added, ...}
 ```
 
-SQLite is the default local backend. To open redb stores, build the extension
-with the Cargo `redb` feature and pass `backend="redb"`:
+SQLite is the default local backend. Pass `backend="sqlite"` or
+`backend="libsqlite"` to select it explicitly. To open redb stores, build the
+extension with the Cargo `redb` feature and pass `backend="redb"`:
 
 ```bash
 cd crates/aidememo-python
@@ -75,6 +76,7 @@ cd crates/aidememo-python
 ```
 
 ```python
+g = aidememo.AideMemo("./_meta/wiki.sqlite", backend="libsqlite")
 g = aidememo.AideMemo("./_meta/wiki.redb", backend="redb")
 ```
 
