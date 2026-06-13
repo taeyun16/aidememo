@@ -35,9 +35,10 @@ AideMemoNif.fact_add(g, "Redis Sentinel provides HA",
 )
 ```
 
-SQLite is the default local backend. Pass `backend: "sqlite"` or
-`backend: "libsqlite"` to select it explicitly. To open redb stores, compile
-the NIF with the Cargo `redb` feature and pass `backend: "redb"`:
+SQLite is the default local backend. Omit `backend` or pass an empty string to
+use the compiled default. Pass `backend: "sqlite"` or `backend: "libsqlite"` to
+select SQLite explicitly. To open redb stores, compile the NIF with the
+Cargo `redb` feature and pass `backend: "redb"`:
 
 ```bash
 cd crates/aidememo-nif

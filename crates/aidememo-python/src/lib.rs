@@ -261,7 +261,7 @@ impl PyAideMemo {
         if let Some(dur) = durability {
             config.set("store.durability", &dur).map_err(map_err)?;
         }
-        if let Some(backend) = backend {
+        if let Some(backend) = backend.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
             config.set("store.backend", &backend).map_err(map_err)?;
         }
         let wiki = AideMemo::open(Path::new(&store_path), config).map_err(map_err)?;

@@ -23,13 +23,40 @@ def smoke_backend() -> str:
     return backend
 
 
-def assert_backend_file(path: str, backend: str) -> None:
+def read_header(path: str) -> bytes:
     with open(path, "rb") as handle:
-        header = handle.read(16)
+        return handle.read(16)
+
+
+def assert_backend_file(path: str, backend: str) -> None:
+    header = read_header(path)
     if backend in {"sqlite", "libsqlite"}:
         assert header == SQLITE_HEADER, header
     elif backend == "redb":
         assert header != SQLITE_HEADER, "redb backend produced a SQLite store file"
+
+
+def assert_default_and_empty_backend_match(tmp: str, explicit_backend: str) -> None:
+    expected = os.environ.get("AIDEMEMO_PYTHON_SMOKE_EXPECT_DEFAULT_BACKEND", "").strip().lower()
+    if not expected and explicit_backend in {"sqlite", "libsqlite"}:
+        expected = "sqlite"
+    if expected and expected not in {"sqlite", "redb"}:
+        raise AssertionError(
+            f"unsupported AIDEMEMO_PYTHON_SMOKE_EXPECT_DEFAULT_BACKEND={expected!r}"
+        )
+
+    default_db = os.path.join(tmp, "default-store")
+    empty_db = os.path.join(tmp, "empty-backend-store")
+
+    aidememo.AideMemo(default_db).stats()
+    aidememo.AideMemo(empty_db, backend="").stats()
+
+    default_header = read_header(default_db)
+    empty_header = read_header(empty_db)
+    assert empty_header == default_header, "empty backend should inherit compiled default"
+    if expected:
+        assert_backend_file(default_db, expected)
+        assert_backend_file(empty_db, expected)
 
 
 def main() -> None:
@@ -37,6 +64,7 @@ def main() -> None:
     backend = smoke_backend()
     db = os.path.join(tmp, f"test.{backend}")
     try:
+        assert_default_and_empty_backend_match(tmp, backend)
         g = aidememo.AideMemo(db, backend=backend)
 
         # Entity CRUD

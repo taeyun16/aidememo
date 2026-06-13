@@ -8,6 +8,7 @@ EXPECT_VERSION="${AIDEMEMO_PYTHON_EXPECT_VERSION:-}"
 BUILD_FEATURES="${AIDEMEMO_PYTHON_PACK_SMOKE_FEATURES:-}"
 NO_DEFAULT_FEATURES="${AIDEMEMO_PYTHON_PACK_SMOKE_NO_DEFAULT_FEATURES:-0}"
 SMOKE_BACKEND="${AIDEMEMO_PYTHON_SMOKE_BACKEND:-sqlite}"
+SMOKE_EXPECT_DEFAULT_BACKEND="${AIDEMEMO_PYTHON_SMOKE_EXPECT_DEFAULT_BACKEND:-}"
 BASE="${AIDEMEMO_PYTHON_PACK_SMOKE_BASE:-$(mktemp -d "${TMPDIR:-/tmp}/aidememo-python-pack-smoke.XXXXXX")}"
 SUMMARY_TSV="$BASE/aidememo-python-pack-smoke.tsv"
 tmp_dir=""
@@ -174,6 +175,15 @@ if [[ -n "$BUILD_FEATURES" ]]; then
 fi
 build_args+=(-i "$venv_dir/bin/python" -o "$wheel_dir")
 
+if [[ -z "$SMOKE_EXPECT_DEFAULT_BACKEND" ]]; then
+    normalized_features="$(tr ',' ' ' <<<"$BUILD_FEATURES")"
+    if [[ ("$NO_DEFAULT_FEATURES" == "1" || "$NO_DEFAULT_FEATURES" == "true") && " $normalized_features " == *" redb "* && " $normalized_features " != *" sqlite "* ]]; then
+        SMOKE_EXPECT_DEFAULT_BACKEND="redb"
+    else
+        SMOKE_EXPECT_DEFAULT_BACKEND="sqlite"
+    fi
+fi
+
 run_labeled "$build_label" \
     bash -lc 'cd "$1" && shift && exec "$@"' \
     _ "$PY_DIR" "$ROOT_DIR/scripts/maturin.sh" "${build_args[@]}"
@@ -187,7 +197,10 @@ if [[ -z "$wheel" ]]; then
 fi
 
 run_labeled "install built wheel" "$venv_dir/bin/python" -m pip --disable-pip-version-check install "$wheel"
-run_labeled "run Python binding smoke ($SMOKE_BACKEND)" env AIDEMEMO_PYTHON_SMOKE_BACKEND="$SMOKE_BACKEND" "$venv_dir/bin/python" "$PY_DIR/tests/smoke.py"
+run_labeled "run Python binding smoke ($SMOKE_BACKEND)" env \
+    AIDEMEMO_PYTHON_SMOKE_BACKEND="$SMOKE_BACKEND" \
+    AIDEMEMO_PYTHON_SMOKE_EXPECT_DEFAULT_BACKEND="$SMOKE_EXPECT_DEFAULT_BACKEND" \
+    "$venv_dir/bin/python" "$PY_DIR/tests/smoke.py"
 run_labeled "verify installed aidememo-python version" "$venv_dir/bin/python" - "$version" <<'PY'
 import importlib.metadata
 import sys

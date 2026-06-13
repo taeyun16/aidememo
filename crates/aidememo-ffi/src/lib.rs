@@ -77,6 +77,7 @@ fn ptr_to_optional_str(p: *const c_char) -> Result<Option<&'static str>, String>
         return Ok(None);
     }
     let value = ptr_to_str(p)?;
+    let value = value.trim();
     if value.is_empty() {
         Ok(None)
     } else {
@@ -145,9 +146,9 @@ pub extern "C" fn aidememo_open(path: *const c_char) -> *mut AideMemoStore {
 }
 
 /// Open or create a store at `path` using an explicit backend.
-/// `backend` may be NULL or empty for the default SQLite backend, "sqlite" or
-/// "libsqlite" for the SQLite path, or "redb" when built with the Cargo
-/// `redb` feature.
+/// `backend` may be NULL or empty for the compiled default backend, "sqlite"
+/// or "libsqlite" for the SQLite path, or "redb" when built with the Cargo
+/// `redb` feature. Default builds use SQLite.
 #[unsafe(no_mangle)]
 pub extern "C" fn aidememo_open_with_backend(
     path: *const c_char,
@@ -854,24 +855,54 @@ mod backend_binding_tests {
         }
     }
 
+    fn expected_default_backend() -> &'static str {
+        if cfg!(all(feature = "redb", not(feature = "sqlite"))) {
+            "redb"
+        } else {
+            "sqlite"
+        }
+    }
+
+    fn assert_opened_store(path: &std::path::Path, store: *mut AideMemoStore, backend: &str) {
+        assert!(!store.is_null());
+        let store_ref = unsafe { store.as_ref() }.expect("store ref");
+        assert_eq!(store_ref.wiki.config().store.backend, backend);
+
+        let stats = aidememo_stats(store);
+        assert!(!stats.is_null());
+        aidememo_free_string(stats);
+        assert_backend_file(path, backend);
+        aidememo_close(store);
+    }
+
     fn assert_open_with_backend_opens_backend(name: &str, backend: &str, suffix: &str) {
         let store_path = temp_store_path(name, suffix);
         let path =
             std::ffi::CString::new(store_path.to_string_lossy().as_ref()).expect("path cstring");
         let backend = std::ffi::CString::new(backend).expect("backend cstring");
         let store = aidememo_open_with_backend(path.as_ptr(), backend.as_ptr());
-        assert!(!store.is_null());
-        let store_ref = unsafe { store.as_ref() }.expect("store ref");
-        assert_eq!(
-            store_ref.wiki.config().store.backend,
-            backend.to_str().expect("backend utf8")
-        );
+        assert_opened_store(&store_path, store, backend.to_str().expect("backend utf8"));
+    }
 
-        let stats = aidememo_stats(store);
-        assert!(!stats.is_null());
-        aidememo_free_string(stats);
-        assert_backend_file(&store_path, backend.to_str().expect("backend utf8"));
-        aidememo_close(store);
+    #[test]
+    fn open_without_backend_opens_default_backend() {
+        let backend = expected_default_backend();
+        let store_path = temp_store_path("default-open", backend);
+        let path =
+            std::ffi::CString::new(store_path.to_string_lossy().as_ref()).expect("path cstring");
+        let store = aidememo_open(path.as_ptr());
+        assert_opened_store(&store_path, store, backend);
+    }
+
+    #[test]
+    fn open_with_empty_backend_opens_default_backend() {
+        let backend = expected_default_backend();
+        let store_path = temp_store_path("empty-backend-open", backend);
+        let path =
+            std::ffi::CString::new(store_path.to_string_lossy().as_ref()).expect("path cstring");
+        let empty = std::ffi::CString::new("").expect("empty backend cstring");
+        let store = aidememo_open_with_backend(path.as_ptr(), empty.as_ptr());
+        assert_opened_store(&store_path, store, backend);
     }
 
     #[cfg(feature = "sqlite")]

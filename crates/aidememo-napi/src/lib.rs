@@ -221,7 +221,12 @@ impl AideMemoStore {
     pub fn new(store_path: String, args: Option<StoreOpenArgs>) -> napi::Result<Self> {
         let mut config = Config::default();
         if let Some(args) = args {
-            if let Some(backend) = args.backend {
+            if let Some(backend) = args
+                .backend
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
                 config.set("store.backend", &backend).map_err(map_err)?;
             }
             if let Some(durability) = args.durability {
@@ -638,22 +643,29 @@ mod backend_binding_tests {
         }
     }
 
-    fn assert_constructor_opens_backend(name: &str, backend: &str, suffix: &str) {
+    fn expected_default_backend() -> &'static str {
+        if cfg!(all(feature = "redb", not(feature = "sqlite"))) {
+            "redb"
+        } else {
+            "sqlite"
+        }
+    }
+
+    fn assert_constructor_args_open_backend(
+        name: &str,
+        args: Option<StoreOpenArgs>,
+        expected_backend: &str,
+        suffix: &str,
+    ) {
         let path = temp_store_path(name, suffix);
-        let store = AideMemoStore::new(
-            path.to_string_lossy().into_owned(),
-            Some(StoreOpenArgs {
-                backend: Some(backend.to_string()),
-                durability: None,
-            }),
-        )
-        .expect("open explicit backend");
-        assert_eq!(store.wiki.config().store.backend, backend);
+        let store =
+            AideMemoStore::new(path.to_string_lossy().into_owned(), args).expect("open backend");
+        assert_eq!(store.wiki.config().store.backend, expected_backend);
 
         let entity_id = store
             .wiki
             .entity_add(EntityInput {
-                name: format!("Node{backend}"),
+                name: format!("Node{expected_backend}"),
                 entity_type: Some(EntityType::Technology),
                 ..Default::default()
             })
@@ -661,7 +673,7 @@ mod backend_binding_tests {
         store
             .wiki
             .fact_add(FactInput {
-                content: format!("Node binding opened a {backend} backend"),
+                content: format!("Node binding opened a {expected_backend} backend"),
                 entity_ids: Some(vec![entity_id]),
                 fact_type: Some(FactType::Note),
                 ..Default::default()
@@ -671,7 +683,39 @@ mod backend_binding_tests {
         let stats = store.wiki.stats().expect("stats");
         assert_eq!(stats.entity_count, 1);
         assert_eq!(stats.fact_count, 1);
-        assert_backend_file(&path, backend);
+        assert_backend_file(&path, expected_backend);
+    }
+
+    fn assert_constructor_opens_backend(name: &str, backend: &str, suffix: &str) {
+        assert_constructor_args_open_backend(
+            name,
+            Some(StoreOpenArgs {
+                backend: Some(backend.to_string()),
+                durability: None,
+            }),
+            backend,
+            suffix,
+        );
+    }
+
+    #[test]
+    fn constructor_without_backend_opens_default_backend() {
+        let expected = expected_default_backend();
+        assert_constructor_args_open_backend("default-open", None, expected, expected);
+    }
+
+    #[test]
+    fn constructor_with_empty_backend_opens_default_backend() {
+        let expected = expected_default_backend();
+        assert_constructor_args_open_backend(
+            "empty-backend-open",
+            Some(StoreOpenArgs {
+                backend: Some(String::new()),
+                durability: None,
+            }),
+            expected,
+            expected,
+        );
     }
 
     #[cfg(feature = "sqlite")]

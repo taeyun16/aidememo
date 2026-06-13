@@ -50,10 +50,10 @@ const hits = JSON.parse(g.search('high availability', {
 console.log(factId, hits.map((hit) => hit.content));
 ```
 
-SQLite is the default local backend. Pass `backend: 'sqlite'` or
-`backend: 'libsqlite'` to select it explicitly. To open redb stores, build the
-native package with the Cargo `redb` feature and pass `backend: 'redb'` when
-opening the store:
+SQLite is the default local backend. Omit `backend` or pass an empty string to
+use the compiled default. Pass `backend: 'sqlite'` or `backend: 'libsqlite'` to
+select SQLite explicitly. To open redb stores, build the native package with
+the Cargo `redb` feature and pass `backend: 'redb'` when opening the store:
 
 ```bash
 cd crates/aidememo-napi

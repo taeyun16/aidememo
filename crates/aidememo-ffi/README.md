@@ -35,9 +35,10 @@ cc your.c \
 
 (On Linux: drop the `-framework` flags; add `-lpthread -ldl -lm` if your linker needs them.)
 
-SQLite is the default local backend. Pass `"sqlite"` or `"libsqlite"` to select
-it explicitly. To open redb stores, build the library with the Cargo `redb`
-feature and open with an explicit backend:
+SQLite is the default local backend. Pass `NULL` / `""` to use the compiled
+default, or pass `"sqlite"` / `"libsqlite"` to select SQLite explicitly. To
+open redb stores, build the library with the Cargo `redb` feature and open with
+an explicit backend:
 
 ```bash
 cargo build -p aidememo-ffi --features redb

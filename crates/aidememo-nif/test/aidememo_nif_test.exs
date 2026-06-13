@@ -136,6 +136,19 @@ defmodule AideMemoNifTest do
     assert is_binary(AideMemoNif.version())
   end
 
+  test "default and empty backend open the compiled default store", %{db: db} do
+    g = AideMemoNif.open!(db)
+    assert is_reference(g)
+    assert %{"fact_count" => 0} = AideMemoNif.stats(g)
+    assert_backend_file(db, "sqlite")
+
+    empty_backend_path = Path.rootname(db) <> ".empty-backend"
+    empty = AideMemoNif.open!(empty_backend_path, backend: "")
+    assert is_reference(empty)
+    assert %{"fact_count" => 0} = AideMemoNif.stats(empty)
+    assert_backend_file(empty_backend_path, "sqlite")
+  end
+
   defp assert_backend_file(path, backend) when backend in ["sqlite", "libsqlite"] do
     assert File.exists?(path)
     assert File.read!(path) |> binary_part(0, 16) == "SQLite format 3\0"

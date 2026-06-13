@@ -306,9 +306,10 @@ Runtime promotion status:
   fact IDs, final stats, and BM25 visibility for a tail write. Set
   `AIDEMEMO_SQLITE_MCP_SOAK_BACKEND=sqlite` to exercise the canonical spelling.
 * `scripts/storage-backend-sdk-bindings-check.sh` verifies the SDK/binding
-  surface: default SQLite builds, explicit SQLite-only builds, `libsqlite`
-  alias opens in native binding tests, and redb-only Cargo feature builds
-  across Python, Node, Elixir, and C.
+  surface: default SQLite builds, explicit SQLite-only builds, omitted/empty
+  backend arguments inherit the compiled default, `libsqlite` alias opens in
+  native binding tests, and redb-only Cargo feature builds across Python, Node,
+  Elixir, and C.
 * The CI `storage-backend-compat` job runs the parity, real-corpus diff,
   SQLite MCP soak, and SDK binding backend gates on Ubuntu after lint. That
   keeps redb/SQLite sync/import/archive compatibility, libsqlite runtime

@@ -66,9 +66,10 @@ stats = g.ingest("./my-wiki", incremental=False)
 print(stats)  # {entities_added, facts_added, ...}
 ```
 
-SQLite is the default local backend. Pass `backend="sqlite"` or
-`backend="libsqlite"` to select it explicitly. To open redb stores, build the
-extension with the Cargo `redb` feature and pass `backend="redb"`:
+SQLite is the default local backend. Omit `backend` or pass an empty string to
+use the compiled default. Pass `backend="sqlite"` or `backend="libsqlite"` to
+select SQLite explicitly. To open redb stores, build the extension with the
+Cargo `redb` feature and pass `backend="redb"`:
 
 ```bash
 cd crates/aidememo-python

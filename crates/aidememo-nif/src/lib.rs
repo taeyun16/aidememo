@@ -80,7 +80,12 @@ fn parse_fact_id(s: &str) -> NifResult<FactId> {
 }
 
 fn opt_str(s: String) -> Option<String> {
-    if s.is_empty() { None } else { Some(s) }
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
 }
 
 fn opt_vec(v: Vec<String>) -> Option<Vec<String>> {

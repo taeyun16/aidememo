@@ -40,7 +40,8 @@ are documented in their package READMEs:
 | Elixir | `aidememo_nif` | Local/path binding docs are ready; no Hex publish workflow yet | [README](https://github.com/taeyun16/aidememo/tree/main/crates/aidememo-nif) |
 | C ABI | `aidememo-ffi` | Rust crate plus C header/linking docs | [README](https://github.com/taeyun16/aidememo/tree/main/crates/aidememo-ffi) |
 
-All native bindings use the same backend selector as the CLI. Default builds
+All native bindings use the same backend selector as the CLI. Omitting the
+backend or passing an empty string uses the compiled default. Default builds
 include SQLite and can select it at open time (`backend="sqlite"` or
 `backend="libsqlite"` / `{ backend: "sqlite" }` or `{ backend: "libsqlite" }` /
 `backend: "sqlite"` or `backend: "libsqlite"` /
