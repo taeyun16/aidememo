@@ -11,7 +11,6 @@ pub mod embedding;
 pub mod error;
 pub mod extract;
 pub mod extract_structured;
-#[cfg(feature = "redb")]
 pub mod fuzzy;
 pub mod graph;
 pub mod index;

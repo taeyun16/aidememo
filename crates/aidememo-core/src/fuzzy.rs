@@ -3,18 +3,18 @@
 //! Provides strsim + trigram-based fuzzy matching for typo tolerance
 //! and entity name suggestions.
 
+use crate::backend::StoreBackend;
 use crate::error::Result;
-use crate::store::Store;
 use crate::types::*;
 
 /// Fuzzy matcher for entity names.
-pub struct FuzzyMatcher<'a> {
-    store: &'a Store,
+pub struct FuzzyMatcher<'a, B: StoreBackend + ?Sized> {
+    store: &'a B,
 }
 
-impl<'a> FuzzyMatcher<'a> {
+impl<'a, B: StoreBackend + ?Sized> FuzzyMatcher<'a, B> {
     /// Create a new fuzzy matcher.
-    pub fn new(store: &'a Store) -> Self {
+    pub fn new(store: &'a B) -> Self {
         Self { store }
     }
 
@@ -119,7 +119,7 @@ pub trait EntityFuzzyExt {
     fn entity_get_fuzzy(&self, name: &str) -> crate::error::Result<EntityRecord>;
 }
 
-impl EntityFuzzyExt for Store {
+impl<T: StoreBackend + ?Sized> EntityFuzzyExt for T {
     fn entity_get_fuzzy(&self, name: &str) -> crate::error::Result<EntityRecord> {
         // Try exact match first
         if let Ok(entity) = self.entity_get(name) {
@@ -144,14 +144,33 @@ impl EntityFuzzyExt for Store {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::backend::{StoreBackend, StoreKind};
     use crate::config::Config;
+    use std::path::PathBuf;
     use tempfile::tempdir;
 
-    fn create_test_store() -> (Store, tempfile::TempDir) {
+    fn test_store_path(
+        dir: &tempfile::TempDir,
+        stem: &str,
+        mut config: Config,
+    ) -> (PathBuf, Config) {
+        if cfg!(all(feature = "redb", not(feature = "sqlite"))) {
+            config.store.backend = "redb".to_string();
+        }
+        let suffix = if config.store.backend == "redb" {
+            "redb"
+        } else {
+            "sqlite"
+        };
+        let path = dir.path().join(format!("{stem}.{suffix}"));
+        config.store.path = path.to_string_lossy().into_owned();
+        (path, config)
+    }
+
+    fn create_test_store() -> (StoreKind, tempfile::TempDir) {
         let dir = tempdir().unwrap();
-        let path = dir.path().join("test.redb");
-        let config = Config::default();
-        let store = Store::open(&path, config).unwrap();
+        let (path, config) = test_store_path(&dir, "test", Config::default());
+        let store = StoreKind::open(&path, config).unwrap();
         (store, dir)
     }
 
