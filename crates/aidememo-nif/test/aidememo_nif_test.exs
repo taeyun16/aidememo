@@ -136,26 +136,46 @@ defmodule AideMemoNifTest do
     assert is_binary(AideMemoNif.version())
   end
 
+  defp assert_backend_file(path, "sqlite") do
+    assert File.exists?(path)
+    assert File.read!(path) |> binary_part(0, 16) == "SQLite format 3\0"
+  end
+
+  defp assert_backend_file(path, "redb") do
+    assert File.exists?(path)
+    refute File.read!(path) |> binary_part(0, 16) == "SQLite format 3\0"
+  end
+
+  defp assert_backend_opens(db, backend) do
+    store_path = Path.rootname(db) <> ".#{backend}"
+    g = AideMemoNif.open!(store_path, backend: backend)
+    assert is_reference(g)
+
+    label = backend |> String.capitalize()
+    eid = AideMemoNif.entity_add(g, "Elixir#{label}", entity_type: "technology")
+
+    fid =
+      AideMemoNif.fact_add(g, "Elixir NIF opened a #{backend} backend",
+        entity_ids: [eid],
+        fact_type: "note"
+      )
+
+    assert is_binary(fid)
+    stats = AideMemoNif.stats(g)
+    assert stats["entity_count"] == 1
+    assert stats["fact_count"] == 1
+    assert_backend_file(store_path, backend)
+  end
+
   test "sqlite backend opens when cargo feature is enabled", %{db: db} do
+    assert_backend_opens(db, "sqlite")
+  end
+
+  test "redb backend opens when cargo feature is enabled", %{db: db} do
     features = System.get_env("AIDEMEMO_NIF_CARGO_FEATURES", "")
 
-    if String.contains?(features, "sqlite") do
-      sqlite_db = Path.rootname(db) <> ".sqlite"
-      g = AideMemoNif.open!(sqlite_db, backend: "sqlite")
-      assert is_reference(g)
-
-      eid = AideMemoNif.entity_add(g, "ElixirSQLite", entity_type: "technology")
-
-      fid =
-        AideMemoNif.fact_add(g, "Elixir NIF opened a SQLite backend",
-          entity_ids: [eid],
-          fact_type: "note"
-        )
-
-      assert is_binary(fid)
-      stats = AideMemoNif.stats(g)
-      assert stats["entity_count"] == 1
-      assert stats["fact_count"] == 1
+    if String.contains?(features, "redb") do
+      assert_backend_opens(db, "redb")
     end
   end
 end

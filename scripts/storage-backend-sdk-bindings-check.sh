@@ -28,6 +28,8 @@ if command -v mix >/dev/null 2>&1; then
     (
         cd "$ROOT_DIR/crates/aidememo-nif"
         run mix test
+        run mix clean
+        run env AIDEMEMO_NIF_CARGO_FEATURES=redb mix test
     )
 else
     echo "skip: mix not found; cargo checked aidememo-nif default SQLite and redb feature builds"
