@@ -1466,6 +1466,41 @@ mod tests {
     }
 
     #[test]
+    fn doctor_json_includes_backend_path_mismatch_hint() {
+        let dir = TempDir::new().unwrap();
+        let store_path = dir.path().join("wiki.redb");
+        let mut config = Config::default();
+        config.store.backend = "sqlite".to_string();
+        config.store.path = store_path.to_string_lossy().into_owned();
+
+        let output = run_doctor(
+            &store_path,
+            config,
+            DoctorSub {
+                json: true,
+                fix: false,
+                shell: false,
+            },
+            false,
+        )
+        .unwrap();
+        let payload: serde_json::Value = serde_json::from_str(&output).unwrap();
+        let hints = payload
+            .get("sharing")
+            .and_then(|sharing| sharing.get("hints"))
+            .and_then(|hints| hints.as_array())
+            .expect("sharing hints array");
+
+        assert!(
+            hints
+                .iter()
+                .any(|hint| hint.get("code").and_then(|code| code.as_str())
+                    == Some("storage_backend_path_extension_mismatch")),
+            "expected backend/path mismatch hint in doctor JSON: {payload}"
+        );
+    }
+
+    #[test]
     fn stale_hnsw_advisory_fires_when_superseded_facts_present() {
         let dir = TempDir::new().unwrap();
         let store_path = dir.path().join("wiki.sqlite");
