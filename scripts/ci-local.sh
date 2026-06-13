@@ -113,12 +113,14 @@ lint() {
 tests() {
     run "${cargo_cmd[@]}" test -p aidememo-core --no-default-features --features redb
     run "${cargo_cmd[@]}" check -p aidememo-core --no-default-features --features s3
+    run "$ROOT_DIR/scripts/storage-backend-feature-gate.sh"
     run "${cargo_cmd[@]}" test -p aidememo-core --features semantic
     run "${cargo_cmd[@]}" test -p aidememo-core --features sqlite,semantic,semantic-adapt
     run "${cargo_cmd[@]}" check -p aidememo-cli --features sqlite
     run "${cargo_cmd[@]}" test -p aidememo-cli --bin aidememo
     run "${cargo_cmd[@]}" test -p aidememo-cli --no-default-features --features redb --bin aidememo
     run "$ROOT_DIR/scripts/storage-backend-sqlite-full-surface.sh"
+    run "$ROOT_DIR/scripts/storage-backend-sqlite-advanced-surface.sh"
     run "$ROOT_DIR/scripts/storage-backend-parity.sh"
     run "$ROOT_DIR/scripts/storage-backend-real-corpus-diff.sh"
     run "$ROOT_DIR/scripts/storage-backend-sqlite-mcp-soak.sh"

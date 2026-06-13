@@ -77,11 +77,11 @@ chmod +x ~/.claude/hooks/aidememo-*.py
 
 ### 3. 환경변수 (선택)
 
-기본은 `~/.aidememo/wiki.redb` (또는 config의 default project). 프로젝트별
+기본은 `~/.aidememo/wiki.sqlite` (또는 config의 default project). 프로젝트별
 다른 store를 쓰려면 셸에:
 
 ```bash
-export AIDEMEMO_STORE=/path/to/project-wiki.redb
+export AIDEMEMO_STORE=/path/to/project-wiki.sqlite
 # 또는
 export AIDEMEMO_PROJECT=work          # `aidememo project list`로 확인
 ```

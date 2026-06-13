@@ -122,9 +122,11 @@ jobs:
       # the full surface.
       - run: cargo test --workspace --no-default-features
       - run: cargo check -p aidememo-core --no-default-features --features s3
+      - run: scripts/storage-backend-feature-gate.sh
       - run: cargo test -p aidememo-core --features semantic
       - run: cargo test -p aidememo-cli --bin aidememo
       - run: scripts/storage-backend-sqlite-full-surface.sh
+      - run: scripts/storage-backend-sqlite-advanced-surface.sh
       # model2vec-native lives in its own repo
       # (https://github.com/taeyun16/model2vec-native) and is pulled in
       # as a git dep when --features aidememo-core/semantic is on, so

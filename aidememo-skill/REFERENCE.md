@@ -342,9 +342,11 @@ aidememo daemon stop     # SIGTERM
 은 `~/.aidememo/daemon.json`을 보고 자동으로 데몬으로 디스패치합니다 — 모델 워밍
 없이 ~9 ms (BM25) / ~45 ms (HNSW). `AIDEMEMO_NO_DAEMON=1`로 일회성 우회.
 
-다중 에이전트 공유: redb는 프로세스당 단일 락이라, 여러 에이전트가 같은
-스토어를 쓰려면 **하나의 `aidememo mcp-serve`**를 띄우고 모두 그 HTTP 엔드포인트를
-가리켜야 합니다. 자세한 패턴은 `AGENTS.md`의 "Multi-agent shared store" 절.
+다중 에이전트 공유: SQLite가 기본 스토어이며 여러 로컬 프로세스의 짧은
+쓰기 경합을 기본 경로로 처리합니다. 선택적 redb backend는 프로세스당 단일
+락이라, 여러 에이전트가 같은 redb 스토어를 쓰려면 **하나의
+`aidememo mcp-serve`**를 띄우고 모두 그 HTTP 엔드포인트를 가리키는 편이
+안전합니다. 자세한 패턴은 `AGENTS.md`의 "Multi-agent shared store" 절.
 
 ## 언어 바인딩
 
@@ -353,20 +355,20 @@ aidememo daemon stop     # SIGTERM
 ```python
 # Python
 import aidememo_python as aidememo
-g = aidememo.AideMemo("./_meta/wiki.redb")
+g = aidememo.AideMemo("./_meta/wiki.sqlite")
 ctx = g.query("Redis", current_only=True)
 ```
 
 ```javascript
 // Node
 const { AideMemoStore } = require('aidememo-napi');
-const g = new AideMemoStore('./_meta/wiki.redb');
+const g = new AideMemoStore('./_meta/wiki.sqlite');
 g.factSupersede(oldId, newId);
 ```
 
 ```elixir
 # Elixir
-g = AideMemoNif.open!("./_meta/wiki.redb")
+g = AideMemoNif.open!("./_meta/wiki.sqlite")
 ctx = AideMemoNif.query(g, "Redis", current_only: true)
 ```
 

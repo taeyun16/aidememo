@@ -131,7 +131,7 @@ fn main() {
         cmd::Command::Workflow(sub) => handle_workflow(&store_path, config, sub, json),
         cmd::Command::AutoRelate(sub) => handle_auto_relate(&store_path, config, sub),
         cmd::Command::Overview(sub) => handle_overview(&store_path, config, sub, json),
-        cmd::Command::Consolidate(sub) => handle_consolidate(&store_path, config, sub),
+        cmd::Command::Consolidate(sub) => handle_consolidate(&store_path, config, sub, json),
         cmd::Command::Auth(sub) => cmd::auth::run_auth(sub),
     };
 
@@ -2133,6 +2133,7 @@ fn handle_consolidate(
     path: &Path,
     config: Config,
     sub: cmd::ConsolidateSub,
+    json: bool,
 ) -> Result<String, AideMemoError> {
     with_wiki(path, config, |wiki| {
         let started = std::time::Instant::now();
@@ -2160,7 +2161,7 @@ fn handle_consolidate(
             };
             let stats = wiki.consolidate_gac(gac_opts.clone())?;
             let elapsed_ms = started.elapsed().as_millis();
-            if sub.json {
+            if json || sub.json {
                 let payload = serde_json::json!({
                     "strategy": "gac",
                     "theta": stats.theta,
@@ -2248,7 +2249,7 @@ fn handle_consolidate(
         let stats = wiki.consolidate_semantic(opts.clone())?;
         let elapsed_ms = started.elapsed().as_millis();
 
-        if sub.json {
+        if json || sub.json {
             let payload = serde_json::json!({
                 "facts_processed": stats.facts_processed,
                 "pairs_found": stats.pairs_found,

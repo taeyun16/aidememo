@@ -260,6 +260,12 @@ Runtime promotion status:
   init, ingest, entity/fact writes, BM25 search/query, graph traversal,
   sessions, workflow start, archive, export, and import without redb compiled
   in.
+* `scripts/storage-backend-sqlite-advanced-surface.sh` is the SQLite-only
+  advanced-surface smoke: it builds the same SQLite CLI and verifies
+  fact-level feedback, search feedback, adapter train/status/eval, heuristic
+  extract preview/apply, pending approve/reject, and TTL-only consolidate
+  without model downloads. The TTL gate explicitly runs with
+  `--semantic-threshold 0`, proving expiry is independent from semantic dedup.
 * `fact_archive_preserves_mcp_fact_get_for_cold_tier` is the MCP archive
   invariant gate: archived facts leave the hot store, `aidememo_fact_get` still
   resolves them from the backend-specific cold tier, default search hides them,
@@ -279,6 +285,10 @@ Runtime promotion status:
   SQLite (`wal.sqlite`), so `cargo check -p aidememo-core --no-default-features
   --features s3` proves the S3/manifest code can build without compiling the
   optional redb backend.
+* `scripts/storage-backend-feature-gate.sh` locks the Cargo feature boundary:
+  SQLite-only core/CLI builds and S3-only core builds must omit the `redb`
+  crate from `cargo tree`, while redb still appears only when the explicit
+  `redb` feature is selected.
 
 Validation added in the runtime spike:
 
@@ -288,9 +298,11 @@ cargo test -p aidememo-core --no-default-features --features redb
 cargo test -p aidememo-core --features sqlite,redb archive_contract_matches_redb_and_sqlite_public_api
 cargo test -p aidememo-core --features sqlite,semantic,semantic-adapt
 cargo check -p aidememo-core --no-default-features --features s3
+./scripts/storage-backend-feature-gate.sh
 cargo check -p aidememo-cli
 cargo test -p aidememo-cli --no-default-features --features redb --bin aidememo
 ./scripts/storage-backend-sqlite-full-surface.sh
+./scripts/storage-backend-sqlite-advanced-surface.sh
 ./scripts/storage-backend-parity.sh
 ./scripts/storage-backend-real-corpus-diff.sh
 ./scripts/storage-backend-sqlite-mcp-soak.sh

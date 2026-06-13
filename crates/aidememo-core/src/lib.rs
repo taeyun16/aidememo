@@ -943,7 +943,7 @@ impl AideMemo {
     ) -> Result<types::ConsolidateStats> {
         use std::collections::{HashMap, HashSet};
         let mut stats = types::ConsolidateStats::default();
-        if opts.semantic_threshold <= 0.0 {
+        if opts.semantic_threshold <= 0.0 && opts.ttl_days_by_type.is_empty() {
             return Ok(stats);
         }
 
@@ -953,67 +953,67 @@ impl AideMemo {
             ..Default::default()
         })?;
         stats.facts_processed = facts.len();
-        if facts.len() < 2 {
-            return Ok(stats);
-        }
-
-        // Embed every fact once. The embedding provider already caches
-        // its model load and the LRU caches handle repeated calls
-        // cheaply, but we still want a single explicit map here so the
-        // pairwise loop is pure cosine arithmetic.
-        let provider = self.embed_provider()?;
-        let mut embeds: HashMap<types::FactId, Vec<f32>> = HashMap::with_capacity(facts.len());
-        for f in &facts {
-            let v = provider.embed(&f.content)?;
-            embeds.insert(f.id, v);
-        }
-
-        // Pairwise cosine. Older fact (smaller created_at) loses;
-        // ties broken by smaller ULID so the result is deterministic.
         let mut superseded: HashSet<types::FactId> = HashSet::new();
-        let mut to_apply: Vec<(types::FactId, types::FactId, f32)> = Vec::new();
-        let mut max_cos: f32 = 0.0;
-        for i in 0..facts.len() {
-            if superseded.contains(&facts[i].id) {
-                continue;
-            }
-            for j in (i + 1)..facts.len() {
-                if superseded.contains(&facts[j].id) {
-                    continue;
-                }
-                let cos = cosine_f32(&embeds[&facts[i].id], &embeds[&facts[j].id]);
-                if cos > max_cos {
-                    max_cos = cos;
-                }
-                if cos < opts.semantic_threshold {
-                    continue;
-                }
-                let (older, newer) = if facts[i].created_at < facts[j].created_at
-                    || (facts[i].created_at == facts[j].created_at
-                        && facts[i].id.0.to_string() < facts[j].id.0.to_string())
-                {
-                    (facts[i].id, facts[j].id)
-                } else {
-                    (facts[j].id, facts[i].id)
-                };
-                superseded.insert(older);
-                to_apply.push((older, newer, cos));
-            }
-        }
-        stats.pairs_found = to_apply.len();
-        stats.max_cosine = max_cos;
 
-        if !opts.dry_run {
-            for (old, new, _) in &to_apply {
-                // Skip if a prior pair in this same pass already
-                // superseded `old` against a different `new` — the
-                // first newer wins.
-                if let Ok(rec) = self.fact_get(old) {
-                    if rec.superseded_at.is_some() {
+        if opts.semantic_threshold > 0.0 && facts.len() >= 2 {
+            // Embed every fact once. The embedding provider already caches
+            // its model load and the LRU caches handle repeated calls
+            // cheaply, but we still want a single explicit map here so the
+            // pairwise loop is pure cosine arithmetic.
+            let provider = self.embed_provider()?;
+            let mut embeds: HashMap<types::FactId, Vec<f32>> = HashMap::with_capacity(facts.len());
+            for f in &facts {
+                let v = provider.embed(&f.content)?;
+                embeds.insert(f.id, v);
+            }
+
+            // Pairwise cosine. Older fact (smaller created_at) loses;
+            // ties broken by smaller ULID so the result is deterministic.
+            let mut to_apply: Vec<(types::FactId, types::FactId, f32)> = Vec::new();
+            let mut max_cos: f32 = 0.0;
+            for i in 0..facts.len() {
+                if superseded.contains(&facts[i].id) {
+                    continue;
+                }
+                for j in (i + 1)..facts.len() {
+                    if superseded.contains(&facts[j].id) {
                         continue;
                     }
-                    self.fact_supersede(old, new)?;
-                    stats.supersedes_applied += 1;
+                    let cos = cosine_f32(&embeds[&facts[i].id], &embeds[&facts[j].id]);
+                    if cos > max_cos {
+                        max_cos = cos;
+                    }
+                    if cos < opts.semantic_threshold {
+                        continue;
+                    }
+                    let (older, newer) = if facts[i].created_at < facts[j].created_at
+                        || (facts[i].created_at == facts[j].created_at
+                            && facts[i].id.0.to_string() < facts[j].id.0.to_string())
+                    {
+                        (facts[i].id, facts[j].id)
+                    } else {
+                        (facts[j].id, facts[i].id)
+                    };
+                    superseded.insert(older);
+                    to_apply.push((older, newer, cos));
+                }
+            }
+
+            stats.pairs_found = to_apply.len();
+            stats.max_cosine = max_cos;
+
+            if !opts.dry_run {
+                for (old, new, _) in &to_apply {
+                    // Skip if a prior pair in this same pass already
+                    // superseded `old` against a different `new` — the
+                    // first newer wins.
+                    if let Ok(rec) = self.fact_get(old) {
+                        if rec.superseded_at.is_some() {
+                            continue;
+                        }
+                        self.fact_supersede(old, new)?;
+                        stats.supersedes_applied += 1;
+                    }
                 }
             }
         }
@@ -2217,6 +2217,50 @@ mod sqlite_backend_tests {
             .fact_get(&live)
             .expect("live fact remains hot");
         assert!(live_after.superseded_at.is_none());
+    }
+
+    #[cfg(feature = "semantic")]
+    #[test]
+    fn sqlite_consolidate_ttl_runs_with_semantic_threshold_disabled() {
+        let (wiki, _dir) = fresh_sqlite();
+        let entity = wiki
+            .entity_add(EntityInput {
+                name: "Redis".to_string(),
+                ..Default::default()
+            })
+            .unwrap();
+        let fact = wiki
+            .fact_add(FactInput {
+                content: "short lived Redis note".to_string(),
+                fact_type: Some(FactType::Note),
+                entity_ids: Some(vec![entity]),
+                ..Default::default()
+            })
+            .unwrap();
+
+        std::thread::sleep(std::time::Duration::from_millis(2));
+
+        let mut opts = ConsolidateOpts {
+            semantic_threshold: 0.0,
+            dry_run: true,
+            ..Default::default()
+        };
+        opts.ttl_days_by_type.insert("note".to_string(), 0);
+
+        let dry_run = wiki.consolidate_semantic(opts.clone()).unwrap();
+        assert_eq!(dry_run.facts_processed, 1);
+        assert_eq!(dry_run.pairs_found, 0);
+        assert_eq!(dry_run.expired_applied, 1);
+        assert!(wiki.fact_get(&fact).unwrap().superseded_at.is_none());
+
+        opts.dry_run = false;
+        let applied = wiki.consolidate_semantic(opts).unwrap();
+        assert_eq!(applied.facts_processed, 1);
+        assert_eq!(applied.pairs_found, 0);
+        assert_eq!(applied.expired_applied, 1);
+        let expired = wiki.fact_get(&fact).unwrap();
+        assert!(expired.superseded_at.is_some());
+        assert!(expired.superseded_by.is_none());
     }
 
     #[cfg(feature = "redb")]

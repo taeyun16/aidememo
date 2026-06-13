@@ -35,14 +35,14 @@ plugins:
   enabled:
     - aidememo
   aidememo:
-    store_path: ~/.aidememo/wiki.redb     # optional; uses aidememo config default otherwise
+    store_path: ~/.aidememo/wiki.sqlite   # optional; uses aidememo config default otherwise
     source_id: team-a               # optional default namespace for reads/writes
     recent_window: 7d               # session_start auto-context window
     recent_limit: 10
     auto_record: true               # session_end fact auto-recorder
     dry_run: false                  # if true, log detections to aidememo-pending.jsonl instead of writing
     confidence_floor: 0.85          # higher = stricter (fewer false positives)
-    lock_retry_ms: 5000             # smooth over short redb lock contention, no daemon required
+    lock_retry_ms: 5000             # smooth over short CLI write contention; useful for optional redb
     default_entities: []            # entities to attach to auto-recorded facts
     pending_log: ~/.hermes/state/aidememo-pending.jsonl  # dry-run audit log
 ```
@@ -116,14 +116,14 @@ floor, modest 7-day window, auto-record on).
 
 | Key | Default | Notes |
 |---|---|---|
-| `store_path` | AideMemo config resolution | Override the redb store location. |
+| `store_path` | AideMemo config resolution | Override the local store location. SQLite is the default; redb requires an explicit redb build/config. |
 | `source_id` | unset | Default namespace for scoped tool reads/writes. Explicit tool `source_id` values override it; `AIDEMEMO_SOURCE_ID` is also honored when config is unset. |
 | `recent_window` | `7d` | How far back the session-start preamble looks. |
 | `recent_limit` | `10` | Max facts in the preamble. |
 | `auto_record` | `true` | Toggle the `on_session_end` recorder. |
 | `dry_run` | `false` | When `true`, detections are appended to `pending_log` instead of being written to AideMemo. Useful for auditing precision before trusting writes. |
 | `confidence_floor` | `0.85` | 0.7–1.0; lower = more captures (and more noise). |
-| `lock_retry_ms` | `5000` | CLI fallback retries short redb lock collisions for this long. Keeps two local Hermes agents smooth without requiring a daemon. Set `0` for fail-fast debugging. |
+| `lock_retry_ms` | `5000` | CLI fallback retries short write-lock collisions for this long. Mostly useful when opting into redb; set `0` for fail-fast debugging. |
 | `default_entities` | `[]` | Entities to attach to auto-recorded facts. |
 | `pending_log` | `~/.hermes/state/aidememo-pending.jsonl` | Override the dry-run audit log path. |
 

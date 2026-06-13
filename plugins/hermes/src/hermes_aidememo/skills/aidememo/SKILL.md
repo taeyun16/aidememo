@@ -16,7 +16,8 @@ metadata:
 
 # AideMemo (`aidememo`)
 
-Structured local wiki: redb store + BM25 + semantic vectors + entity graph.
+Structured local wiki: SQLite store by default, optional redb backend, BM25 +
+semantic vectors, and entity graph.
 All operations are offline and private.
 
 ## Quick reference

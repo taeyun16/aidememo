@@ -180,9 +180,9 @@ aidememo search "retrieval preference" --source-id agent-a
 ```
 
 Hermes uses the same `source_id` field through its plugin tools and slash
-commands. Its CLI fallback retries short redb lock collisions when that backend
-is selected, so two local Hermes agents can share a redb store without asking
-the user to start a server.
+commands. SQLite is the default shared-store path. If the optional redb backend
+is selected, the CLI fallback retries short lock collisions; for heavier
+multi-agent redb writes, run one `aidememo mcp-serve` and point agents at it.
 
 For MCP agents, install with `--source-id` to set `AIDEMEMO_SOURCE_ID` once in the
 server environment. That namespace becomes the default for reads and writes;
@@ -323,7 +323,7 @@ Useful knobs:
 
 ```bash
 aidememo config set store.durability eventual    # faster writes, less power-loss safety
-aidememo config set store.lock_retry_ms 5000     # smooth short redb lock contention
+aidememo config set store.lock_retry_ms 5000     # smooth short write contention
 aidememo doctor --json                           # includes sharing.mode and daemon guidance
 aidememo config set model.provider fastembed
 aidememo config set model.name bge-small-en-v1.5

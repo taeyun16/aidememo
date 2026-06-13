@@ -46,7 +46,7 @@ cp ~/dev/aidememo/.codex.md ~/projects/your-project/.codex.md
 `~/.aidememo/config.toml` (자동 생성 또는手動作成):
 ```toml
 [store]
-path = "~/.aidememo/wiki.redb"
+path = "~/.aidememo/wiki.sqlite"
 
 [search]
 default_limit = 20
