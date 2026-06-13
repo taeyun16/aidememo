@@ -13,6 +13,12 @@ processes against the same store with two config profiles:
   - retry 0 ms: old fail-fast behaviour.
   - retry 5000 ms: recommended short local contention smoothing.
 
+The scenario intentionally selects `store.backend=redb` because it measures the
+optional redb backend's exclusive-file-lock behaviour. Build the `aidememo`
+binary with `--features redb` before running it. SQLite is the default runtime
+backend; use `scripts/storage-backend-sqlite-mcp-soak.sh` for the SQLite
+shared-writer path.
+
 No LLM is involved. Results are written to
 `bench/multi-agent/results/scenario_j.json`.
 """
@@ -65,15 +71,18 @@ def write_config(home: Path, retry_ms: int) -> None:
     env = os.environ.copy()
     env["HOME"] = str(home)
     env.pop("AIDEMEMO_STORE", None)
-    proc = subprocess.run(
-        [WG, "config", "set", "store.lock_retry_ms", str(retry_ms)],
-        capture_output=True,
-        text=True,
-        timeout=15,
-        env=env,
-    )
-    if proc.returncode != 0:
-        raise RuntimeError(f"failed to write config for retry={retry_ms}: {proc.stderr}")
+    for key, value in (("store.backend", "redb"), ("store.lock_retry_ms", str(retry_ms))):
+        proc = subprocess.run(
+            [WG, "config", "set", key, value],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            env=env,
+        )
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"failed to write config {key}={value!r} for retry={retry_ms}: {proc.stderr}"
+            )
 
 
 def percentile(values: list[float], p: float) -> float:

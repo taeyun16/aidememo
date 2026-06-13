@@ -617,17 +617,18 @@ another process holds that lock. Two ways to handle shared writes:
    ```
    `lock_retry_ms = 0` (default) preserves the old fail-fast behaviour.
    Scenario J (`python3 bench/multi-agent/scenario_j_lock_retry_sweep.py`)
-   measured this path as smooth through **4 concurrent local writers**
-   (40/40 persisted, p95 1.28s). At 8 writers it still recovered
-   79/80 writes but p95 rose to 2.99s and one write exhausted the
-   5s budget, so use the shared daemon when that level of parallelism
-   is normal. `aidememo doctor --json` exposes the same threshold in its
-   `sharing` block.
+   measures the optional redb backend's serverless lock-retry path as smooth
+   through **4 concurrent local writers** (40/40 persisted, p95 1.28s). At 8
+   writers it still recovered 79/80 writes but p95 rose to 2.99s and one write
+   exhausted the 5s budget, so use the shared daemon when that level of
+   parallelism is normal. `aidememo doctor --json` exposes the same threshold
+   in its `sharing` block. The default SQLite backend's concurrent HTTP write
+   path is covered by `scripts/storage-backend-sqlite-mcp-soak.sh`.
 
 Don't try to give multiple agents their own stdio `aidememo mcp` against the
-same redb path — it will work for whichever started first, then silently lose
-writes from the others. For default SQLite stores, HTTP `mcp-serve` is still the
-simplest shared warm process.
+same optional-redb path — one process owns the redb file lock and the others
+will fail to open or return explicit lock errors. For default SQLite stores,
+HTTP `mcp-serve` is still the simplest shared warm process.
 
 ### Hardened mcp-serve (Phase 1)
 

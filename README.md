@@ -277,8 +277,8 @@ parallel.
 | LongMemEval-S E2E, bge + rerank + MiniMax reader | `74.0%` |
 | gbrain-evals BrainBench, aidememo BM25 | P@5 `17.4%`, R@5 `64.1%` |
 | gbrain-evals BrainBench, aidememo BM25 via daemon | same score, `5.7x` faster |
-| Hermes two-process serverless shared store, retry `5000` | 20/20 writes persisted, 0 lock errors |
-| Serverless lock-retry sweep, retry `5000` | smooth through 4 writers; 8 writers persisted 79/80 |
+| Hermes two-process optional-redb serverless shared store, retry `5000` | 20/20 writes persisted, 0 lock errors |
+| Optional-redb serverless lock-retry sweep, retry `5000` | smooth through 4 writers; 8 writers persisted 79/80 |
 | HTTP shared `mcp-serve`, 2 clients x 10 writes | p50 `18.4ms`, p95 `41.8ms`, 20/20 persisted |
 | Zero-token workflow demo | decision + lesson + error surfaced in `128ms` |
 | MCP source-default install Scenario M | 12/12 invariants; installed `AIDEMEMO_SOURCE_ID` scoped MCP write/search in `323.97ms` |

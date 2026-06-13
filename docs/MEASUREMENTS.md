@@ -46,10 +46,10 @@ with current scorecards in
 |---|---:|---|
 | Hermes mixed-source prompt, unscoped | beta facts included 2/2 | Shared stores leak neighbouring source context unless scoped. |
 | Hermes mixed-source prompt, `source_id=alpha` | alpha recall 2/2, beta leakage 0/2 | `source_id` gives clean per-agent/per-source reads. |
-| Hermes serverless shared store, retry `0` | 10/20 writes persisted, 10 lock errors | redb's process lock is visible without smoothing. |
-| Hermes serverless shared store, retry `5000` | 20/20 writes persisted, 0 errors; wall 2.16s, p50 98.1ms, max 1.22s | The default plugin path is smooth for ordinary two-agent local sharing. |
-| Scenario J serverless lock-retry sweep, retry `5000` | Smooth until 4 concurrent writers; at 8 writers 79/80 persisted, p95 2.99s | Keep serverless sharing for small same-host teams; switch to daemon when high parallel write volume is normal. |
-| HTTP shared `aidememo mcp-serve`, 2 clients x 10 writes | 20/20 persisted; p50 18.4ms, p95 41.8ms, wall 251ms | Daemon mode is still the faster high-concurrency path, but it can stay optional. |
+| Hermes serverless shared store (optional redb), retry `0` | 10/20 writes persisted, 10 lock errors | redb's process lock is visible without smoothing. |
+| Hermes serverless shared store (optional redb), retry `5000` | 20/20 writes persisted, 0 errors; wall 2.16s, p50 98.1ms, max 1.22s | The redb plugin path can smooth ordinary two-agent local sharing when retry is enabled. |
+| Scenario J redb serverless lock-retry sweep, retry `5000` | Smooth until 4 concurrent writers; at 8 writers 79/80 persisted, p95 2.99s | Keep optional-redb serverless sharing for small same-host teams; switch to daemon when high parallel write volume is normal. |
+| HTTP shared `aidememo mcp-serve`, 2 clients x 10 writes | 20/20 persisted; p50 18.4ms, p95 41.8ms, wall 251ms | Daemon mode is still the faster high-concurrency path; the SQLite MCP soak covers the default backend's concurrent write path. |
 | Workflow trigger Scenario F, 4 sparse tickets | 13/13 invariants; p95 2.48s; max context 3,023 chars; forbidden leakage 0 | CLI, MCP, and Hermes paths create distinct sessions/ticket facts and keep `source_id`-scoped ticket context separated. |
 | Hermes workflow binding Scenario G, 4 sparse tickets | 5/5 invariants; shape parity 4/4; leakage 0; p50 1,795.71ms CLI vs 13.14ms binding | When `aidememo-python` is installed, Hermes composes workflow packs in process: same context contract, about 137x lower p50 after the first model/index warmup. |
 | SDK workflow parity Scenario K, 4 sparse tickets | 8/8 invariants; Python and Node shape parity 4/4 each; leakage 0; p50 CLI 1,864.55ms, Python 16.19ms, Node 13.69ms | `aidememo-python` and `aidememo-napi` expose the same sparse-ticket context contract as CLI while avoiding per-command CLI spawn overhead. |
@@ -427,11 +427,12 @@ Scenario J lock-retry sweep, May 21 2026:
 | 4 | 5000 | 40/40 | 100.0% | 101.86 | 1282.56 | 3452.56 | 4431.45 |
 | 8 | 5000 | 79/80 | 98.8% | 103.02 | 2988.40 | 5049.66 | 8529.39 |
 
-Product read: serverless CLI retry is appropriate for one to four same-host
-writers. At eight concurrent writers it is still much better than fail-fast
-mode, but p95 approaches three seconds and one write can still exhaust the
-5s retry budget; use a shared `aidememo mcp-serve` daemon when that level of
-parallelism is normal.
+Product read: optional-redb serverless CLI retry is appropriate for one to four
+same-host writers. At eight concurrent writers it is still much better than
+fail-fast mode, but p95 approaches three seconds and one write can still
+exhaust the 5s retry budget; use a shared `aidememo mcp-serve` daemon when that
+level of parallelism is normal. The default SQLite backend has separate
+coverage through `scripts/storage-backend-sqlite-mcp-soak.sh`.
 
 ## GBrain Adapter Native Backend
 
