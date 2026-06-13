@@ -14,6 +14,21 @@ fn fixtures_root() -> PathBuf {
     p
 }
 
+fn open_temp_wiki() -> (tempfile::TempDir, AideMemo) {
+    let dir = tempdir().unwrap();
+    let mut config = Config::default();
+    if cfg!(all(feature = "redb", not(feature = "sqlite"))) {
+        config.store.backend = "redb".to_string();
+    }
+    let store_path = dir.path().join(if config.store.backend == "redb" {
+        "test.redb"
+    } else {
+        "test.sqlite"
+    });
+    let wiki = AideMemo::open(&store_path, config).unwrap();
+    (dir, wiki)
+}
+
 fn relations_for(wiki: &AideMemo, entity: &str) -> Vec<(String, String, String)> {
     wiki.relations_get(entity, TraverseDirection::Forward)
         .unwrap_or_default()
@@ -34,9 +49,7 @@ fn relations_for(wiki: &AideMemo, entity: &str) -> Vec<(String, String, String)>
 
 #[test]
 fn typed_relations_extracted_from_real_markdown() {
-    let dir = tempdir().unwrap();
-    let store_path = dir.path().join("test.redb");
-    let wiki = AideMemo::open(&store_path, Config::default()).unwrap();
+    let (_dir, wiki) = open_temp_wiki();
     let stats = wiki.ingest(&fixtures_root(), false).unwrap();
 
     assert!(
@@ -119,9 +132,7 @@ fn typed_relations_extracted_from_real_markdown() {
 
 #[test]
 fn typed_relations_survive_reingest() {
-    let dir = tempdir().unwrap();
-    let store_path = dir.path().join("test.redb");
-    let wiki = AideMemo::open(&store_path, Config::default()).unwrap();
+    let (_dir, wiki) = open_temp_wiki();
 
     let _ = wiki.ingest(&fixtures_root(), false).unwrap();
     let alice_first = relations_for(&wiki, "Alice");

@@ -15,18 +15,22 @@ run() {
     "$@"
 }
 
-run "${cargo_cmd[@]}" check -p aidememo-python --features sqlite
-run "${cargo_cmd[@]}" test -p aidememo-napi --features sqlite
-run "${cargo_cmd[@]}" check -p aidememo-nif --features sqlite
-run "${cargo_cmd[@]}" test -p aidememo-ffi --features sqlite
+run "${cargo_cmd[@]}" check -p aidememo-python
+run "${cargo_cmd[@]}" test -p aidememo-napi
+run "${cargo_cmd[@]}" check -p aidememo-nif
+run "${cargo_cmd[@]}" test -p aidememo-ffi
+run "${cargo_cmd[@]}" check -p aidememo-python --no-default-features --features redb
+run "${cargo_cmd[@]}" test -p aidememo-napi --no-default-features --features redb
+run "${cargo_cmd[@]}" check -p aidememo-nif --no-default-features --features redb
+run "${cargo_cmd[@]}" test -p aidememo-ffi --no-default-features --features redb
 
 if command -v mix >/dev/null 2>&1; then
     (
         cd "$ROOT_DIR/crates/aidememo-nif"
-        run env AIDEMEMO_NIF_CARGO_FEATURES=sqlite mix test
+        run mix test
     )
 else
-    echo "skip: mix not found; cargo checked aidememo-nif --features sqlite"
+    echo "skip: mix not found; cargo checked aidememo-nif default SQLite and redb feature builds"
 fi
 
 echo "storage backend SDK bindings check ok"

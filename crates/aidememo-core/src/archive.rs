@@ -27,10 +27,14 @@
 
 use std::path::PathBuf;
 
+#[cfg(feature = "redb")]
 use redb::ReadableTable;
 
+#[cfg(feature = "redb")]
 use crate::error::{AideMemoError, Result};
+#[cfg(feature = "redb")]
 use crate::store::{FACT_BY_ENTITY_TABLE, FACT_CONTENT_HASH_TABLE, FACTS_TABLE, Store};
+#[cfg(feature = "redb")]
 use crate::types::{FactId, FactRecord};
 
 /// Compute the cold-tier db path for a hot db file. Both files sit
@@ -54,6 +58,7 @@ pub fn cold_path_for_backend(hot_path: &std::path::Path, backend: &str) -> PathB
 /// archive entries land in the same hash bucket cold-side dedup
 /// expects. Reimplemented here so the archive module doesn't need to
 /// expose store internals.
+#[cfg(feature = "redb")]
 fn sha256_hex(s: &str) -> String {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
@@ -66,6 +71,7 @@ fn sha256_hex(s: &str) -> String {
     out
 }
 
+#[cfg(feature = "redb")]
 impl Store {
     /// Where this store's cold-tier file lives.
     pub fn cold_path(&self) -> PathBuf {
@@ -274,7 +280,7 @@ impl Store {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "redb"))]
 mod tests {
     use super::*;
     use crate::config::Config;

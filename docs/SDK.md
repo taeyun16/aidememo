@@ -40,11 +40,11 @@ are documented in their package READMEs:
 | Elixir | `aidememo_nif` | Local/path binding docs are ready; no Hex publish workflow yet | [README](https://github.com/taeyun16/aidememo/tree/main/crates/aidememo-nif) |
 | C ABI | `aidememo-ffi` | Rust crate plus C header/linking docs | [README](https://github.com/taeyun16/aidememo/tree/main/crates/aidememo-ffi) |
 
-All native bindings can opt into the experimental local SQLite backend at build
-time with their Cargo `sqlite` feature, then select it at open time
-(`backend="sqlite"` / `{ backend: "sqlite" }` / `backend: "sqlite"` /
-`aidememo_open_with_backend(..., "sqlite")`). Prebuilt packages that are not
-compiled with that feature continue to use redb.
+All native bindings use the same backend selector as the CLI. Default builds
+include SQLite and can select it at open time (`backend="sqlite"` /
+`{ backend: "sqlite" }` / `backend: "sqlite"` /
+`aidememo_open_with_backend(..., "sqlite")`). Build with Cargo `redb` when you
+need to open redb stores.
 
 ## Open memory
 

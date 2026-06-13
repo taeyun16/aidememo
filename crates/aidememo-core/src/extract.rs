@@ -553,6 +553,7 @@ mod tests {
         assert_eq!(with.suggested_fact_type, FactType::Decision);
     }
 
+    #[cfg(feature = "redb")]
     #[test]
     fn extract_candidates_sorts_by_confidence() {
         // Use a temp store so we can populate it with one entity then

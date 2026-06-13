@@ -11,7 +11,7 @@ workflow from a sparse ticket.
 ## 1. Create a demo store
 
 ```bash
-export AIDEMEMO_DEMO_STORE="$(mktemp -d)/wiki.redb"
+export AIDEMEMO_DEMO_STORE="$(mktemp -d)/wiki.sqlite"
 ```
 
 All commands below use this store:

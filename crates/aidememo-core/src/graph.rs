@@ -268,7 +268,7 @@ impl<'a, B: StoreBackend + ?Sized> Graph<'a, B> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "redb"))]
 mod tests {
     use super::*;
     use crate::config::Config;

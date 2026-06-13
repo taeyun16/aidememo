@@ -1016,7 +1016,7 @@ fn current_epoch_ms() -> u64 {
 #[cfg(feature = "semantic")]
 pub use semantic::{hybrid_search, hybrid_search_with_ctx, hybrid_search_with_hnsw};
 
-#[cfg(test)]
+#[cfg(all(test, feature = "redb"))]
 mod tests {
     use super::*;
     use crate::store::Store;

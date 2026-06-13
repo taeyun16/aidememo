@@ -63,8 +63,8 @@ By default, AideMemo uses its configured local store. For examples and scripts,
 you can pass an explicit store path:
 
 ```bash
-aidememo --store ./memory.redb stats
-aidememo --store ./memory.redb fact add "A first note" --entities Project
+aidememo --store ./memory.sqlite stats
+aidememo --store ./memory.sqlite fact add "A first note" --entities Project
 ```
 
 Using `--store` is useful for demos, tests, and per-project memory files.
@@ -74,7 +74,7 @@ Using `--store` is useful for demos, tests, and per-project memory files.
 Run this in a temporary directory:
 
 ```bash
-STORE="$(mktemp -d)/wiki.redb"
+STORE="$(mktemp -d)/wiki.sqlite"
 
 aidememo --store "$STORE" fact add \
   "Decision: AideMemo stores typed project memory locally." \

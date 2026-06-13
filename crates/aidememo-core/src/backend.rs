@@ -7,6 +7,7 @@ use std::path::Path;
 
 use crate::config::Config;
 use crate::error::{AideMemoError, Result};
+#[cfg(feature = "redb")]
 use crate::store::Store;
 use crate::types::{
     EntityId, EntityInput, EntityRecord, EntityUpdate, FactId, FactInput, FactListOpts, FactRecord,
@@ -16,6 +17,7 @@ use crate::types::{
 
 /// Runtime-selected store backend.
 pub enum StoreKind {
+    #[cfg(feature = "redb")]
     Redb(Store),
     #[cfg(feature = "sqlite")]
     Sqlite(crate::sqlite_store::SqliteStore),
@@ -25,8 +27,7 @@ impl StoreKind {
     /// Open the backend selected by `config.store.backend`.
     pub fn open(path: &Path, config: Config) -> Result<Self> {
         match config.store.backend.trim().to_lowercase().as_str() {
-            "" | "redb" => Ok(Self::Redb(Store::open(path, config)?)),
-            "sqlite" | "libsqlite" => {
+            "" | "sqlite" | "libsqlite" => {
                 #[cfg(feature = "sqlite")]
                 {
                     Ok(Self::Sqlite(crate::sqlite_store::SqliteStore::open(
@@ -40,6 +41,18 @@ impl StoreKind {
                     ))
                 }
             }
+            "redb" => {
+                #[cfg(feature = "redb")]
+                {
+                    Ok(Self::Redb(Store::open(path, config)?))
+                }
+                #[cfg(not(feature = "redb"))]
+                {
+                    Err(AideMemoError::InvalidInput(
+                        "store.backend = redb requires the `redb` Cargo feature".to_string(),
+                    ))
+                }
+            }
             other => Err(AideMemoError::InvalidInput(format!(
                 "unsupported store.backend '{other}'"
             ))),
@@ -48,7 +61,14 @@ impl StoreKind {
 
     /// Returns true when this handle is backed by redb.
     pub fn is_redb(&self) -> bool {
-        matches!(self, Self::Redb(_))
+        #[cfg(feature = "redb")]
+        {
+            return matches!(self, Self::Redb(_));
+        }
+        #[cfg(not(feature = "redb"))]
+        {
+            false
+        }
     }
 }
 
@@ -183,6 +203,7 @@ pub trait StoreBackend {
     fn relations_list_all(&self) -> Result<Vec<RelationRecord>>;
 }
 
+#[cfg(feature = "redb")]
 impl StoreBackend for Store {
     fn open(path: &Path, config: Config) -> Result<Self> {
         Store::open(path, config)
@@ -344,6 +365,7 @@ impl StoreBackend for StoreKind {
 
     fn stats(&self) -> Result<StoreStats> {
         match self {
+            #[cfg(feature = "redb")]
             StoreKind::Redb(store) => store.stats(),
             #[cfg(feature = "sqlite")]
             StoreKind::Sqlite(store) => store.stats(),
@@ -352,6 +374,7 @@ impl StoreBackend for StoreKind {
 
     fn config(&self) -> &Config {
         match self {
+            #[cfg(feature = "redb")]
             StoreKind::Redb(store) => store.config(),
             #[cfg(feature = "sqlite")]
             StoreKind::Sqlite(store) => store.config(),
@@ -360,6 +383,7 @@ impl StoreBackend for StoreKind {
 
     fn set_last_ingest_at(&self) -> Result<()> {
         match self {
+            #[cfg(feature = "redb")]
             StoreKind::Redb(store) => store.set_last_ingest_at(),
             #[cfg(feature = "sqlite")]
             StoreKind::Sqlite(store) => store.set_last_ingest_at(),
@@ -368,6 +392,7 @@ impl StoreBackend for StoreKind {
 
     fn entity_add(&mut self, input: EntityInput) -> Result<EntityId> {
         match self {
+            #[cfg(feature = "redb")]
             StoreKind::Redb(store) => store.entity_add(input),
             #[cfg(feature = "sqlite")]
             StoreKind::Sqlite(store) => store.entity_add(input),
@@ -376,6 +401,7 @@ impl StoreBackend for StoreKind {
 
     fn entity_get(&self, name: &str) -> Result<EntityRecord> {
         match self {
+            #[cfg(feature = "redb")]
             StoreKind::Redb(store) => store.entity_get(name),
             #[cfg(feature = "sqlite")]
             StoreKind::Sqlite(store) => store.entity_get(name),
@@ -384,6 +410,7 @@ impl StoreBackend for StoreKind {
 
     fn resolve_entity(&self, name: &str) -> Result<EntityId> {
         match self {
+            #[cfg(feature = "redb")]
             StoreKind::Redb(store) => store.resolve_entity(name),
             #[cfg(feature = "sqlite")]
             StoreKind::Sqlite(store) => store.resolve_entity(name),
@@ -392,6 +419,7 @@ impl StoreBackend for StoreKind {
 
     fn entity_get_by_id(&self, id: EntityId) -> Result<EntityRecord> {
         match self {
+            #[cfg(feature = "redb")]
             StoreKind::Redb(store) => store.entity_get_by_id(id),
             #[cfg(feature = "sqlite")]
             StoreKind::Sqlite(store) => store.entity_get_by_id(id),
@@ -400,6 +428,7 @@ impl StoreBackend for StoreKind {
 
     fn entity_update(&mut self, name: &str, input: EntityUpdate) -> Result<()> {
         match self {
+            #[cfg(feature = "redb")]
             StoreKind::Redb(store) => store.entity_update(name, input),
             #[cfg(feature = "sqlite")]
             StoreKind::Sqlite(store) => store.entity_update(name, input),
@@ -408,6 +437,7 @@ impl StoreBackend for StoreKind {
 
     fn entity_list(&self, opts: ListOpts) -> Result<Vec<crate::types::EntitySummary>> {
         match self {
+            #[cfg(feature = "redb")]
             StoreKind::Redb(store) => store.entity_list(opts),
             #[cfg(feature = "sqlite")]
             StoreKind::Sqlite(store) => store.entity_list(opts),
@@ -416,6 +446,7 @@ impl StoreBackend for StoreKind {
 
     fn entity_delete(&mut self, name: &str) -> Result<()> {
         match self {
+            #[cfg(feature = "redb")]
             StoreKind::Redb(store) => store.entity_delete(name),
             #[cfg(feature = "sqlite")]
             StoreKind::Sqlite(store) => store.entity_delete(name),
@@ -424,6 +455,7 @@ impl StoreBackend for StoreKind {
 
     fn entity_upsert_record(&mut self, record: EntityRecord) -> Result<bool> {
         match self {
+            #[cfg(feature = "redb")]
             StoreKind::Redb(store) => store.entity_upsert_record(record),
             #[cfg(feature = "sqlite")]
             StoreKind::Sqlite(store) => store.entity_upsert_record(record),
@@ -432,6 +464,7 @@ impl StoreBackend for StoreKind {
 
     fn suggest_similar_entities(&self, name: &str) -> Result<Vec<String>> {
         match self {
+            #[cfg(feature = "redb")]
             StoreKind::Redb(store) => store.suggest_similar_entities(name),
             #[cfg(feature = "sqlite")]
             StoreKind::Sqlite(store) => store.suggest_similar_entities(name),
@@ -440,6 +473,7 @@ impl StoreBackend for StoreKind {
 
     fn count_entity_facts(&self, entity_id: &EntityId) -> Result<u32> {
         match self {
+            #[cfg(feature = "redb")]
             StoreKind::Redb(store) => store.count_entity_facts(entity_id),
             #[cfg(feature = "sqlite")]
             StoreKind::Sqlite(store) => store.count_entity_facts(entity_id),
@@ -448,6 +482,7 @@ impl StoreBackend for StoreKind {
 
     fn fact_add(&mut self, input: FactInput) -> Result<FactId> {
         match self {
+            #[cfg(feature = "redb")]
             StoreKind::Redb(store) => store.fact_add(input),
             #[cfg(feature = "sqlite")]
             StoreKind::Sqlite(store) => store.fact_add(input),
@@ -456,6 +491,7 @@ impl StoreBackend for StoreKind {
 
     fn fact_add_many(&mut self, inputs: Vec<FactInput>) -> Result<Vec<FactId>> {
         match self {
+            #[cfg(feature = "redb")]
             StoreKind::Redb(store) => store.fact_add_many(inputs),
             #[cfg(feature = "sqlite")]
             StoreKind::Sqlite(store) => store.fact_add_many(inputs),
@@ -464,6 +500,7 @@ impl StoreBackend for StoreKind {
 
     fn fact_get(&self, id: &FactId) -> Result<FactRecord> {
         match self {
+            #[cfg(feature = "redb")]
             StoreKind::Redb(store) => store.fact_get(id),
             #[cfg(feature = "sqlite")]
             StoreKind::Sqlite(store) => store.fact_get(id),
@@ -472,6 +509,7 @@ impl StoreBackend for StoreKind {
 
     fn fact_get_many(&self, ids: &[FactId]) -> Result<Vec<FactRecord>> {
         match self {
+            #[cfg(feature = "redb")]
             StoreKind::Redb(store) => store.fact_get_many(ids),
             #[cfg(feature = "sqlite")]
             StoreKind::Sqlite(store) => store.fact_get_many(ids),
@@ -480,6 +518,7 @@ impl StoreBackend for StoreKind {
 
     fn fact_list(&self, opts: FactListOpts) -> Result<Vec<FactRecord>> {
         match self {
+            #[cfg(feature = "redb")]
             StoreKind::Redb(store) => store.fact_list(opts),
             #[cfg(feature = "sqlite")]
             StoreKind::Sqlite(store) => store.fact_list(opts),
@@ -488,6 +527,7 @@ impl StoreBackend for StoreKind {
 
     fn fact_update(&mut self, id: &FactId, input: FactUpdate) -> Result<()> {
         match self {
+            #[cfg(feature = "redb")]
             StoreKind::Redb(store) => store.fact_update(id, input),
             #[cfg(feature = "sqlite")]
             StoreKind::Sqlite(store) => store.fact_update(id, input),
@@ -496,6 +536,7 @@ impl StoreBackend for StoreKind {
 
     fn fact_delete(&mut self, id: &FactId) -> Result<()> {
         match self {
+            #[cfg(feature = "redb")]
             StoreKind::Redb(store) => store.fact_delete(id),
             #[cfg(feature = "sqlite")]
             StoreKind::Sqlite(store) => store.fact_delete(id),
@@ -504,6 +545,7 @@ impl StoreBackend for StoreKind {
 
     fn fact_upsert_record(&mut self, record: FactRecord) -> Result<bool> {
         match self {
+            #[cfg(feature = "redb")]
             StoreKind::Redb(store) => store.fact_upsert_record(record),
             #[cfg(feature = "sqlite")]
             StoreKind::Sqlite(store) => store.fact_upsert_record(record),
@@ -512,6 +554,7 @@ impl StoreBackend for StoreKind {
 
     fn pinned_facts(&self, limit: usize) -> Result<Vec<FactRecord>> {
         match self {
+            #[cfg(feature = "redb")]
             StoreKind::Redb(store) => store.pinned_facts(limit),
             #[cfg(feature = "sqlite")]
             StoreKind::Sqlite(store) => store.pinned_facts(limit),
@@ -520,6 +563,7 @@ impl StoreBackend for StoreKind {
 
     fn fact_feedback(&mut self, id: &FactId, helpful: bool) -> Result<()> {
         match self {
+            #[cfg(feature = "redb")]
             StoreKind::Redb(store) => store.fact_feedback(id, helpful),
             #[cfg(feature = "sqlite")]
             StoreKind::Sqlite(store) => store.fact_feedback(id, helpful),
@@ -528,6 +572,7 @@ impl StoreBackend for StoreKind {
 
     fn search_session_add(&mut self, session: &SearchSession) -> Result<()> {
         match self {
+            #[cfg(feature = "redb")]
             StoreKind::Redb(store) => store.search_session_add(session),
             #[cfg(feature = "sqlite")]
             StoreKind::Sqlite(store) => store.search_session_add(session),
@@ -536,6 +581,7 @@ impl StoreBackend for StoreKind {
 
     fn search_feedback_add(&mut self, feedback: &SearchFeedback) -> Result<()> {
         match self {
+            #[cfg(feature = "redb")]
             StoreKind::Redb(store) => store.search_feedback_add(feedback),
             #[cfg(feature = "sqlite")]
             StoreKind::Sqlite(store) => store.search_feedback_add(feedback),
@@ -544,6 +590,7 @@ impl StoreBackend for StoreKind {
 
     fn search_feedback_count(&self) -> Result<usize> {
         match self {
+            #[cfg(feature = "redb")]
             StoreKind::Redb(store) => store.search_feedback_count(),
             #[cfg(feature = "sqlite")]
             StoreKind::Sqlite(store) => store.search_feedback_count(),
@@ -553,6 +600,7 @@ impl StoreBackend for StoreKind {
     #[cfg(feature = "semantic-adapt")]
     fn adapt_train(&mut self) -> Result<crate::types::AdaptResult> {
         match self {
+            #[cfg(feature = "redb")]
             StoreKind::Redb(store) => store.adapt_train(),
             #[cfg(feature = "sqlite")]
             StoreKind::Sqlite(store) => store.adapt_train(),
@@ -562,6 +610,7 @@ impl StoreBackend for StoreKind {
     #[cfg(feature = "semantic-adapt")]
     fn adapt_status(&self) -> Result<crate::types::AdaptStatus> {
         match self {
+            #[cfg(feature = "redb")]
             StoreKind::Redb(store) => store.adapt_status(),
             #[cfg(feature = "sqlite")]
             StoreKind::Sqlite(store) => store.adapt_status(),
@@ -571,6 +620,7 @@ impl StoreBackend for StoreKind {
     #[cfg(feature = "semantic-adapt")]
     fn adapt_eval(&self) -> Result<crate::types::AdaptEvalReport> {
         match self {
+            #[cfg(feature = "redb")]
             StoreKind::Redb(store) => store.adapt_eval(),
             #[cfg(feature = "sqlite")]
             StoreKind::Sqlite(store) => store.adapt_eval(),
@@ -580,6 +630,7 @@ impl StoreBackend for StoreKind {
     #[cfg(feature = "semantic-adapt")]
     fn load_adapter(&self) -> Result<crate::adapt::DomainAdapter> {
         match self {
+            #[cfg(feature = "redb")]
             StoreKind::Redb(store) => store.load_adapter(),
             #[cfg(feature = "sqlite")]
             StoreKind::Sqlite(store) => store.load_adapter(),
@@ -588,6 +639,7 @@ impl StoreBackend for StoreKind {
 
     fn relation_add(&mut self, input: RelationInput) -> Result<()> {
         match self {
+            #[cfg(feature = "redb")]
             StoreKind::Redb(store) => store.relation_add(input),
             #[cfg(feature = "sqlite")]
             StoreKind::Sqlite(store) => store.relation_add(input),
@@ -596,6 +648,7 @@ impl StoreBackend for StoreKind {
 
     fn relation_upsert_record(&mut self, record: RelationRecord) -> Result<bool> {
         match self {
+            #[cfg(feature = "redb")]
             StoreKind::Redb(store) => store.relation_upsert_record(record),
             #[cfg(feature = "sqlite")]
             StoreKind::Sqlite(store) => store.relation_upsert_record(record),
@@ -604,6 +657,7 @@ impl StoreBackend for StoreKind {
 
     fn relation_remove(&mut self, source: &str, target: &str, rel_type: &str) -> Result<()> {
         match self {
+            #[cfg(feature = "redb")]
             StoreKind::Redb(store) => store.relation_remove(source, target, rel_type),
             #[cfg(feature = "sqlite")]
             StoreKind::Sqlite(store) => store.relation_remove(source, target, rel_type),
@@ -616,6 +670,7 @@ impl StoreBackend for StoreKind {
         direction: TraverseDirection,
     ) -> Result<Vec<RelationRecord>> {
         match self {
+            #[cfg(feature = "redb")]
             StoreKind::Redb(store) => store.relations_get(entity_name, direction),
             #[cfg(feature = "sqlite")]
             StoreKind::Sqlite(store) => store.relations_get(entity_name, direction),
@@ -624,6 +679,7 @@ impl StoreBackend for StoreKind {
 
     fn relations_list_all(&self) -> Result<Vec<RelationRecord>> {
         match self {
+            #[cfg(feature = "redb")]
             StoreKind::Redb(store) => store.relations_list_all(),
             #[cfg(feature = "sqlite")]
             StoreKind::Sqlite(store) => store.relations_list_all(),

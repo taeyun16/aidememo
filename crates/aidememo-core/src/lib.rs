@@ -1,5 +1,8 @@
 //! AideMemo — local-first memory SDK for coding agents.
 
+#[cfg(not(any(feature = "sqlite", feature = "redb")))]
+compile_error!("aidememo-core requires at least one storage backend feature: `sqlite` or `redb`.");
+
 pub mod adapt;
 pub mod archive;
 pub mod backend;
@@ -8,6 +11,7 @@ pub mod embedding;
 pub mod error;
 pub mod extract;
 pub mod extract_structured;
+#[cfg(feature = "redb")]
 pub mod fuzzy;
 pub mod graph;
 pub mod index;
@@ -22,6 +26,7 @@ pub mod s3;
 pub mod search;
 #[cfg(feature = "sqlite")]
 pub mod sqlite_store;
+#[cfg(feature = "redb")]
 pub mod store;
 pub mod sync;
 pub mod time;

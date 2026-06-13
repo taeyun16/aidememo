@@ -13,7 +13,7 @@ name = "aidememo"
 path = "src/main.rs"
 
 [dependencies]
-aidememo-core = { version = "0.1.0", path = "../aidememo-core", features = ["semantic", "semantic-adapt"] }
+aidememo-core = { version = "0.1.0", path = "../aidememo-core", default-features = false, features = ["semantic", "semantic-adapt"] }
 
 # Profile-mode measurement for `aidememo bench`.
 # - memory-stats: cross-platform RSS (includes virtual mappings — useful as a
@@ -81,8 +81,9 @@ libc = "0.2"
 mach2 = "0.4"
 
 [features]
-default = []
+default = ["sqlite"]
 sqlite = ["aidememo-core/sqlite"]
+redb = ["aidememo-core/redb"]
 # Replace the GlobalAlloc with dhat's instrumented allocator. The bin
 # emits dhat-heap.json on exit (or when the Profiler guard drops),
 # which https://nnethercote.github.io/dh_view/dh_view.html renders

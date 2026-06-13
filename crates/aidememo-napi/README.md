@@ -28,7 +28,7 @@ npm install aidememo-napi
 ```js
 const { AideMemoStore } = require('aidememo-napi');
 
-const g = new AideMemoStore('./_meta/wiki.redb');
+const g = new AideMemoStore('./_meta/wiki.sqlite');
 
 const redis = g.entityAdd('Redis', {
   entityType: 'technology',
@@ -50,16 +50,17 @@ const hits = JSON.parse(g.search('high availability', {
 console.log(factId, hits.map((hit) => hit.content));
 ```
 
-To use the experimental local SQLite backend, build the native package with the
-Cargo `sqlite` feature and pass `backend: 'sqlite'` when opening the store:
+SQLite is the default local backend. To open redb stores, build the native
+package with the Cargo `redb` feature and pass `backend: 'redb'` when opening
+the store:
 
 ```bash
 cd crates/aidememo-napi
-npm run build -- --features sqlite
+npm run build -- --features redb
 ```
 
 ```js
-const g = new AideMemoStore('./_meta/wiki.sqlite', { backend: 'sqlite' });
+const g = new AideMemoStore('./_meta/wiki.redb', { backend: 'redb' });
 ```
 
 ## Workflow start
@@ -72,7 +73,7 @@ context in one call.
 ```js
 const { AideMemoStore } = require('aidememo-napi');
 
-const g = new AideMemoStore('./team.redb');
+const g = new AideMemoStore('./team.sqlite');
 
 const redis = g.entityAdd('Redis', { entityType: 'technology' });
 g.factAdd('Decision: Redis worker jobs must wrap DNS timeouts with retries', {

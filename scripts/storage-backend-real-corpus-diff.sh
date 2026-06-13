@@ -16,7 +16,7 @@ cleanup() {
 trap cleanup EXIT
 
 cd "$ROOT_DIR"
-cargo build -p aidememo-cli --features sqlite
+cargo build -p aidememo-cli --features sqlite,redb
 
 REDB_HOME="$BASE/home-redb"
 SQLITE_HOME="$BASE/home-sqlite"
@@ -26,6 +26,8 @@ SQLITE_STORE="$BASE/real.sqlite"
 REDB_EXPORT="$BASE/redb.jsonl"
 SQLITE_EXPORT="$BASE/sqlite.jsonl"
 mkdir -p "$REDB_HOME" "$SQLITE_HOME" "$CORPUS_DIR"
+
+HOME="$REDB_HOME" "$BIN" config set store.backend redb >/dev/null
 
 python3 - "$ROOT_DIR" "$CORPUS_DIR" <<'PY'
 from pathlib import Path

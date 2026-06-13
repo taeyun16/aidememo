@@ -120,9 +120,9 @@ python3 scripts/docs-feature-gate.py
 | `aidememo-ffi` | C ABI bindings. |
 | `hermes-aidememo` | Hermes Agent plugin, slash commands, lifecycle hooks, and SDK re-exports. |
 
-The native Python, Node, Elixir, and C bindings can select the experimental
-local SQLite backend when built with their Cargo `sqlite` feature. The default
-published surface remains redb unless that feature is included at build time.
+The native Python, Node, Elixir, and C bindings use the same backend selector
+as the CLI. Default builds include the local SQLite backend; build with Cargo
+`redb` when you need to open a redb store.
 
 ## Gate contract
 

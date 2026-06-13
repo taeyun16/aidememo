@@ -44,7 +44,7 @@ flowchart LR
     MCP --> Core["aidememo-core"]
     CLI --> Core
     API --> Core
-    Core --> Store[("redb default / SQLite experimental + BM25 + HNSW")]
+    Core --> Store[("SQLite default / redb optional + BM25 + HNSW")]
 ```
 
 ## Why AideMemo
@@ -180,9 +180,9 @@ aidememo search "retrieval preference" --source-id agent-a
 ```
 
 Hermes uses the same `source_id` field through its plugin tools and slash
-commands. Its CLI fallback retries short redb lock collisions for 5 seconds by
-default, so two local Hermes agents can share a store without asking the user
-to start a server.
+commands. Its CLI fallback retries short redb lock collisions when that backend
+is selected, so two local Hermes agents can share a redb store without asking
+the user to start a server.
 
 For MCP agents, install with `--source-id` to set `AIDEMEMO_SOURCE_ID` once in the
 server environment. That namespace becomes the default for reads and writes;
@@ -328,22 +328,24 @@ aidememo doctor --json                           # includes sharing.mode and dae
 aidememo config set model.provider fastembed
 aidememo config set model.name bge-small-en-v1.5
 
-# Experimental local SQLite backend. Build the CLI with `--features sqlite` first.
+# SQLite is the default local backend. Build with `--features redb` to opt into redb.
 aidememo config set store.backend sqlite
+aidememo config set store.backend redb
 ```
 
-Native bindings use the same backend selector when they are built with their
-Cargo `sqlite` feature:
+Native bindings use the same backend selector. Default builds include SQLite;
+build with Cargo `redb` to open redb stores:
 
 ```python
 g = aidememo.AideMemo("./_meta/wiki.sqlite", backend="sqlite")
+g = aidememo.AideMemo("./_meta/wiki.redb", backend="redb")
 ```
 
 ## Architecture
 
 | Crate | Purpose |
 |---|---|
-| `aidememo-core` | redb store, experimental SQLite backend, ingest, BM25, semantic search, graph, lint, lifecycle |
+| `aidememo-core` | SQLite default store, optional redb store, ingest, BM25, semantic search, graph, lint, lifecycle |
 | `aidememo-cli` | `aidememo` binary: CLI, stdio MCP, HTTP/SSE MCP |
 | `aidememo-agent-sdk` | Python composition layer for code-executing agents (Codex, Claude Code, Hermes, CI); uses `aidememo-python` or CLI fallback |
 | `aidememo-python` | PyO3 bindings |

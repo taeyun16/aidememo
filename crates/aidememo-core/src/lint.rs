@@ -367,7 +367,7 @@ fn check_conflicts(entities: &[EntitySummary], facts: &[FactRecord]) -> Vec<Lint
     issues
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "redb"))]
 mod tests {
     use super::*;
     use crate::config::Config;

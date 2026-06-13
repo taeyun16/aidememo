@@ -3645,7 +3645,18 @@ mod tests {
     fn open_temp_wiki() -> (TempDir, AideMemo) {
         let dir = TempDir::new().unwrap();
         let mut config = Config::default();
-        config.store.path = dir.path().join("store").to_string_lossy().into_owned();
+        if cfg!(all(feature = "redb", not(feature = "sqlite"))) {
+            config.store.backend = "redb".to_string();
+        }
+        config.store.path = dir
+            .path()
+            .join(if config.store.backend == "redb" {
+                "store.redb"
+            } else {
+                "store.sqlite"
+            })
+            .to_string_lossy()
+            .into_owned();
         let wiki = AideMemo::open(&PathBuf::from(&config.store.path), config).unwrap();
         (dir, wiki)
     }

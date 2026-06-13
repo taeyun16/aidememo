@@ -36,7 +36,7 @@ claude mcp add aidememo -- aidememo mcp
 Use HTTP when multiple agents should share one warm process:
 
 ```bash
-aidememo mcp-serve --port 3000 --store ~/.aidememo/team.redb
+aidememo mcp-serve --port 3000 --store ~/.aidememo/team.sqlite
 ```
 
 Then point MCP clients at:
@@ -45,8 +45,9 @@ Then point MCP clients at:
 http://127.0.0.1:3000/mcp
 ```
 
-HTTP mode is recommended when several agents write to the same store because
-redb allows one writer process at a time.
+HTTP mode is still useful for warm model reuse and shared writes. It is
+especially recommended for redb stores, where only one writer process can hold
+the database lock at a time.
 
 ## Core tools
 

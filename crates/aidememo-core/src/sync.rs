@@ -401,8 +401,16 @@ mod tests {
 
     fn open_temp() -> (tempfile::TempDir, AideMemo) {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("test.redb");
-        let wiki = AideMemo::open(&path, Config::default()).unwrap();
+        let mut config = Config::default();
+        if cfg!(all(feature = "redb", not(feature = "sqlite"))) {
+            config.store.backend = "redb".to_string();
+        }
+        let path = dir.path().join(if config.store.backend == "redb" {
+            "test.redb"
+        } else {
+            "test.sqlite"
+        });
+        let wiki = AideMemo::open(&path, config).unwrap();
         (dir, wiki)
     }
 

@@ -44,10 +44,11 @@ For MCP installs:
 aidememo mcp-install --target codex --source-id team-a
 ```
 
-## Avoid store lock issues
+## Avoid redb store lock issues
 
-redb is a single-writer embedded database. If several processes open the same
-store and write at the same time, one process may need to wait or fail.
+SQLite is the default backend. The optional redb backend is a single-writer
+embedded database; if several processes open the same redb store and write at
+the same time, one process may need to wait or fail.
 
 For shared writes, run one daemon:
 
@@ -105,5 +106,5 @@ AideMemo uses a local database file. Back it up like any other project artifact.
 Stop long-running writers before copying the file.
 
 ```bash
-cp ~/.aidememo/wiki.redb ~/backups/wiki.redb
+cp ~/.aidememo/wiki.sqlite ~/backups/wiki.sqlite
 ```

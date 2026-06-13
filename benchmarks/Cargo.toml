@@ -15,7 +15,7 @@ parking_lot = "0.12"
 redb = "2.6"
 rusqlite = { version = "0.40.1", default-features = false, features = ["bundled"] }
 tempfile = "3.10"
-aidememo-core = { version = "0.1.0", path = "../crates/aidememo-core", features = ["semantic", "fastembed"] }
+aidememo-core = { version = "0.1.0", path = "../crates/aidememo-core", features = ["semantic", "fastembed", "redb"] }
 
 # HNSW ANN prototype — measures recall + latency vs brute force on
 # real Korean Wikipedia retrieval (MIRACL/ko). Lives behind the

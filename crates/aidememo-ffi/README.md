@@ -16,7 +16,7 @@ cargo build -p aidememo-ffi --release
 ```c
 #include "aidememo.h"
 
-aidememo_store_t* g = aidememo_open("./_meta/wiki.redb");
+aidememo_store_t* g = aidememo_open("./_meta/wiki.sqlite");
 char* json = aidememo_query(g, "Redis", 5, 2, 5);
 printf("%s\n", json);
 aidememo_free_string(json);
@@ -35,15 +35,15 @@ cc your.c \
 
 (On Linux: drop the `-framework` flags; add `-lpthread -ldl -lm` if your linker needs them.)
 
-To use the experimental local SQLite backend, build the library with the Cargo
-`sqlite` feature and open with an explicit backend:
+SQLite is the default local backend. To open redb stores, build the library
+with the Cargo `redb` feature and open with an explicit backend:
 
 ```bash
-cargo build -p aidememo-ffi --features sqlite
+cargo build -p aidememo-ffi --features redb
 ```
 
 ```c
-aidememo_store_t* g = aidememo_open_with_backend("./_meta/wiki.sqlite", "sqlite");
+aidememo_store_t* g = aidememo_open_with_backend("./_meta/wiki.redb", "redb");
 ```
 
 ## API

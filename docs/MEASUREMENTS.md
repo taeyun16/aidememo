@@ -181,12 +181,12 @@ synthetic wiki, p95 latency, default config:
 
 ### Storage Backend Probe
 
-`benchmarks/src/bin/storage_backend_probe.rs` compares the current redb-backed
-AideMemo API path with a SQLite schema. The SQLite backend now also exists as a
-feature-gated runtime backend (`store.backend = "sqlite"`, `--features sqlite`)
-with normalized `entities`, `facts`, `fact_entities`, `relations`, feedback
-tables, secondary indexes, JSON record payloads, and FTS5. Results are written
-to `benchmarks/results/storage_backend_probe.json`.
+`benchmarks/src/bin/storage_backend_probe.rs` compares the optional redb-backed
+AideMemo API path with the default SQLite schema. SQLite is now the default
+runtime backend (`store.backend = "sqlite"`, default Cargo features) with
+normalized `entities`, `facts`, `fact_entities`, `relations`, feedback tables,
+secondary indexes, JSON record payloads, and FTS5. Results are written to
+`benchmarks/results/storage_backend_probe.json`.
 
 Local macOS arm64 run on 2026-06-13:
 
@@ -207,9 +207,8 @@ cargo run --release -p aidememo-benchmarks --bin storage_backend_probe
 
 Interpretation:
 
-* SQLite is a serious backend candidate if AideMemo moves toward a relational
-  store abstraction. It naturally fits entity/fact joins, indexed filtered
-  lists, migrations, introspection, and persistent FTS.
+* SQLite is now the default backend. It naturally fits entity/fact joins,
+  indexed filtered lists, migrations, introspection, and persistent FTS.
 * The redb `fact_list_entity` path improved from the earlier all-scan result
   (`~29 ms`) to `~6 ms` after using `fact_by_entity`. The remaining gap is no
   longer from total-store scanning; it is the cost of point-hydrating JSON facts
@@ -232,14 +231,13 @@ Runtime promotion status:
   This makes `aidememo export` from a redb store followed by `aidememo import`
   into a SQLite store a usable migration primitive instead of allocating fresh
   ULIDs.
-* `aidememo-cli` exposes a `sqlite` Cargo feature that forwards
-  `aidememo-core/sqlite`; build with
-  `cargo build -p aidememo-cli --features sqlite` before setting
-  `aidememo config set store.backend sqlite`.
-* The Python, Node, Elixir, and C native binding crates expose the same
-  `sqlite` Cargo feature and runtime backend selector. This keeps the SDK
-  replacement path aligned with CLI/MCP instead of making SQLite a CLI-only
-  spike.
+* `aidememo-cli` defaults to SQLite and exposes a `redb` Cargo feature that
+  forwards `aidememo-core/redb`; build with
+  `cargo build -p aidememo-cli --features redb` before setting
+  `aidememo config set store.backend redb`.
+* The Python, Node, Elixir, and C native binding crates share the same default
+  SQLite backend and optional `redb` feature. This keeps the SDK replacement
+  path aligned with CLI/MCP instead of making backend choice a CLI-only spike.
 * `sqlite_matches_redb_for_core_public_api_fixture` seeds the same fixture into
   redb and SQLite, then compares stats, fact contents, traversal output, and
   BM25 search results. This is the current semantic parity gate for backend
@@ -260,16 +258,17 @@ Runtime promotion status:
   through 16 parallel HTTP MCP callers, verifies unique fact IDs, final stats,
   and BM25 visibility for a tail write.
 * `scripts/storage-backend-sdk-bindings-check.sh` verifies the SDK/binding
-  surface: Python compiles with `--features sqlite`, Node and C run SQLite
-  open smoke tests through their binding APIs, and Elixir runs `mix test` with
-  `AIDEMEMO_NIF_CARGO_FEATURES=sqlite`.
+  surface: default SQLite builds plus redb-only Cargo feature builds across
+  Python, Node, Elixir, and C.
 
 Validation added in the runtime spike:
 
 ```bash
-cargo test -p aidememo-core --features sqlite
+cargo test -p aidememo-core
+cargo test -p aidememo-core --no-default-features --features redb
 cargo test -p aidememo-core --features sqlite,semantic,semantic-adapt
-cargo check -p aidememo-cli --features sqlite
+cargo check -p aidememo-cli
+cargo test -p aidememo-cli --no-default-features --features redb --bin aidememo
 ./scripts/storage-backend-parity.sh
 ./scripts/storage-backend-real-corpus-diff.sh
 ./scripts/storage-backend-sqlite-mcp-soak.sh

@@ -41,7 +41,7 @@ global `maturin` install is required.
 ```python
 import aidememo_python as aidememo
 
-g = aidememo.AideMemo("./_meta/wiki.redb")
+g = aidememo.AideMemo("./_meta/wiki.sqlite")
 
 # Unified context fetch
 ctx = g.query("Redis", limit=5, depth=2, recent_limit=5)
@@ -66,16 +66,16 @@ stats = g.ingest("./my-wiki", incremental=False)
 print(stats)  # {entities_added, facts_added, ...}
 ```
 
-To use the experimental local SQLite backend from the native binding, build the
-extension with the Cargo `sqlite` feature and pass `backend="sqlite"`:
+SQLite is the default local backend. To open redb stores, build the extension
+with the Cargo `redb` feature and pass `backend="redb"`:
 
 ```bash
 cd crates/aidememo-python
-../../scripts/maturin.sh develop --release --features sqlite
+../../scripts/maturin.sh develop --release --features redb
 ```
 
 ```python
-g = aidememo.AideMemo("./_meta/wiki.sqlite", backend="sqlite")
+g = aidememo.AideMemo("./_meta/wiki.redb", backend="redb")
 ```
 
 ## Workflow start
@@ -88,7 +88,7 @@ context in one call.
 ```python
 import aidememo_python as aidememo
 
-g = aidememo.AideMemo("./team.redb")
+g = aidememo.AideMemo("./team.sqlite")
 
 redis = g.entity_add("Redis", entity_type="technology")
 g.fact_add(

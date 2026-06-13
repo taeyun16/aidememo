@@ -1090,6 +1090,21 @@ mod tests {
         c
     }
 
+    fn open_temp_wiki() -> (TempDir, AideMemo) {
+        let dir = TempDir::new().unwrap();
+        let mut config = Config::default();
+        if cfg!(all(feature = "redb", not(feature = "sqlite"))) {
+            config.store.backend = "redb".to_string();
+        }
+        let store_path = dir.path().join(if config.store.backend == "redb" {
+            "wiki.redb"
+        } else {
+            "wiki.sqlite"
+        });
+        let wiki = AideMemo::open(&store_path, config).unwrap();
+        (dir, wiki)
+    }
+
     #[test]
     fn model_load_bytes_known_models() {
         assert_eq!(
@@ -1188,9 +1203,7 @@ mod tests {
 
     #[test]
     fn workflow_status_counts_recent_ticket_facts() {
-        let dir = TempDir::new().unwrap();
-        let store_path = dir.path().join("wiki.redb");
-        let wiki = AideMemo::open(&store_path, Config::default()).unwrap();
+        let (_dir, wiki) = open_temp_wiki();
         let session_id = wiki
             .entity_add(EntityInput {
                 name: "session-test".to_string(),
@@ -1255,9 +1268,7 @@ mod tests {
 
     #[test]
     fn workflow_status_recommends_source_id_for_mcp_install_when_ticket_is_scoped() {
-        let dir = TempDir::new().unwrap();
-        let store_path = dir.path().join("wiki.redb");
-        let wiki = AideMemo::open(&store_path, Config::default()).unwrap();
+        let (_dir, wiki) = open_temp_wiki();
         let session_id = wiki
             .entity_add(EntityInput {
                 name: "session-scoped".to_string(),
@@ -1321,9 +1332,7 @@ mod tests {
 
     #[test]
     fn workflow_status_surfaces_actionable_setup_hints() {
-        let dir = TempDir::new().unwrap();
-        let store_path = dir.path().join("wiki.redb");
-        let wiki = AideMemo::open(&store_path, Config::default()).unwrap();
+        let (_dir, wiki) = open_temp_wiki();
         let agents = vec![AgentStatus {
             target: "codex",
             skill_path: None,

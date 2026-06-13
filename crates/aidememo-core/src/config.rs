@@ -49,13 +49,13 @@ pub struct ProjectConfig {
 pub struct StoreConfig {
     /// Storage backend. Supported values:
     ///
-    /// - `"redb"` (default): existing embedded redb file.
-    /// - `"sqlite"`: experimental SQLite backend behind the `sqlite` Cargo feature.
+    /// - `"sqlite"` (default): bundled local SQLite backend.
+    /// - `"redb"`: optional embedded redb backend behind the `redb` Cargo feature.
     #[serde(default = "default_backend")]
     pub backend: String,
-    /// Path to the redb file (relative to wiki root or absolute).
+    /// Path to the store file (relative to wiki root or absolute).
     pub path: String,
-    /// redb commit durability. Two options:
+    /// redb commit durability. Ignored by SQLite. Two options:
     ///
     /// - `"immediate"` (default, recommended) — every commit fsyncs to
     ///   disk before returning. Survives both process crash and power
@@ -91,14 +91,14 @@ fn default_durability() -> String {
 }
 
 fn default_backend() -> String {
-    "redb".to_string()
+    "sqlite".to_string()
 }
 
 impl Default for StoreConfig {
     fn default() -> Self {
         Self {
             backend: default_backend(),
-            path: "./_meta/wiki.redb".to_string(),
+            path: "./_meta/wiki.sqlite".to_string(),
             durability: default_durability(),
             lock_retry_ms: 0,
         }
@@ -1021,7 +1021,7 @@ mod tests {
     #[test]
     fn test_config_default() {
         let config = Config::default();
-        assert_eq!(config.store.path, "./_meta/wiki.redb");
+        assert_eq!(config.store.path, "./_meta/wiki.sqlite");
         assert_eq!(config.model.name, "minishlab/potion-multilingual-128M");
         assert_eq!(config.model.download_dir, "~/.aidememo/models/downloads");
         assert_eq!(config.search.default_limit, 10);
@@ -1056,10 +1056,10 @@ mod tests {
     }
 
     #[test]
-    fn store_backend_default_is_redb() {
+    fn store_backend_default_is_sqlite() {
         let config = Config::default();
-        assert_eq!(config.store.backend, "redb");
-        assert_eq!(config.get("store.backend"), Some("redb".to_string()));
+        assert_eq!(config.store.backend, "sqlite");
+        assert_eq!(config.get("store.backend"), Some("sqlite".to_string()));
     }
 
     #[test]
@@ -1086,7 +1086,7 @@ mod tests {
         let err = config
             .set("store.backend", "postgres")
             .expect_err("unknown backend should be rejected");
-        assert!(format!("{err}").contains("redb"));
+        assert!(format!("{err}").contains("sqlite"));
     }
 
     #[test]

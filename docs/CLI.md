@@ -111,5 +111,5 @@ For scripts, pass `--store` so the command cannot accidentally read your default
 store:
 
 ```bash
-aidememo --store ./team.redb search "release checklist"
+aidememo --store ./team.sqlite search "release checklist"
 ```

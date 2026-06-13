@@ -889,8 +889,16 @@ this is not json
         discard.insert(1);
 
         let dir = tempfile::tempdir().unwrap();
-        let store = dir.path().join("wiki.redb");
-        let wiki = AideMemo::open(&store, Config::default()).unwrap();
+        let mut config = Config::default();
+        if cfg!(all(feature = "redb", not(feature = "sqlite"))) {
+            config.store.backend = "redb".to_string();
+        }
+        let store = dir.path().join(if config.store.backend == "redb" {
+            "wiki.redb"
+        } else {
+            "wiki.sqlite"
+        });
+        let wiki = AideMemo::open(&store, config).unwrap();
 
         let (kept, summary) = apply_review(&entries, &commit, &discard, &wiki);
         assert_eq!(summary.committed, 1);

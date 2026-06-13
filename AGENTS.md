@@ -10,13 +10,13 @@ Codex, Cursor, Aider, Jules, and any agent that follows the
 ## What this project is
 
 AideMemo (`aidememo`) ingests a markdown wiki into a structured knowledge graph
-(redb by default, experimental SQLite behind a feature flag, plus BM25 and
-semantic vectors) and exposes it to LLM agents via CLI, MCP server, and native
-bindings (Python / Node / Elixir / C).
+(SQLite by default, redb as an optional Cargo feature, plus BM25 and semantic
+vectors) and exposes it to LLM agents via CLI, MCP server, and native bindings
+(Python / Node / Elixir / C).
 
 | Crate | Purpose |
 |---|---|
-| `aidememo-core` | redb store, experimental SQLite backend, ingest, search, traverse, lint, validity windows |
+| `aidememo-core` | SQLite default store, optional redb store, ingest, search, traverse, lint, validity windows |
 | `aidememo-cli` | `aidememo` binary (CLI + stdio/HTTP MCP) |
 | `aidememo-napi`, `aidememo-python`, `aidememo-nif`, `aidememo-ffi` | language bindings (full API; optional `sqlite` Cargo feature) |
 
@@ -27,10 +27,11 @@ mise install                                      # sync local tool versions wit
 cargo check -p aidememo-core -p aidememo-cli       # fast verify
 cargo build -p aidememo-cli                   # debug binary at target/debug/aidememo
 cargo build -p aidememo-cli --release         # release binary
-cargo check -p aidememo-python --features sqlite
-cargo check -p aidememo-napi --features sqlite
-cargo check -p aidememo-nif --features sqlite
-cargo check -p aidememo-ffi --features sqlite
+cargo check -p aidememo-python
+cargo check -p aidememo-napi
+cargo check -p aidememo-nif
+cargo check -p aidememo-ffi
+cargo check -p aidememo-core --no-default-features --features redb
 cargo test -p aidememo-core --features semantic
 cargo test -p aidememo-cli --bin aidememo
 ./scripts/ci-local.sh lint
@@ -64,7 +65,7 @@ Useful debug spans (turn on with `RUST_LOG=aidememo_core=debug`):
   you'll see `embed_provider loaded ms=…` (model load on first call,
   near-zero after) and per-phase events `bm25` / `query_embed` /
   `hnsw_lookup`.
-- `Store::open` — directory create + redb open + schema init.
+- `StoreKind::open` / backend `open` — directory create + backend schema init.
 
 The legacy `AIDEMEMO_SEARCH_PROFILE=1` and `AIDEMEMO_LINT_PROFILE=1` env vars
 still work as a self-contained `eprintln` dump for users who'd
@@ -325,13 +326,17 @@ crates/aidememo-cli/src/
   use a variable named the same as the field.
 - Parser return type is `impl Parser<Command>`, not the concrete type.
 
-### redb / aidememo-core
+### Storage backends / aidememo-core
 
-- `AideMemo` wraps `Arc<RwLock<Store>>`; `Store` itself owns `Arc<Database>`.
+- `AideMemo` wraps `Arc<RwLock<StoreKind>>`; `StoreKind` dispatches to SQLite
+  by default or redb when the `redb` Cargo feature and `store.backend = "redb"`
+  are selected.
 - `AideMemo::ingest` is `&self` (uses interior mutability via the RwLock).
   This makes `Arc<AideMemo>` callable from bindings.
-- Only `Store::open(path, config)` exists — no `new` / `get_or_create`.
-- Read txn and write txn cannot be nested. Drop the txn before opening another.
+- Only `StoreKind::open(path, config)` exists at the public dispatch layer — no
+  `new` / `get_or_create`.
+- In the redb implementation, read txn and write txn cannot be nested. Drop the
+  txn before opening another.
 - All persisted records are JSON (not bincode), so adding `#[serde(default)]`
   fields to types is fully backward-compatible — no migration needed.
 - `EntityType::Custom(String)` and `FactRecord.superseded_at/by` rely on this.
@@ -585,10 +590,10 @@ args = ["mcp"]
 
 ### Multi-agent shared store
 
-`aidememo` uses redb, which holds an **exclusive file lock per process**.
-Two agents that each spawn their own `aidememo mcp` against the same store
-will fight over the lock — one wins, the other gets `Database
-already open. Cannot acquire lock.` Two ways to handle this:
+SQLite is the default backend. The optional redb backend holds an **exclusive
+file lock per process**. Two agents that each spawn their own `aidememo mcp`
+against the same redb store will fight over the lock — one wins, the other gets
+`Database already open. Cannot acquire lock.` Two ways to handle this:
 
 1. **Single shared `aidememo mcp-serve` instance** (recommended for shared
    writes). Run one HTTP/SSE server, point every agent at the same
@@ -613,9 +618,10 @@ already open. Cannot acquire lock.` Two ways to handle this:
    is normal. `aidememo doctor --json` exposes the same threshold in its
    `sharing` block.
 
-Don't try to give multiple agents their own stdio `aidememo mcp` against
-the same redb path — it will work for whichever started first, then
-silently lose writes from the others.
+Don't try to give multiple agents their own stdio `aidememo mcp` against the
+same redb path — it will work for whichever started first, then silently lose
+writes from the others. For default SQLite stores, HTTP `mcp-serve` is still the
+simplest shared warm process.
 
 ### Hardened mcp-serve (Phase 1)
 
@@ -776,7 +782,7 @@ Each binding exposes ~22 methods including `current_only` filtering and
 ```python
 # Python
 import aidememo_python as aidememo
-g = aidememo.AideMemo("./_meta/wiki.redb")
+g = aidememo.AideMemo("./_meta/wiki.sqlite")
 ctx = g.query("Redis", current_only=True)
 g.fact_supersede(old_id, new_id)
 ```
@@ -784,14 +790,14 @@ g.fact_supersede(old_id, new_id)
 ```javascript
 // Node
 const { AideMemoStore } = require('aidememo-napi');
-const g = new AideMemoStore('./_meta/wiki.redb');
+const g = new AideMemoStore('./_meta/wiki.sqlite');
 const hits = JSON.parse(g.search('redis', { limit: 5, currentOnly: true }));
 g.factSupersede(oldId, newId);
 ```
 
 ```elixir
 # Elixir
-g = AideMemoNif.open!("./_meta/wiki.redb")
+g = AideMemoNif.open!("./_meta/wiki.sqlite")
 ctx = AideMemoNif.query(g, "Redis", current_only: true)
 :ok = AideMemoNif.fact_supersede(g, old_id, new_id)
 ```

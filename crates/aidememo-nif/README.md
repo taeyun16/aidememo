@@ -19,7 +19,7 @@ You only need the Rust toolchain installed.
 ## Quick start
 
 ```elixir
-g = AideMemoNif.open!("./_meta/wiki.redb")
+g = AideMemoNif.open!("./_meta/wiki.sqlite")
 
 ctx = AideMemoNif.query(g, "Redis", limit: 5, depth: 2)
 # %{"topic" => "Redis", "entity" => %{...}, "search" => [...], ...}
@@ -35,16 +35,16 @@ AideMemoNif.fact_add(g, "Redis Sentinel provides HA",
 )
 ```
 
-To use the experimental local SQLite backend, compile the NIF with the Cargo
-`sqlite` feature and pass `backend: "sqlite"`:
+SQLite is the default local backend. To open redb stores, compile the NIF with
+the Cargo `redb` feature and pass `backend: "redb"`:
 
 ```bash
 cd crates/aidememo-nif
-AIDEMEMO_NIF_CARGO_FEATURES=sqlite mix compile
+AIDEMEMO_NIF_CARGO_FEATURES=redb mix compile
 ```
 
 ```elixir
-g = AideMemoNif.open!("./_meta/wiki.sqlite", backend: "sqlite")
+g = AideMemoNif.open!("./_meta/wiki.redb", backend: "redb")
 ```
 
 Read methods that return complex shapes (search, query, traverse, lint, …)

@@ -37,7 +37,7 @@ PY
 }
 
 cd "$ROOT_DIR"
-cargo build -p aidememo-cli --features sqlite
+cargo build -p aidememo-cli --features sqlite,redb
 
 mkdir -p "$BASE"
 REDB_HOME="$BASE/home-redb"
@@ -48,6 +48,8 @@ SQLITE_STORE="$BASE/target.sqlite"
 EXPORT="$BASE/export.jsonl"
 MCP_STORE="$BASE/mcp.sqlite"
 mkdir -p "$REDB_HOME" "$SQLITE_HOME" "$WIKI_DIR"
+
+HOME="$REDB_HOME" "$BIN" config set store.backend redb >/dev/null
 
 printf '%s\n' \
     'Redis references [[Sentinel]].' \
