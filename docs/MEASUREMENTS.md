@@ -312,10 +312,11 @@ Runtime promotion status:
   and stops a SQLite-only daemon and checks daemon-discovered BM25 search. Set
   `AIDEMEMO_SQLITE_MCP_SOAK_BACKEND=sqlite` to exercise the canonical spelling.
 * `scripts/storage-backend-sdk-bindings-check.sh` verifies the SDK/binding
-  surface: default SQLite builds, explicit SQLite-only builds, omitted/empty
-  backend arguments inherit the compiled default, `libsqlite` alias opens in
-  native binding tests, and redb-only Cargo feature builds across Python, Node,
-  Elixir, and C.
+  surface: Python compile checks for default SQLite / explicit SQLite-only /
+  redb-only builds, plus backend open/write/header tests for Node, Elixir NIF,
+  and C. The tests cover omitted/empty backend arguments inheriting the
+  compiled default, the `libsqlite` alias, and redb-only Cargo feature builds.
+  Python runtime packaging is covered by `scripts/aidememo-python-pack-smoke.sh`.
 * The CI `storage-backend-compat` job runs the parity, real-corpus diff,
   SQLite MCP soak, and SDK binding backend gates on Ubuntu after lint. That
   keeps redb/SQLite sync/import/archive compatibility, libsqlite runtime

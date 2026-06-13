@@ -106,14 +106,19 @@ fn open_with_backend(env: Env, store_path: String, backend: String) -> Return {
     open_with_config(env, store_path, opt_str(backend))
 }
 
-fn open_with_config(env: Env, store_path: String, backend: Option<String>) -> Return {
+fn open_store(
+    store_path: &str,
+    backend: Option<String>,
+) -> std::result::Result<AideMemo, aidememo_core::AideMemoError> {
     let mut config = Config::default();
-    if let Some(backend) = backend {
-        if config.set("store.backend", &backend).is_err() {
-            return Return::Error(rustler::Error::BadArg);
-        }
+    if let Some(backend) = backend.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        config.set("store.backend", backend)?;
     }
-    match AideMemo::open(Path::new(&store_path), config) {
+    AideMemo::open(Path::new(store_path), config)
+}
+
+fn open_with_config(env: Env, store_path: String, backend: Option<String>) -> Return {
+    match open_store(&store_path, backend) {
         Ok(wiki) => {
             let resource = ResourceArc::new(AideMemoNif {
                 wiki: Arc::new(wiki),
@@ -562,3 +567,97 @@ fn version() -> &'static str {
 }
 
 rustler::init!("Elixir.AideMemoNif.Native", load = load);
+
+#[cfg(all(test, any(feature = "sqlite", feature = "redb")))]
+mod backend_binding_tests {
+    use super::*;
+
+    fn temp_store_path(name: &str, suffix: &str) -> std::path::PathBuf {
+        let unique = format!(
+            "aidememo-nif-{name}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock")
+                .as_nanos()
+        );
+        let dir = std::env::temp_dir().join(unique);
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        dir.join(format!("wiki.{suffix}"))
+    }
+
+    fn assert_backend_file(path: &std::path::Path, backend: &str) {
+        let header = std::fs::read(path).expect("read backend file");
+        match backend {
+            "sqlite" | "libsqlite" => assert_eq!(&header[..16], b"SQLite format 3\0"),
+            "redb" => assert_ne!(&header[..16], b"SQLite format 3\0"),
+            other => panic!("unsupported backend in test: {other}"),
+        }
+    }
+
+    fn expected_default_backend() -> &'static str {
+        if cfg!(all(feature = "redb", not(feature = "sqlite"))) {
+            "redb"
+        } else {
+            "sqlite"
+        }
+    }
+
+    fn assert_open_store_opens_backend(name: &str, backend: Option<&str>, expected_backend: &str) {
+        let path = temp_store_path(name, expected_backend);
+        let store = open_store(path.to_string_lossy().as_ref(), backend.map(str::to_string))
+            .expect("open backend");
+
+        assert_eq!(store.config().store.backend, expected_backend);
+        let entity_id = store
+            .entity_add(EntityInput {
+                name: format!("Elixir{expected_backend}"),
+                entity_type: Some(EntityType::Technology),
+                ..Default::default()
+            })
+            .expect("entity add");
+        store
+            .fact_add(FactInput {
+                content: format!("Elixir NIF opened a {expected_backend} backend"),
+                entity_ids: Some(vec![entity_id]),
+                fact_type: Some(FactType::Note),
+                ..Default::default()
+            })
+            .expect("fact add");
+
+        let stats = store.stats().expect("stats");
+        assert_eq!(stats.entity_count, 1);
+        assert_eq!(stats.fact_count, 1);
+        assert_backend_file(&path, expected_backend);
+    }
+
+    #[test]
+    fn open_without_backend_opens_default_backend() {
+        let expected = expected_default_backend();
+        assert_open_store_opens_backend("default-open", None, expected);
+    }
+
+    #[test]
+    fn open_with_empty_backend_opens_default_backend() {
+        let expected = expected_default_backend();
+        assert_open_store_opens_backend("empty-backend-open", Some(""), expected);
+    }
+
+    #[cfg(feature = "sqlite")]
+    #[test]
+    fn open_with_backend_opens_sqlite_backend() {
+        assert_open_store_opens_backend("sqlite-open", Some("sqlite"), "sqlite");
+    }
+
+    #[cfg(feature = "sqlite")]
+    #[test]
+    fn open_with_backend_opens_libsqlite_alias() {
+        assert_open_store_opens_backend("libsqlite-open", Some("libsqlite"), "libsqlite");
+    }
+
+    #[cfg(feature = "redb")]
+    #[test]
+    fn open_with_backend_opens_redb_backend() {
+        assert_open_store_opens_backend("redb-open", Some("redb"), "redb");
+    }
+}
