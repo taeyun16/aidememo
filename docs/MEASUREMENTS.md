@@ -291,6 +291,11 @@ Runtime promotion status:
 * `scripts/storage-backend-sdk-bindings-check.sh` verifies the SDK/binding
   surface: default SQLite builds, `libsqlite` alias opens in native binding
   tests, and redb-only Cargo feature builds across Python, Node, Elixir, and C.
+* The CI `storage-backend-compat` job runs the parity, real-corpus diff,
+  SQLite MCP soak, and SDK binding backend gates on Ubuntu after lint. That
+  keeps redb/SQLite sync/import/archive compatibility, libsqlite runtime
+  spelling, concurrent SQLite MCP writes, and SDK feature boundaries visible in
+  PR checks instead of relying only on local `ci-local.sh test` runs.
 * `s3` no longer enables the `redb` feature. Its local WAL staging path uses
   SQLite (`wal.sqlite`), so `cargo check -p aidememo-core --no-default-features
   --features s3` proves the S3/manifest code can build without compiling the

@@ -133,6 +133,35 @@ jobs:
       # `cargo test -p aidememo-core --features semantic` already exercises
       # it end-to-end here.
 
+  # Backend replacement compatibility guard. The matrix test job covers the
+  # SQLite-only CLI surface; this job keeps the heavier cross-backend and SDK
+  # gates visible in PR checks without duplicating them on macOS.
+  storage-backend-compat:
+    name: storage backend compatibility
+    needs: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.96.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ubuntu-aidememo-v2
+          save-if: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: storage backend parity
+        run: scripts/storage-backend-parity.sh
+      - name: storage backend real corpus diff
+        run: scripts/storage-backend-real-corpus-diff.sh
+      - name: SQLite MCP soak
+        run: scripts/storage-backend-sqlite-mcp-soak.sh
+      - name: SDK binding backend check
+        run: scripts/storage-backend-sdk-bindings-check.sh
+
   # Upstream-CVE check. Pulls the RustSec advisory DB, parses our
   # committed Cargo.lock, and fails the build on any known-vulnerable
   # transitive dep that isn't on the documented ignore list (see
