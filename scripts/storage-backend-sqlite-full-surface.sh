@@ -137,6 +137,14 @@ am entity alias CacheLayer cache-layer >/dev/null
 am entity describe CacheLayer "Compiled summary stored through the SQLite backend." >/dev/null
 expect_contains "entity get alias" "$(am entity get cache-layer)" "CacheLayer"
 expect_contains "entity show" "$(am entity show CacheLayer)" "Compiled summary"
+am entity add RenameScratch --type project >/dev/null
+expect_contains "entity rename" "$(am entity rename RenameScratch RenamedScratch)" "Renamed"
+expect_contains "entity get renamed" "$(am entity get RenamedScratch)" "RenamedScratch"
+expect_contains "entity delete" "$(am entity delete RenamedScratch)" "Deleted entity"
+if am entity get RenamedScratch >/dev/null 2>&1; then
+    echo "deleted entity RenamedScratch was still retrievable" >&2
+    exit 1
+fi
 
 fact_a_out="$(am fact add \
     "SQLite full surface smoke writes warm cache facts" \
@@ -161,6 +169,18 @@ fact_c_out="$(am fact add \
     --source-id smoke \
     --observed-at 2026-01-03)"
 FACT_C="$(fact_id_from_output "$fact_c_out")"
+
+delete_fact_out="$(am fact add \
+    "SQLite full surface smoke delete candidate" \
+    --entities CacheLayer \
+    --type note \
+    --source-id smoke)"
+DELETE_FACT="$(fact_id_from_output "$delete_fact_out")"
+expect_contains "fact delete" "$(am fact delete "$DELETE_FACT")" "Deleted fact"
+if am fact get "$DELETE_FACT" >/dev/null 2>&1; then
+    echo "deleted fact $DELETE_FACT was still retrievable" >&2
+    exit 1
+fi
 
 am fact supersede "$FACT_B" "$FACT_C" >/dev/null
 am edit fact "$FACT_A" --append "Edited via SQLite full-surface smoke." >/dev/null
@@ -223,4 +243,4 @@ expect_contains "archive dry-run after cold move" "$(am fact archive --ids "$FAC
 
 assert_stats_at_least "$(am_json stats)" 4 5 1
 
-echo "sqlite full-surface ok ($BACKEND): init/ingest/read/write/search/graph/session/workflow/archive/export/import"
+echo "sqlite full-surface ok ($BACKEND): init/ingest/read/write/delete/search/graph/session/workflow/archive/export/import"

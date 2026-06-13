@@ -19,6 +19,10 @@ run "${cargo_cmd[@]}" check -p aidememo-python
 run "${cargo_cmd[@]}" test -p aidememo-napi
 run "${cargo_cmd[@]}" check -p aidememo-nif
 run "${cargo_cmd[@]}" test -p aidememo-ffi
+run "${cargo_cmd[@]}" check -p aidememo-python --no-default-features --features sqlite
+run "${cargo_cmd[@]}" test -p aidememo-napi --no-default-features --features sqlite
+run "${cargo_cmd[@]}" check -p aidememo-nif --no-default-features --features sqlite
+run "${cargo_cmd[@]}" test -p aidememo-ffi --no-default-features --features sqlite
 run "${cargo_cmd[@]}" check -p aidememo-python --no-default-features --features redb
 run "${cargo_cmd[@]}" test -p aidememo-napi --no-default-features --features redb
 run "${cargo_cmd[@]}" check -p aidememo-nif --no-default-features --features redb

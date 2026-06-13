@@ -264,11 +264,12 @@ Runtime promotion status:
   cold-tier archive/search, and 24 concurrent MCP writes through `mcp-serve`.
 * `scripts/storage-backend-sqlite-full-surface.sh` is the SQLite-only
   full-surface smoke: it builds the CLI with `--no-default-features --features
-  sqlite` and exercises init, ingest, entity/fact writes, BM25 search/query,
-  graph traversal, sessions, workflow start, archive, export, and import
-  without redb compiled in. It defaults `store.backend` to the `libsqlite`
-  alias, so the full public surface proves both the canonical SQLite backend
-  and the user-facing libsqlite spelling resolve to the same implementation.
+  sqlite` and exercises init, ingest, entity/fact writes, entity rename/delete,
+  fact delete, BM25 search/query, graph traversal, sessions, workflow start,
+  archive, export, and import without redb compiled in. It defaults
+  `store.backend` to the `libsqlite` alias, so the full public surface proves
+  both the canonical SQLite backend and the user-facing libsqlite spelling
+  resolve to the same implementation.
 * `scripts/storage-backend-sqlite-advanced-surface.sh` is the SQLite-only
   advanced-surface smoke: it builds the same no-default SQLite CLI and verifies
   CLI-level `store.lock_retry_ms` busy-timeout behaviour under a held SQLite
@@ -290,8 +291,9 @@ Runtime promotion status:
   The default local gate writes 200 facts through 16 parallel HTTP MCP callers,
   verifies unique fact IDs, final stats, and BM25 visibility for a tail write.
 * `scripts/storage-backend-sdk-bindings-check.sh` verifies the SDK/binding
-  surface: default SQLite builds, `libsqlite` alias opens in native binding
-  tests, and redb-only Cargo feature builds across Python, Node, Elixir, and C.
+  surface: default SQLite builds, explicit SQLite-only builds, `libsqlite`
+  alias opens in native binding tests, and redb-only Cargo feature builds
+  across Python, Node, Elixir, and C.
 * The CI `storage-backend-compat` job runs the parity, real-corpus diff,
   SQLite MCP soak, and SDK binding backend gates on Ubuntu after lint. That
   keeps redb/SQLite sync/import/archive compatibility, libsqlite runtime
