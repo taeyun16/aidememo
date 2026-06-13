@@ -609,11 +609,11 @@ pub fn version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
 
-#[cfg(all(test, feature = "sqlite"))]
-mod sqlite_binding_tests {
+#[cfg(all(test, any(feature = "sqlite", feature = "redb")))]
+mod backend_binding_tests {
     use super::*;
 
-    fn temp_store_path(name: &str) -> std::path::PathBuf {
+    fn temp_store_path(name: &str, suffix: &str) -> std::path::PathBuf {
         let unique = format!(
             "aidememo-napi-{name}-{}-{}",
             std::process::id(),
@@ -624,25 +624,25 @@ mod sqlite_binding_tests {
         );
         let dir = std::env::temp_dir().join(unique);
         std::fs::create_dir_all(&dir).expect("create temp dir");
-        dir.join("wiki.sqlite")
+        dir.join(format!("wiki.{suffix}"))
     }
 
-    #[test]
-    fn constructor_opens_sqlite_backend() {
-        let path = temp_store_path("sqlite-open");
+    fn assert_constructor_opens_backend(name: &str, backend: &str, suffix: &str) {
+        let path = temp_store_path(name, suffix);
         let store = AideMemoStore::new(
             path.to_string_lossy().into_owned(),
             Some(StoreOpenArgs {
-                backend: Some("sqlite".to_string()),
+                backend: Some(backend.to_string()),
                 durability: None,
             }),
         )
-        .expect("open sqlite backend");
+        .expect("open explicit backend");
+        assert_eq!(store.wiki.config().store.backend, backend);
 
         let entity_id = store
             .wiki
             .entity_add(EntityInput {
-                name: "NodeSQLite".to_string(),
+                name: format!("Node{backend}"),
                 entity_type: Some(EntityType::Technology),
                 ..Default::default()
             })
@@ -650,7 +650,7 @@ mod sqlite_binding_tests {
         store
             .wiki
             .fact_add(FactInput {
-                content: "Node binding opened a SQLite backend".to_string(),
+                content: format!("Node binding opened a {backend} backend"),
                 entity_ids: Some(vec![entity_id]),
                 fact_type: Some(FactType::Note),
                 ..Default::default()
@@ -660,5 +660,17 @@ mod sqlite_binding_tests {
         let stats = store.wiki.stats().expect("stats");
         assert_eq!(stats.entity_count, 1);
         assert_eq!(stats.fact_count, 1);
+    }
+
+    #[cfg(feature = "sqlite")]
+    #[test]
+    fn constructor_opens_sqlite_backend() {
+        assert_constructor_opens_backend("sqlite-open", "sqlite", "sqlite");
+    }
+
+    #[cfg(feature = "redb")]
+    #[test]
+    fn constructor_opens_redb_backend() {
+        assert_constructor_opens_backend("redb-open", "redb", "redb");
     }
 }

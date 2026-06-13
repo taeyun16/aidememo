@@ -826,11 +826,11 @@ pub extern "C" fn aidememo_stats(store: *const AideMemoStore) -> *mut c_char {
     })
 }
 
-#[cfg(all(test, feature = "sqlite"))]
-mod sqlite_binding_tests {
+#[cfg(all(test, any(feature = "sqlite", feature = "redb")))]
+mod backend_binding_tests {
     use super::*;
 
-    fn temp_store_path(name: &str) -> std::path::PathBuf {
+    fn temp_store_path(name: &str, suffix: &str) -> std::path::PathBuf {
         let unique = format!(
             "aidememo-ffi-{name}-{}-{}",
             std::process::id(),
@@ -841,21 +841,36 @@ mod sqlite_binding_tests {
         );
         let dir = std::env::temp_dir().join(unique);
         std::fs::create_dir_all(&dir).expect("create temp dir");
-        dir.join("wiki.sqlite")
+        dir.join(format!("wiki.{suffix}"))
     }
 
-    #[test]
-    fn open_with_backend_opens_sqlite_backend() {
-        let path =
-            std::ffi::CString::new(temp_store_path("sqlite-open").to_string_lossy().as_ref())
-                .expect("path cstring");
-        let backend = std::ffi::CString::new("sqlite").expect("backend cstring");
+    fn assert_open_with_backend_opens_backend(name: &str, backend: &str, suffix: &str) {
+        let path = std::ffi::CString::new(temp_store_path(name, suffix).to_string_lossy().as_ref())
+            .expect("path cstring");
+        let backend = std::ffi::CString::new(backend).expect("backend cstring");
         let store = aidememo_open_with_backend(path.as_ptr(), backend.as_ptr());
         assert!(!store.is_null());
+        let store_ref = unsafe { store.as_ref() }.expect("store ref");
+        assert_eq!(
+            store_ref.wiki.config().store.backend,
+            backend.to_str().expect("backend utf8")
+        );
 
         let stats = aidememo_stats(store);
         assert!(!stats.is_null());
         aidememo_free_string(stats);
         aidememo_close(store);
+    }
+
+    #[cfg(feature = "sqlite")]
+    #[test]
+    fn open_with_backend_opens_sqlite_backend() {
+        assert_open_with_backend_opens_backend("sqlite-open", "sqlite", "sqlite");
+    }
+
+    #[cfg(feature = "redb")]
+    #[test]
+    fn open_with_backend_opens_redb_backend() {
+        assert_open_with_backend_opens_backend("redb-open", "redb", "redb");
     }
 }
