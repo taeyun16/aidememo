@@ -168,6 +168,11 @@ ok, detail = has_tokens(
 )
 append_status(checks, "aidememo-python", "session/pinned docs", ok, detail, detail)
 ok, detail = has_tokens(
+    "crates/aidememo-python/README.md",
+    ['backend="sqlite"', 'backend="libsqlite"', 'backend="redb"', "Cargo `redb` feature"],
+)
+append_status(checks, "aidememo-python", "backend selector docs", ok, detail, detail)
+ok, detail = has_tokens(
     "crates/aidememo-python/src/lib.rs",
     ["session_id", "fn pinned_facts", "fn fact_pin", "attach_session_entity"],
 )
@@ -191,6 +196,16 @@ ok, detail = has_tokens(
     ["sessionId", "factAddMany", "factPin", "pinnedFacts"],
 )
 append_status(checks, "aidememo-napi", "session/pinned docs", ok, detail, detail)
+ok, detail = has_tokens(
+    "crates/aidememo-napi/README.md",
+    ["backend: 'sqlite'", "backend: 'libsqlite'", "backend: 'redb'", "Cargo `redb` feature"],
+)
+append_status(checks, "aidememo-napi", "backend selector docs", ok, detail, detail)
+ok, detail = has_tokens(
+    "crates/aidememo-napi/src/lib.rs",
+    ['"sqlite"', '"libsqlite"', '"redb"', "Cargo `redb` feature"],
+)
+append_status(checks, "aidememo-napi", "backend selector API", ok, detail, detail)
 ok, detail = has_tokens(
     "crates/aidememo-napi/src/lib.rs",
     ["session_id", "pub fn pinned_facts", "pub fn fact_pin", "attach_session_entity"],
@@ -218,6 +233,22 @@ ok, detail = has_tokens(
     ["test_pyo3_backend_preserves_session_and_context_scope", "pinned_facts", "session_id"],
 )
 append_status(checks, "aidememo-agent-sdk", "backend parity tests", ok, detail, detail)
+
+ok, detail = has_tokens(
+    "crates/aidememo-nif/README.md",
+    ['backend: "sqlite"', 'backend: "libsqlite"', 'backend: "redb"', "Cargo `redb` feature"],
+)
+append_status(checks, "aidememo-nif", "backend selector docs", ok, detail, detail)
+ok, detail = has_tokens(
+    "crates/aidememo-ffi/README.md",
+    ['"sqlite"', '"libsqlite"', '"redb"', "Cargo `redb`"],
+)
+append_status(checks, "aidememo-ffi", "backend selector docs", ok, detail, detail)
+ok, detail = has_tokens(
+    "crates/aidememo-ffi/include/aidememo.h",
+    ['"sqlite"', '"libsqlite"', '"redb"', "`redb` Cargo feature"],
+)
+append_status(checks, "aidememo-ffi", "backend selector header", ok, detail, detail)
 
 optional_scenario_k(checks)
 

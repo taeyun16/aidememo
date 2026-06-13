@@ -145,8 +145,9 @@ pub extern "C" fn aidememo_open(path: *const c_char) -> *mut AideMemoStore {
 }
 
 /// Open or create a store at `path` using an explicit backend.
-/// `backend` may be NULL or empty for the default SQLite backend.
-/// Use "redb" only when this library was built with the `redb` Cargo feature.
+/// `backend` may be NULL or empty for the default SQLite backend, "sqlite" or
+/// "libsqlite" for the SQLite path, or "redb" when built with the Cargo
+/// `redb` feature.
 #[unsafe(no_mangle)]
 pub extern "C" fn aidememo_open_with_backend(
     path: *const c_char,

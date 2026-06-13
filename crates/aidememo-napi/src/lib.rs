@@ -200,6 +200,8 @@ pub struct FactListArgs {
 
 #[napi(object)]
 pub struct StoreOpenArgs {
+    /// Storage backend selector: "sqlite" or "libsqlite" in default builds;
+    /// "redb" requires the Cargo `redb` feature.
     pub backend: Option<String>,
     pub durability: Option<String>,
 }

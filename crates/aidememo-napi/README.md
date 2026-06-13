@@ -137,7 +137,7 @@ try {
 
 | Method | Returns |
 |---|---|
-| `new AideMemoStore(path, args?)` | store handle; defaults to SQLite. `args.backend` may be `"sqlite"` in default builds or `"redb"` when built with the Cargo `redb` feature |
+| `new AideMemoStore(path, args?)` | store handle; defaults to SQLite. `args.backend` may be `"sqlite"` or `"libsqlite"` in default builds, or `"redb"` when built with the Cargo `redb` feature |
 | `search(query, args?)` | JSON string: `SearchResult[]` |
 | `query(topic, args?)` | JSON string: `QueryResult` |
 | `workflowStart(title, args?)` | JSON string: workflow context pack |
