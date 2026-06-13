@@ -30,12 +30,60 @@ FORBIDDEN_GLOBS = [
     "plugins/hermes/**/*.md",
     "plugins/hermes/pyproject.toml",
     "crates/aidememo-cli/src/**/*.rs",
+    "crates/*/README.md",
 ]
 
 FORBIDDEN_PATTERNS = [
     (re.compile(r"\ba aidememo\b"), "Use 'an AideMemo' or a backticked CLI/package name."),
     (re.compile(r"\bthe aidememo\b"), "Use 'AideMemo' or a precise noun such as 'AideMemo store'."),
     (re.compile(r"\bin the aidememo\b"), "Use 'in AideMemo' or a precise noun such as 'in the AideMemo store'."),
+    (
+        re.compile(r"\bredb\s+by\s+default\b", re.IGNORECASE),
+        "SQLite is the default backend; describe redb as an optional Cargo feature.",
+    ),
+    (
+        re.compile(r"\bredb\s+default\s+(?:store|backend)\b", re.IGNORECASE),
+        "SQLite is the default backend; describe redb as an optional Cargo feature.",
+    ),
+    (
+        re.compile(r"\bexperimental\s+SQLite\b", re.IGNORECASE),
+        "SQLite is the default backend; describe redb as the optional path.",
+    ),
+    (
+        re.compile(r"\bSQLite\b.{0,40}\bbehind\s+(?:a\s+)?(?:feature|feature flag)\b", re.IGNORECASE),
+        "SQLite is in default builds; only redb should be described as feature-gated.",
+    ),
+]
+
+STORAGE_POSITIONING_REQUIREMENTS = [
+    (
+        ROOT / "README.md",
+        [
+            "SQLite default / redb optional",
+            "Build with `--features redb` to opt into redb",
+        ],
+    ),
+    (
+        ROOT / "AGENTS.md",
+        [
+            "SQLite by default, redb as an optional Cargo feature",
+            "language bindings (full API; SQLite default, optional `redb` Cargo feature)",
+        ],
+    ),
+    (
+        ROOT / "docs" / "SDK.md",
+        [
+            "Default builds include SQLite",
+            "Build with Cargo `redb` when you",
+        ],
+    ),
+    (
+        ROOT / "docs" / "OPERATIONS.md",
+        [
+            "SQLite is the default backend",
+            "The optional redb backend",
+        ],
+    ),
 ]
 
 
@@ -138,6 +186,22 @@ def check_stale_wording() -> list[str]:
     return errors
 
 
+def check_storage_positioning() -> list[str]:
+    errors: list[str] = []
+    for path, tokens in STORAGE_POSITIONING_REQUIREMENTS:
+        text = path.read_text(encoding="utf-8")
+        normalized_text = re.sub(r"\s+", " ", text)
+        rel = path.relative_to(ROOT)
+        for token in tokens:
+            normalized_token = re.sub(r"\s+", " ", token)
+            if normalized_token not in normalized_text:
+                errors.append(
+                    f"{rel}: missing storage positioning token {token!r}; "
+                    "public docs must keep SQLite as default and redb as optional"
+                )
+    return errors
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -151,6 +215,7 @@ def main() -> int:
     errors = []
     errors.extend(check_feature_inventory(binary))
     errors.extend(check_stale_wording())
+    errors.extend(check_storage_positioning())
 
     if errors:
         print("docs feature gate failed:", file=sys.stderr)

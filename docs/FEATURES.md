@@ -126,7 +126,7 @@ as the CLI. Default builds include the local SQLite backend; build with Cargo
 
 ## Gate contract
 
-`scripts/docs-feature-gate.py` enforces three drift checks:
+`scripts/docs-feature-gate.py` enforces four drift checks:
 
 1. Every command listed by `aidememo --help` must appear in this page as
    `` `aidememo <command>` ``.
@@ -134,7 +134,9 @@ as the CLI. Default builds include the local SQLite backend; build with Cargo
    this page as a backticked tool name.
 3. The Docusaurus sidebar must include this page, and public-facing docs/source
    strings must not contain known stale lowercase product wording.
+4. Public storage positioning must continue to describe SQLite as the default
+   backend and redb as the optional Cargo-feature backend.
 
 The gate cannot prove that prose is semantically perfect. It does make feature
 drift noisy: adding or renaming a CLI command or MCP tool without updating this
-inventory fails CI.
+inventory, or reverting the storage positioning, fails CI.
