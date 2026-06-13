@@ -3980,7 +3980,8 @@ mod tests {
                 "title": "Fix Redis timeout in worker",
                 "body": "Worker jobs are timing out against Redis",
                 "source": "github:org/repo#123",
-                "source_id": "alpha"
+                "source_id": "alpha",
+                "bm25_only": true
             }),
             &wiki,
         )
@@ -4189,8 +4190,11 @@ mod tests {
         // bypassing the public API, so this is a smoke check.
         let (_dir, wiki) = open_temp_wiki();
         add_fact(&wiki, "an old decision about caching", "Redis");
-        let result =
-            tool_search(&json!({"query": "caching", "since": "2020-01-01"}), &wiki).unwrap();
+        let result = tool_search(
+            &json!({"query": "caching", "since": "2020-01-01", "bm25_only": true}),
+            &wiki,
+        )
+        .unwrap();
         assert!(result.is_error.is_none());
     }
 
