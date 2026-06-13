@@ -5,6 +5,9 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PY_DIR="$ROOT_DIR/crates/aidememo-python"
 EXPECT_VERSION="${AIDEMEMO_PYTHON_EXPECT_VERSION:-}"
+BUILD_FEATURES="${AIDEMEMO_PYTHON_PACK_SMOKE_FEATURES:-}"
+NO_DEFAULT_FEATURES="${AIDEMEMO_PYTHON_PACK_SMOKE_NO_DEFAULT_FEATURES:-0}"
+SMOKE_BACKEND="${AIDEMEMO_PYTHON_SMOKE_BACKEND:-sqlite}"
 BASE="${AIDEMEMO_PYTHON_PACK_SMOKE_BASE:-$(mktemp -d "${TMPDIR:-/tmp}/aidememo-python-pack-smoke.XXXXXX")}"
 SUMMARY_TSV="$BASE/aidememo-python-pack-smoke.tsv"
 tmp_dir=""
@@ -158,7 +161,22 @@ venv_dir="$tmp_dir/venv"
 mkdir -p "$wheel_dir"
 
 run_labeled "create virtualenv" "$ROOT_DIR/scripts/uv.sh" venv --seed -p "$PYO3_PYTHON" "$venv_dir"
-run_labeled "maturin build --release" bash -lc "cd '$PY_DIR' && '$ROOT_DIR/scripts/maturin.sh' build --release -i '$venv_dir/bin/python' -o '$wheel_dir'"
+
+build_args=(build --release)
+build_label="maturin build --release"
+if [[ "$NO_DEFAULT_FEATURES" == "1" || "$NO_DEFAULT_FEATURES" == "true" ]]; then
+    build_args+=(--no-default-features)
+    build_label+=" --no-default-features"
+fi
+if [[ -n "$BUILD_FEATURES" ]]; then
+    build_args+=(--features "$BUILD_FEATURES")
+    build_label+=" --features $BUILD_FEATURES"
+fi
+build_args+=(-i "$venv_dir/bin/python" -o "$wheel_dir")
+
+run_labeled "$build_label" \
+    bash -lc 'cd "$1" && shift && exec "$@"' \
+    _ "$PY_DIR" "$ROOT_DIR/scripts/maturin.sh" "${build_args[@]}"
 
 wheel="$(
     find "$wheel_dir" -maxdepth 1 -type f -name 'aidememo_python-*.whl' | sort | head -n 1
@@ -169,7 +187,7 @@ if [[ -z "$wheel" ]]; then
 fi
 
 run_labeled "install built wheel" "$venv_dir/bin/python" -m pip --disable-pip-version-check install "$wheel"
-run_labeled "run Python binding smoke" "$venv_dir/bin/python" "$PY_DIR/tests/smoke.py"
+run_labeled "run Python binding smoke ($SMOKE_BACKEND)" env AIDEMEMO_PYTHON_SMOKE_BACKEND="$SMOKE_BACKEND" "$venv_dir/bin/python" "$PY_DIR/tests/smoke.py"
 run_labeled "verify installed aidememo-python version" "$venv_dir/bin/python" - "$version" <<'PY'
 import importlib.metadata
 import sys

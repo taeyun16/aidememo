@@ -11,11 +11,33 @@ import tempfile
 import aidememo_python as aidememo
 
 
+SQLITE_HEADER = b"SQLite format 3\x00"
+
+
+def smoke_backend() -> str:
+    backend = os.environ.get("AIDEMEMO_PYTHON_SMOKE_BACKEND", "sqlite").strip().lower()
+    if backend in {"", "libsqlite"}:
+        return "sqlite"
+    if backend not in {"sqlite", "redb"}:
+        raise AssertionError(f"unsupported AIDEMEMO_PYTHON_SMOKE_BACKEND={backend!r}")
+    return backend
+
+
+def assert_backend_file(path: str, backend: str) -> None:
+    with open(path, "rb") as handle:
+        header = handle.read(16)
+    if backend == "sqlite":
+        assert header == SQLITE_HEADER, header
+    elif backend == "redb":
+        assert header != SQLITE_HEADER, "redb backend produced a SQLite store file"
+
+
 def main() -> None:
     tmp = tempfile.mkdtemp(prefix="aidememo-py-smoke-")
-    db = os.path.join(tmp, "test.sqlite")
+    backend = smoke_backend()
+    db = os.path.join(tmp, f"test.{backend}")
     try:
-        g = aidememo.AideMemo(db)
+        g = aidememo.AideMemo(db, backend=backend)
 
         # Entity CRUD
         eid_redis = g.entity_add(
@@ -56,6 +78,7 @@ def main() -> None:
         fact = g.fact_get(fid)
         assert fact["content"].startswith("Redis Sentinel")
         assert fact["source_id"] == "team-a"
+        assert_backend_file(db, backend)
 
         g.fact_pin(fid, True)
         pinned = g.pinned_facts(limit=5)
@@ -188,7 +211,7 @@ def main() -> None:
         g.relation_remove("Redis", "Postgres", "alternative_to")
         g.entity_delete("Postgres")
 
-        print("OK: aidememo-python smoke test passed")
+        print(f"OK: aidememo-python smoke test passed ({backend})")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
