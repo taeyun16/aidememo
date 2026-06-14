@@ -100,6 +100,7 @@ fn main() {
         cmd::Command::Bench(sub) => cmd::bench::run_bench(&store_path, config, sub, json),
         cmd::Command::Skill(sub) => cmd::skill::run_skill(sub, json),
         cmd::Command::Backup(sub) => handle_backup(&store_path, config, sub, json),
+        cmd::Command::Branch(sub) => handle_branch(&store_path, config, sub, json),
         cmd::Command::Export(sub) => handle_export(&store_path, config, sub),
         cmd::Command::Import(sub) => handle_import(&store_path, config, sub),
         cmd::Command::Stats(sub) => handle_stats(&store_path, config, sub, json),
@@ -365,6 +366,162 @@ fn render_backup_restore(
         report.source,
         previous,
         report.removed_sidecars.len()
+    ))
+}
+
+fn handle_branch(
+    path: &Path,
+    config: Config,
+    sub: cmd::BranchSub,
+    global_json: bool,
+) -> Result<String, AideMemoError> {
+    match sub {
+        cmd::BranchSub::Push {
+            branch,
+            base,
+            json,
+            destination,
+        } => {
+            let json = json || global_json;
+            let base_manifest = match base.as_deref() {
+                Some(base) => Some(read_branch_base_manifest(base)?),
+                None => None,
+            };
+            if aidememo_core::backup::is_s3_uri(&destination) {
+                #[cfg(feature = "s3")]
+                {
+                    let rt = tokio::runtime::Runtime::new().map_err(|source| {
+                        AideMemoError::Internal(format!("create Tokio runtime: {source}"))
+                    })?;
+                    let report = rt.block_on(aidememo_core::branch::push_s3_branch(
+                        path,
+                        config,
+                        &branch,
+                        base_manifest.as_ref(),
+                        &destination,
+                    ))?;
+                    render_branch_push(&report, json)
+                }
+                #[cfg(not(feature = "s3"))]
+                {
+                    let _ = (path, config, branch, base_manifest);
+                    Err(AideMemoError::InvalidInput(
+                        "S3 branch push requires a CLI build with `--features s3`".to_string(),
+                    ))
+                }
+            } else {
+                let report = aidememo_core::branch::push_local_branch(
+                    path,
+                    config,
+                    &branch,
+                    base_manifest.as_ref(),
+                    Path::new(&destination),
+                )?;
+                render_branch_push(&report, json)
+            }
+        }
+        cmd::BranchSub::Merge {
+            branch,
+            json,
+            source,
+        } => {
+            let json = json || global_json;
+            if aidememo_core::backup::is_s3_uri(&source) {
+                #[cfg(feature = "s3")]
+                {
+                    let rt = tokio::runtime::Runtime::new().map_err(|source| {
+                        AideMemoError::Internal(format!("create Tokio runtime: {source}"))
+                    })?;
+                    let report = rt.block_on(aidememo_core::branch::merge_s3_branches(
+                        path,
+                        config,
+                        &source,
+                        branch.as_deref(),
+                    ))?;
+                    render_branch_merge(&report, json)
+                }
+                #[cfg(not(feature = "s3"))]
+                {
+                    let _ = (path, config, branch);
+                    Err(AideMemoError::InvalidInput(
+                        "S3 branch merge requires a CLI build with `--features s3`".to_string(),
+                    ))
+                }
+            } else {
+                let report = aidememo_core::branch::merge_local_branches(
+                    path,
+                    config,
+                    Path::new(&source),
+                    branch.as_deref(),
+                )?;
+                render_branch_merge(&report, json)
+            }
+        }
+    }
+}
+
+fn read_branch_base_manifest(
+    source: &str,
+) -> Result<aidememo_core::backup::BackupManifest, AideMemoError> {
+    if aidememo_core::backup::is_s3_uri(source) {
+        #[cfg(feature = "s3")]
+        {
+            let rt = tokio::runtime::Runtime::new().map_err(|source| {
+                AideMemoError::Internal(format!("create Tokio runtime: {source}"))
+            })?;
+            return rt.block_on(aidememo_core::backup::read_s3_backup_manifest(source));
+        }
+        #[cfg(not(feature = "s3"))]
+        {
+            return Err(AideMemoError::InvalidInput(
+                "S3 branch base requires a CLI build with `--features s3`".to_string(),
+            ));
+        }
+    }
+    aidememo_core::backup::read_local_backup_manifest(Path::new(source))
+}
+
+fn render_branch_push(
+    report: &aidememo_core::branch::BranchPushReport,
+    json: bool,
+) -> Result<String, AideMemoError> {
+    if json {
+        return serde_json::to_string_pretty(report).map_err(|source| AideMemoError::Serialize {
+            context: "branch push report".to_string(),
+            source,
+        });
+    }
+    Ok(format!(
+        "branch pushed: {}\nsegment: {}\nmanifest: {}\nrecords: {}\nmode: {:?}",
+        report.branch_id,
+        report.segment_uri,
+        report.manifest_uri,
+        report.records_exported,
+        report.export_mode
+    ))
+}
+
+fn render_branch_merge(
+    report: &aidememo_core::branch::BranchMergeReport,
+    json: bool,
+) -> Result<String, AideMemoError> {
+    if json {
+        return serde_json::to_string_pretty(report).map_err(|source| AideMemoError::Serialize {
+            context: "branch merge report".to_string(),
+            source,
+        });
+    }
+    Ok(format!(
+        "branch merge complete: {}\nsegments: {}\n+{} entities, +{} facts, +{} relations\nskipped: {} entities, {} facts, {} relations\nerrors: {}",
+        report.source,
+        report.segments_merged,
+        report.entities_inserted,
+        report.facts_inserted,
+        report.relations_inserted,
+        report.entities_skipped,
+        report.facts_skipped,
+        report.relations_skipped,
+        report.errors
     ))
 }
 

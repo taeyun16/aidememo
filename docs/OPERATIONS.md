@@ -133,3 +133,41 @@ aidememo --store ~/.aidememo/wiki.sqlite backup restore s3://my-bucket/aidememo/
 The S3 path is for backup storage, not for using S3 as the live database.
 Restores replace the local SQLite store and remove stale SQLite WAL/SHM and
 HNSW sidecar files next to the target.
+
+## Share cloud agent branches
+
+For agents that run on separate machines, start from a backup snapshot and push
+per-agent branch logs instead of letting every worker write the same hot SQLite
+file. The backup manifest records a sync cursor; `branch push --base` uses that
+cursor to export only the records written after the baseline. This is also the
+right shape for what-if memory experiments: fork several candidate stores from
+one backup, let each attempt write local lessons, merge the best branch, and
+leave the rest unmerged.
+
+```bash
+# Coordinator creates a baseline snapshot.
+aidememo --store ./coordinator.sqlite backup create ./shared
+
+# Agent restores the baseline, writes local memory, then pushes a branch segment.
+aidememo --store ./agent-a.sqlite backup restore ./shared/backup-01... --force
+aidememo --store ./agent-a.sqlite fact add "Agent A learned X" --entities AgentA --type lesson
+aidememo --store ./agent-a.sqlite branch push \
+  --branch agent-a \
+  --base ./shared/backup-01... \
+  ./shared
+
+# Coordinator merges one branch, or omit --branch to merge every branch under SOURCE.
+aidememo --store ./coordinator.sqlite branch merge --branch agent-a ./shared
+```
+
+With `--features s3`, the same commands accept `s3://bucket/prefix` for the
+backup and branch-log locations. S3 branch payloads are zstd-compressed JSONL
+segments with a manifest containing byte counts and SHA-256 checksums.
+
+This is not full multi-master conflict resolution. Merge currently relies on
+the existing idempotent `sync_import` path: duplicate entities, facts, and
+relations are skipped, while independent new facts are appended. Use distinct
+branch ids per cloud agent or worker, and treat semantic conflict handling
+between competing decisions as an application policy for now. See
+[`Branch Logs`](BRANCHES.md) for the speculative experiment workflow and
+storage layout.

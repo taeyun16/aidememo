@@ -262,7 +262,7 @@ impl PyAideMemo {
             config.set("store.durability", &dur).map_err(map_err)?;
         }
         if let Some(backend) = backend.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-            config.set("store.backend", &backend).map_err(map_err)?;
+            config.set("store.backend", backend).map_err(map_err)?;
         }
         let wiki = AideMemo::open(Path::new(&store_path), config).map_err(map_err)?;
         Ok(Self(Arc::new(wiki)))
@@ -645,6 +645,67 @@ impl PyAideMemo {
     fn stats(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let stats = self.0.stats().map_err(map_err)?;
         to_py(py, &stats)
+    }
+
+    // === Branch logs ===
+
+    /// Push a local branch segment for this open store. For S3 branch targets,
+    /// use the CLI build with `--features s3`.
+    #[pyo3(signature = (branch, destination, base=None))]
+    fn branch_push(
+        &self,
+        py: Python<'_>,
+        branch: String,
+        destination: String,
+        base: Option<String>,
+    ) -> PyResult<Py<PyAny>> {
+        if aidememo_core::backup::is_s3_uri(&destination)
+            || base
+                .as_deref()
+                .is_some_and(aidememo_core::backup::is_s3_uri)
+        {
+            return Err(PyErr::new::<AideMemoInvalidInputError, _>(
+                "S3 branch push requires the aidememo CLI built with `--features s3`",
+            ));
+        }
+        let base_manifest = match base.as_deref() {
+            Some(path) => Some(
+                aidememo_core::backup::read_local_backup_manifest(Path::new(path))
+                    .map_err(map_err)?,
+            ),
+            None => None,
+        };
+        let report = aidememo_core::branch::push_local_branch_for_wiki(
+            &self.0,
+            &branch,
+            base_manifest.as_ref(),
+            Path::new(&destination),
+        )
+        .map_err(map_err)?;
+        to_py(py, &report)
+    }
+
+    /// Merge local branch segments into this open store. For S3 branch sources,
+    /// use the CLI build with `--features s3`.
+    #[pyo3(signature = (source, branch=None))]
+    fn branch_merge(
+        &self,
+        py: Python<'_>,
+        source: String,
+        branch: Option<String>,
+    ) -> PyResult<Py<PyAny>> {
+        if aidememo_core::backup::is_s3_uri(&source) {
+            return Err(PyErr::new::<AideMemoInvalidInputError, _>(
+                "S3 branch merge requires the aidememo CLI built with `--features s3`",
+            ));
+        }
+        let report = aidememo_core::branch::merge_local_branches_for_wiki(
+            &self.0,
+            Path::new(&source),
+            branch.as_deref(),
+        )
+        .map_err(map_err)?;
+        to_py(py, &report)
     }
 }
 

@@ -116,6 +116,29 @@ For a multi-agent shared store, pass `sourceId` on writes and reads. The same
 field flows through `search`, `query`, `factList`, `factAdd`, `factAddMany`,
 and `workflowStart`.
 
+## Branch logs
+
+Use `branchPush` / `branchMerge` when a Node agent or plugin forks a memory
+store for speculative work and wants to merge only the winning branch.
+
+```js
+const candidate = new AideMemoStore('./candidate-b.sqlite', { backend: 'libsqlite' });
+const pushed = JSON.parse(candidate.branchPush('candidate-b', './shared', {
+  base: './shared/backup-01...',
+}));
+
+const main = new AideMemoStore('./main.sqlite', { backend: 'libsqlite' });
+const merged = JSON.parse(main.branchMerge('./shared', {
+  branch: 'candidate-b',
+}));
+
+console.log(pushed.records_exported, merged.facts_inserted);
+```
+
+Local branch paths use the already-open native store handle, so SDK/plugin code
+does not reopen the same database file. S3 branch URIs should use the CLI
+`aidememo branch ...` commands from a build compiled with `--features s3`.
+
 ## Errors
 
 Native failures throw JavaScript `Error` objects. The N-API `error.code` is
@@ -148,3 +171,4 @@ try {
 | `factPin`, `pinnedFacts` | always-loaded facts |
 | `relationAdd/remove`, `relationsGet` | relation operations |
 | `ingest(wikiRoot, incremental?)`, `lint()`, `stats()` | maintenance |
+| `branchPush(branch, destination, args?)`, `branchMerge(source, args?)` | JSON string branch-log reports |

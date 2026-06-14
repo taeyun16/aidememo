@@ -565,6 +565,67 @@ class AideMemoClient:
             return list(self._py.fact_add_many(py_items))
         return []
 
+    # ------------------------------------------------------------------
+    # Branch log API
+    # ------------------------------------------------------------------
+
+    def branch_push(
+        self,
+        branch: str,
+        destination: str | os.PathLike,
+        *,
+        base: str | os.PathLike | None = None,
+    ) -> dict:
+        """Push this store's branch segment to a local directory or S3 prefix.
+
+        Local paths use the in-process binding when available. S3 targets fall
+        back to the CLI so the user's `aidememo --features s3` build controls
+        credentials, compression, and AWS SDK behavior.
+        """
+
+        branch = str(branch).strip()
+        destination_s = str(destination)
+        base_s = str(base) if base is not None else None
+        if self._py is not None and not _is_s3_uri(destination_s) and not _is_s3_uri(base_s):
+            try:
+                return self._py.branch_push(branch, destination_s, base=base_s)
+            except AttributeError as exc:
+                raise AideMemoUnavailable(
+                    "installed aidememo-python does not expose branch_push; "
+                    "rebuild/install the current aidememo-python package"
+                ) from exc
+        args = ["branch", "push", "--branch", branch]
+        if base_s:
+            args += ["--base", base_s]
+        args.append(destination_s)
+        return self._cli_json(args)
+
+    def branch_merge(
+        self,
+        source: str | os.PathLike,
+        *,
+        branch: str | None = None,
+    ) -> dict:
+        """Merge branch segments from a local directory or S3 prefix."""
+
+        source_s = str(source)
+        branch_s = str(branch).strip() if branch is not None else None
+        if branch_s == "":
+            branch_s = None
+        if self._py is not None and not _is_s3_uri(source_s):
+            try:
+                return self._py.branch_merge(source_s, branch=branch_s)
+            except AttributeError as exc:
+                raise AideMemoUnavailable(
+                    "installed aidememo-python does not expose branch_merge; "
+                    "rebuild/install the current aidememo-python package"
+                ) from exc
+        args = ["branch", "merge"]
+        if branch_s:
+            args += ["--branch", branch_s]
+        args.append(source_s)
+        return self._cli_json(args)
+
     def _source_id(self, source_id: str | None) -> str | None:
         return _normalise_source_id(source_id) or self.default_source_id
 
@@ -674,6 +735,10 @@ def _normalise_storage_backend(backend: Any) -> str | None:
         return None
     backend = str(backend).strip()
     return backend or None
+
+
+def _is_s3_uri(value: Any) -> bool:
+    return isinstance(value, str) and value.startswith("s3://")
 
 
 # Crockford's ULID alphabet: 26 chars, [0-9A-HJKMNP-TV-Z] (no I, L, O,

@@ -63,7 +63,7 @@ impl StoreKind {
     pub fn is_redb(&self) -> bool {
         #[cfg(feature = "redb")]
         {
-            return matches!(self, Self::Redb(_));
+            matches!(self, Self::Redb(_))
         }
         #[cfg(not(feature = "redb"))]
         {

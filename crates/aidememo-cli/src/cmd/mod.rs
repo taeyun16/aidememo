@@ -69,6 +69,7 @@ pub enum Command {
     Bench(BenchSub),
     Skill(SkillSub),
     Backup(BackupSub),
+    Branch(BranchSub),
     Export(ExportSub),
     Import(ImportSub),
     Stats(StatsSub),
@@ -376,6 +377,21 @@ pub enum BackupSub {
 }
 
 #[derive(Debug, Clone)]
+pub enum BranchSub {
+    Push {
+        branch: String,
+        base: Option<String>,
+        json: bool,
+        destination: String,
+    },
+    Merge {
+        branch: Option<String>,
+        json: bool,
+        source: String,
+    },
+}
+
+#[derive(Debug, Clone)]
 pub struct ImportSub {
     pub path: Option<PathBuf>,
 }
@@ -484,6 +500,7 @@ pub fn build_cli() -> OptionParser<Args> {
         bench_cmd,
         skill_cmd,
         backup_command(),
+        branch_command(),
         export_command(),
         import_command(),
         stats_command(),
@@ -603,6 +620,56 @@ fn backup_command() -> impl Parser<Command> {
         .to_options()
         .command("backup")
         .help("Create or restore SQLite snapshot backups. S3 targets require the `s3` feature.")
+}
+
+fn branch_command() -> impl Parser<Command> {
+    let branch = long("branch")
+        .short('b')
+        .help("Branch id for this agent or worker (ASCII letters, digits, '.', '-', '_')")
+        .argument::<String>("ID");
+    let base = long("base")
+        .help("Baseline backup directory or S3 prefix. When present, push emits only changes after that backup cursor.")
+        .argument::<String>("BACKUP")
+        .optional();
+    let json = long("json")
+        .help("Emit JSON output for this branch command")
+        .switch();
+    let destination = positional::<String>("DESTINATION")
+        .help("Local branch-log directory or S3 prefix (s3://bucket/prefix)");
+    let push = construct!(BranchSub::Push {
+        branch,
+        base,
+        json,
+        destination,
+    })
+    .to_options()
+    .command("push")
+    .help("Export this store's branch segment to a shared branch-log location.");
+
+    let branch = long("branch")
+        .short('b')
+        .help("Merge only this branch id. Omit to merge every branch under SOURCE.")
+        .argument::<String>("ID")
+        .optional();
+    let json = long("json")
+        .help("Emit JSON output for this branch command")
+        .switch();
+    let source = positional::<String>("SOURCE")
+        .help("Local branch-log directory or S3 prefix (s3://bucket/prefix)");
+    let merge = construct!(BranchSub::Merge {
+        branch,
+        json,
+        source,
+    })
+    .to_options()
+    .command("merge")
+    .help("Verify and import branch segments from a shared branch-log location.");
+
+    construct!([push, merge])
+        .map(Command::Branch)
+        .to_options()
+        .command("branch")
+        .help("Push or merge append-only memory branch logs. S3 targets require the `s3` feature.")
 }
 
 fn session_command() -> impl Parser<Command> {

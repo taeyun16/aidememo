@@ -65,11 +65,22 @@ mem.remember(
     source_id="codex-aidememo",
     session_id=pack["session_id"],
 )
+
+branch = mem.branch_push(
+    "candidate-b",
+    "./shared",
+    base="./shared/backup-01...",
+)
+print(branch["records_exported"])
+
+main = Memory.open(store_path="./main.sqlite", storage_backend="libsqlite")
+main.branch_merge("./shared", branch="candidate-b")
 ```
 
 Use MCP/tools for one-off model-visible calls. Use this SDK when the agent
 needs memory as code: fanout retrieval, dedupe, coverage checks, aggregation,
-or session-aware batch writes without spending model turns on intermediate state.
+branch-log experiments, or session-aware batch writes without spending model
+turns on intermediate state.
 
 `source_id` can be passed to `Memory.open(...)` or inherited from
 `AIDEMEMO_SOURCE_ID`, matching the MCP `aidememo mcp-install --source-id <namespace>` path.
@@ -80,3 +91,7 @@ omit it or pass an empty string for the compiled default, pass `"sqlite"` or
 installed native binding / CLI was built with the Cargo `redb` feature. The SDK
 passes the selector to both the `aidememo-python` fast path and the CLI fallback
 (`aidememo --backend ...`).
+
+`branch_push(...)` and `branch_merge(...)` use the native binding for local
+paths when available. S3 branch URIs fall back to the CLI so the installed
+`aidememo --features s3` binary owns AWS credentials and compression behavior.

@@ -136,6 +136,67 @@ defmodule AideMemoNifTest do
     assert is_binary(AideMemoNif.version())
   end
 
+  test "branch logs push and merge through open handles", %{db: db} do
+    root = Path.dirname(db)
+    shared = Path.join(root, "shared-branches")
+
+    candidate_a = AideMemoNif.open!(Path.join(root, "candidate-a.sqlite"))
+    entity_a = AideMemoNif.entity_add(candidate_a, "BranchExperiment", entity_type: "concept")
+
+    _fact_a =
+      AideMemoNif.fact_add(candidate_a, "Candidate A keeps the red branch result",
+        entity_ids: [entity_a],
+        fact_type: "lesson"
+      )
+
+    push_a = AideMemoNif.branch_push(candidate_a, "candidate-a", shared)
+    assert push_a["branch_id"] == "candidate-a"
+    assert push_a["records_exported"] >= 2
+    assert push_a["export_mode"] == "full"
+
+    candidate_b = AideMemoNif.open!(Path.join(root, "candidate-b.sqlite"))
+    entity_b = AideMemoNif.entity_add(candidate_b, "BranchExperiment", entity_type: "concept")
+
+    _fact_b =
+      AideMemoNif.fact_add(candidate_b, "Candidate B keeps the blue branch result",
+        entity_ids: [entity_b],
+        fact_type: "lesson"
+      )
+
+    push_b = AideMemoNif.branch_push(candidate_b, "candidate-b", shared)
+    assert push_b["branch_id"] == "candidate-b"
+    assert push_b["records_exported"] >= 2
+
+    target = AideMemoNif.open!(Path.join(root, "target.sqlite"))
+    merge_b = AideMemoNif.branch_merge(target, shared, branch: "candidate-b")
+    assert merge_b["branch"] == "candidate-b"
+    assert merge_b["segments_merged"] == 1
+    assert merge_b["facts_inserted"] == 1
+
+    target_facts = AideMemoNif.fact_list(target, entity: "BranchExperiment", limit: 10)
+    contents = Enum.map(target_facts, & &1["content"])
+    assert "Candidate B keeps the blue branch result" in contents
+    refute "Candidate A keeps the red branch result" in contents
+
+    repeat = AideMemoNif.branch_merge(target, shared, branch: "candidate-b")
+    assert repeat["segments_merged"] == 1
+    assert repeat["facts_inserted"] == 0
+
+    all_target = AideMemoNif.open!(Path.join(root, "all-target.sqlite"))
+    merge_all = AideMemoNif.branch_merge(all_target, shared)
+    assert merge_all["branch"] == nil
+    assert merge_all["segments_merged"] == 2
+    assert merge_all["facts_inserted"] == 2
+
+    assert_raise ArgumentError, ~r/S3 branch logs/, fn ->
+      AideMemoNif.branch_push(candidate_a, "candidate-a", "s3://bucket/prefix")
+    end
+
+    assert_raise ArgumentError, ~r/S3 branch logs/, fn ->
+      AideMemoNif.branch_merge(target, "s3://bucket/prefix")
+    end
+  end
+
   test "default and empty backend open the compiled default store", %{db: db} do
     g = AideMemoNif.open!(db)
     assert is_reference(g)

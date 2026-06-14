@@ -49,6 +49,11 @@ include SQLite and can select it at open time (`backend="sqlite"` or
 `aidememo_open_with_backend(..., "libsqlite")`). Build with Cargo `redb` when
 you need to open redb stores.
 
+Branch-log helpers are currently exposed in the Python composition SDK,
+`aidememo-python`, `aidememo-napi`, and `aidememo_nif` for local branch
+artifacts through already-open handles. C ABI callers should use the CLI
+`aidememo branch ...` commands until the lower-level ABI needs that surface.
+
 ## Open memory
 
 ```python
@@ -124,6 +129,32 @@ mem.remember([
 ```
 
 Batching writes is faster and gives the agent one clear side effect.
+
+## Branch speculative runs
+
+Use branch logs when a script or agent forks several candidate stores from one
+backup and wants to merge only the best result.
+
+```python
+from aidememo_agent import Memory
+
+candidate = Memory.open(store_path="./candidate-b.sqlite", storage_backend="libsqlite")
+
+push = candidate.branch_push(
+    "candidate-b",
+    "./shared",
+    base="./shared/backup-01...",
+)
+print(push["records_exported"])
+
+main = Memory.open(store_path="./main.sqlite", storage_backend="libsqlite")
+merge = main.branch_merge("./shared", branch="candidate-b")
+print(merge["facts_inserted"])
+```
+
+Local branch paths use the `aidememo-python` fast path when available. S3
+branch URIs fall back to the CLI so the installed `aidememo --features s3`
+binary owns AWS credentials and compression behavior.
 
 ## When to use SDK vs MCP
 

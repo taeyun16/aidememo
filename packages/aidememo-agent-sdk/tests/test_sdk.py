@@ -10,6 +10,7 @@ from aidememo_agent.sdk import AideMemoMemorySDK
 class FakeClient:
     def __init__(self) -> None:
         self.fact_batches = []
+        self.branch_calls = []
 
     def search(self, query, **kwargs):
         return [
@@ -30,6 +31,24 @@ class FakeClient:
     def fact_add_many(self, items):
         self.fact_batches.append(items)
         return [f"fact-{idx}" for idx, _ in enumerate(items, start=1)]
+
+    def branch_push(self, branch, destination, *, base=None):
+        self.branch_calls.append(("push", branch, destination, base))
+        return {
+            "branch_id": branch,
+            "destination": destination,
+            "base": base,
+            "records_exported": 1,
+        }
+
+    def branch_merge(self, source, *, branch=None):
+        self.branch_calls.append(("merge", branch, source))
+        return {
+            "source": source,
+            "branch": branch,
+            "segments_merged": 1,
+            "facts_inserted": 1,
+        }
 
 
 def test_search_many_preserves_order_and_metadata() -> None:
@@ -221,6 +240,21 @@ def test_remember_converts_and_commits_batch() -> None:
     ]
 
 
+def test_branch_helpers_forward_to_client() -> None:
+    client = FakeClient()
+    sdk = AideMemoMemorySDK(client)
+
+    push = sdk.branch_push("candidate-b", "/tmp/shared", base="/tmp/shared/backup-01")
+    merge = sdk.branch_merge("/tmp/shared", branch="candidate-b")
+
+    assert push["branch_id"] == "candidate-b"
+    assert merge["facts_inserted"] == 1
+    assert client.branch_calls == [
+        ("push", "candidate-b", "/tmp/shared", "/tmp/shared/backup-01"),
+        ("merge", "candidate-b", "/tmp/shared"),
+    ]
+
+
 def test_pyo3_backend_preserves_session_and_context_scope() -> None:
     class FakePyBackend:
         def __init__(self) -> None:
@@ -283,6 +317,104 @@ def test_pyo3_backend_preserves_session_and_context_scope() -> None:
     assert [row["id"] for row in context["pinned"]] == ["pinned-a"]
     assert [row["id"] for row in context["recent"]] == ["recent-a"]
     assert [row["id"] for row in context["personalisation"]] == ["recent-a"]
+
+
+def test_branch_uses_pyo3_for_local_paths() -> None:
+    class FakePyBackend:
+        def __init__(self) -> None:
+            self.calls = []
+
+        def branch_push(self, branch, destination, *, base=None):
+            self.calls.append(("push", branch, destination, base))
+            return {"branch_id": branch, "records_exported": 1}
+
+        def branch_merge(self, source, *, branch=None):
+            self.calls.append(("merge", branch, source))
+            return {"branch": branch, "facts_inserted": 1}
+
+    backend = FakePyBackend()
+    client = AideMemoClient.__new__(AideMemoClient)
+    client.store_path = "/tmp/wiki.sqlite"
+    client.storage_backend = "libsqlite"
+    client.lock_retry_ms = 5000
+    client.default_source_id = None
+    client._py = backend
+
+    assert client.branch_push("candidate-b", "/tmp/shared", base="/tmp/shared/backup-01") == {
+        "branch_id": "candidate-b",
+        "records_exported": 1,
+    }
+    assert client.branch_merge("/tmp/shared", branch="candidate-b") == {
+        "branch": "candidate-b",
+        "facts_inserted": 1,
+    }
+    assert backend.calls == [
+        ("push", "candidate-b", "/tmp/shared", "/tmp/shared/backup-01"),
+        ("merge", "candidate-b", "/tmp/shared"),
+    ]
+
+
+def test_branch_s3_uses_cli_even_when_pyo3_exists(monkeypatch) -> None:
+    captured = []
+
+    class FakePyBackend:
+        pass
+
+    class Completed:
+        returncode = 0
+        stderr = ""
+
+        def __init__(self, stdout):
+            self.stdout = stdout
+
+    def fake_run(cmd, **kwargs):
+        captured.append(cmd)
+        if "push" in cmd:
+            return Completed('{"branch_id":"candidate-b","records_exported":1}')
+        return Completed('{"branch":"candidate-b","facts_inserted":1}')
+
+    monkeypatch.setattr("aidememo_agent.client.subprocess.run", fake_run)
+    client = AideMemoClient.__new__(AideMemoClient)
+    client.store_path = "/tmp/wiki.sqlite"
+    client.storage_backend = "libsqlite"
+    client.lock_retry_ms = 0
+    client.default_source_id = None
+    client._py = FakePyBackend()
+
+    assert client.branch_push("candidate-b", "s3://bucket/shared", base="s3://bucket/shared/backup-01")[
+        "records_exported"
+    ] == 1
+    assert client.branch_merge("s3://bucket/shared", branch="candidate-b")["facts_inserted"] == 1
+    assert captured == [
+        [
+            "aidememo",
+            "--backend",
+            "libsqlite",
+            "--store",
+            "/tmp/wiki.sqlite",
+            "--json",
+            "branch",
+            "push",
+            "--branch",
+            "candidate-b",
+            "--base",
+            "s3://bucket/shared/backup-01",
+            "s3://bucket/shared",
+        ],
+        [
+            "aidememo",
+            "--backend",
+            "libsqlite",
+            "--store",
+            "/tmp/wiki.sqlite",
+            "--json",
+            "branch",
+            "merge",
+            "--branch",
+            "candidate-b",
+            "s3://bucket/shared",
+        ],
+    ]
 
 
 def test_query_and_aggregate_many_forward_source_scope() -> None:

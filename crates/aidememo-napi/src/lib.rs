@@ -206,6 +206,19 @@ pub struct StoreOpenArgs {
     pub durability: Option<String>,
 }
 
+#[napi(object)]
+pub struct BranchPushArgs {
+    /// Optional baseline backup directory. When present, only records after
+    /// that backup manifest's sync cursor are exported.
+    pub base: Option<String>,
+}
+
+#[napi(object)]
+pub struct BranchMergeArgs {
+    /// Merge only this branch id. Omit to merge every branch under source.
+    pub branch: Option<String>,
+}
+
 // ---------------------------------------------------------------------------
 // AideMemoStore — the napi class
 // ---------------------------------------------------------------------------
@@ -227,7 +240,7 @@ impl AideMemoStore {
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
             {
-                config.set("store.backend", &backend).map_err(map_err)?;
+                config.set("store.backend", backend).map_err(map_err)?;
             }
             if let Some(durability) = args.durability {
                 config
@@ -605,6 +618,67 @@ impl AideMemoStore {
         let stats = self.wiki.stats().map_err(map_err)?;
         to_json(&stats)
     }
+
+    // === Branch logs ===
+
+    /// Push a local branch segment for this open store. For S3 branch targets,
+    /// use the CLI build with `--features s3`.
+    #[napi]
+    pub fn branch_push(
+        &self,
+        branch: String,
+        destination: String,
+        args: Option<BranchPushArgs>,
+    ) -> napi::Result<String> {
+        let base = args.and_then(|args| args.base);
+        if aidememo_core::backup::is_s3_uri(&destination)
+            || base
+                .as_deref()
+                .is_some_and(aidememo_core::backup::is_s3_uri)
+        {
+            return Err(invalid_arg(
+                "S3 branch push requires the aidememo CLI built with `--features s3`",
+            ));
+        }
+        let base_manifest = match base.as_deref() {
+            Some(path) => Some(
+                aidememo_core::backup::read_local_backup_manifest(Path::new(path))
+                    .map_err(map_err)?,
+            ),
+            None => None,
+        };
+        let report = aidememo_core::branch::push_local_branch_for_wiki(
+            &self.wiki,
+            &branch,
+            base_manifest.as_ref(),
+            Path::new(&destination),
+        )
+        .map_err(map_err)?;
+        to_json(&report)
+    }
+
+    /// Merge local branch segments into this open store. For S3 branch sources,
+    /// use the CLI build with `--features s3`.
+    #[napi]
+    pub fn branch_merge(
+        &self,
+        source: String,
+        args: Option<BranchMergeArgs>,
+    ) -> napi::Result<String> {
+        if aidememo_core::backup::is_s3_uri(&source) {
+            return Err(invalid_arg(
+                "S3 branch merge requires the aidememo CLI built with `--features s3`",
+            ));
+        }
+        let branch = args.and_then(|args| args.branch);
+        let report = aidememo_core::branch::merge_local_branches_for_wiki(
+            &self.wiki,
+            Path::new(&source),
+            branch.as_deref(),
+        )
+        .map_err(map_err)?;
+        to_json(&report)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -734,5 +808,75 @@ mod backend_binding_tests {
     #[test]
     fn constructor_opens_redb_backend() {
         assert_constructor_opens_backend("redb-open", "redb", "redb");
+    }
+
+    #[test]
+    fn branch_push_merge_round_trips_with_open_handles() {
+        let backend = expected_default_backend();
+        let source_path = temp_store_path("branch-source", backend);
+        let target_path = temp_store_path("branch-target", backend);
+        let branches_dir = source_path
+            .parent()
+            .expect("source parent")
+            .join("branch-log");
+        let source = AideMemoStore::new(source_path.to_string_lossy().into_owned(), None)
+            .expect("open source");
+        let target = AideMemoStore::new(target_path.to_string_lossy().into_owned(), None)
+            .expect("open target");
+
+        let entity_id = source
+            .wiki
+            .entity_add(EntityInput {
+                name: "NodeBranch".to_string(),
+                entity_type: Some(EntityType::Concept),
+                ..Default::default()
+            })
+            .expect("entity add");
+        source
+            .wiki
+            .fact_add(FactInput {
+                content: "Node binding branch fact".to_string(),
+                entity_ids: Some(vec![entity_id]),
+                fact_type: Some(FactType::Lesson),
+                ..Default::default()
+            })
+            .expect("fact add");
+
+        let push_json = source
+            .branch_push(
+                "node-smoke".to_string(),
+                branches_dir.to_string_lossy().into_owned(),
+                None,
+            )
+            .expect("branch push");
+        let push: serde_json::Value = serde_json::from_str(&push_json).expect("push json");
+        assert_eq!(push["branch_id"], "node-smoke");
+        assert!(push["records_exported"].as_u64().expect("records") >= 2);
+
+        let merge_json = target
+            .branch_merge(
+                branches_dir.to_string_lossy().into_owned(),
+                Some(BranchMergeArgs {
+                    branch: Some("node-smoke".to_string()),
+                }),
+            )
+            .expect("branch merge");
+        let merge: serde_json::Value = serde_json::from_str(&merge_json).expect("merge json");
+        assert_eq!(merge["segments_merged"], 1);
+        assert_eq!(merge["facts_inserted"], 1);
+        let stats = target.wiki.stats().expect("target stats");
+        assert_eq!(stats.entity_count, 1);
+        assert_eq!(stats.fact_count, 1);
+
+        let repeat_json = target
+            .branch_merge(
+                branches_dir.to_string_lossy().into_owned(),
+                Some(BranchMergeArgs {
+                    branch: Some("node-smoke".to_string()),
+                }),
+            )
+            .expect("repeat branch merge");
+        let repeat: serde_json::Value = serde_json::from_str(&repeat_json).expect("repeat json");
+        assert_eq!(repeat["facts_inserted"], 0);
     }
 }

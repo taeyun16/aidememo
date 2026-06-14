@@ -54,14 +54,37 @@ Read methods that return complex shapes (search, query, traverse, lint, …)
 auto-decode JSON; you receive plain Elixir maps and lists. Write methods
 return atoms or ULID strings.
 
+## Branch logs
+
+The NIF exposes local branch-log push and merge through the already-open store
+handle:
+
+```elixir
+candidate = AideMemoNif.open!("./candidate-b.sqlite", backend: "libsqlite")
+
+push =
+  AideMemoNif.branch_push(candidate, "candidate-b", "./shared",
+    base: "./shared/backup-01..."
+  )
+
+main = AideMemoNif.open!("./main.sqlite", backend: "libsqlite")
+merge = AideMemoNif.branch_merge(main, "./shared", branch: "candidate-b")
+```
+
+Use branch logs when several agents or experiments fork from the same backup and
+you want to merge only the best result. Local paths are handled in-process. S3
+branch logs should go through the `aidememo` CLI built with Cargo `--features
+s3`.
+
 ## API surface
 
-`AideMemoNif` (high-level, JSON-decoding) wraps `AideMemoNif.Native` (raw NIF). 21 functions:
+`AideMemoNif` (high-level, JSON-decoding) wraps `AideMemoNif.Native` (raw NIF). Core functions include:
 `open!/1`, `open!/2`, `version/0`, `search/3`, `query/3`, `traverse/3`, `path_find/3`,
 `entity_add/3`, `entity_get/2`, `entity_list/2`, `entity_delete/2`,
-`resolve_entity/2`, `fact_add/3`, `fact_get/2`, `fact_list/2`, `fact_delete/2`,
+`entity_describe/3`, `resolve_entity/2`, `fact_add/3`, `fact_add_many/2`,
+`fact_get/2`, `fact_list/2`, `fact_delete/2`, `fact_supersede/3`,
 `relation_add/4`, `relation_remove/4`, `relations_get/3`, `ingest/3`,
-`lint/1`, `stats/1`.
+`lint/1`, `stats/1`, `branch_push/4`, `branch_merge/3`.
 
 ## Test
 

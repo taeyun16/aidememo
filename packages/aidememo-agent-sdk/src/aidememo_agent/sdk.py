@@ -258,6 +258,32 @@ class AideMemoMemorySDK:
             )
         )
 
+    def branch_push(
+        self,
+        branch: str,
+        destination: str,
+        *,
+        base: str | None = None,
+    ) -> dict[str, Any]:
+        """Push this store's branch segment.
+
+        Use this after a speculative run or cloud worker finishes writing local
+        facts. Pass ``base`` when the branch started from an AideMemo backup so
+        only the delta after that baseline is exported.
+        """
+
+        return self.client.branch_push(branch, destination, base=base)
+
+    def branch_merge(
+        self,
+        source: str,
+        *,
+        branch: str | None = None,
+    ) -> dict[str, Any]:
+        """Merge branch segments, optionally selecting one branch id."""
+
+        return self.client.branch_merge(source, branch=branch)
+
 
 def _normalise_query(value: str | dict[str, Any], *, key: str = "query") -> dict[str, Any]:
     if isinstance(value, dict):

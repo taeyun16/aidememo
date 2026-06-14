@@ -163,6 +163,22 @@ def main() -> None:
         print(f"stats: {stats}")
         print(f"lint issues: {len(issues)}")
 
+        # Branch logs: native binding should be able to push/merge from an
+        # already-open handle without reopening the same store. This matters
+        # for SDK/plugin callers and for redb builds with exclusive handles.
+        branch_dir = os.path.join(tmp, "branches")
+        branch_clone_db = os.path.join(tmp, f"branch-clone.{backend}")
+        branch_clone = aidememo.AideMemo(branch_clone_db, backend=backend)
+        branch_push = g.branch_push("python-smoke", branch_dir)
+        assert branch_push["branch_id"] == "python-smoke"
+        assert branch_push["records_exported"] >= stats["fact_count"]
+        branch_merge = branch_clone.branch_merge(branch_dir, branch="python-smoke")
+        assert branch_merge["segments_merged"] == 1
+        assert branch_merge["facts_inserted"] == stats["fact_count"]
+        assert branch_clone.stats()["fact_count"] == stats["fact_count"]
+        branch_merge_again = branch_clone.branch_merge(branch_dir, branch="python-smoke")
+        assert branch_merge_again["facts_inserted"] == 0
+
         # Query (unified) — relies on hybrid search; tolerate failure on that
         # but verify the call dispatches.
         try:

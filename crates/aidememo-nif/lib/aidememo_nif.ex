@@ -185,4 +185,49 @@ defmodule AideMemoNif do
 
   def lint(handle), do: handle |> Native.lint() |> Jason.decode!()
   def stats(handle), do: handle |> Native.stats() |> Jason.decode!()
+
+  # === Branch logs =========================================================
+
+  @doc """
+  Export this open store's append-only branch segment to a local directory.
+
+  Use `base: "/path/to/backup-id"` to export only records after that backup's
+  sync cursor. S3 branch URIs are intentionally handled by the CLI build that
+  enables the optional `s3` Cargo feature.
+  """
+  def branch_push(handle, branch, destination, opts \\ []) do
+    base = Keyword.get(opts, :base, "")
+
+    if s3_uri?(destination) or s3_uri?(base) do
+      raise ArgumentError, "S3 branch logs must use the aidememo CLI built with the s3 feature"
+    end
+
+    handle
+    |> Native.branch_push(to_string(branch), to_string(destination), maybe_string(base))
+    |> Jason.decode!()
+  end
+
+  @doc """
+  Merge local branch segments into this open store.
+
+  Pass `branch: "candidate-b"` to import only one branch. Omitting `branch`
+  imports every local branch under the source directory.
+  """
+  def branch_merge(handle, source, opts \\ []) do
+    branch = Keyword.get(opts, :branch, "")
+
+    if s3_uri?(source) do
+      raise ArgumentError, "S3 branch logs must use the aidememo CLI built with the s3 feature"
+    end
+
+    handle
+    |> Native.branch_merge(to_string(source), maybe_string(branch))
+    |> Jason.decode!()
+  end
+
+  defp maybe_string(nil), do: ""
+  defp maybe_string(value), do: to_string(value)
+
+  defp s3_uri?(nil), do: false
+  defp s3_uri?(value), do: String.starts_with?(to_string(value), "s3://")
 end

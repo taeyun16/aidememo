@@ -11,7 +11,7 @@ const sidebars = {
       type: 'category',
       label: 'Use AideMemo',
       collapsed: false,
-      items: ['CLI', 'MCP', 'SDK', 'FEATURES', 'OPERATIONS', 'RELEASE'],
+      items: ['CLI', 'MCP', 'SDK', 'FEATURES', 'OPERATIONS', 'BRANCHES', 'RELEASE'],
     },
   ],
 };

@@ -136,6 +136,27 @@ For a multi-agent shared store, pass `source_id` on writes and reads. The same
 field flows through `search`, `query`, `fact_list`, `fact_add`, `fact_add_many`,
 and `workflow_start`.
 
+## Branch logs
+
+Use `branch_push` / `branch_merge` when a Python agent or plugin forks a memory
+store for speculative work and wants to merge only the winning branch.
+
+```python
+candidate = aidememo.AideMemo("./candidate-b.sqlite", backend="libsqlite")
+candidate.branch_push(
+    "candidate-b",
+    "./shared",
+    base="./shared/backup-01...",
+)
+
+main = aidememo.AideMemo("./main.sqlite", backend="libsqlite")
+main.branch_merge("./shared", branch="candidate-b")
+```
+
+Local branch paths use the already-open native store handle, so SDK/plugin code
+does not reopen the same database file. S3 branch URIs should use the CLI
+`aidememo branch ...` commands from a build compiled with `--features s3`.
+
 ## Errors
 
 Core `aidememo` failures are mapped to typed Python exceptions. Every message starts
@@ -178,3 +199,4 @@ Exception classes:
 | `ingest(wiki_root, incremental?)` | `dict` |
 | `lint()` | `list[dict]` |
 | `stats()` | `dict` |
+| `branch_push(branch, destination, base?)` / `branch_merge(source, branch?)` | `dict` |

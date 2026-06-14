@@ -139,6 +139,17 @@ aidememo backup restore <DIR|s3://bucket/prefix> --force [--json]
                                           integrity_check, replace selected
                                           --store, and remove stale WAL/SHM/HNSW
                                           sidecars. SQLite backend only.
+aidememo branch push --branch ID [--base DIR|s3://bucket/prefix] <DIR|s3://bucket/prefix> [--json]
+                                          export this store's append-only branch
+                                          segment. With --base, emits changes
+                                          after that backup manifest's sync cursor;
+                                          without --base, emits a full sync segment.
+                                          Use for cloud agents or what-if memory
+                                          experiments, then merge only the winner.
+aidememo branch merge [--branch ID] <DIR|s3://bucket/prefix> [--json]
+                                          verify branch segment manifests and
+                                          import them idempotently via sync_import.
+                                          S3 targets require `--features s3`.
 aidememo ingest <root> [-i]                     ingest markdown
 aidememo watch <root> [--search Q]              live re-ingest + optional live search
 aidememo vector-rebuild [--current-only] [--json]  rebuild HNSW from scratch (after model swap).
@@ -819,6 +830,8 @@ g.factSupersede(oldId, newId);
 g = AideMemoNif.open!("./_meta/wiki.sqlite")
 ctx = AideMemoNif.query(g, "Redis", current_only: true)
 :ok = AideMemoNif.fact_supersede(g, old_id, new_id)
+AideMemoNif.branch_push(g, "candidate-b", "./shared")
+AideMemoNif.branch_merge(g, "./shared", branch: "candidate-b")
 ```
 
 ```c

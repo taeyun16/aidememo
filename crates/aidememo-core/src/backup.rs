@@ -24,6 +24,11 @@ pub struct BackupManifest {
     pub backend: String,
     pub source_store: String,
     pub database: BackupDatabase,
+    /// High-water sync cursor for the snapshot contents. Branch push uses this
+    /// as the compact delta base. Older backup manifests omit it; branch push
+    /// can still fall back to a full-state segment.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sync_cursor: Option<BackupSyncCursor>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -34,6 +39,46 @@ pub struct BackupDatabase {
     pub stored_sha256: String,
     pub sqlite_bytes: u64,
     pub sqlite_sha256: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BackupSyncCursor {
+    pub entity: Option<String>,
+    pub fact: Option<String>,
+    pub entity_updated_at: Option<u64>,
+    pub fact_updated_at: Option<u64>,
+}
+
+impl BackupSyncCursor {
+    pub fn from_sync(cursor: crate::sync::SyncCursor) -> Self {
+        Self {
+            entity: cursor.entity.map(|id| id.0.to_string()),
+            fact: cursor.fact.map(|id| id.0.to_string()),
+            entity_updated_at: cursor.entity_updated_at,
+            fact_updated_at: cursor.fact_updated_at,
+        }
+    }
+
+    pub fn to_sync(&self) -> Result<crate::sync::SyncCursor> {
+        let parse = |name: &str, value: &Option<String>| -> Result<Option<Ulid>> {
+            value
+                .as_deref()
+                .map(|raw| {
+                    Ulid::from_string(raw).map_err(|source| {
+                        AideMemoError::InvalidInput(format!(
+                            "invalid backup sync cursor {name} ULID `{raw}`: {source}"
+                        ))
+                    })
+                })
+                .transpose()
+        };
+        Ok(crate::sync::SyncCursor {
+            entity: parse("entity", &self.entity)?.map(crate::EntityId),
+            fact: parse("fact", &self.fact)?.map(crate::FactId),
+            entity_updated_at: self.entity_updated_at,
+            fact_updated_at: self.fact_updated_at,
+        })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -72,6 +117,7 @@ pub fn create_local_backup(
     })?;
     snapshot_sqlite(store_path, snapshot.path())?;
     validate_sqlite_file(snapshot.path())?;
+    let sync_cursor = snapshot_sync_cursor(snapshot.path(), backend)?;
 
     let sqlite_bytes = std::fs::read(snapshot.path()).map_err(|source| {
         AideMemoError::FileRead(snapshot.path().to_path_buf(), source.to_string())
@@ -98,6 +144,7 @@ pub fn create_local_backup(
             sqlite_bytes: sqlite_bytes.len() as u64,
             sqlite_sha256,
         },
+        sync_cursor,
     };
     let manifest_path = output_dir.join(MANIFEST_FILE);
     write_manifest(&manifest_path, &manifest)?;
@@ -152,6 +199,7 @@ pub async fn create_s3_backup(
     })?;
     snapshot_sqlite(store_path, snapshot.path())?;
     validate_sqlite_file(snapshot.path())?;
+    let sync_cursor = snapshot_sync_cursor(snapshot.path(), backend)?;
 
     let sqlite_bytes = std::fs::read(snapshot.path()).map_err(|source| {
         AideMemoError::FileRead(snapshot.path().to_path_buf(), source.to_string())
@@ -176,6 +224,7 @@ pub async fn create_s3_backup(
             sqlite_bytes: sqlite_bytes.len() as u64,
             sqlite_sha256,
         },
+        sync_cursor,
     };
     let manifest_bytes =
         serde_json::to_vec_pretty(&manifest).map_err(|source| AideMemoError::Serialize {
@@ -221,6 +270,22 @@ pub async fn restore_s3_backup(
         target_store_path,
         force,
     )
+}
+
+pub fn read_local_backup_manifest(source_dir: &Path) -> Result<BackupManifest> {
+    read_manifest(&source_dir.join(MANIFEST_FILE))
+}
+
+#[cfg(feature = "s3")]
+pub async fn read_s3_backup_manifest(source: &str) -> Result<BackupManifest> {
+    let location = S3Location::parse(source)?;
+    let client = s3_client().await;
+    let manifest_key = location.object_key(MANIFEST_FILE);
+    let manifest_bytes = get_s3_object(&client, &location.bucket, &manifest_key).await?;
+    serde_json::from_slice(&manifest_bytes).map_err(|source| AideMemoError::Deserialize {
+        context: "backup manifest".to_string(),
+        source,
+    })
 }
 
 pub fn is_s3_uri(value: &str) -> bool {
@@ -375,6 +440,25 @@ fn ensure_sqlite_backend(backend: &str) -> Result<()> {
             "backup/restore currently supports SQLite stores only, got backend `{other}`"
         ))),
     }
+}
+
+fn snapshot_sync_cursor(snapshot_path: &Path, backend: &str) -> Result<Option<BackupSyncCursor>> {
+    let mut config = crate::Config::default();
+    config.store.backend = canonical_sqlite_backend(backend).to_string();
+    config.store.path = snapshot_path.display().to_string();
+    let snapshot = crate::AideMemo::open(snapshot_path, config)?;
+    let mut output = Vec::new();
+    snapshot.sync_export(
+        crate::sync::SyncExportOpts {
+            include_relations: true,
+            ..Default::default()
+        },
+        &mut output,
+    )?;
+    let jsonl = std::str::from_utf8(&output)
+        .map_err(|source| AideMemoError::Internal(format!("backup sync cursor UTF-8: {source}")))?;
+    let cursor = crate::sync::cursor_from_jsonl(jsonl)?;
+    Ok(Some(BackupSyncCursor::from_sync(cursor)))
 }
 
 fn canonical_sqlite_backend(backend: &str) -> &str {

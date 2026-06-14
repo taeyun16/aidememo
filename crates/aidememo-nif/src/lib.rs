@@ -561,6 +561,58 @@ fn stats(handle: ResourceArc<AideMemoNif>) -> NifResult<String> {
     to_json(&stats)
 }
 
+// ---------------------------------------------------------------------------
+// Branch logs
+// ---------------------------------------------------------------------------
+
+#[rustler::nif]
+fn branch_push(
+    handle: ResourceArc<AideMemoNif>,
+    branch: String,
+    destination: String,
+    base: String,
+) -> NifResult<String> {
+    if aidememo_core::backup::is_s3_uri(destination.trim())
+        || aidememo_core::backup::is_s3_uri(base.trim())
+    {
+        return Err(rustler::Error::BadArg);
+    }
+    let base_manifest = match opt_str(base) {
+        Some(path) => Some(
+            aidememo_core::backup::read_local_backup_manifest(Path::new(&path))
+                .map_err(|_| rustler::Error::BadArg)?,
+        ),
+        None => None,
+    };
+    let report = aidememo_core::branch::push_local_branch_for_wiki(
+        handle.wiki.as_ref(),
+        &branch,
+        base_manifest.as_ref(),
+        Path::new(&destination),
+    )
+    .map_err(|_| rustler::Error::BadArg)?;
+    to_json(&report)
+}
+
+#[rustler::nif]
+fn branch_merge(
+    handle: ResourceArc<AideMemoNif>,
+    source: String,
+    branch: String,
+) -> NifResult<String> {
+    if aidememo_core::backup::is_s3_uri(source.trim()) {
+        return Err(rustler::Error::BadArg);
+    }
+    let branch = opt_str(branch);
+    let report = aidememo_core::branch::merge_local_branches_for_wiki(
+        handle.wiki.as_ref(),
+        Path::new(&source),
+        branch.as_deref(),
+    )
+    .map_err(|_| rustler::Error::BadArg)?;
+    to_json(&report)
+}
+
 #[rustler::nif]
 fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")

@@ -421,6 +421,105 @@ aidememo --backend libsqlite --store "$RESTORED" --json stats
 
 The smoke restored `1` entity and `1` fact from the backup manifest.
 
+### Branch Log Push / Merge
+
+`aidememo branch push --branch <ID> [--base <BACKUP>] <DEST>` exports a
+branch segment for cloud-deployed agents. When `--base` points at a backup
+manifest that contains a sync cursor, the segment is a compact delta after that
+baseline. `aidememo branch merge [--branch <ID>] <SOURCE>` verifies the segment
+manifest and imports the JSONL payload through the existing idempotent
+`sync_import` path.
+
+Local layout:
+
+```text
+<DEST>/branches/<branch-id>/segments/<segment-id>.jsonl
+<DEST>/branches/<branch-id>/segments/<segment-id>.manifest.json
+```
+
+S3 layout uses the same prefix shape, stores `.jsonl.zst` payloads, and remains
+an optional `--features s3` transport. This is branch-log sync, not S3 as a live
+database backend.
+
+Validation added with the branch command:
+
+```bash
+cargo check -p aidememo-core --features sqlite
+cargo check -p aidememo-cli
+cargo check -p aidememo-core --features s3
+cargo check -p aidememo-cli --features s3
+cargo test -p aidememo-core --features sqlite branch -- --nocapture
+cargo test -p aidememo-core --features sqlite backup -- --nocapture
+cargo check -p aidememo-python -p aidememo-napi
+cargo test -p aidememo-napi -- --nocapture
+PYTHONPATH=packages/aidememo-agent-sdk/src uvx --from pytest pytest -q packages/aidememo-agent-sdk/tests
+scripts/aidememo-python-pack-smoke.sh
+```
+
+The branch unit test suite now covers two workflows:
+
+| Workflow | Expected result |
+|---|---|
+| Single agent delta after a backup cursor | `since_base` export inserts exactly the new branch fact into the restored target. |
+| Candidate A/B experiment from one baseline | Merging `candidate-b` imports only B's fact, leaves A absent, and a repeated merge inserts `0` duplicate facts. Merging all branches into a clean target imports both candidate facts. |
+
+SDK / binding validation:
+
+| Surface | Result |
+|---|---|
+| `aidememo-agent-sdk` | `branch_push` / `branch_merge` forward to local `aidememo-python` when available and fall back to CLI for S3 URIs. Unit tests passed: `13 passed`. |
+| `aidememo-python` | Wheel smoke passed after adding native `branch_push` / `branch_merge`; local branch merge inserted the exported facts and repeated merge inserted `0` duplicates. |
+| `aidememo-napi` | Native Rust test passed: branch push/merge round-trips through already-open handles and repeated merge is idempotent. |
+| `aidememo_nif` | Elixir `mix test` branch smoke covers candidate A/B push, selected-branch merge, repeat-merge idempotency, and local-only S3 URI guard. |
+| C ABI | Not exposed yet; use the CLI branch commands for branch artifacts until that lower-level ABI needs the surface. |
+
+Manual local smoke:
+
+```bash
+aidememo --store "$BASE" --backend sqlite fact add \
+  "Base fact for branch smoke" --entities BranchSmoke --type claim
+BACKUP_DIR="$(aidememo --store "$BASE" --backend sqlite backup create --json "$BACKUPS" \
+  | jq -r '.destination')"
+aidememo --store "$AGENT" --backend sqlite backup restore --force "$BACKUP_DIR"
+aidememo --store "$MERGED" --backend sqlite backup restore --force "$BACKUP_DIR"
+aidememo --store "$AGENT" --backend sqlite fact add \
+  "Agent branch fact for branch smoke" --entities BranchSmoke --type lesson
+aidememo --store "$AGENT" --backend sqlite branch push \
+  --branch agent-smoke --base "$BACKUP_DIR" --json "$BRANCHES"
+aidememo --store "$MERGED" --backend sqlite branch merge \
+  --branch agent-smoke --json "$BRANCHES"
+aidememo --store "$MERGED" --backend sqlite stats --json
+```
+
+The smoke exported `1` record in `since_base` mode, merged `1` segment with
+`1` inserted fact, and the merged store reported `1` entity and `2` facts.
+
+Manual A/B branch experiment smoke:
+
+```bash
+# Baseline store -> backup -> candidate-a / candidate-b / selected / all stores.
+# candidate-a writes one noisy lesson, candidate-b writes one winning lesson.
+aidememo --store "$A" --backend sqlite branch push \
+  --branch candidate-a --base "$BACKUP_DIR" --json "$SHARED"
+aidememo --store "$B" --backend sqlite branch push \
+  --branch candidate-b --base "$BACKUP_DIR" --json "$SHARED"
+aidememo --store "$SELECTED" --backend sqlite branch merge \
+  --branch candidate-b --json "$SHARED"
+aidememo --store "$SELECTED" --backend sqlite branch merge \
+  --branch candidate-b --json "$SHARED"
+aidememo --store "$ALL" --backend sqlite branch merge --json "$SHARED"
+```
+
+Observed local CLI result:
+
+| Step | Result |
+|---|---|
+| Push `candidate-a` | `records_exported=1`, `export_mode=since_base` |
+| Push `candidate-b` | `records_exported=1`, `export_mode=since_base` |
+| Merge selected `candidate-b` | `segments_merged=1`, `facts_inserted=1`, selected store `fact_count=2` |
+| Merge selected `candidate-b` again | `facts_inserted=0`, `facts_skipped=1` |
+| Merge all branches into a clean target | `segments_merged=2`, `facts_inserted=2`, all-branches store `fact_count=3` |
+
 ## Workflow Doctor Readiness
 
 P3.5 adds a `workflow` block and P2.5 adds a separate `sharing` block to

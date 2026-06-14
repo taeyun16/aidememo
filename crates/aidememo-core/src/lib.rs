@@ -7,6 +7,7 @@ pub mod adapt;
 pub mod archive;
 pub mod backend;
 pub mod backup;
+pub mod branch;
 pub mod config;
 pub mod embedding;
 pub mod error;
@@ -2561,7 +2562,7 @@ mod sqlite_backend_tests {
         let stats = wiki.ingest(&wiki_root, false).unwrap();
         assert_eq!(stats.files_scanned, 1);
         assert_eq!(stats.facts_added, 1);
-        assert_eq!(wiki.stats().unwrap().last_ingest_at.is_some(), true);
+        assert!(wiki.stats().unwrap().last_ingest_at.is_some());
     }
 }
 

@@ -306,7 +306,7 @@ and temporal memory semantics, not a SOTA benchmark claim.
 | Agent tools | 25 MCP tools including `aidememo_workflow_start`, `aidememo_context`, `aidememo_query`, `aidememo_aggregate`, `aidememo_fact_add_many` |
 | Capture | `aidememo_extract`, pending review queue, `aidememo pending list/stats/approve/reject` |
 | Ops | `doctor` / MCP `aidememo_doctor`, `overview`, `bench`, `vector-rebuild`, `consolidate`, `auto-relate` |
-| Sharing | `source_id`, multi-project stores, stdio MCP, HTTP/SSE MCP, daemon discovery |
+| Sharing | `source_id`, multi-project stores, stdio MCP, HTTP/SSE MCP, daemon discovery, branch logs for cloud agents and speculative memory runs |
 | Code-first composition | `aidememo-agent-sdk` with `Memory.open`, `search_rows`, `coverage_by`, `aggregate_many`, `remember` |
 | Bindings | Python, Node, Elixir, C |
 
@@ -317,7 +317,7 @@ and temporal memory semantics, not a SOTA benchmark claim.
 | Setup | `aidememo init`, `aidememo init --agent codex`, `aidememo project create/use/list` |
 | Read | `aidememo search`, `aidememo query`, `aidememo recent`, `aidememo overview`, `aidememo traverse`, `aidememo path`, `aidememo graph` |
 | Write | `aidememo fact add`, `aidememo fact supersede`, `aidememo fact archive`, `aidememo edit fact`, `aidememo entity describe`, `aidememo relation add` |
-| Maintenance | `aidememo doctor`, `aidememo lint`, `aidememo bench`, `aidememo backup`, `aidememo pending`, `aidememo workflow`, `aidememo ingest`, `aidememo watch`, `aidememo vector-rebuild`, `aidememo consolidate` |
+| Maintenance | `aidememo doctor`, `aidememo lint`, `aidememo bench`, `aidememo backup`, `aidememo branch`, `aidememo pending`, `aidememo workflow`, `aidememo ingest`, `aidememo watch`, `aidememo vector-rebuild`, `aidememo consolidate` |
 | Server | `aidememo mcp`, `aidememo mcp-serve`, `aidememo daemon start/status/stop`, `aidememo mcp-install` |
 | Config | `aidememo config get/set/list`, `aidememo auth generate/login/list/logout` |
 
@@ -331,6 +331,8 @@ aidememo config set model.provider fastembed
 aidememo config set model.name bge-small-en-v1.5
 aidememo backup create ~/backups/aidememo       # consistent SQLite snapshot + manifest
 aidememo backup restore ~/backups/aidememo/backup-01... --force
+aidememo branch push --branch agent-a --base ~/backups/aidememo/backup-01... ~/backups/aidememo
+aidememo branch merge --branch agent-a ~/backups/aidememo
 
 # SQLite is the default local backend. `libsqlite` is an alias for the same path.
 # Build with `--features redb` to opt into redb.
@@ -340,6 +342,10 @@ aidememo config set store.backend redb
 # Or override for one command without mutating config:
 aidememo --backend libsqlite --store ./_meta/wiki.sqlite stats
 ```
+
+Branch logs are for cloud agents or what-if runs that start from one backup and
+write memory independently. Merge the winning branch and leave noisy candidates
+unmerged. See [`docs/BRANCHES.md`](docs/BRANCHES.md).
 
 Native bindings use the same backend selector. Default builds include SQLite;
 build with Cargo `redb` to open redb stores:

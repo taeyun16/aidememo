@@ -97,6 +97,48 @@ pub struct SyncImportStats {
     pub new_cursor: SyncCursor,
 }
 
+/// Extract the trailing cursor from a sync JSONL blob.
+///
+/// Branch logs and backup manifests use this to remember the high-water mark
+/// produced by `sync_export` without applying the export to another store.
+pub fn cursor_from_jsonl(jsonl: &str) -> Result<SyncCursor> {
+    let mut cursor = None;
+    for line in jsonl.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let value: serde_json::Value =
+            serde_json::from_str(line).map_err(|source| AideMemoError::Deserialize {
+                context: "sync cursor line".to_string(),
+                source,
+            })?;
+        if value.get("kind").and_then(|kind| kind.as_str()) != Some("cursor") {
+            continue;
+        }
+        let parse_ulid = |key: &str| -> Result<Option<Ulid>> {
+            value
+                .get(key)
+                .and_then(|raw| raw.as_str())
+                .map(|raw| {
+                    Ulid::from_string(raw).map_err(|source| {
+                        AideMemoError::InvalidInput(format!(
+                            "invalid sync cursor {key} ULID `{raw}`: {source}"
+                        ))
+                    })
+                })
+                .transpose()
+        };
+        cursor = Some(SyncCursor {
+            entity: parse_ulid("entity")?.map(EntityId),
+            fact: parse_ulid("fact")?.map(FactId),
+            entity_updated_at: value.get("entity_updated_at").and_then(|raw| raw.as_u64()),
+            fact_updated_at: value.get("fact_updated_at").and_then(|raw| raw.as_u64()),
+        });
+    }
+    cursor.ok_or_else(|| AideMemoError::InvalidInput("sync JSONL missing cursor line".to_string()))
+}
+
 impl AideMemo {
     /// Emit a JSONL delta in two passes:
     ///   1. **Inserts** — entities / facts whose ULID is strictly

@@ -57,5 +57,7 @@ defmodule AideMemoNif.Native do
   def ingest(_h, _root, _incremental), do: :erlang.nif_error(:nif_not_loaded)
   def lint(_h), do: :erlang.nif_error(:nif_not_loaded)
   def stats(_h), do: :erlang.nif_error(:nif_not_loaded)
+  def branch_push(_h, _branch, _destination, _base), do: :erlang.nif_error(:nif_not_loaded)
+  def branch_merge(_h, _source, _branch), do: :erlang.nif_error(:nif_not_loaded)
   def version, do: :erlang.nif_error(:nif_not_loaded)
 end
