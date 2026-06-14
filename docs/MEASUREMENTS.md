@@ -380,6 +380,47 @@ Current replacement read:
   path uses local SQLite staging; this proves relational schema fit and local
   runtime replaceability, not managed remote replication semantics.
 
+### SQLite Snapshot Backup
+
+`aidememo backup create <DIR>` uses SQLite's Online Backup API through
+`rusqlite` to create a point-in-time snapshot of the selected SQLite store,
+then writes `manifest.json` plus `wiki.sqlite` into a time-sortable backup
+directory. The manifest records byte counts and SHA-256 for the stored object
+and SQLite payload. `aidememo backup restore <DIR> --force` verifies the
+manifest, runs SQLite `integrity_check`, replaces the selected `--store`, and
+removes stale SQLite WAL/SHM plus HNSW sidecar files.
+
+S3 backup / restore is intentionally an optional build surface:
+`cargo build -p aidememo-cli --features s3` enables `s3://bucket/prefix`
+targets. S3 stores a zstd-compressed `wiki.sqlite.zst` plus the same manifest.
+S3 remains backup storage, not the live database backend.
+
+Validation added with the backup command:
+
+```bash
+cargo check -p aidememo-core --features sqlite
+cargo check -p aidememo-cli
+cargo check -p aidememo-core --no-default-features --features redb
+cargo check -p aidememo-core --no-default-features --features s3
+cargo check -p aidememo-cli --no-default-features --features redb
+cargo check -p aidememo-cli --features s3
+cargo test -p aidememo-core --features sqlite backup
+python3 scripts/docs-feature-gate.py
+scripts/storage-backend-feature-gate.sh
+```
+
+Manual local smoke:
+
+```bash
+aidememo --backend libsqlite --store "$STORE" fact add \
+  "SQLite backup smoke fact" --entities Backup --type claim
+aidememo --backend libsqlite --store "$STORE" backup create "$BACKUPS"
+aidememo --backend libsqlite --store "$RESTORED" backup restore "$BACKUP_DIR" --force
+aidememo --backend libsqlite --store "$RESTORED" --json stats
+```
+
+The smoke restored `1` entity and `1` fact from the backup manifest.
+
 ## Workflow Doctor Readiness
 
 P3.5 adds a `workflow` block and P2.5 adds a separate `sharing` block to

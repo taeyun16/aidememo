@@ -112,9 +112,24 @@ aidememo search "favorite camera setup" --hybrid
 
 ## Back up a store
 
-AideMemo uses a local database file. Back it up like any other project artifact.
-Stop long-running writers before copying the file.
+AideMemo's default store is SQLite. Use the backup command instead of copying
+the hot `.sqlite` file directly: it creates a consistent SQLite snapshot,
+writes a manifest with byte counts and SHA-256 checksums, and restore verifies
+the manifest plus `PRAGMA integrity_check` before replacing the target store.
 
 ```bash
-cp ~/.aidememo/wiki.sqlite ~/backups/wiki.sqlite
+aidememo --store ~/.aidememo/wiki.sqlite backup create ~/backups/aidememo
+aidememo --store ~/.aidememo/wiki.sqlite backup restore ~/backups/aidememo/backup-01... --force
 ```
+
+S3 backup / restore is an optional build feature. Build the CLI with
+`--features s3`, then use an S3 prefix as the destination or source:
+
+```bash
+aidememo --store ~/.aidememo/wiki.sqlite backup create s3://my-bucket/aidememo
+aidememo --store ~/.aidememo/wiki.sqlite backup restore s3://my-bucket/aidememo/backup-01... --force
+```
+
+The S3 path is for backup storage, not for using S3 as the live database.
+Restores replace the local SQLite store and remove stale SQLite WAL/SHM and
+HNSW sidecar files next to the target.

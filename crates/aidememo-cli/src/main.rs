@@ -99,6 +99,7 @@ fn main() {
         cmd::Command::Project(sub) => cmd::project::run_project(config, sub),
         cmd::Command::Bench(sub) => cmd::bench::run_bench(&store_path, config, sub, json),
         cmd::Command::Skill(sub) => cmd::skill::run_skill(sub, json),
+        cmd::Command::Backup(sub) => handle_backup(&store_path, config, sub, json),
         cmd::Command::Export(sub) => handle_export(&store_path, config, sub),
         cmd::Command::Import(sub) => handle_import(&store_path, config, sub),
         cmd::Command::Stats(sub) => handle_stats(&store_path, config, sub, json),
@@ -250,6 +251,121 @@ fn fmt(json: bool) -> output::Format {
     } else {
         output::Format::Table
     }
+}
+
+fn handle_backup(
+    path: &Path,
+    config: Config,
+    sub: cmd::BackupSub,
+    global_json: bool,
+) -> Result<String, AideMemoError> {
+    match sub {
+        cmd::BackupSub::Create { json, destination } => {
+            let json = json || global_json;
+            if aidememo_core::backup::is_s3_uri(&destination) {
+                #[cfg(feature = "s3")]
+                {
+                    let rt = tokio::runtime::Runtime::new().map_err(|source| {
+                        AideMemoError::Internal(format!("create Tokio runtime: {source}"))
+                    })?;
+                    let report = rt.block_on(aidememo_core::backup::create_s3_backup(
+                        path,
+                        &config.store.backend,
+                        &destination,
+                    ))?;
+                    render_backup_create(&report, json)
+                }
+                #[cfg(not(feature = "s3"))]
+                {
+                    Err(AideMemoError::InvalidInput(
+                        "S3 backup requires a CLI build with `--features s3`".to_string(),
+                    ))
+                }
+            } else {
+                let report = aidememo_core::backup::create_local_backup(
+                    path,
+                    &config.store.backend,
+                    Path::new(&destination),
+                )?;
+                render_backup_create(&report, json)
+            }
+        }
+        cmd::BackupSub::Restore {
+            force,
+            json,
+            source,
+        } => {
+            let json = json || global_json;
+            if aidememo_core::backup::is_s3_uri(&source) {
+                #[cfg(feature = "s3")]
+                {
+                    let rt = tokio::runtime::Runtime::new().map_err(|source| {
+                        AideMemoError::Internal(format!("create Tokio runtime: {source}"))
+                    })?;
+                    let report = rt.block_on(aidememo_core::backup::restore_s3_backup(
+                        &source,
+                        path,
+                        &config.store.backend,
+                        force,
+                    ))?;
+                    render_backup_restore(&report, json)
+                }
+                #[cfg(not(feature = "s3"))]
+                {
+                    Err(AideMemoError::InvalidInput(
+                        "S3 restore requires a CLI build with `--features s3`".to_string(),
+                    ))
+                }
+            } else {
+                let report = aidememo_core::backup::restore_local_backup(
+                    Path::new(&source),
+                    path,
+                    &config.store.backend,
+                    force,
+                )?;
+                render_backup_restore(&report, json)
+            }
+        }
+    }
+}
+
+fn render_backup_create(
+    report: &aidememo_core::backup::BackupCreateReport,
+    json: bool,
+) -> Result<String, AideMemoError> {
+    if json {
+        return serde_json::to_string_pretty(report).map_err(|source| AideMemoError::Serialize {
+            context: "backup create report".to_string(),
+            source,
+        });
+    }
+    Ok(format!(
+        "backup created: {}\nmanifest: {}\ndatabase: {}\nsha256: {}",
+        report.destination,
+        report.manifest_uri,
+        report.database_uri,
+        report.manifest.database.sqlite_sha256
+    ))
+}
+
+fn render_backup_restore(
+    report: &aidememo_core::backup::BackupRestoreReport,
+    json: bool,
+) -> Result<String, AideMemoError> {
+    if json {
+        return serde_json::to_string_pretty(report).map_err(|source| AideMemoError::Serialize {
+            context: "backup restore report".to_string(),
+            source,
+        });
+    }
+    let previous = report.previous_store.as_deref().unwrap_or("none");
+    Ok(format!(
+        "backup restored: {}\nsource: {}\nprevious: {}\nremoved sidecars: {}",
+        report.restored_store,
+        report.source,
+        previous,
+        report.removed_sidecars.len()
+    ))
 }
 
 fn handle_entity(

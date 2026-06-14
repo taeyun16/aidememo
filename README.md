@@ -317,7 +317,7 @@ and temporal memory semantics, not a SOTA benchmark claim.
 | Setup | `aidememo init`, `aidememo init --agent codex`, `aidememo project create/use/list` |
 | Read | `aidememo search`, `aidememo query`, `aidememo recent`, `aidememo overview`, `aidememo traverse`, `aidememo path`, `aidememo graph` |
 | Write | `aidememo fact add`, `aidememo fact supersede`, `aidememo fact archive`, `aidememo edit fact`, `aidememo entity describe`, `aidememo relation add` |
-| Maintenance | `aidememo doctor`, `aidememo lint`, `aidememo bench`, `aidememo pending`, `aidememo workflow`, `aidememo ingest`, `aidememo watch`, `aidememo vector-rebuild`, `aidememo consolidate` |
+| Maintenance | `aidememo doctor`, `aidememo lint`, `aidememo bench`, `aidememo backup`, `aidememo pending`, `aidememo workflow`, `aidememo ingest`, `aidememo watch`, `aidememo vector-rebuild`, `aidememo consolidate` |
 | Server | `aidememo mcp`, `aidememo mcp-serve`, `aidememo daemon start/status/stop`, `aidememo mcp-install` |
 | Config | `aidememo config get/set/list`, `aidememo auth generate/login/list/logout` |
 
@@ -329,6 +329,8 @@ aidememo config set store.lock_retry_ms 5000     # smooth short write contention
 aidememo doctor --json                           # includes sharing.mode and daemon guidance
 aidememo config set model.provider fastembed
 aidememo config set model.name bge-small-en-v1.5
+aidememo backup create ~/backups/aidememo       # consistent SQLite snapshot + manifest
+aidememo backup restore ~/backups/aidememo/backup-01... --force
 
 # SQLite is the default local backend. `libsqlite` is an alias for the same path.
 # Build with `--features redb` to opt into redb.

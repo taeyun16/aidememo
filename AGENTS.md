@@ -33,6 +33,7 @@ cargo check -p aidememo-nif
 cargo check -p aidememo-ffi
 cargo test -p aidememo-core --no-default-features --features sqlite
 cargo check -p aidememo-core --no-default-features --features redb
+cargo check -p aidememo-cli --features s3
 cargo test -p aidememo-core --features semantic
 cargo test -p aidememo-cli --bin aidememo
 ./scripts/ci-local.sh lint
@@ -128,6 +129,16 @@ aidememo lint [--json]                          raw lint issues
 aidememo bench <golden.jsonl> [--k 5] [--limit N]
                                           P@K / R@K / latency benchmark
 aidememo skill check <path> [--json]            validate SKILL.md files
+aidememo backup create <DIR|s3://bucket/prefix> [--json]
+                                          consistent SQLite snapshot backup +
+                                          manifest with byte counts and SHA-256.
+                                          S3 targets require a CLI built with
+                                          `--features s3`.
+aidememo backup restore <DIR|s3://bucket/prefix> --force [--json]
+                                          verify manifest + SQLite
+                                          integrity_check, replace selected
+                                          --store, and remove stale WAL/SHM/HNSW
+                                          sidecars. SQLite backend only.
 aidememo ingest <root> [-i]                     ingest markdown
 aidememo watch <root> [--search Q]              live re-ingest + optional live search
 aidememo vector-rebuild [--current-only] [--json]  rebuild HNSW from scratch (after model swap).

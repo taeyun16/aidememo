@@ -34,6 +34,7 @@ python3 scripts/docs-feature-gate.py
 | `aidememo project` | Manage named projects and their store paths. |
 | `aidememo bench` | Benchmark search quality against a golden JSONL set. |
 | `aidememo skill` | Validate or install agent skill files. |
+| `aidememo backup` | Create or restore SQLite snapshot backups with manifest verification. |
 | `aidememo export` | Export entities, relations, and facts to JSONL. |
 | `aidememo import` | Import JSONL data. |
 | `aidememo stats` | Show store statistics. |
@@ -69,6 +70,7 @@ python3 scripts/docs-feature-gate.py
 | Fact editing | `aidememo edit fact` |
 | Project management | `aidememo project list`, `aidememo project show`, `aidememo project create`, `aidememo project use`, `aidememo project remove` |
 | Agent skills | `aidememo skill check`, `aidememo skill install` |
+| Backup / restore | `aidememo backup create`, `aidememo backup restore` |
 | Sync | `aidememo sync ingest`, `aidememo sync pull`, `aidememo sync status` |
 | Config | `aidememo config list`, `aidememo config get`, `aidememo config set` |
 | Model cache | `aidememo model list`, `aidememo model status`, `aidememo model download` |

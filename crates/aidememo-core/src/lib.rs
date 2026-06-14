@@ -6,6 +6,7 @@ compile_error!("aidememo-core requires at least one storage backend feature: `sq
 pub mod adapt;
 pub mod archive;
 pub mod backend;
+pub mod backup;
 pub mod config;
 pub mod embedding;
 pub mod error;

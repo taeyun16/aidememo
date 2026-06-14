@@ -68,6 +68,7 @@ pub enum Command {
     Project(ProjectSub),
     Bench(BenchSub),
     Skill(SkillSub),
+    Backup(BackupSub),
     Export(ExportSub),
     Import(ImportSub),
     Stats(StatsSub),
@@ -362,6 +363,19 @@ pub struct ExportSub {
 }
 
 #[derive(Debug, Clone)]
+pub enum BackupSub {
+    Create {
+        json: bool,
+        destination: String,
+    },
+    Restore {
+        force: bool,
+        json: bool,
+        source: String,
+    },
+}
+
+#[derive(Debug, Clone)]
 pub struct ImportSub {
     pub path: Option<PathBuf>,
 }
@@ -469,6 +483,7 @@ pub fn build_cli() -> OptionParser<Args> {
         project_cmd,
         bench_cmd,
         skill_cmd,
+        backup_command(),
         export_command(),
         import_command(),
         stats_command(),
@@ -551,6 +566,43 @@ fn extract_command() -> impl Parser<Command> {
         "Conversation / text → candidate facts (preview by default, --apply to \
          persist). Heuristic by default; --llm dispatches to extract.provider.",
     )
+}
+
+fn backup_command() -> impl Parser<Command> {
+    let json = long("json")
+        .help("Emit JSON output for this backup command")
+        .switch();
+
+    let destination = positional::<String>("DESTINATION")
+        .help("Local backup directory or S3 prefix (s3://bucket/prefix)");
+    let create = construct!(BackupSub::Create { json, destination })
+        .to_options()
+        .command("create")
+        .help("Create a SQLite snapshot backup and manifest.");
+
+    let force = long("force")
+        .short('f')
+        .help("Replace an existing target store during restore")
+        .switch();
+    let json = long("json")
+        .help("Emit JSON output for this backup command")
+        .switch();
+    let source = positional::<String>("SOURCE")
+        .help("Local backup directory or S3 prefix (s3://bucket/prefix)");
+    let restore = construct!(BackupSub::Restore {
+        force,
+        json,
+        source,
+    })
+    .to_options()
+    .command("restore")
+    .help("Restore a SQLite snapshot backup into the selected --store path.");
+
+    construct!([create, restore])
+        .map(Command::Backup)
+        .to_options()
+        .command("backup")
+        .help("Create or restore SQLite snapshot backups. S3 targets require the `s3` feature.")
 }
 
 fn session_command() -> impl Parser<Command> {
