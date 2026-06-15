@@ -154,9 +154,12 @@ if metadata_version != expected:
 
 if Memory is not AideMemoMemorySDK:
     raise SystemExit("Memory alias does not point at AideMemoMemorySDK")
-for method in ("open", "search_rows", "remember"):
+for method in ("open", "search_rows", "remember", "session_canvas", "project_profile"):
     if not hasattr(Memory, method):
         raise SystemExit(f"Memory missing first-use method: {method}")
+for method in ("session_canvas", "project_profile"):
+    if not hasattr(AideMemoClient, method):
+        raise SystemExit(f"AideMemoClient missing artifact method: {method}")
 
 print(f"installed aidememo-agent-sdk {metadata_version}; exports Memory, {AideMemoClient.__name__}, {AideMemoMemorySDK.__name__}")
 PY

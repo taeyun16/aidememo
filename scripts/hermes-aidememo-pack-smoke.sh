@@ -157,6 +157,7 @@ import importlib.metadata
 import sys
 
 from hermes_aidememo import AideMemoClient, AideMemoMemorySDK
+from hermes_aidememo import capture_adapter
 from hermes_aidememo.client import default_skills_path
 from aidememo_agent import Memory
 import hermes_aidememo
@@ -189,13 +190,21 @@ if "aidememo-agent-sdk" not in skill_text:
     raise SystemExit("bundled skill does not mention aidememo-agent-sdk")
 if "Memory.open" not in skill_text:
     raise SystemExit("bundled skill does not mention Memory.open")
+if "auto_capture.enabled" not in skill_text:
+    raise SystemExit("bundled skill does not mention opt-in auto_capture")
 
 sdk = AideMemoMemorySDK.__name__
 client = AideMemoClient.__name__
 if AideMemoMemorySDK is not Memory:
     raise SystemExit("hermes_aidememo.AideMemoMemorySDK does not re-export aidememo_agent.Memory")
-for method in ("open", "search_rows", "remember"):
+for method in ("open", "search_rows", "remember", "session_canvas", "project_profile"):
     if not hasattr(AideMemoMemorySDK, method):
         raise SystemExit(f"AideMemoMemorySDK missing first-use method: {method}")
+cfg = capture_adapter.config_from_plugin({})
+if cfg.enabled or cfg.mode != "pending":
+    raise SystemExit(f"capture adapter default should be disabled/pending, got {cfg}")
+dry = capture_adapter.config_from_plugin({"dry_run": True})
+if not dry.enabled or dry.mode != "pending":
+    raise SystemExit(f"legacy dry_run should opt into pending capture, got {dry}")
 print(f"installed hermes-aidememo {metadata_version}; exports {client}, {sdk}; skill={skill_md}")
 PY
