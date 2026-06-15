@@ -66,6 +66,27 @@ For deterministic demos, hooks, and CI checks, skip semantic model loading:
 aidememo workflow start "Fix Redis timeout" --bm25-only
 ```
 
+Export the resulting thread as a bounded, auditable canvas:
+
+```bash
+aidememo session canvas "$AIDEMEMO_SESSION_ID" --limit 20 --output session_canvas.md
+```
+
+The canvas is a derived Markdown artifact: a Mermaid map first, then fact-id
+drill-down lines that point back to `aidememo fact get <id>`.
+
+## Export a project profile
+
+Generate a read-only profile from current typed facts:
+
+```bash
+aidememo profile export --output project_profile.md
+aidememo profile export --source-id team-a --limit 80
+```
+
+This does not create or modify facts. It gives agents a compact project/persona
+view while keeping AideMemo's typed facts as the evidence trail.
+
 ## Browse entities and facts
 
 ```bash

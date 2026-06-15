@@ -57,6 +57,7 @@ python3 scripts/docs-feature-gate.py
 | `aidememo extract` | Extract candidate facts from text, optionally using a configured LLM provider. |
 | `aidememo session` | Create, inspect, and warm tracked agent sessions. |
 | `aidememo workflow` | Start issue, PR, or automation workflows with tracked context. |
+| `aidememo profile` | Generate read-only project profile artifacts from current typed facts. |
 | `aidememo auto-relate` | Mine related-entity edges from semantic similarity. |
 | `aidememo overview` | Produce a first-impression snapshot of an unfamiliar store. |
 | `aidememo consolidate` | Deduplicate, expire, or GAC-cluster facts for lifecycle maintenance. |
@@ -79,8 +80,9 @@ python3 scripts/docs-feature-gate.py
 | Ranking adapter | `aidememo adapt train`, `aidememo adapt status`, `aidememo adapt eval` |
 | Pending fact review | `aidememo pending review`, `aidememo pending list`, `aidememo pending approve`, `aidememo pending reject`, `aidememo pending stats` |
 | Daemon | `aidememo daemon start`, `aidememo daemon stop`, `aidememo daemon status` |
-| Sessions | `aidememo session start`, `aidememo session new`, `aidememo session current`, `aidememo session list` |
+| Sessions | `aidememo session start`, `aidememo session new`, `aidememo session current`, `aidememo session list`, `aidememo session canvas` |
 | Workflows | `aidememo workflow start` |
+| Profile artifacts | `aidememo profile export` |
 | Auth | `aidememo auth generate`, `aidememo auth login`, `aidememo auth logout`, `aidememo auth list` |
 
 ## MCP tools

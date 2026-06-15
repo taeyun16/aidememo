@@ -1,6 +1,6 @@
 # multi-agent e2e
 
-Scenarios A-N exercise the integration between `aidememo` and the three
+Scenarios A-O exercise the integration between `aidememo` and the three
 agents installed on this machine: Claude Code, Codex, and Hermes.
 
 | script | what it does | model cost |
@@ -19,6 +19,7 @@ agents installed on this machine: Claude Code, Codex, and Hermes.
 | `scenario_l_self_extraction.py` | Simulates an agent-classified `aidememo_fact_add_many` batch, then verifies typed facts drive sparse-ticket workflow context and `source_id` isolation. | 0 |
 | `scenario_m_mcp_install_source_defaults.py` | Installs MCP configs into an isolated HOME, verifies `AIDEMEMO_SOURCE_ID` is written for file targets / printed for shell targets, then proves the installed env scopes MCP write/search calls. | 0 |
 | `scenario_n_hermes_memory_as_code.py` | Exercises the shared `aidememo_agent.Memory` research profile for Hermes/Codex/Claude-style code execution: fanout row collection, dedupe, coverage, `remember` batch write, aggregate, and source isolation. | 0 |
+| `scenario_o_session_canvas_pressure.py` | Builds a verbose long workflow, exports bounded `session canvas` and `project_profile.md` artifacts, and verifies fact-id drill-down plus read-only behavior. | 0 |
 
 ## Running locally
 
@@ -35,6 +36,7 @@ python3 bench/multi-agent/scenario_i_workflow_doctor.py
 python3 bench/multi-agent/scenario_l_self_extraction.py
 python3 bench/multi-agent/scenario_m_mcp_install_source_defaults.py
 python3 bench/multi-agent/scenario_n_hermes_memory_as_code.py
+python3 bench/multi-agent/scenario_o_session_canvas_pressure.py
 
 # optional-redb lock scenarios
 cargo build -p aidememo-cli --release --features redb

@@ -91,6 +91,7 @@ pub enum Command {
     Extract(ExtractSub),
     Session(SessionSub),
     Workflow(WorkflowSub),
+    Profile(ProfileSub),
     AutoRelate(AutoRelateSub),
     Overview(OverviewSub),
     Consolidate(ConsolidateSub),
@@ -185,6 +186,24 @@ pub enum SessionSub {
     Current,
     /// List recent session entities.
     List { limit: Option<usize> },
+    /// Export a session thread as an auditable Markdown + Mermaid canvas.
+    Canvas {
+        output: Option<PathBuf>,
+        limit: Option<usize>,
+        include_superseded: bool,
+        session: Option<String>,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub enum ProfileSub {
+    /// Export a read-only project/persona profile derived from current typed facts.
+    Export {
+        output: Option<PathBuf>,
+        limit: Option<usize>,
+        source_id: Option<String>,
+        include_sessions: bool,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -522,6 +541,7 @@ pub fn build_cli() -> OptionParser<Args> {
         extract_command(),
         session_command(),
         workflow_command(),
+        profile_command(),
         auto_relate_command(),
         overview_command(),
         consolidate_command(),
@@ -725,11 +745,73 @@ fn session_command() -> impl Parser<Command> {
         .command("list")
         .help("List recent session entities (entity_type=session)");
 
-    construct!([start, new_cmd, current_cmd, list_cmd])
+    let output = long("output")
+        .short('o')
+        .help("Write the Markdown canvas to PATH instead of stdout")
+        .argument::<PathBuf>("PATH")
+        .optional();
+    let limit = long("limit")
+        .short('l')
+        .help("Maximum facts to include in the canvas (default 80)")
+        .argument::<usize>("N")
+        .optional();
+    let include_superseded = long("include-superseded")
+        .help("Include facts superseded after the session was recorded")
+        .switch();
+    let session = positional::<String>("SESSION").optional();
+    let canvas_cmd = construct!(SessionSub::Canvas {
+        output,
+        limit,
+        include_superseded,
+        session,
+    })
+    .to_options()
+    .command("canvas")
+    .help(
+        "Export a tracked session as Markdown plus a Mermaid fact graph. \
+         Defaults to AIDEMEMO_SESSION_ID when SESSION is omitted.",
+    );
+
+    construct!([start, new_cmd, current_cmd, list_cmd, canvas_cmd])
         .map(Command::Session)
         .to_options()
         .command("session")
         .help("Agent session helpers: warmup envelope + tracked sessions")
+}
+
+fn profile_command() -> impl Parser<Command> {
+    let output = long("output")
+        .short('o')
+        .help("Write the generated project_profile.md artifact to PATH instead of stdout")
+        .argument::<PathBuf>("PATH")
+        .optional();
+    let limit = long("limit")
+        .short('l')
+        .help("Maximum current facts to include across sections (default 80)")
+        .argument::<usize>("N")
+        .optional();
+    let source_id = long("source-id")
+        .help("Restrict the profile to one source namespace / tenant / upstream id")
+        .argument::<String>("SOURCE_ID")
+        .optional();
+    let include_sessions = long("include-sessions")
+        .help("Include session/question facts that are normally excluded from project profiles")
+        .switch();
+    let export = construct!(ProfileSub::Export {
+        output,
+        limit,
+        source_id,
+        include_sessions,
+    })
+    .to_options()
+    .command("export")
+    .help("Generate a read-only project_profile.md artifact from current typed facts");
+
+    construct!([export])
+        .map(Command::Profile)
+        .to_options()
+        .command("profile")
+        .help("Read-only profile artifacts derived from typed facts")
 }
 
 fn workflow_command() -> impl Parser<Command> {
