@@ -171,7 +171,7 @@ else
     # Pre-seed two facts so /aidememo-recent has something to show.
     "$AIDEMEMO_BIN" --store "$AIDEMEMO_STORE" fact add "HNSW is the default semantic index" \
         --entities aidememo,hnsw --type decision > /dev/null
-    "$AIDEMEMO_BIN" --store "$AIDEMEMO_STORE" fact add "Hermes plugin auto-records on session_end" \
+    "$AIDEMEMO_BIN" --store "$AIDEMEMO_STORE" fact add "Hermes plugin capture adapter is opt-in" \
         --entities aidememo,hermes --type convention > /dev/null
 
     slash_log="$TEST_HOME/slash_output.jsonl"

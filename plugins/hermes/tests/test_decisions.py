@@ -1,7 +1,7 @@
 """Decision-pattern detector tests.
 
-The detector backs the ``on_session_end`` auto-recorder; precision
-matters more than recall — false positives clutter the wiki.
+The detector backs the opt-in capture adapter; precision matters more than
+recall because false positives clutter the wiki.
 """
 
 from __future__ import annotations

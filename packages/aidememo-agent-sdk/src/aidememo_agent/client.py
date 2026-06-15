@@ -450,6 +450,49 @@ class AideMemoClient:
             "relevant_decisions": relevant_decisions,
         }
 
+    def session_canvas(
+        self,
+        session_id: str | None = None,
+        *,
+        limit: int = 80,
+        include_superseded: bool = False,
+    ) -> str:
+        """Return the read-only Markdown + Mermaid canvas for a workflow session."""
+
+        args: dict[str, Any] = {
+            "limit": limit,
+            "include_superseded": include_superseded,
+        }
+        if session_id:
+            args["session"] = session_id
+        payload = self._mcp_tool("aidememo_session_canvas", args)
+        if isinstance(payload, dict):
+            content = payload.get("content")
+            return content if isinstance(content, str) else ""
+        return str(payload)
+
+    def project_profile(
+        self,
+        *,
+        limit: int = 80,
+        source_id: str | None = None,
+        include_sessions: bool = False,
+    ) -> str:
+        """Return the read-only project_profile.md text artifact."""
+
+        source_id = self._source_id(source_id)
+        args: dict[str, Any] = {
+            "limit": limit,
+            "include_sessions": include_sessions,
+        }
+        if source_id:
+            args["source_id"] = source_id
+        payload = self._mcp_tool("aidememo_profile_export", args)
+        if isinstance(payload, dict):
+            content = payload.get("content")
+            return content if isinstance(content, str) else ""
+        return str(payload)
+
     # ------------------------------------------------------------------
     # Write API
     # ------------------------------------------------------------------

@@ -208,7 +208,7 @@ Use when multiple Hermes agents share one store.
 
 Use for a new repository or noisy transcript.
 
-1. Set `dry_run: true`.
+1. Set `auto_capture.enabled: true` and `auto_capture.mode: pending`.
 2. Inspect `/aidememo-pending`.
 3. Commit only high-confidence decisions / lessons / errors.
 

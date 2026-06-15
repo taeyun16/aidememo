@@ -54,6 +54,9 @@ pack = mem.client.workflow_start(
     source="github:org/app#123",
     source_id="codex-aidememo",
 )
+canvas = mem.session_canvas(pack["session_id"], limit=20)
+profile = mem.project_profile(limit=80)
+
 mem.remember(
     [
         {
@@ -79,8 +82,10 @@ main.branch_merge("./shared", branch="candidate-b")
 
 Use MCP/tools for one-off model-visible calls. Use this SDK when the agent
 needs memory as code: fanout retrieval, dedupe, coverage checks, aggregation,
-branch-log experiments, or session-aware batch writes without spending model
-turns on intermediate state.
+artifact hydration, branch-log experiments, or session-aware batch writes
+without spending model turns on intermediate state. `session_canvas(...)` and
+`project_profile(...)` return read-only Markdown strings suitable for direct
+prompt injection before resuming long work.
 
 `source_id` can be passed to `Memory.open(...)` or inherited from
 `AIDEMEMO_SOURCE_ID`, matching the MCP `aidememo mcp-install --source-id <namespace>` path.

@@ -273,7 +273,10 @@ def _parse_start_args(raw: str) -> tuple[str, str | None, str | None, str | None
 
 def _format_pending_list(entries: list[pending.PendingEntry]) -> str:
     if not entries:
-        return "No pending detections. Run a session with `dry_run: true` to populate this log."
+        return (
+            "No pending detections. Enable `auto_capture.enabled: true` with "
+            "`auto_capture.mode: pending` to populate this log."
+        )
     lines = [f"{len(entries)} pending detection(s):"]
     for e in entries:
         lines.append(f"  #{e.idx}  [{e.fact_type}, {e.confidence:.2f}]  {e.content}")

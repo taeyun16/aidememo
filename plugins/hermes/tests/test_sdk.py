@@ -59,7 +59,12 @@ def test_open_builds_default_client(monkeypatch) -> None:
     sdk = AideMemoMemorySDK.open(store_path="/tmp/wiki.redb", source_id="team-a", lock_retry_ms=250)
 
     assert isinstance(sdk.client, RecordingClient)
-    assert created == {"store_path": "/tmp/wiki.redb", "source_id": "team-a", "lock_retry_ms": 250}
+    assert created == {
+        "store_path": "/tmp/wiki.redb",
+        "source_id": "team-a",
+        "lock_retry_ms": 250,
+        "storage_backend": None,
+    }
 
 
 def test_flatten_dedupe_group_and_coverage() -> None:

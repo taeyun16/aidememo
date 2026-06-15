@@ -1,10 +1,9 @@
 """Heuristic detector for "we just decided X" moments in chat.
 
-Used by the ``on_session_end`` hook to auto-record facts back to aidememo.
-Bias is towards *precision* — false positives clutter the wiki and
-erode trust in the auto-recorder, so we only catch unambiguous
-phrasings. Operators who want recall over precision can lower the
-threshold via ``confidence_floor`` in the plugin config.
+Used by the opt-in capture adapter. Bias is towards *precision* — false
+positives clutter the wiki and erode trust in capture, so we only catch
+unambiguous phrasings. Operators who want recall over precision can lower
+the threshold via ``confidence_floor`` in the plugin config.
 
 Patterns are anchored to short imperative-style claims (≤ 200 chars)
 because longer paragraphs are usually exposition, not commitments.

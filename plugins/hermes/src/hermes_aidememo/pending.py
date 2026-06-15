@@ -1,8 +1,8 @@
-"""Shared accessors for the dry-run pending log.
+"""Shared accessors for the pending capture review log.
 
-The on_session_end hook (when ``dry_run: true``) appends each
-detected fact to a JSONL file. The ``/aidememo-pending`` slash command
-reads that file back so users can audit, commit, or discard the
+The opt-in capture adapter appends each detected fact to a JSONL file
+when configured with ``mode: pending``. The ``/aidememo-pending`` slash
+command reads that file back so users can audit, commit, or discard the
 captures interactively.
 
 The file lives at ``$HERMES_STATE_DIR/aidememo-pending.jsonl`` (default

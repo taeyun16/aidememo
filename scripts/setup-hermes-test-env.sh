@@ -211,7 +211,7 @@ cmd_seed() {
         "HNSW is the default semantic index in aidememo" \
         --entities aidememo,hnsw --type decision > /dev/null 2>&1 || true
     "$AIDEMEMO_BIN" --store "$TEST_HOME/wiki.sqlite" fact add \
-        "Hermes plugin auto-records decisions on session_end" \
+        "Hermes plugin capture adapter is opt-in and pending-first" \
         --entities aidememo,hermes --type convention > /dev/null 2>&1 || true
     "$AIDEMEMO_BIN" --store "$TEST_HOME/wiki.sqlite" fact add \
         "Tool handlers must return strings — Hermes slice-checks results" \

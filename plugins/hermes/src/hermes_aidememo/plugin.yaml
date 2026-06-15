@@ -3,8 +3,8 @@ version: "1.0.0"
 description: |
   AideMemo integration for Hermes Agent. Wraps the local aidememo knowledge
   graph as native tools, slash commands, and lifecycle hooks: every new
-  session is auto-pre-loaded with recent facts, and decisions detected
-  during the session can be auto-recorded back to aidememo on close.
+  session can be pre-loaded with recent facts, and an opt-in capture adapter
+  can queue decision-style facts for pending review.
 author: Taeyun Jang <taeyun16@pm.me>
 kind: standalone
 requires_env: []

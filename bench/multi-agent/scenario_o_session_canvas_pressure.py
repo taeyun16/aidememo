@@ -21,6 +21,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 from pathlib import Path
@@ -38,10 +39,12 @@ def run(
     cmd: list[str],
     *,
     env: dict[str, str] | None = None,
+    input_text: str | None = None,
     timeout: int = 30,
 ) -> subprocess.CompletedProcess:
     proc = subprocess.run(
         cmd,
+        input=input_text,
         capture_output=True,
         text=True,
         timeout=timeout,
@@ -52,6 +55,42 @@ def run(
             f"{cmd!r} exited {proc.returncode}\nstdout={proc.stdout[:1000]}\nstderr={proc.stderr[:1600]}"
         )
     return proc
+
+
+def mcp_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    init = {
+        "jsonrpc": "2.0",
+        "id": 0,
+        "method": "initialize",
+        "params": {"clientInfo": {"name": "scenario-o", "version": "0"}},
+    }
+    call = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {"name": name, "arguments": arguments},
+    }
+    proc = run(
+        [WG, "--store", STORE, "mcp"],
+        input_text=f"{json.dumps(init)}\n{json.dumps(call)}\n",
+    )
+    responses = [json.loads(line) for line in proc.stdout.splitlines() if line.strip()]
+    response = next((row for row in responses if row.get("id") == 1), None)
+    if response is None:
+        raise RuntimeError(f"MCP returned no response for {name}: {proc.stdout[:1000]}")
+    if response.get("error"):
+        raise RuntimeError(f"MCP {name} failed: {response['error']}")
+    result = response.get("result") or {}
+    if result.get("isError"):
+        raise RuntimeError(f"MCP {name} returned isError: {result}")
+    text = "\n".join(
+        str(block.get("text") or "")
+        for block in result.get("content") or []
+        if isinstance(block, dict) and block.get("type") == "text"
+    ).strip()
+    if not text:
+        raise RuntimeError(f"MCP {name} returned no text content")
+    return json.loads(text)
 
 
 def reset_store() -> None:
@@ -92,6 +131,18 @@ def fact_add(
 
 def stats() -> dict[str, Any]:
     return json.loads(run([WG, "--store", STORE, "--json", "stats"]).stdout)
+
+
+def prepare_sdk_import() -> None:
+    sdk_src = REPO / "packages" / "aidememo-agent-sdk" / "src"
+    sys.path.insert(0, str(sdk_src))
+    wg_path = Path(WG).resolve()
+    if wg_path.name == "aidememo":
+        bin_dir = wg_path.parent
+    else:
+        bin_dir = Path(tempfile.mkdtemp(prefix="aidememo-scenario-o-sdk-bin-"))
+        (bin_dir / "aidememo").symlink_to(wg_path)
+    os.environ["PATH"] = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
 
 
 def main() -> int:
@@ -205,11 +256,35 @@ def main() -> int:
             str(profile_path),
         ]
     ).stdout
-    export_ms = (time.perf_counter_ns() - export_start) / 1e6
-    after = stats()
 
     canvas = canvas_path.read_text(encoding="utf-8")
     profile = profile_path.read_text(encoding="utf-8")
+
+    mcp_canvas_payload = mcp_tool("aidememo_session_canvas", {"session": session_id, "limit": 12})
+    mcp_profile_payload = mcp_tool(
+        "aidememo_profile_export",
+        {"source_id": "scenario-o", "limit": 20},
+    )
+    mcp_canvas = mcp_canvas_payload["content"]
+    mcp_profile = mcp_profile_payload["content"]
+
+    prepare_sdk_import()
+    from aidememo_agent import AideMemoClient, Memory  # noqa: PLC0415
+
+    sdk_client = AideMemoClient(
+        store_path=STORE,
+        source_id="scenario-o",
+        storage_backend="libsqlite",
+        lock_retry_ms=5000,
+    )
+    sdk_client._py = None
+    sdk = Memory(sdk_client)
+    sdk_canvas = sdk.session_canvas(session_id, limit=12)
+    sdk_profile = sdk.project_profile(limit=20)
+
+    export_ms = (time.perf_counter_ns() - export_start) / 1e6
+    after = stats()
+
     mermaid = canvas.split("## Evidence Thread", 1)[0]
     canvas_verify_count = canvas.count("aidememo fact get")
 
@@ -222,6 +297,10 @@ def main() -> int:
         "profile_has_evidence_contract": "## Evidence Contract" in profile,
         "profile_has_project_decision": "bounded session canvas" in profile,
         "artifacts_read_only": before == after,
+        "mcp_canvas_matches_cli": mcp_canvas == canvas,
+        "mcp_profile_matches_cli": mcp_profile == profile,
+        "sdk_canvas_matches_cli": sdk_canvas == canvas,
+        "sdk_profile_matches_cli": sdk_profile == profile,
         "bounded_canvas_smaller_than_full_thread": len(canvas) < len(raw_thread),
         "mermaid_map_smaller_than_full_thread": len(mermaid) < len(raw_thread) // 3,
     }
@@ -237,6 +316,10 @@ def main() -> int:
             "session_canvas_verify_refs": canvas_verify_count,
             "project_profile_bytes": len(profile),
             "mermaid_map_bytes": len(mermaid),
+            "mcp_session_canvas_bytes": len(mcp_canvas),
+            "mcp_project_profile_bytes": len(mcp_profile),
+            "sdk_session_canvas_bytes": len(sdk_canvas),
+            "sdk_project_profile_bytes": len(sdk_profile),
         },
         "timing_ms": {
             "seed": round(seed_ms, 2),
@@ -244,6 +327,12 @@ def main() -> int:
         },
         "canvas_meta": json.loads(canvas_meta),
         "profile_meta": json.loads(profile_meta),
+        "mcp_canvas_meta": {
+            key: value for key, value in mcp_canvas_payload.items() if key != "content"
+        },
+        "mcp_profile_meta": {
+            key: value for key, value in mcp_profile_payload.items() if key != "content"
+        },
         "invariants": invariants,
         "ok": all(invariants.values()),
     }

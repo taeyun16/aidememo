@@ -8,7 +8,7 @@ Hermes calls :func:`register` once per plugin enable. We:
 3. Register 5 slash commands (``/aidememo``, ``/aidememo-start``, ``/aidememo-add``,
    ``/aidememo-recent``, ``/aidememo-pending``).
 4. Register 2 lifecycle hooks (``pre_llm_call`` auto-context,
-   ``post_llm_call`` auto-fact-record).
+   ``post_llm_call`` opt-in capture adapter).
 5. Register the ``hermes aidememo`` CLI subtree.
 6. Register the bundled aidememo skill so the agent gets free-form
    instructions on top of the structured tools.
@@ -47,7 +47,7 @@ def _load_config(ctx: Any) -> dict:
     # `HERMES_HOME` is the canonical Hermes state-dir env var; it
     # points at /tmp/aidememo-hermes-test in our isolated profile and at
     # ~/.hermes in a stock setup. Read it before falling back to the
-    # default location so dry_run / auto_record / pending_log keys
+    # default location so auto_capture / dry_run / pending_log keys
     # written into a test profile actually take effect.
     home_env = os.environ.get("HERMES_HOME")
     if home_env:

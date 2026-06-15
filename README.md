@@ -142,8 +142,8 @@ question shape requires it:
 | Follow-up topic dive | `aidememo_query` | Lighter topic retrieval when pinned/recent context is already loaded. |
 | Exact totals, counts, date sets, or timelines | `aidememo_aggregate` | Deterministic arithmetic over matching facts; use it as insurance for cross-fact counting, not for simple recall. |
 | Learned a durable fact | `aidememo_fact_add` / `aidememo_fact_add_many` | Store typed memory explicitly; pass the `session_id` returned by `aidememo_workflow_start` to keep follow-up facts on the workflow thread. |
-| Resuming a long workflow | `aidememo session canvas` | Export a bounded Markdown + Mermaid map of the session with fact-id drill-down instead of injecting the whole thread. |
-| Preparing project context | `aidememo profile export` | Generate a read-only `project_profile.md` from current typed facts; the store remains the source of truth. |
+| Resuming a long workflow | `aidememo_session_canvas` / `aidememo session canvas` / SDK `session_canvas()` | Fetch a bounded Markdown + Mermaid map of the session with fact-id drill-down instead of injecting the whole thread. |
+| Preparing project context | `aidememo_profile_export` / `aidememo profile export` / SDK `project_profile()` | Generate a read-only `project_profile.md` text view from current typed facts; the store remains the source of truth. |
 
 The agent-facing memory profile itself is treated as an auditable artifact.
 [`docs/SKILLOPT_LITE.md`](docs/SKILLOPT_LITE.md) describes the
@@ -262,6 +262,10 @@ aidememo session canvas "$AIDEMEMO_SESSION_ID" --limit 20 --output session_canva
 aidememo profile export --output project_profile.md
 ```
 
+The same artifacts are available on the agent hot path through MCP
+(`aidememo_session_canvas`, `aidememo_profile_export`) and through
+`aidememo-agent-sdk` (`Memory.session_canvas(...)`, `Memory.project_profile(...)`).
+
 These artifacts borrow the useful part of layered memory systems: a compact
 macro view with deterministic drill-down. They do not auto-capture hidden state
 or replace typed facts; every durable claim still points back to `aidememo fact
@@ -318,7 +322,7 @@ and temporal memory semantics, not a SOTA benchmark claim.
 | Graph | entities, facts, relations, traversal, shortest path, Mermaid / DOT export |
 | Time | `supersede`, `current_only`, `as_of`, archive / cold tier |
 | Agent tools | 25 MCP tools including `aidememo_workflow_start`, `aidememo_context`, `aidememo_query`, `aidememo_aggregate`, `aidememo_fact_add_many` |
-| Capture | `aidememo_extract`, pending review queue, `aidememo pending list/stats/approve/reject` |
+| Capture | `aidememo_extract`, pending review queue, `aidememo pending list/stats/approve/reject`, opt-in Hermes/OpenClaw capture adapter |
 | Artifacts | `aidememo session canvas`, `aidememo profile export` for bounded, auditable Markdown views over typed facts |
 | Ops | `doctor` / MCP `aidememo_doctor`, `overview`, `bench`, `vector-rebuild`, `consolidate`, `auto-relate` |
 | Sharing | `source_id`, multi-project stores, stdio MCP, HTTP/SSE MCP, daemon discovery, branch logs for cloud agents and speculative memory runs |

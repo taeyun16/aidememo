@@ -143,6 +143,36 @@ class AideMemoMemorySDK:
             concurrency=concurrency,
         )
 
+    def session_canvas(
+        self,
+        session_id: str | None = None,
+        *,
+        limit: int = 80,
+        include_superseded: bool = False,
+    ) -> str:
+        """Return a bounded session canvas ready for prompt injection."""
+
+        return self.client.session_canvas(
+            session_id,
+            limit=limit,
+            include_superseded=include_superseded,
+        )
+
+    def project_profile(
+        self,
+        *,
+        limit: int = 80,
+        source_id: str | None = None,
+        include_sessions: bool = False,
+    ) -> str:
+        """Return the read-only project profile text artifact."""
+
+        return self.client.project_profile(
+            limit=limit,
+            source_id=source_id,
+            include_sessions=include_sessions,
+        )
+
     def dedupe_by_fact(self, rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
         seen: set[str] = set()
         out: list[dict[str, Any]] = []

@@ -18,13 +18,13 @@ mode (an idle ``HermesCLI`` queue), so the preamble silently
 disappeared in ``hermes chat -q``, gateway, and TUI sessions.
 
 ``post_llm_call`` — fires after every LLM API call with
-``user_message`` and ``assistant_response`` as kwargs. We run the
-decision detector on each turn's text and either auto-record the
-match (default) or append it to the dry-run pending log. Per-turn
-firing is actually a stronger guarantee than the old session-end
-design — captures land before the user pivots away from the
-relevant context, and a session that gets killed mid-conversation
-still has its earlier decisions persisted.
+``user_message`` and ``assistant_response`` as kwargs. When the
+operator explicitly enables the capture adapter, we run the decision
+detector on each turn's text and either queue matches to the pending
+review log (safe default) or write directly when configured. Per-turn
+firing keeps candidate captures close to the relevant context, but the
+default remains disabled so explicit ``fact_add`` / SDK / MCP writes
+stay canonical.
 
 Both hooks degrade gracefully — any exception is logged but never
 propagates back into Hermes's agent loop.
@@ -38,9 +38,8 @@ import re
 from pathlib import Path
 from typing import Any
 
-from . import pending
+from . import capture_adapter
 from .client import CLIENT_ERRORS, AideMemoClient
-from .decisions import detect
 
 log = logging.getLogger("hermes_aidememo")
 
@@ -176,19 +175,19 @@ def make_pre_llm_call(client: AideMemoClient, last: str = "7d", limit: int = 10)
 def make_post_llm_call(
     client: AideMemoClient,
     *,
-    enable_auto_record: bool = True,
+    enable_auto_record: bool = False,
     dry_run: bool = False,
     confidence_floor: float = 0.85,
     default_entities: list[str] | None = None,
     pending_path: Path | None = None,
     detect_in: str = "both",
+    capture_config: capture_adapter.CaptureConfig | None = None,
 ):
     """Build the ``post_llm_call`` callback.
 
-    Runs the decision detector against the just-finished turn's text
-    and either auto-records each match as an AideMemo fact (the default) or
-    appends it to ``pending_path`` for offline review when
-    ``dry_run`` is on.
+    Runs the decision detector against the just-finished turn's text only when
+    capture is explicitly enabled. The safe mode appends matches to the pending
+    review log; direct writes require explicit opt-in.
 
     ``detect_in`` controls which side of the turn is scanned:
 
@@ -204,14 +203,16 @@ def make_post_llm_call(
         the agent commits to but the user merely prompted for.
     """
 
-    valid_modes = {"both", "user", "assistant"}
-    if detect_in not in valid_modes:
-        log.warning(
-            "aidememo detect_in=%r unknown — falling back to 'both' (valid: %s)",
-            detect_in,
-            sorted(valid_modes),
+    if capture_config is None:
+        capture_config = capture_adapter.CaptureConfig(
+            enabled=enable_auto_record,
+            mode="pending" if dry_run else "direct",
+            provider="hermes",
+            confidence_floor=confidence_floor,
+            detect_in=detect_in,
+            default_entities=default_entities,
+            pending_path=pending_path,
         )
-        detect_in = "both"
 
     def post_llm_call(**kwargs: Any) -> None:
         user_message = str(kwargs.get("user_message") or "")
@@ -225,62 +226,23 @@ def make_post_llm_call(
             except CLIENT_ERRORS as exc:
                 log.warning("aidememo workflow_start capture failed at post_llm_call: %s", exc)
 
-        if not enable_auto_record:
-            return
-        text_chunks: list[str] = []
-        wanted_keys = {
-            "both": ("user_message", "assistant_response"),
-            "user": ("user_message",),
-            "assistant": ("assistant_response",),
-        }[detect_in]
-        for key in wanted_keys:
-            value = kwargs.get(key)
-            if isinstance(value, str) and value.strip():
-                text_chunks.append(value)
-        if not text_chunks:
+        try:
+            result = capture_adapter.capture_from_payload(client, kwargs, capture_config)
+        except (OSError, RuntimeError) as exc:
+            log.warning("aidememo auto-capture adapter failed: %s", exc)
             return
 
-        transcript = "\n".join(text_chunks)
-        detections = detect(transcript, confidence_floor=confidence_floor)
-        if not detections:
-            return
-
-        if dry_run:
-            try:
-                path = pending.append(detections, pending_path)
-            except OSError as exc:
-                log.warning("aidememo dry-run could not write pending log: %s", exc)
-                return
+        if result.queued:
+            path = result.pending_path or str(pending_path or "pending log")
             log.info(
-                "aidememo dry-run captured %d detection(s) (logged to %s - review with `/aidememo-pending`, then `/aidememo-pending commit all` or `clear all`)",
-                len(detections),
+                "aidememo auto-capture queued %d detection(s) to %s; review with `/aidememo-pending`",
+                result.queued,
                 path,
             )
-            for d in detections:
-                log.info(
-                    "  [%s, %.2f] %s",
-                    d.fact_type,
-                    d.confidence,
-                    d.content,
-                )
             return
 
-        for d in detections:
-            try:
-                client.fact_add(
-                    d.content,
-                    entities=default_entities,
-                    fact_type=d.fact_type,
-                    tags=["auto-recorded", "hermes-session"],
-                    # Forward the detector's per-pattern weight so the
-                    # wiki sees the same confidence the auto-recorder
-                    # used to gate the entry. Otherwise aidememo defaults to
-                    # 0.5 and a 0.95-marker decision lands at 0.5 in
-                    # search ranking — bug masquerading as feature.
-                    confidence=d.confidence,
-                )
-            except CLIENT_ERRORS as exc:
-                log.warning("aidememo fact_add (auto-record) failed: %s", exc)
+        if result.recorded:
+            log.info("aidememo auto-capture recorded %d detection(s)", result.recorded)
 
     return post_llm_call
 
@@ -293,7 +255,7 @@ def make_post_llm_call(
 def make_on_session_end(
     client: AideMemoClient,
     *,
-    enable_auto_record: bool = True,
+    enable_auto_record: bool = False,
     dry_run: bool = False,
     confidence_floor: float = 0.85,
     default_entities: list[str] | None = None,
@@ -327,13 +289,7 @@ def register_all(ctx: Any, client: AideMemoClient, config: dict | None = None) -
     cfg = config or {}
     last = cfg.get("recent_window", "7d")
     limit = int(cfg.get("recent_limit", 10))
-    auto_record = bool(cfg.get("auto_record", True))
-    dry_run = bool(cfg.get("dry_run", False))
-    floor = float(cfg.get("confidence_floor", 0.85))
-    default_entities = cfg.get("default_entities")
-    pending_path_cfg = cfg.get("pending_log")
-    pending_path = Path(pending_path_cfg) if pending_path_cfg else None
-    detect_in = str(cfg.get("detect_in") or "both")
+    capture_config = capture_adapter.config_from_plugin(cfg, provider="hermes")
 
     ctx.register_hook(
         "pre_llm_call",
@@ -343,11 +299,6 @@ def register_all(ctx: Any, client: AideMemoClient, config: dict | None = None) -
         "post_llm_call",
         make_post_llm_call(
             client,
-            enable_auto_record=auto_record,
-            dry_run=dry_run,
-            confidence_floor=floor,
-            default_entities=default_entities,
-            pending_path=pending_path,
-            detect_in=detect_in,
+            capture_config=capture_config,
         ),
     )

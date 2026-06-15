@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 import types
 
@@ -11,6 +12,7 @@ class FakeClient:
     def __init__(self) -> None:
         self.fact_batches = []
         self.branch_calls = []
+        self.artifact_calls = []
 
     def search(self, query, **kwargs):
         return [
@@ -49,6 +51,14 @@ class FakeClient:
             "segments_merged": 1,
             "facts_inserted": 1,
         }
+
+    def session_canvas(self, session_id=None, *, limit=80, include_superseded=False):
+        self.artifact_calls.append(("session_canvas", session_id, limit, include_superseded))
+        return "# AideMemo Session Canvas"
+
+    def project_profile(self, *, limit=80, source_id=None, include_sessions=False):
+        self.artifact_calls.append(("project_profile", limit, source_id, include_sessions))
+        return "# AideMemo Project Profile"
 
 
 def test_search_many_preserves_order_and_metadata() -> None:
@@ -253,6 +263,74 @@ def test_branch_helpers_forward_to_client() -> None:
         ("push", "candidate-b", "/tmp/shared", "/tmp/shared/backup-01"),
         ("merge", "candidate-b", "/tmp/shared"),
     ]
+
+
+def test_artifact_helpers_forward_to_client() -> None:
+    client = FakeClient()
+    sdk = AideMemoMemorySDK(client)
+
+    assert sdk.session_canvas("session-1", limit=12) == "# AideMemo Session Canvas"
+    assert sdk.project_profile(limit=20, source_id="team-a") == "# AideMemo Project Profile"
+    assert client.artifact_calls == [
+        ("session_canvas", "session-1", 12, False),
+        ("project_profile", 20, "team-a", False),
+    ]
+
+
+def test_client_artifact_methods_use_mcp_tools(monkeypatch) -> None:
+    calls = []
+
+    class Completed:
+        returncode = 0
+        stderr = ""
+
+        def __init__(self, stdout: str) -> None:
+            self.stdout = stdout
+
+    def fake_run(cmd, **kwargs):
+        lines = [json.loads(line) for line in kwargs["input"].splitlines() if line.strip()]
+        tool_call = next(line for line in lines if line["method"] == "tools/call")
+        calls.append((cmd, tool_call["params"]))
+        name = tool_call["params"]["name"]
+        content = "# AideMemo Session Canvas" if name == "aidememo_session_canvas" else "# AideMemo Project Profile"
+        stdout = "\n".join(
+            [
+                json.dumps({"jsonrpc": "2.0", "id": 0, "result": {}}),
+                json.dumps({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "result": {
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": json.dumps({"content": content}),
+                            }
+                        ]
+                    },
+                }),
+            ]
+        )
+        return Completed(stdout)
+
+    monkeypatch.setattr("aidememo_agent.client.subprocess.run", fake_run)
+    client = AideMemoClient.__new__(AideMemoClient)
+    client.store_path = "/tmp/wiki.sqlite"
+    client.storage_backend = "libsqlite"
+    client.lock_retry_ms = 0
+    client.default_source_id = "team-a"
+    client._py = None
+
+    assert client.session_canvas("session-1", limit=7) == "# AideMemo Session Canvas"
+    assert client.project_profile(limit=9) == "# AideMemo Project Profile"
+    assert calls[0][0] == ["aidememo", "--backend", "libsqlite", "--store", "/tmp/wiki.sqlite", "mcp"]
+    assert calls[0][1] == {
+        "name": "aidememo_session_canvas",
+        "arguments": {"limit": 7, "include_superseded": False, "session": "session-1"},
+    }
+    assert calls[1][1] == {
+        "name": "aidememo_profile_export",
+        "arguments": {"limit": 9, "include_sessions": False, "source_id": "team-a"},
+    }
 
 
 def test_pyo3_backend_preserves_session_and_context_scope() -> None:

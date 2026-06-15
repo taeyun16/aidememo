@@ -334,9 +334,9 @@ def test_dry_run_writes_pending_log_instead_of_calling_fact_add(
     assert "ts_ms" in payload
 
 
-def test_dry_run_default_is_false(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
-    """Without an explicit ``dry_run: true`` config, the recorder
-    behaves as before — calling ``fact_add`` for each detection."""
+def test_auto_capture_default_is_disabled(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    """Without explicit capture config, the hook does not write facts or
+    pending entries."""
     from hermes_aidememo.client import AideMemoClient
     from hermes_aidememo.hooks import make_on_session_end
 
@@ -351,16 +351,11 @@ def test_dry_run_default_is_false(monkeypatch: pytest.MonkeyPatch, tmp_path) -> 
     monkeypatch.setattr("hermes_aidememo.client.AideMemoClient._has_cli", staticmethod(lambda: True))
 
     pending = tmp_path / "aidememo-pending.jsonl"
-    on_end = make_on_session_end(
-        AideMemoClient(),
-        enable_auto_record=True,
-        confidence_floor=0.85,
-        pending_path=pending,
-    )
+    on_end = make_on_session_end(AideMemoClient(), confidence_floor=0.85, pending_path=pending)
 
     on_end(transcript="Decision: ship the dry-run flag this week, soon")
 
-    assert len(fact_add_calls) == 1
+    assert fact_add_calls == []
     assert not pending.exists()
 
 

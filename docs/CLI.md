@@ -74,6 +74,8 @@ aidememo session canvas "$AIDEMEMO_SESSION_ID" --limit 20 --output session_canva
 
 The canvas is a derived Markdown artifact: a Mermaid map first, then fact-id
 drill-down lines that point back to `aidememo fact get <id>`.
+MCP agents can request the same text with `aidememo_session_canvas`; Python
+agents can call `Memory.session_canvas(...)`.
 
 ## Export a project profile
 
@@ -86,6 +88,8 @@ aidememo profile export --source-id team-a --limit 80
 
 This does not create or modify facts. It gives agents a compact project/persona
 view while keeping AideMemo's typed facts as the evidence trail.
+MCP agents can request the same text with `aidememo_profile_export`; Python
+agents can call `Memory.project_profile(...)`.
 
 ## Browse entities and facts
 

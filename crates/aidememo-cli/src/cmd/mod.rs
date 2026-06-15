@@ -4,6 +4,7 @@ use bpaf::*;
 use std::path::PathBuf;
 
 pub mod adapt;
+pub mod artifacts;
 pub mod auth;
 pub mod bench;
 pub mod completions;

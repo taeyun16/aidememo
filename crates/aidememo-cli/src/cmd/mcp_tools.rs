@@ -7,7 +7,7 @@ use aidememo_core::{AideMemo, WorkflowStartOpts, backend::StoreBackend};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::cmd::doctor::collect_sharing_status;
+use crate::cmd::{artifacts, doctor::collect_sharing_status};
 
 pub const PROTOCOL_VERSION: &str = "2025-06-18";
 pub const SERVER_NAME: &str = "aidememo";
@@ -2323,6 +2323,59 @@ fn tool_workflow_start(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, 
     })
 }
 
+fn tool_session_canvas(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, String> {
+    let session = args
+        .get("session")
+        .or_else(|| args.get("session_id"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(80) as usize;
+    let include_superseded = args
+        .get("include_superseded")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    let artifact = artifacts::session_canvas(wiki, session, limit, include_superseded)
+        .map_err(|e| e.to_string())?;
+    let payload = json!({
+        "artifact": "session_canvas",
+        "session_id": artifact.session_id,
+        "topic": artifact.topic,
+        "fact_count": artifact.fact_count,
+        "bytes": artifact.body.len(),
+        "content": artifact.body,
+    });
+    Ok(ToolCallResult {
+        content: vec![ContentBlock::text(payload.to_string())],
+        is_error: None,
+    })
+}
+
+fn tool_profile_export(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, String> {
+    let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(80) as usize;
+    let source_id = mcp_source_id(args);
+    let include_sessions = args
+        .get("include_sessions")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    let artifact = artifacts::project_profile(wiki, limit, source_id.clone(), include_sessions)
+        .map_err(|e| e.to_string())?;
+    let payload = json!({
+        "artifact": "project_profile",
+        "source_id": source_id,
+        "fact_count": artifact.fact_count,
+        "entity_count": artifact.entity_count,
+        "bytes": artifact.body.len(),
+        "content": artifact.body,
+    });
+    Ok(ToolCallResult {
+        content: vec![ContentBlock::text(payload.to_string())],
+        is_error: None,
+    })
+}
+
 fn render_context_markdown(
     payload: &serde_json::Map<String, Value>,
     topic: Option<&str>,
@@ -3306,6 +3359,33 @@ pub fn list_tools() -> Vec<Tool> {
             }),
         },
         Tool {
+            name: "aidememo_session_canvas".into(),
+            description: "Return a bounded, read-only Markdown + Mermaid canvas for a tracked session. Use before resuming a long workflow: it gives the agent a compact map plus fact-id drill-down commands instead of injecting the entire session thread."
+                .into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "session": {"type": "string", "description": "Tracked session entity id/name, e.g. session-01H... . If omitted, the MCP process falls back to AIDEMEMO_SESSION_ID."},
+                    "session_id": {"type": "string", "description": "Alias for session."},
+                    "limit": {"type": "number", "default": 80, "description": "Max facts from the session thread to include."},
+                    "include_superseded": {"type": "boolean", "default": false, "description": "Include superseded facts for historical/audit replay."}
+                }
+            }),
+        },
+        Tool {
+            name: "aidememo_profile_export".into(),
+            description: "Return a read-only project_profile.md text artifact derived from current typed facts. Use to hydrate agent prompts with durable decisions, conventions, lessons, and errors while preserving fact ids for drill-down."
+                .into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "number", "default": 80, "description": "Max current facts to consider before grouping by type."},
+                    "source_id": {"type": "string", "description": "Optional source namespace / tenant / upstream id. If omitted, MCP falls back to AIDEMEMO_SOURCE_ID when set."},
+                    "include_sessions": {"type": "boolean", "default": false, "description": "Include tracked session/ticket facts in the profile. Default keeps the profile focused on durable project facts."}
+                }
+            }),
+        },
+        Tool {
             name: "aidememo_query".into(),
             description: "Topic-only retrieval (search + entity + traverse + recent). Lighter than aidememo_context — no pinned / personalisation tier. Prefer aidememo_context for an agent's opening turn; use aidememo_query for follow-up topic dives. Defaults to current_only=true. Modes: naive (search only), local (entity + neighbors, no global search), hybrid (default), global (broader scan). Agent context cost: pass `format:\"compact\"` to truncate each snippet's content to a preview (cuts result size ~3×). Hard-cap with `max_chars:N` to fit a turn budget — overflow drops `related` first, then uniformly shrinks snippet previews."
                 .into(),
@@ -3569,6 +3649,8 @@ fn call_tool(name: &str, args: &Value, wiki: &AideMemo) -> Result<ToolCallResult
         "aidememo_query" => tool_query(args, wiki),
         "aidememo_context" => tool_context(args, wiki),
         "aidememo_workflow_start" => tool_workflow_start(args, wiki),
+        "aidememo_session_canvas" => tool_session_canvas(args, wiki),
+        "aidememo_profile_export" => tool_profile_export(args, wiki),
         "aidememo_entity_describe" => tool_entity_describe(args, wiki),
         "aidememo_fact_add" => tool_fact_add(args, wiki),
         "aidememo_fact_add_many" => tool_fact_add_many(args, wiki),
@@ -3789,6 +3871,8 @@ mod tests {
         assert!(names.contains(&"aidememo_fact_supersede".to_string()));
         assert!(names.contains(&"aidememo_fact_edit".to_string()));
         assert!(names.contains(&"aidememo_fact_add_many".to_string()));
+        assert!(names.contains(&"aidememo_session_canvas".to_string()));
+        assert!(names.contains(&"aidememo_profile_export".to_string()));
     }
 
     #[test]
@@ -4042,6 +4126,94 @@ mod tests {
         assert!(serialized.contains("job wrapper"));
         assert!(serialized.contains("DNS"));
         assert!(!serialized.contains("TLS handshake"));
+    }
+
+    #[test]
+    fn artifact_tools_return_read_only_markdown() {
+        let (_dir, wiki) = open_temp_wiki();
+
+        tool_fact_add(
+            &json!({
+                "content": "Alpha durable decision: resume long work from the bounded session canvas",
+                "entities": ["AideMemo", "SessionCanvas"],
+                "source_id": "alpha",
+                "fact_type": "decision",
+                "dedup_check": false
+            }),
+            &wiki,
+        )
+        .unwrap();
+        tool_fact_add(
+            &json!({
+                "content": "Beta durable decision: unrelated profile fact",
+                "entities": ["AideMemo"],
+                "source_id": "beta",
+                "fact_type": "decision",
+                "dedup_check": false
+            }),
+            &wiki,
+        )
+        .unwrap();
+
+        let workflow = tool_workflow_start(
+            &json!({
+                "title": "Resume long investigation",
+                "body": "Need a compact thread artifact before continuing.",
+                "source_id": "alpha",
+                "bm25_only": true
+            }),
+            &wiki,
+        )
+        .unwrap();
+        let workflow_payload: Value =
+            serde_json::from_str(workflow.content[0].text.as_deref().unwrap()).unwrap();
+        let session_id = workflow_payload["session_id"].as_str().unwrap();
+        tool_fact_add(
+            &json!({
+                "content": "Session note: captured canvas parity evidence",
+                "entities": ["AideMemo", "SessionCanvas"],
+                "session_id": session_id,
+                "source_id": "alpha",
+                "fact_type": "lesson",
+                "dedup_check": false
+            }),
+            &wiki,
+        )
+        .unwrap();
+
+        let before = wiki.stats().unwrap();
+        let canvas =
+            tool_session_canvas(&json!({"session": session_id, "limit": 10}), &wiki).unwrap();
+        let profile =
+            tool_profile_export(&json!({"source_id": "alpha", "limit": 10}), &wiki).unwrap();
+        let after = wiki.stats().unwrap();
+
+        assert_eq!(before.entity_count, after.entity_count);
+        assert_eq!(before.fact_count, after.fact_count);
+        assert_eq!(before.relation_count, after.relation_count);
+
+        let canvas_payload: Value =
+            serde_json::from_str(canvas.content[0].text.as_deref().unwrap()).unwrap();
+        let canvas_text = canvas_payload["content"].as_str().unwrap();
+        assert_eq!(canvas_payload["artifact"].as_str(), Some("session_canvas"));
+        assert_eq!(canvas_payload["session_id"].as_str(), Some(session_id));
+        assert!(canvas_text.contains("# AideMemo Session Canvas"));
+        assert!(canvas_text.contains("```mermaid"));
+        assert!(canvas_text.contains("aidememo fact get"));
+        assert!(canvas_text.contains("canvas parity evidence"));
+
+        let profile_payload: Value =
+            serde_json::from_str(profile.content[0].text.as_deref().unwrap()).unwrap();
+        let profile_text = profile_payload["content"].as_str().unwrap();
+        assert_eq!(
+            profile_payload["artifact"].as_str(),
+            Some("project_profile")
+        );
+        assert_eq!(profile_payload["source_id"].as_str(), Some("alpha"));
+        assert!(profile_text.contains("# AideMemo Project Profile"));
+        assert!(profile_text.contains("## Evidence Contract"));
+        assert!(profile_text.contains("bounded session canvas"));
+        assert!(!profile_text.contains("unrelated profile fact"));
     }
 
     #[test]

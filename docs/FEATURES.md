@@ -107,6 +107,8 @@ python3 scripts/docs-feature-gate.py
 | `aidememo_recent` | Return recent facts. |
 | `aidememo_context` | Return the broad opening-turn context envelope. |
 | `aidememo_workflow_start` | Start a tracked issue, PR, ticket, or automation workflow. |
+| `aidememo_session_canvas` | Return a bounded Markdown + Mermaid canvas for long workflow resumption. |
+| `aidememo_profile_export` | Return a read-only project profile text artifact from current typed facts. |
 | `aidememo_query` | Return a focused topic context pack. |
 | `aidememo_entity_describe` | Set or clear an entity summary. |
 | `aidememo_fact_add` | Add one fact with self-classified type and optional session/source scoping. |
@@ -119,12 +121,12 @@ python3 scripts/docs-feature-gate.py
 
 | Surface | What it covers |
 |---|---|
-| `aidememo-agent-sdk` | Python composition layer for code-executing agents. |
+| `aidememo-agent-sdk` | Python composition layer for code-executing agents, including `session_canvas()` and `project_profile()` artifact helpers. |
 | `aidememo-python` | PyO3 native bindings for Python. |
 | `aidememo-napi` | Node.js native bindings. |
 | `aidememo-nif` | Elixir/Erlang NIF bindings. |
 | `aidememo-ffi` | C ABI bindings. |
-| `hermes-aidememo` | Hermes Agent plugin, slash commands, lifecycle hooks, and SDK re-exports. |
+| `hermes-aidememo` | Hermes Agent plugin, slash commands, lifecycle hooks, SDK re-exports, and opt-in pending-first capture adapter. |
 
 The native Python, Node, Elixir, and C bindings use the same backend selector
 as the CLI. Default builds include the local SQLite backend; build with Cargo
