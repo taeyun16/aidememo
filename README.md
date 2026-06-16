@@ -303,7 +303,8 @@ parallel.
 | Zero-token workflow demo | decision + lesson + error surfaced in `128ms` |
 | MCP source/backend-default install Scenario M | 21/21 invariants; installed `AIDEMEMO_SOURCE_ID` + `--backend libsqlite` scoped MCP write/search in `111.6ms` |
 | Hermes Memory-as-Code Scenario N | 9/9 invariants; SDK fanout/dedupe/coverage/aggregate excluded beta-source rows |
-| `aidememo-agent-sdk` pack smoke | wheel install + `Memory` / `AideMemoClient` / `AideMemoMemorySDK` first-use checks passed in `3.20s` |
+| `aidememo-agent-sdk` pack smoke | wheel install + `Memory` / `AideMemoClient` / `AideMemoMemorySDK` artifact-method checks passed in `3.38s` |
+| `hermes-aidememo` pack smoke | wheel install + SDK re-export / bundled skill / opt-in capture adapter checks passed in `4.43s` |
 | SkillOpt-lite profile gate | validates candidate memory-profile tokens, `aidememo skill check`, workflow demo, and SDK promotion gate |
 | SkillOpt-lite periodic cycle | records accepted / rejected skill-profile candidates under `target/skillopt-lite`; applies only with `--apply` |
 | `aidememo-napi` package split | root JS/types package + current-platform optional package install smoke passed |

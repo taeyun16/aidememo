@@ -4,6 +4,8 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUN_NPM="${AIDEMEMO_BINDINGS_SMOKE_NPM:-1}"
+RUN_AGENT_SDK="${AIDEMEMO_BINDINGS_SMOKE_AGENT_SDK:-1}"
+RUN_HERMES="${AIDEMEMO_BINDINGS_SMOKE_HERMES:-1}"
 RUN_OPTIONAL="${AIDEMEMO_BINDINGS_SMOKE_OPTIONAL:-0}"
 BASE="${AIDEMEMO_BINDINGS_SMOKE_BASE:-$(mktemp -d "${TMPDIR:-/tmp}/aidememo-bindings-smoke.XXXXXX")}"
 SUMMARY_TSV="$BASE/bindings-release-smoke.tsv"
@@ -146,6 +148,20 @@ if [[ "$RUN_NPM" == "1" ]]; then
     record_status "aidememo-napi" "ok" "version gate + root/platform pack/install smoke"
 else
     record_status "aidememo-napi" "skip" "set AIDEMEMO_BINDINGS_SMOKE_NPM=1 to run npm pack/install smoke"
+fi
+
+if [[ "$RUN_AGENT_SDK" == "1" ]]; then
+    run_without_child_summary "scripts/aidememo-agent-sdk-pack-smoke.sh" scripts/aidememo-agent-sdk-pack-smoke.sh
+    record_status "aidememo-agent-sdk" "ok" "wheel install smoke + artifact SDK surface"
+else
+    record_status "aidememo-agent-sdk" "skip" "set AIDEMEMO_BINDINGS_SMOKE_AGENT_SDK=1 to run wheel install smoke"
+fi
+
+if [[ "$RUN_HERMES" == "1" ]]; then
+    run_without_child_summary "scripts/hermes-aidememo-pack-smoke.sh" scripts/hermes-aidememo-pack-smoke.sh
+    record_status "hermes-aidememo" "ok" "wheel install smoke + opt-in capture adapter surface"
+else
+    record_status "hermes-aidememo" "skip" "set AIDEMEMO_BINDINGS_SMOKE_HERMES=1 to run wheel install smoke"
 fi
 
 if have uvx; then

@@ -67,7 +67,8 @@ scripts/release-preflight.sh
 ```
 
 This includes the version pins, workflow syntax lint, docs feature coverage
-gate, docs-site build, binding smoke, workflow smoke, and SDK promotion check.
+gate, docs-site build, binding smoke, agent SDK/Hermes wheel smoke, workflow
+smoke, and SDK promotion check.
 
 `maturin` is intentionally run through `uvx` using the pinned spec from
 `mise.toml`, not from whichever `maturin` happens to be on `PATH`.
