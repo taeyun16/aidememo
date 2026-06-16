@@ -1,0 +1,29 @@
+name: hermes-aidememo publish dry-run
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "hermes-aidememo-v*"
+
+concurrency:
+  group: hermes-aidememo-publish-dry-run-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  dry-run:
+    name: Hermes publish dry-run
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: publish dry-run
+        run: scripts/hermes-aidememo-publish-dry-run.sh

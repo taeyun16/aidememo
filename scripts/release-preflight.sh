@@ -212,9 +212,13 @@ fi
 
 if [[ "$RUN_PUBLISH" == "1" ]]; then
     run_without_child_summary "aidememo-python publish dry-run" "$ROOT_DIR/scripts/aidememo-python-publish-dry-run.sh"
+    run_without_child_summary "aidememo-agent-sdk publish dry-run" "$ROOT_DIR/scripts/aidememo-agent-sdk-publish-dry-run.sh"
+    run_without_child_summary "hermes-aidememo publish dry-run" "$ROOT_DIR/scripts/hermes-aidememo-publish-dry-run.sh"
     run_without_child_summary "aidememo-napi publish dry-run" "$ROOT_DIR/scripts/aidememo-napi-publish-dry-run.sh"
 else
     record_skip "aidememo-python publish dry-run" "set AIDEMEMO_RELEASE_PREFLIGHT_PROFILE=full"
+    record_skip "aidememo-agent-sdk publish dry-run" "set AIDEMEMO_RELEASE_PREFLIGHT_PROFILE=full"
+    record_skip "hermes-aidememo publish dry-run" "set AIDEMEMO_RELEASE_PREFLIGHT_PROFILE=full"
     record_skip "aidememo-napi publish dry-run" "set AIDEMEMO_RELEASE_PREFLIGHT_PROFILE=full"
 fi
 

@@ -40,6 +40,14 @@ run = "./scripts/aidememo-python-pack-smoke.sh"
 description = "Build and validate aidememo-python PyPI payloads via uvx+maturin"
 run = "./scripts/aidememo-python-publish-dry-run.sh"
 
+[tasks.agent-sdk-publish-dry-run]
+description = "Build and validate aidememo-agent-sdk PyPI payloads"
+run = "./scripts/aidememo-agent-sdk-publish-dry-run.sh"
+
+[tasks.hermes-publish-dry-run]
+description = "Build and validate hermes-aidememo PyPI payloads"
+run = "./scripts/hermes-aidememo-publish-dry-run.sh"
+
 [tasks.docs-install]
 description = "Install the Docusaurus documentation site dependencies"
 run = "npm --prefix website install"

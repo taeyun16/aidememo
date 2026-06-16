@@ -20,7 +20,7 @@ GitHub environments:
 
 | Environment | Workflows | Purpose |
 |---|---|---|
-| `pypi-publish` | `.github/workflows/aidememo-python-publish.yml` | Approval gate for PyPI trusted publishing |
+| `pypi-publish` | `.github/workflows/aidememo-python-publish.yml`, `.github/workflows/aidememo-agent-sdk-publish.yml`, `.github/workflows/hermes-aidememo-publish.yml` | Approval gate for PyPI trusted publishing |
 | `npm-publish` | `.github/workflows/aidememo-napi-publish.yml` | Approval gate for npm trusted publishing |
 
 Recommended protection: require a reviewer for both environments and restrict
@@ -31,8 +31,8 @@ PyPI trusted publishers:
 | Project | GitHub owner/repo | Workflow | Environment | Status |
 |---|---|---|---|---|
 | `aidememo-python` | `taeyun16/aidememo` | `aidememo-python-publish.yml` | `pypi-publish` | Workflow ready |
-| `aidememo-agent-sdk` | `taeyun16/aidememo` | none yet | none yet | Keep checkout/manual publish docs until a workflow is added |
-| `hermes-aidememo` | `taeyun16/aidememo` | none yet | none yet | Keep checkout/manual publish docs until a workflow is added |
+| `aidememo-agent-sdk` | `taeyun16/aidememo` | `aidememo-agent-sdk-publish.yml` | `pypi-publish` | Workflow ready |
+| `hermes-aidememo` | `taeyun16/aidememo` | `hermes-aidememo-publish.yml` | `pypi-publish` | Workflow ready |
 
 npm trusted publishers:
 
@@ -119,6 +119,8 @@ Local Python payload checks:
 ```bash
 mise run python-pack-smoke
 mise run python-publish-dry-run
+mise run agent-sdk-publish-dry-run
+mise run hermes-publish-dry-run
 ```
 
 Before the first PyPI release, user-facing docs should show checkout installs:
@@ -143,8 +145,12 @@ Publish the platform packages before the root wrapper:
 1. `aidememo-napi-*` platform packages
 2. `aidememo-napi`
 
-Use the trusted-publisher workflow with the exact version input. The default
-workflow mode is dry-run.
+Use each trusted-publisher workflow with the exact version input. The default
+workflow mode is dry-run:
+
+1. `.github/workflows/aidememo-python-publish.yml`
+2. `.github/workflows/aidememo-agent-sdk-publish.yml`
+3. `.github/workflows/hermes-aidememo-publish.yml`
 
 ## 6. Post-release checks
 

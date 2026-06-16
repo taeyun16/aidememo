@@ -1,0 +1,29 @@
+name: aidememo-agent-sdk publish dry-run
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "aidememo-agent-sdk-v*"
+
+concurrency:
+  group: aidememo-agent-sdk-publish-dry-run-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  dry-run:
+    name: agent SDK publish dry-run
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: publish dry-run
+        run: scripts/aidememo-agent-sdk-publish-dry-run.sh

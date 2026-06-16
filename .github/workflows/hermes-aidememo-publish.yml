@@ -1,0 +1,66 @@
+name: hermes-aidememo publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Exact hermes-aidememo version to publish"
+        required: true
+        type: string
+      dry_run:
+        description: "Build and validate distributions without publishing"
+        required: true
+        default: true
+        type: boolean
+
+concurrency:
+  group: hermes-aidememo-publish-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  HERMES_AIDEMEMO_EXPECT_VERSION: ${{ inputs.version }}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build distributions
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: build and validate distributions
+        run: HERMES_AIDEMEMO_DIST_DIR=dist scripts/hermes-aidememo-publish-dry-run.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hermes-aidememo-dist
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    name: publish to PyPI
+    if: ${{ ! inputs.dry_run }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: build
+    environment: pypi-publish
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: hermes-aidememo-dist
+          path: dist
+
+      - name: publish distributions
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist

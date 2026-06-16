@@ -227,7 +227,18 @@ publish_platform() {
 import json
 import os
 
-payload = json.loads(os.environ["PUBLISH_JSON"])
+raw_payload = json.loads(os.environ["PUBLISH_JSON"])
+if isinstance(raw_payload, dict) and "files" in raw_payload:
+    payload = raw_payload
+else:
+    candidates = [
+        value
+        for value in raw_payload.values()
+        if isinstance(value, dict) and "files" in value
+    ]
+    if len(candidates) != 1:
+        raise SystemExit(f"could not find package payload in npm JSON: {raw_payload}")
+    payload = candidates[0]
 files = payload.get("files") or []
 paths = {item.get("path") for item in files}
 required = {"package.json", os.environ["NODE_BASE"]}
@@ -260,7 +271,18 @@ publish_root() {
 import json
 import os
 
-payload = json.loads(os.environ["PUBLISH_JSON"])
+raw_payload = json.loads(os.environ["PUBLISH_JSON"])
+if isinstance(raw_payload, dict) and "files" in raw_payload:
+    payload = raw_payload
+else:
+    candidates = [
+        value
+        for value in raw_payload.values()
+        if isinstance(value, dict) and "files" in value
+    ]
+    if len(candidates) != 1:
+        raise SystemExit(f"could not find package payload in npm JSON: {raw_payload}")
+    payload = candidates[0]
 files = payload.get("files") or []
 paths = {item.get("path") for item in files}
 required = {"package.json", "index.js", "index.d.ts"}

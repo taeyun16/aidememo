@@ -48,13 +48,21 @@ mise run ci-lint
 mise run ci-test
 ```
 
-The Python release path uses `uvx` to run the pinned `maturin` build tool, so
-`mise install` is enough to reproduce the local wheel and publish dry-run
-checks:
+The native Python binding release path uses `uvx` to run the pinned `maturin`
+build tool, so `mise install` is enough to reproduce the local wheel and
+publish dry-run checks:
 
 ```bash
 mise run python-pack-smoke
 mise run python-publish-dry-run
+```
+
+The pure-Python agent package publish dry-runs use the local Python build
+backend:
+
+```bash
+mise run agent-sdk-publish-dry-run
+mise run hermes-publish-dry-run
 ```
 
 ## Store location
