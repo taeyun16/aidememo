@@ -343,8 +343,8 @@ fn tool_search(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, String> 
         .and_then(|v| v.as_str())
         .ok_or("query required")?;
     let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(10) as usize;
-    // Opt-in lazy fast path. Caller asks for BM25-only when latency
-    // matters more than semantic recall (agent hot path).
+    // Escape hatch for the lazy fast path. Callers ask for BM25-only when
+    // deterministic latency matters more than semantic recall.
     let bm25_only = args
         .get("bm25_only")
         .and_then(|v| v.as_bool())
@@ -352,7 +352,7 @@ fn tool_search(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, String> 
     let auto_hybrid = args
         .get("auto_hybrid")
         .and_then(|v| v.as_bool())
-        .unwrap_or(false);
+        .unwrap_or_else(|| wiki.config().search.auto_hybrid);
     // Default `current_only=true` because most agent queries are
     // "what do we know NOW?" — superseded facts mixed into results was
     // the biggest correctness footgun. Pass `false` explicitly for
@@ -3279,7 +3279,7 @@ pub fn list_tools() -> Vec<Tool> {
         Tool {
             name: "aidememo_search".into(),
             description:
-                "Search facts in the wiki using BM25 + semantic vectors. Returns ranked results. Defaults to current-only (excludes superseded facts) — pass `current_only:false` for historical/timeline queries. Pass `bm25_only:true` to skip the embedding model load (cuts cold-start ~700-900ms; loses semantic recall), or `auto_hybrid:true` to probe BM25 first and promote to semantic only when lexical evidence is weak. For graph context (related entities + recent facts) prefer `aidememo_query` instead — it wraps this tool plus traversal in one call."
+                "Search facts in the wiki using BM25 + semantic vectors. Returns ranked results. Defaults to current-only (excludes superseded facts) and follows the store's `search.auto_hybrid` policy: probe BM25 first, then promote to semantic only when lexical evidence is weak or the query is CJK and the semantic path is ready. Pass `bm25_only:true` to force pure BM25 for deterministic demos/hooks. Pass `auto_hybrid:false` with `bm25_only:false` to force the older always-hybrid path for one call. For graph context (related entities + recent facts) prefer `aidememo_query` instead - it wraps this tool plus traversal in one call."
                     .into(),
             input_schema: json!({
                 "type": "object",
@@ -3293,8 +3293,8 @@ pub fn list_tools() -> Vec<Tool> {
                     },
                     "auto_hybrid": {
                         "type": "boolean",
-                        "default": false,
-                        "description": "Probe BM25 first and promote to semantic search only when the lexical probe is weak or the query is CJK. Ignored when bm25_only=true."
+                        "default": true,
+                        "description": "Probe BM25 first and promote to semantic search only when the lexical probe is weak or the query is CJK and the semantic path is ready. Defaults to the store config. Set false with bm25_only=false to force always-hybrid search. Ignored when bm25_only=true."
                     },
                     "current_only": {
                         "type": "boolean",

@@ -333,6 +333,19 @@ impl AideMemo {
         }
     }
 
+    /// Fast readiness check for auto-hybrid promotion. The default semantic
+    /// index is HNSW, so promoting without a sidecar would load the embedding
+    /// provider and then fall back to the slower BM25-prefilter semantic path.
+    /// Keep the default search path cheap unless an operator has explicitly
+    /// selected `search.semantic_index=bm25` or built the HNSW sidecar.
+    #[cfg(feature = "semantic")]
+    fn auto_hybrid_semantic_ready(&self) -> bool {
+        if self.config.search.semantic_index != "hnsw" {
+            return true;
+        }
+        self.vector_index.read().is_some() || self.hnsw_sidecar_path().is_file()
+    }
+
     /// Build the HNSW index from every fact in the store, persist
     /// it as `wiki.hnsw.bin`, and replace the in-memory copy.
     /// Idempotent + safe to call repeatedly; cost is dominated by
@@ -1476,7 +1489,8 @@ impl AideMemo {
         };
         let mut bm25_results = self.search(query, probe_opts)?;
 
-        if should_promote_auto_hybrid(query, &bm25_results, &self.config.search) {
+        let should_promote = should_promote_auto_hybrid(query, &bm25_results, &self.config.search);
+        if should_promote && self.auto_hybrid_semantic_ready() {
             tracing::debug!(
                 bm25_hits = bm25_results.len(),
                 bm25_top_score = bm25_results.first().map(|r| r.score),
@@ -1503,6 +1517,13 @@ impl AideMemo {
                     Ok(bm25_results)
                 }
             };
+        } else if should_promote {
+            tracing::debug!(
+                bm25_hits = bm25_results.len(),
+                bm25_top_score = bm25_results.first().map(|r| r.score),
+                sidecar = %self.hnsw_sidecar_path().display(),
+                "auto_hybrid semantic promotion skipped; hnsw sidecar missing"
+            );
         }
 
         tracing::debug!(
@@ -2180,6 +2201,7 @@ pub use types::VectorRecord;
 #[cfg(all(test, feature = "semantic"))]
 mod adaptive_search_tests {
     use super::*;
+    use tempfile::tempdir;
 
     fn result(score: f32) -> SearchResult {
         SearchResult {
@@ -2241,6 +2263,47 @@ mod adaptive_search_tests {
             &[],
             &config,
         ));
+    }
+
+    #[test]
+    fn auto_hybrid_semantic_ready_requires_hnsw_sidecar() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("wiki.sqlite");
+        let mut config = Config::default();
+        config.store.backend = "sqlite".to_string();
+        config.model.provider = "missing-provider".to_string();
+        config.search.auto_hybrid_min_top_score = 1000.0;
+        let wiki = AideMemo::open(&path, config).unwrap();
+        assert!(!wiki.auto_hybrid_semantic_ready());
+
+        let redis = wiki
+            .entity_add(EntityInput {
+                name: "Redis".to_string(),
+                entity_type: Some(EntityType::Technology),
+                ..Default::default()
+            })
+            .unwrap();
+        wiki.fact_add(FactInput {
+            content: "Redis handles hot cache keys".to_string(),
+            fact_type: Some(FactType::Claim),
+            entity_ids: Some(vec![redis]),
+            source_confidence: Some(1.0),
+            ..Default::default()
+        })
+        .unwrap();
+
+        let hits = wiki
+            .adaptive_search(
+                "Redis",
+                SearchOpts {
+                    limit: Some(5),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].content, "Redis handles hot cache keys");
+        assert!(wiki.provider.get().is_none());
     }
 }
 
@@ -2918,6 +2981,7 @@ mod sqlite_backend_search_tests {
         let mut config = Config::default();
         config.store.backend = "sqlite".to_string();
         config.model.provider = "missing-provider".to_string();
+        config.search.semantic_index = "bm25".to_string();
         config.search.auto_hybrid_min_top_score = 1000.0;
         let wiki = AideMemo::open(&path, config).unwrap();
         let redis = wiki

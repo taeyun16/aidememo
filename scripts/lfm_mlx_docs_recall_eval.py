@@ -1,0 +1,1020 @@
+#!/usr/bin/env python3
+"""Evaluate LFM MLX dense retrieval on the real AideMemo docs corpus.
+
+This is the larger follow-up to ``lfm_mlx_dense_eval.py``. It builds a temporary
+AideMemo store from the repository's actual Markdown docs, validates a curated
+gold-query set against those chunks, then compares:
+
+* ``aidememo search`` BM25
+* ``aidememo search --hybrid`` with the current AideMemo semantic provider
+  (model2vec by default, skipped if the local model/cache is unavailable)
+* ``mlx-community/LFM2.5-Embedding-350M-4bit`` dense all-document ranking
+* a simulated BM25-confidence gate that uses LFM only when BM25 looks weak
+
+Usage:
+
+  /private/tmp/aidememo-lfm-venv/bin/python scripts/lfm_mlx_docs_recall_eval.py \
+      --aidememo target/debug/aidememo \
+      --model-dir /private/tmp/lfm25-embedding-mlx-4bit \
+      --summary-only
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import socket
+import subprocess
+import tempfile
+import time
+import urllib.error
+import urllib.request
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+
+DEFAULT_DOCS = [
+    "README.md",
+    "AGENTS.md",
+    "docs/BRANCHES.md",
+    "docs/CLI.md",
+    "docs/FEATURES.md",
+    "docs/INSTALLATION.md",
+    "docs/INTRODUCTION.md",
+    "docs/MCP.md",
+    "docs/MEASUREMENTS.md",
+    "docs/OPERATIONS.md",
+    "docs/QUICKSTART.md",
+    "docs/RELEASE.md",
+    "docs/SDK.md",
+    "docs/SDK_POSITIONING.md",
+    "docs/SKILLOPT_LITE.md",
+    "scripts/README.md",
+    "packages/aidememo-agent-sdk/README.md",
+]
+
+
+DEFAULT_CASES: list[dict[str, str]] = [
+    {
+        "id": "surface-agent-sdk-memory",
+        "scenario": "surface-overlap",
+        "query": "agent friendly SDK memory Memory.open search_rows coverage_by",
+        "path": "README.md",
+        "gold": "Memory.open",
+    },
+    {
+        "id": "surface-workflow-start",
+        "scenario": "surface-overlap",
+        "query": "sparse ticket workflow start decisions lessons errors",
+        "path": "README.md",
+        "gold": "Creates a tracked session",
+    },
+    {
+        "id": "surface-source-id",
+        "scenario": "surface-overlap",
+        "query": "source_id isolate shared store",
+        "path": "docs/OPERATIONS.md",
+        "gold": "neighbouring project",
+    },
+    {
+        "id": "surface-vector-rebuild",
+        "scenario": "surface-overlap",
+        "query": "rebuild HNSW vector sidecar after model changes",
+        "path": "docs/FEATURES.md",
+        "gold": "Rebuild the HNSW vector sidecar",
+    },
+    {
+        "id": "surface-mcp-tool-schema",
+        "scenario": "surface-overlap",
+        "query": "where do MCP tool schemas live list_tools",
+        "path": "AGENTS.md",
+        "gold": "cmd/mcp_tools.rs::list_tools()",
+    },
+    {
+        "id": "surface-bpaf-usage-bug",
+        "scenario": "surface-overlap",
+        "query": "bpaf usage BUG positional fields rightmost",
+        "path": "AGENTS.md",
+        "gold": "bpaf usage BUG",
+    },
+    {
+        "id": "surface-redb-single-writer",
+        "scenario": "surface-overlap",
+        "query": "redb daemon single writer cannot open store",
+        "path": "AGENTS.md",
+        "gold": "redb is single-writer",
+    },
+    {
+        "id": "surface-shadow-log",
+        "scenario": "surface-overlap",
+        "query": "AIDEMEMO_FACT_TYPE_SHADOW_LOG label_source fact_type_hint",
+        "path": "docs/OPERATIONS.md",
+        "gold": "AIDEMEMO_FACT_TYPE_SHADOW_LOG",
+    },
+    {
+        "id": "surface-lfm-4bit-placement",
+        "scenario": "surface-overlap",
+        "query": "LFM2.5 Embedding 350M 4bit first-stage semantic retrieval",
+        "path": "docs/MEASUREMENTS.md",
+        "gold": "mlx-community/LFM2.5-Embedding-350M-4bit",
+    },
+    {
+        "id": "surface-longmemeval-r5",
+        "scenario": "surface-overlap",
+        "query": "LongMemEval-S R@5 improved from 96.2 to 98.0",
+        "path": "docs/MEASUREMENTS.md",
+        "gold": "LongMemEval-S R@5 improved",
+    },
+    {
+        "id": "surface-miracl-ko",
+        "scenario": "surface-overlap",
+        "query": "MIRACL ko improved MRR nDCG rerank",
+        "path": "docs/MEASUREMENTS.md",
+        "gold": "MIRACL/ko improved",
+    },
+    {
+        "id": "surface-branch-push-base",
+        "scenario": "surface-overlap",
+        "query": "branch push base backup exports records written after backup",
+        "path": "docs/BRANCHES.md",
+        "gold": "branch push --base <BACKUP>",
+    },
+    {
+        "id": "surface-backup-sync-cursor",
+        "scenario": "surface-overlap",
+        "query": "backup manifest records sync cursor branch push base",
+        "path": "docs/OPERATIONS.md",
+        "gold": "backup manifest records a sync cursor",
+    },
+    {
+        "id": "surface-aggregate-sum-currency",
+        "scenario": "surface-overlap",
+        "query": "aidememo aggregate sum_currency sum_duration count distinct dates",
+        "path": "AGENTS.md",
+        "gold": "sum_currency",
+    },
+    {
+        "id": "paraphrase-no-hosted-memory",
+        "scenario": "paraphrase",
+        "query": "what makes this local instead of a managed vector database service",
+        "path": "README.md",
+        "gold": "not a hosted memory SaaS",
+    },
+    {
+        "id": "paraphrase-history-replacement",
+        "scenario": "paraphrase",
+        "query": "how does the system remember that an old fact was replaced",
+        "path": "README.md",
+        "gold": "validity",
+    },
+    {
+        "id": "paraphrase-code-agent-sdk",
+        "scenario": "paraphrase",
+        "query": "which interface should an agent use when it needs fanout retrieval in code",
+        "path": "README.md",
+        "gold": "Use MCP tools for one-off",
+    },
+    {
+        "id": "paraphrase-exact-arithmetic",
+        "scenario": "paraphrase",
+        "query": "what pulls the reader out of doing totals in its own head",
+        "path": "AGENTS.md",
+        "gold": "Pulls agent out of in-head arithmetic",
+    },
+    {
+        "id": "paraphrase-auto-hybrid-gate",
+        "scenario": "paraphrase",
+        "query": "how do we avoid paying semantic search cost unless lexical recall is weak",
+        "path": "docs/OPERATIONS.md",
+        "gold": "AideMemo first runs a BM25 probe",
+    },
+    {
+        "id": "paraphrase-daemon-warmup",
+        "scenario": "paraphrase",
+        "query": "which mode moves embedding startup cost before the first user query",
+        "path": "docs/MEASUREMENTS.md",
+        "gold": "prewarms the semantic provider",
+    },
+    {
+        "id": "paraphrase-pending-review",
+        "scenario": "paraphrase",
+        "query": "where should uncertain extracted memories wait before becoming durable",
+        "path": "README.md",
+        "gold": "pending review queue",
+    },
+    {
+        "id": "paraphrase-no-lfm-router",
+        "scenario": "paraphrase",
+        "query": "why should route selection stay rules based instead of spending a small model call",
+        "path": "docs/MEASUREMENTS.md",
+        "gold": "Do not use the tested LFM text-generation models as AideMemo's query router",
+    },
+    {
+        "id": "paraphrase-corpus-lora",
+        "scenario": "paraphrase",
+        "query": "which trained adapter is the current best fact type sidecar placement",
+        "path": "docs/MEASUREMENTS.md",
+        "gold": "corpus-only adapter is the best current placement",
+    },
+    {
+        "id": "paraphrase-reader-bound-rerank",
+        "scenario": "paraphrase",
+        "query": "when should cross encoder reranking stay disabled despite better ordering",
+        "path": "docs/MEASUREMENTS.md",
+        "gold": "Reader-bound agent loops",
+    },
+    {
+        "id": "paraphrase-source-default-install",
+        "scenario": "paraphrase",
+        "query": "how can MCP clients avoid passing the namespace on every call",
+        "path": "README.md",
+        "gold": "AIDEMEMO_SOURCE_ID",
+    },
+    {
+        "id": "ko-shared-store-isolation",
+        "scenario": "cross-lingual-query",
+        "query": "여러 에이전트가 같은 저장소를 쓸 때 서로의 메모리가 섞이지 않게 하는 옵션은?",
+        "path": "docs/OPERATIONS.md",
+        "gold": "neighbouring project",
+    },
+    {
+        "id": "ko-auto-hybrid-prewarm",
+        "scenario": "cross-lingual-query",
+        "query": "자동 하이브리드 검색에서 첫 사용자 쿼리 전에 모델을 미리 켜는 건 어디서 설명해?",
+        "path": "docs/MEASUREMENTS.md",
+        "gold": "prewarms the semantic provider",
+    },
+    {
+        "id": "ko-shadow-fact-type",
+        "scenario": "cross-lingual-query",
+        "query": "팩트 타입을 나중에 학습하려고 성공한 쓰기 로그를 따로 남기는 환경 변수는?",
+        "path": "docs/OPERATIONS.md",
+        "gold": "AIDEMEMO_FACT_TYPE_SHADOW_LOG",
+    },
+    {
+        "id": "ko-lfm-router-warning",
+        "scenario": "cross-lingual-query",
+        "query": "작은 LFM 생성 모델을 쿼리 라우터로 바로 쓰지 말라는 근거는?",
+        "path": "docs/MEASUREMENTS.md",
+        "gold": "Do not use the tested LFM text-generation models as AideMemo's query router",
+    },
+    {
+        "id": "ko-branch-sync",
+        "scenario": "cross-lingual-query",
+        "query": "백업 이후 바뀐 브랜치 세그먼트만 내보내는 명령은?",
+        "path": "docs/BRANCHES.md",
+        "gold": "branch push --base <BACKUP>",
+    },
+    {
+        "id": "ko-sdk-code-path",
+        "scenario": "cross-lingual-query",
+        "query": "코드를 실행할 수 있는 에이전트가 중간 검색 결과를 직접 다룰 때 쓰는 패키지는?",
+        "path": "docs/SDK_POSITIONING.md",
+        "gold": "aidememo-agent-sdk",
+    },
+    {
+        "id": "ko-vector-rebuild",
+        "scenario": "cross-lingual-query",
+        "query": "임베딩 모델을 바꾼 뒤 HNSW를 다시 만드는 명령은?",
+        "path": "AGENTS.md",
+        "gold": "aidememo vector-rebuild",
+    },
+]
+
+
+@dataclass(frozen=True)
+class Chunk:
+    id: str
+    path: str
+    heading: str
+    text: str
+
+    @property
+    def content(self) -> str:
+        return f"[chunk:{self.id}]\npath: {self.path}\nheading: {self.heading}\n\n{self.text}"
+
+
+def run_json(cmd: list[str]) -> Any:
+    proc = subprocess.run(cmd, check=True, text=True, capture_output=True)
+    return json.loads(proc.stdout)
+
+
+def run_capture(cmd: list[str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(cmd, check=True, text=True, capture_output=True)
+
+
+def free_loopback_port() -> int:
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+    finally:
+        sock.close()
+
+
+def wait_health(url: str, timeout_s: float) -> None:
+    deadline = time.perf_counter() + timeout_s
+    health_url = f"{url.rstrip('/')}/health"
+    last_error = ""
+    while time.perf_counter() < deadline:
+        try:
+            with urllib.request.urlopen(health_url, timeout=0.5) as resp:
+                if resp.status == 200:
+                    return
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            last_error = str(exc)
+        time.sleep(0.25)
+    raise TimeoutError(f"daemon health timeout for {health_url}: {last_error}")
+
+
+def start_mcp_daemon(
+    aidememo: str,
+    store: Path,
+    timeout_s: float,
+) -> tuple[subprocess.Popen[str], str, float]:
+    port = free_loopback_port()
+    url = f"http://127.0.0.1:{port}"
+    env = os.environ.copy()
+    env["AIDEMEMO_PREWARM_SEMANTIC"] = "1"
+    env.setdefault("RUST_LOG", "error")
+    started = time.perf_counter()
+    proc = subprocess.Popen(
+        [aidememo, "--store", str(store), "mcp-serve", "--port", str(port)],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        env=env,
+    )
+    try:
+        wait_health(url, timeout_s)
+    except Exception:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+        raise
+    return proc, url, (time.perf_counter() - started) * 1000
+
+
+def stop_process(proc: subprocess.Popen[str] | None) -> None:
+    if proc is None or proc.poll() is not None:
+        return
+    proc.terminate()
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait(timeout=5)
+
+
+def mcp_search(
+    base_url: str,
+    query: str,
+    limit: int,
+    *,
+    bm25_only: bool,
+    auto_hybrid: bool = False,
+) -> list[dict[str, Any]]:
+    body = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+            "name": "aidememo_search",
+            "arguments": {
+                "query": query,
+                "limit": limit,
+                "bm25_only": bm25_only,
+                "auto_hybrid": auto_hybrid,
+                "current_only": False,
+                "format": "full",
+            },
+        },
+    }
+    request = urllib.request.Request(
+        f"{base_url.rstrip('/')}/mcp",
+        data=json.dumps(body).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=30) as resp:
+        payload = json.loads(resp.read().decode("utf-8"))
+    if "error" in payload:
+        raise RuntimeError(f"daemon error: {payload['error']}")
+    text = payload["result"]["content"][0]["text"]
+    return json.loads(text)["results"]
+
+
+def strip_frontmatter(text: str) -> str:
+    lines = text.splitlines()
+    if not lines or lines[0].strip() != "---":
+        return text
+    for idx in range(1, len(lines)):
+        if lines[idx].strip() == "---":
+            return "\n".join(lines[idx + 1 :])
+    return text
+
+
+def split_long_block(block: str, max_chars: int) -> list[str]:
+    if len(block) <= max_chars:
+        return [block]
+    pieces: list[str] = []
+    current: list[str] = []
+    current_len = 0
+    for line in block.splitlines():
+        next_len = current_len + len(line) + 1
+        if current and next_len > max_chars:
+            pieces.append("\n".join(current).strip())
+            current = []
+            current_len = 0
+        current.append(line)
+        current_len += len(line) + 1
+    if current:
+        pieces.append("\n".join(current).strip())
+    return [piece for piece in pieces if piece]
+
+
+def chunk_section(path: str, heading: str, body: str, start_idx: int, max_chars: int) -> list[Chunk]:
+    paragraphs = [p.strip() for p in re.split(r"\n\s*\n", body.strip()) if p.strip()]
+    if not paragraphs:
+        return []
+    chunks: list[Chunk] = []
+    current: list[str] = []
+    for para in paragraphs:
+        para_parts = split_long_block(para, max_chars)
+        for part in para_parts:
+            candidate = "\n\n".join([*current, part]).strip()
+            if current and len(candidate) > max_chars:
+                idx = start_idx + len(chunks)
+                chunks.append(
+                    Chunk(
+                        id=f"{path}#{idx:04d}",
+                        path=path,
+                        heading=heading,
+                        text="\n\n".join(current).strip(),
+                    )
+                )
+                current = [part]
+            else:
+                current = [*current, part]
+    if current:
+        idx = start_idx + len(chunks)
+        chunks.append(
+            Chunk(
+                id=f"{path}#{idx:04d}",
+                path=path,
+                heading=heading,
+                text="\n\n".join(current).strip(),
+            )
+        )
+    return chunks
+
+
+def chunk_markdown(path: Path, root: Path, max_chars: int) -> list[Chunk]:
+    rel = path.relative_to(root).as_posix()
+    text = strip_frontmatter(path.read_text(encoding="utf-8"))
+    chunks: list[Chunk] = []
+    heading = "(preamble)"
+    body: list[str] = []
+    for line in text.splitlines():
+        match = re.match(r"^(#{1,6})\s+(.+?)\s*$", line)
+        if match:
+            chunks.extend(chunk_section(rel, heading, "\n".join(body), len(chunks), max_chars))
+            heading = match.group(2).strip()
+            body = [line]
+        else:
+            body.append(line)
+    chunks.extend(chunk_section(rel, heading, "\n".join(body), len(chunks), max_chars))
+    return chunks
+
+
+def collect_docs(root: Path, patterns: list[str], max_chars: int) -> list[Chunk]:
+    seen: set[Path] = set()
+    chunks: list[Chunk] = []
+    for pattern in patterns:
+        for path in sorted(root.glob(pattern)):
+            if path in seen or not path.is_file():
+                continue
+            seen.add(path)
+            chunks.extend(chunk_markdown(path, root, max_chars))
+    return chunks
+
+
+def load_cases(path: Path | None) -> list[dict[str, str]]:
+    if path is None:
+        return DEFAULT_CASES
+    if path.suffix == ".json":
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, list):
+            raise SystemExit("case JSON must be a list")
+        return data
+    rows = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.strip():
+            rows.append(json.loads(line))
+    return rows
+
+
+def validate_cases(chunks: list[Chunk], cases: list[dict[str, str]]) -> dict[str, list[str]]:
+    gold_by_case: dict[str, list[str]] = {}
+    missing = []
+    for case in cases:
+        path = case.get("path")
+        gold = case["gold"].lower()
+        matches = [
+            chunk.id
+            for chunk in chunks
+            if (not path or chunk.path == path) and gold in chunk.content.lower()
+        ]
+        if not matches:
+            missing.append(f"{case['id']} path={path!r} gold={case['gold']!r}")
+        gold_by_case[case["id"]] = matches
+    if missing:
+        raise SystemExit("gold text not found in docs chunks:\n" + "\n".join(missing))
+    return gold_by_case
+
+
+ULID_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+
+
+def stable_ulid(timestamp_ms: int, counter: int) -> str:
+    value = ((timestamp_ms & ((1 << 48) - 1)) << 80) | (counter & ((1 << 80) - 1))
+    chars = []
+    for shift in range(125, -1, -5):
+        chars.append(ULID_ALPHABET[(value >> shift) & 31])
+    return "".join(chars)
+
+
+def write_import_jsonl(path: Path, chunks: list[Chunk]) -> None:
+    now_ms = int(time.time() * 1000)
+    entity_id = stable_ulid(now_ms, 0)
+    lines = [
+        json.dumps({"schema_version": 1, "exported_by": "aidememo docs recall eval"}),
+        json.dumps(
+            {
+                "type": "entity",
+                "data": {
+                    "id": entity_id,
+                    "name": "AideMemoDocs",
+                    "name_lower": "aidememodocs",
+                    "entity_type": "unknown",
+                    "aliases": [],
+                    "tags": [],
+                    "source_page": None,
+                    "summary": None,
+                    "summary_updated_at": None,
+                    "created_at": now_ms,
+                    "updated_at": now_ms,
+                },
+            },
+            ensure_ascii=False,
+        ),
+    ]
+    for offset, chunk in enumerate(chunks, start=1):
+        lines.append(
+            json.dumps(
+                {
+                    "type": "fact",
+                    "data": {
+                        "id": stable_ulid(now_ms, offset),
+                        "content": chunk.content,
+                        "fact_type": "note",
+                        "entity_ids": [entity_id],
+                        "tags": ["docs-recall-eval"],
+                        "source": chunk.path,
+                        "source_id": "docs-recall-eval",
+                        "source_confidence": 1.0,
+                        "relevance_score": 0.5,
+                        "created_at": now_ms,
+                        "updated_at": now_ms,
+                        "observed_at": None,
+                        "superseded_at": None,
+                        "superseded_by": None,
+                        "access_count": 0,
+                        "last_accessed_at": now_ms,
+                        "pinned": False,
+                    },
+                },
+                ensure_ascii=False,
+            )
+        )
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def seed_store(aidememo: str, store: Path, chunks: list[Chunk]) -> float:
+    started = time.perf_counter()
+    import_path = store.with_suffix(".jsonl")
+    write_import_jsonl(import_path, chunks)
+    run_capture([aidememo, "--store", str(store), "import", str(import_path)])
+    return (time.perf_counter() - started) * 1000
+
+
+CHUNK_RE = re.compile(r"\[chunk:([^\]]+)\]")
+
+
+def chunk_id_from_content(content: str) -> str | None:
+    match = CHUNK_RE.search(content)
+    return match.group(1) if match else None
+
+
+def rank_gold_ids(ids: list[str], gold_ids: set[str]) -> int | None:
+    for idx, chunk_id in enumerate(ids, start=1):
+        if chunk_id in gold_ids:
+            return idx
+    return None
+
+
+def rank_hits(hits: list[dict[str, Any]], gold_ids: set[str]) -> int | None:
+    ids = [
+        chunk_id
+        for chunk_id in (chunk_id_from_content(str(hit.get("content", ""))) for hit in hits)
+        if chunk_id is not None
+    ]
+    return rank_gold_ids(ids, gold_ids)
+
+
+def metric_row(rank: int | None) -> dict[str, float | int]:
+    return {
+        "recall": int(rank is not None),
+        "hit1": int(rank == 1),
+        "mrr": reciprocal(rank),
+    }
+
+
+def summarize_method(rows: list[dict[str, Any]], method: str) -> dict[str, Any]:
+    ranks = [row.get(f"{method}_rank") for row in rows]
+    ranks = [rank if isinstance(rank, int) else None for rank in ranks]
+    n = len(ranks)
+    return {
+        "recall": sum(rank is not None for rank in ranks) / n,
+        "hit1": sum(rank == 1 for rank in ranks) / n,
+        "mrr": sum(reciprocal(rank) for rank in ranks) / n,
+    }
+
+
+def summarize(rows: list[dict[str, Any]], methods: list[str]) -> dict[str, Any]:
+    summary: dict[str, Any] = {}
+    for method in methods:
+        summary[method] = summarize_method(rows, method)
+
+    by_scenario: dict[str, Any] = {}
+    for scenario in sorted({str(row["scenario"]) for row in rows}):
+        scenario_rows = [row for row in rows if row["scenario"] == scenario]
+        by_scenario[scenario] = {
+            method: summarize_method(scenario_rows, method) for method in methods
+        }
+    summary["by_scenario"] = by_scenario
+    return summary
+
+
+def contains_cjk(text: str) -> bool:
+    return any(
+        "\u3040" <= ch <= "\u30ff"
+        or "\u3400" <= ch <= "\u9fff"
+        or "\uac00" <= ch <= "\ud7af"
+        for ch in text
+    )
+
+
+def auto_promote(
+    query: str,
+    hits: list[dict[str, Any]],
+    min_hits: int,
+    min_top_score: float,
+) -> tuple[bool, str]:
+    if contains_cjk(query):
+        return True, "cjk"
+    if len(hits) < min_hits:
+        return True, "few_hits"
+    top_score = 0.0
+    if hits:
+        try:
+            top_score = float(hits[0].get("score", 0.0))
+        except (TypeError, ValueError):
+            top_score = 0.0
+    if top_score < min_top_score:
+        return True, "weak_top_score"
+    return False, "bm25_confident"
+
+
+def mean(values: list[float]) -> float:
+    return sum(values) / len(values) if values else 0.0
+
+
+def reciprocal(rank: int | None) -> float:
+    if rank is None:
+        return 0.0
+    return 1.0 / rank
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--aidememo", default="target/debug/aidememo")
+    parser.add_argument("--repo-root", type=Path, default=Path("."))
+    parser.add_argument("--model-dir", type=Path)
+    parser.add_argument("--candidate-limit", type=int, default=8)
+    parser.add_argument("--batch-size", type=int, default=8)
+    parser.add_argument("--max-chars", type=int, default=1800)
+    parser.add_argument("--case-file", type=Path)
+    parser.add_argument("--doc", action="append", dest="docs")
+    parser.add_argument("--skip-model2vec", action="store_true")
+    parser.add_argument(
+        "--model2vec-mode",
+        choices=["daemon", "cli"],
+        default="daemon",
+        help="How to run AideMemo's current semantic provider after vector-rebuild.",
+    )
+    parser.add_argument("--daemon-start-timeout", type=float, default=90.0)
+    parser.add_argument("--skip-lfm", action="store_true")
+    parser.add_argument("--auto-min-bm25-hits", type=int, default=1)
+    parser.add_argument("--auto-min-top-score", type=float, default=1.0)
+    parser.add_argument("--summary-only", action="store_true")
+    args = parser.parse_args()
+
+    root = args.repo_root.resolve()
+    chunks = collect_docs(root, args.docs or DEFAULT_DOCS, args.max_chars)
+    if not chunks:
+        raise SystemExit("no Markdown chunks found")
+    cases = load_cases(args.case_file)
+    gold_by_case = validate_cases(chunks, cases)
+    chunk_by_id = {chunk.id: chunk for chunk in chunks}
+    documents = [chunk.content for chunk in chunks]
+
+    model_stats: dict[str, Any] = {"lfm": None, "model2vec": None}
+    lfm_doc_embeddings = None
+    rank_dense = None
+    if not args.skip_lfm:
+        if args.model_dir is None:
+            raise SystemExit("--model-dir is required unless --skip-lfm is set")
+        from lfm_dense_eval import embedding_health
+        from lfm_mlx_dense_eval import MlxEmbedder, rank_dense as rank_dense_impl
+
+        rank_dense = rank_dense_impl
+        model_started = time.perf_counter()
+        embedder = MlxEmbedder(args.model_dir)
+        model_stats["lfm"] = {
+            "model_dir": str(args.model_dir),
+            "model_load_ms": round((time.perf_counter() - model_started) * 1000, 2),
+        }
+        doc_started = time.perf_counter()
+        lfm_doc_embeddings = embedder.encode(documents, role="document", batch_size=args.batch_size)
+        model_stats["lfm"]["document_encode_ms"] = round(
+            (time.perf_counter() - doc_started) * 1000, 2
+        )
+        model_stats["lfm"]["embedding_health"] = embedding_health(lfm_doc_embeddings)
+    else:
+        embedder = None
+
+    with tempfile.TemporaryDirectory(prefix="aidememo-lfm-docs-recall-") as tmp:
+        store = Path(tmp) / "docs.sqlite"
+        seed_ms = seed_store(args.aidememo, store, chunks)
+        model2vec_daemon: subprocess.Popen[str] | None = None
+        model2vec_url: str | None = None
+
+        try:
+            if not args.skip_model2vec:
+                rebuild_started = time.perf_counter()
+                try:
+                    proc = run_capture(
+                        [
+                            args.aidememo,
+                            "--store",
+                            str(store),
+                            "vector-rebuild",
+                            "--current-only",
+                            "--json",
+                        ]
+                    )
+                    model_stats["model2vec"] = {
+                        "available": True,
+                        "mode": args.model2vec_mode,
+                        "rebuild_ms": round((time.perf_counter() - rebuild_started) * 1000, 2),
+                        "stdout": proc.stdout.strip(),
+                    }
+                    if args.model2vec_mode == "daemon":
+                        model2vec_daemon, model2vec_url, daemon_ms = start_mcp_daemon(
+                            args.aidememo,
+                            store,
+                            args.daemon_start_timeout,
+                        )
+                        model_stats["model2vec"]["daemon_start_ms"] = round(daemon_ms, 2)
+                except subprocess.CalledProcessError as exc:
+                    model_stats["model2vec"] = {
+                        "available": False,
+                        "rebuild_ms": round((time.perf_counter() - rebuild_started) * 1000, 2),
+                        "stderr": exc.stderr.strip()[-2000:],
+                    }
+                except (TimeoutError, OSError, RuntimeError) as exc:
+                    model_stats["model2vec"] = {
+                        "available": False,
+                        "mode": args.model2vec_mode,
+                        "error": str(exc),
+                    }
+            else:
+                model_stats["model2vec"] = {"available": False, "skipped": True}
+
+            rows: list[dict[str, Any]] = []
+            bm25_ms: list[float] = []
+            model2vec_ms: list[float] = []
+            lfm_query_ms: list[float] = []
+            lfm_score_ms: list[float] = []
+
+            for case in cases:
+                query = case["query"]
+                gold_ids = set(gold_by_case[case["id"]])
+
+                bm25_started = time.perf_counter()
+                bm25_hits = run_json(
+                    [
+                        args.aidememo,
+                        "--store",
+                        str(store),
+                        "search",
+                        query,
+                        "--json",
+                        "-l",
+                        str(args.candidate_limit),
+                    ]
+                )
+                bm25_ms.append((time.perf_counter() - bm25_started) * 1000)
+                bm25_rank = rank_hits(bm25_hits, gold_ids)
+
+                model2vec_rank = None
+                model2vec_top = None
+                if model_stats["model2vec"] and model_stats["model2vec"].get("available"):
+                    hybrid_started = time.perf_counter()
+                    try:
+                        if model2vec_url is not None:
+                            model2vec_hits = mcp_search(
+                                model2vec_url,
+                                query,
+                                args.candidate_limit,
+                                bm25_only=False,
+                            )
+                        else:
+                            model2vec_hits = run_json(
+                                [
+                                    args.aidememo,
+                                    "--store",
+                                    str(store),
+                                    "search",
+                                    query,
+                                    "--json",
+                                    "--hybrid",
+                                    "-l",
+                                    str(args.candidate_limit),
+                                ]
+                            )
+                        model2vec_ms.append((time.perf_counter() - hybrid_started) * 1000)
+                        model2vec_rank = rank_hits(model2vec_hits, gold_ids)
+                        model2vec_top = (
+                            chunk_id_from_content(str(model2vec_hits[0].get("content", "")))
+                            if model2vec_hits
+                            else None
+                        )
+                    except (subprocess.CalledProcessError, RuntimeError, urllib.error.URLError) as exc:
+                        model_stats["model2vec"]["search_error"] = str(exc)[-2000:]
+
+                lfm_dense_rank = None
+                lfm_dense_full_rank = None
+                lfm_rerank_rank = None
+                lfm_auto_rank = None
+                lfm_dense_top = None
+                lfm_auto_reason = None
+                lfm_promoted = False
+                if (
+                    embedder is not None
+                    and lfm_doc_embeddings is not None
+                    and rank_dense is not None
+                ):
+                    query_started = time.perf_counter()
+                    query_embedding = embedder.encode([query], role="query", batch_size=1)[0]
+                    lfm_query_ms.append((time.perf_counter() - query_started) * 1000)
+
+                    score_started = time.perf_counter()
+                    dense_order = rank_dense(query_embedding, lfm_doc_embeddings)
+                    lfm_score_ms.append((time.perf_counter() - score_started) * 1000)
+                    dense_ids = [chunks[idx].id for idx in dense_order]
+                    lfm_dense_full_rank = rank_gold_ids(dense_ids, gold_ids)
+                    lfm_dense_rank = rank_gold_ids(dense_ids[: args.candidate_limit], gold_ids)
+                    lfm_dense_top = dense_ids[0] if dense_ids else None
+
+                    id_to_index = {chunk.id: idx for idx, chunk in enumerate(chunks)}
+                    bm25_candidate_ids = [
+                        chunk_id
+                        for chunk_id in (
+                            chunk_id_from_content(str(hit.get("content", ""))) for hit in bm25_hits
+                        )
+                        if chunk_id is not None and chunk_id in id_to_index
+                    ]
+                    candidate_scores = [
+                        (
+                            chunk_id,
+                            float(lfm_doc_embeddings[id_to_index[chunk_id]] @ query_embedding),
+                        )
+                        for chunk_id in bm25_candidate_ids
+                    ]
+                    candidate_scores.sort(key=lambda item: item[1], reverse=True)
+                    lfm_rerank_rank = rank_gold_ids(
+                        [chunk_id for chunk_id, _score in candidate_scores],
+                        gold_ids,
+                    )
+
+                    lfm_promoted, lfm_auto_reason = auto_promote(
+                        query,
+                        bm25_hits,
+                        args.auto_min_bm25_hits,
+                        args.auto_min_top_score,
+                    )
+                    auto_ids = dense_ids if lfm_promoted else bm25_candidate_ids
+                    lfm_auto_rank = rank_gold_ids(auto_ids[: args.candidate_limit], gold_ids)
+
+                row = {
+                    "id": case["id"],
+                    "scenario": case["scenario"],
+                    "query": query,
+                    "gold_ids": sorted(gold_ids),
+                    "gold_paths": sorted({chunk_by_id[chunk_id].path for chunk_id in gold_ids}),
+                    "bm25_rank": bm25_rank,
+                    "model2vec_rank": model2vec_rank,
+                    "lfm_dense_rank": lfm_dense_rank,
+                    "lfm_dense_full_rank": lfm_dense_full_rank,
+                    "lfm_rerank_rank": lfm_rerank_rank,
+                    "lfm_auto_rank": lfm_auto_rank,
+                    "lfm_auto_promoted": lfm_promoted,
+                    "lfm_auto_reason": lfm_auto_reason,
+                    "bm25_top": chunk_id_from_content(str(bm25_hits[0].get("content", "")))
+                    if bm25_hits
+                    else None,
+                    "model2vec_top": model2vec_top,
+                    "lfm_dense_top": lfm_dense_top,
+                }
+                rows.append(row)
+        finally:
+            stop_process(model2vec_daemon)
+
+    methods = ["bm25"]
+    if model_stats["model2vec"] and model_stats["model2vec"].get("available"):
+        methods.append("model2vec")
+    if not args.skip_lfm:
+        methods.extend(["lfm_dense", "lfm_rerank", "lfm_auto"])
+
+    summary = summarize(rows, methods)
+    if not args.skip_lfm:
+        bm25 = summary["bm25"]
+        lfm = summary["lfm_dense"]
+        auto_lfm = summary["lfm_auto"]
+        summary["lfm_dense_vs_bm25"] = {
+            "recall_delta": round(lfm["recall"] - bm25["recall"], 6),
+            "hit1_delta": round(lfm["hit1"] - bm25["hit1"], 6),
+            "mrr_delta": round(lfm["mrr"] - bm25["mrr"], 6),
+            "rescues": sum(
+                row["bm25_rank"] is None and row["lfm_dense_rank"] is not None for row in rows
+            ),
+            "harms": sum(
+                row["bm25_rank"] is not None and row["lfm_dense_rank"] is None for row in rows
+            ),
+        }
+        summary["lfm_auto_vs_bm25"] = {
+            "recall_delta": round(auto_lfm["recall"] - bm25["recall"], 6),
+            "hit1_delta": round(auto_lfm["hit1"] - bm25["hit1"], 6),
+            "mrr_delta": round(auto_lfm["mrr"] - bm25["mrr"], 6),
+            "promoted": sum(row["lfm_auto_promoted"] for row in rows),
+            "promotion_reasons": {
+                reason: sum(row["lfm_auto_reason"] == reason for row in rows)
+                for reason in sorted({str(row["lfm_auto_reason"]) for row in rows})
+            },
+        }
+
+    payload: dict[str, Any] = {
+        "summary": summary,
+        "corpus": {
+            "doc_patterns": args.docs or DEFAULT_DOCS,
+            "chunks": len(chunks),
+            "cases": len(cases),
+            "paths": sorted({chunk.path for chunk in chunks}),
+            "seed_ms": round(seed_ms, 2),
+        },
+        "latency": {
+            "bm25_search_ms_mean": round(mean(bm25_ms), 2),
+            "model2vec_search_ms_mean": round(mean(model2vec_ms), 2)
+            if model2vec_ms
+            else None,
+            "lfm_query_embed_ms_mean": round(mean(lfm_query_ms), 2) if lfm_query_ms else None,
+            "lfm_dense_score_ms_mean": round(mean(lfm_score_ms), 4) if lfm_score_ms else None,
+        },
+        "models": model_stats,
+    }
+    if not args.summary_only:
+        payload["rows"] = rows
+
+    print(json.dumps(payload, indent=2, ensure_ascii=False))
+
+
+if __name__ == "__main__":
+    main()

@@ -219,11 +219,11 @@ pub struct SearchConfig {
     #[serde(default = "default_graph_fact_cap")]
     pub graph_fact_cap: usize,
     /// Tier 8: which semantic candidate path to use.
-    ///   - `"bm25"`  (default) — top-`semantic_prefilter` BM25 hits
+    ///   - `"bm25"` — top-`semantic_prefilter` BM25 hits
     ///     plus graph expansion, then semantic re-rank.
     ///     Cheap; ties on accuracy when fact text shares
     ///     keywords with the query.
-    ///   - `"hnsw"` — HNSW ANN over fact embeddings.
+    ///   - `"hnsw"` (default) — HNSW ANN over fact embeddings.
     ///     Closes the recall gap on languages where BM25
     ///     tokenization is weak (Korean, Japanese, etc.).
     ///     Requires `aidememo vector-rebuild` once after the
@@ -232,11 +232,13 @@ pub struct SearchConfig {
     #[serde(default = "default_semantic_index")]
     pub semantic_index: String,
     /// Automatically promote CLI / tool searches from the cheap BM25 path to
-    /// semantic retrieval when the lexical probe looks weak. Off by default so
-    /// the existing CLI latency contract stays intact; use `aidememo search
-    /// --auto ...` for one-off calls or `aidememo config set
-    /// search.auto_hybrid true` for stores where LFM/HNSW is known to help.
-    #[serde(default)]
+    /// semantic retrieval when the lexical probe looks weak. On by default as
+    /// the balanced path: strong lexical queries stay BM25-only, while weak or
+    /// CJK queries can use the semantic provider when a semantic path is ready.
+    /// With the default HNSW index, auto-hybrid does not load the provider just
+    /// to discover a missing sidecar. Set `search.auto_hybrid=false` or pass a
+    /// per-call BM25-only flag for deterministic demos/hooks.
+    #[serde(default = "default_true")]
     pub auto_hybrid: bool,
     /// Minimum number of BM25 hits required before auto-hybrid stays lexical.
     /// If the probe returns fewer hits, AideMemo runs semantic retrieval.
@@ -406,7 +408,7 @@ impl Default for SearchConfig {
             graph_depth: default_graph_depth(),
             graph_fact_cap: default_graph_fact_cap(),
             semantic_index: default_semantic_index(),
-            auto_hybrid: false,
+            auto_hybrid: true,
             auto_hybrid_min_bm25_hits: default_auto_hybrid_min_bm25_hits(),
             auto_hybrid_min_top_score: default_auto_hybrid_min_top_score(),
             auto_hybrid_cjk: default_true(),
@@ -1124,7 +1126,7 @@ mod tests {
         assert_eq!(config.model.name, "minishlab/potion-multilingual-128M");
         assert_eq!(config.model.download_dir, "~/.aidememo/models/downloads");
         assert_eq!(config.search.default_limit, 10);
-        assert!(!config.search.auto_hybrid);
+        assert!(config.search.auto_hybrid);
         assert_eq!(config.search.auto_hybrid_min_bm25_hits, 1);
         assert_eq!(config.search.auto_hybrid_min_top_score, 1.0);
         assert!(config.search.auto_hybrid_cjk);

@@ -103,34 +103,40 @@ deterministic hooks, demos, and CI checks:
 aidememo workflow start "Release smoke ticket" --bm25-only
 ```
 
-Enable semantic/hybrid retrieval when wording may differ between the question
-and the stored fact:
+Force semantic/hybrid retrieval when wording may differ between the question
+and the stored fact and you want to pay the semantic path on every query:
 
 ```bash
 aidememo search "favorite camera setup" --hybrid
 ```
 
-Use auto-hybrid when you want the LFM/HNSW path only at the recall failure
-point. AideMemo first runs a BM25 probe and promotes to semantic retrieval when
-the probe is empty, the top score is weak, or the query is CJK:
+Auto-hybrid is the default search policy. AideMemo first runs a BM25 probe and
+promotes to semantic retrieval when the probe is empty, the top score is weak,
+or the query is CJK. Keep the default thresholds unless a store-specific eval
+shows a better cutoff:
 
 ```bash
-aidememo search "레디스 장애 원인" --auto
 aidememo config set search.auto_hybrid true
 aidememo config set search.auto_hybrid_min_bm25_hits 1
 aidememo config set search.auto_hybrid_min_top_score 1.0
 ```
 
-Do not make this the global default for every fresh CLI install yet. It is
-safe to opt in per store after the embedding provider and HNSW sidecar are
-ready, or when searches go through a warm daemon. In a fresh offline HOME,
-semantic promotion can fail because the embedding model is not cached; in a
-fresh CLI process with the model cached, promoted CJK queries still pay the
-embedding-model cold load. The `--auto` path falls back to BM25 if semantic
-promotion fails, but the latency contract is still different from the default
-BM25-only CLI search.
+Use `--bm25-only` or `search.auto_hybrid=false` for deterministic demos, hooks,
+CI checks, or stores where surface-form BM25 is already saturated:
 
-For daemon-backed stores, `search.auto_hybrid=true` also prewarms the semantic
+```bash
+aidememo search "Redis timeout" --bm25-only
+aidememo config set search.auto_hybrid false
+```
+
+With the default HNSW semantic index, auto-hybrid does not cold-load the
+embedding provider when the HNSW sidecar is missing; it stays on the BM25 probe
+until `aidememo vector-rebuild` creates the sidecar. In a fresh CLI process with
+a sidecar present, promoted CJK queries still pay the embedding-model cold load.
+The auto-hybrid path falls back to BM25 if semantic promotion fails. For
+repeated agent calls, run through the daemon so the model is warm.
+
+For daemon-backed stores, `search.auto_hybrid=true` prewarms the semantic
 provider when `aidememo mcp-serve` starts, so the startup pays the model load
 instead of the first user query. To prewarm a daemon without changing config,
 start it with `AIDEMEMO_PREWARM_SEMANTIC=1`.
@@ -146,7 +152,7 @@ switch:
 
 | AideMemo surface | First LFM candidate | Use when | Do not use when |
 |---|---|---|---|
-| First-stage semantic retrieval | `mlx-community/LFM2.5-Embedding-350M-4bit` | BM25 returns weak/empty candidates, especially multilingual or paraphrase-heavy queries. In the Mac MLX smoke, 4-bit beat 8-bit on this fixture. Use `aidememo search --auto` or `search.auto_hybrid=true` to gate this path by BM25 confidence. | Plain lexical/code/doc search is already saturated. |
+| First-stage semantic retrieval | `mlx-community/LFM2.5-Embedding-350M-4bit` | BM25 returns weak/empty candidates, especially CJK / multilingual queries. The larger tracked-docs gate did not justify a global dense replacement, but BM25-gated LFM improved `R@8` from 0.656 to 0.812 by promoting only the CJK failure slice. Keep `search.auto_hybrid=true` and use a warm daemon for repeated calls. | Plain lexical/code/doc search is already saturated, or you would run LFM dense for every query. |
 | Reranking | `mlx-community/LFM2.5-ColBERT-350M-4bit` or `LiquidAI/LFM2.5-ColBERT-350M` sidecar | BM25/hybrid candidate recall is high but the top result is often misordered. | The right fact is absent from the candidate set unless you deliberately build an all-doc / multi-vector ColBERT index. |
 | Fact extraction / type classification | `LiquidAI/LFM2.5-1.2B-Instruct-MLX-4bit` with a fact-type LoRA adapter | You want local high-confidence `fact_type_hint` candidates for residual/default-note cases or pending review. The corpus-only 240-iteration LoRA beat deterministic inference on both the seed coding-agent corpus test and the older 45-case holdout. | You need automatic high-precision writes from unlabelled real traffic. Grow and validate a reviewed shadow corpus first. |
 | Query routing | deterministic rules + search confidence | You need to choose BM25-only vs dense vs ColBERT vs aggregate. | Do not spend an LFM text-generation call here yet; the MLX LM router micro-eval was weaker than rules. |

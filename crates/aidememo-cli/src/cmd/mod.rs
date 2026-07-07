@@ -330,18 +330,16 @@ pub struct PathSub {
 pub struct SearchSub {
     pub json: bool,
     pub all_projects: bool,
-    /// Opt into hybrid BM25 + semantic ranking (loads the embedding
-    /// model — adds ~700-900 ms cold-start). Default is BM25-only:
-    /// the CLI is the latency-sensitive path, semantic recall is for
-    /// agents that explicitly need it (or via `aidememo config set
-    /// search.semantic_weight …` for users on languages with weak
-    /// BM25 tokenisation, e.g. Korean).
+    /// Force hybrid BM25 + semantic ranking for every query (loads the
+    /// embedding model unless the daemon already keeps it warm).
     pub hybrid: bool,
     /// Probe BM25 first and automatically promote to semantic retrieval only
-    /// when lexical evidence is weak. Useful for LFM/HNSW deployments where
-    /// the embedding model should be used at the recall failure point instead
-    /// of on every CLI query.
+    /// when lexical evidence is weak. This is the default when
+    /// `search.auto_hybrid=true`, but the flag remains useful for configs that
+    /// have opted out.
     pub auto: bool,
+    /// Force pure BM25 for this invocation, overriding `search.auto_hybrid`.
+    pub bm25_only: bool,
     /// Optional `aidememo mcp-serve` endpoint (e.g. `http://localhost:3000`).
     /// When set, dispatch the search via `aidememo_search` JSON-RPC against
     /// that daemon instead of opening the store in-process.
@@ -1297,22 +1295,27 @@ fn search_command() -> impl Parser<Command> {
     let all_projects = long("all-projects")
         .help("Search across every registered project (`aidememo project list`); merges + re-ranks")
         .switch();
-    // The CLI defaults to BM25 (the latency-sensitive path). `--hybrid`
-    // opts into the semantic-ranking path that loads the embedding
-    // model (~700-900ms cold start on a fresh CLI; near-zero in
-    // `--via` daemon mode). Agents reach hybrid by default through
-    // the MCP tool surface, where the cost is amortised by the
-    // long-lived `aidememo mcp-serve` process.
+    // The CLI defaults to auto-hybrid via config: a BM25 probe stays lexical
+    // when confidence is good and promotes weak/CJK queries only when the
+    // semantic path is ready. `--hybrid` forces semantic search for every
+    // query; `--bm25-only` forces the deterministic fast path.
     let hybrid = long("hybrid")
         .help(
-            "Hybrid BM25 + semantic search (loads the embedding model). \
+            "Force hybrid BM25 + semantic search (loads the embedding model). \
              Pair with --via for warm daemon mode.",
         )
         .switch();
     let auto = long("auto")
         .help(
             "Probe BM25 first, then use semantic search only when BM25 is weak \
-             or the query is CJK. Keeps easy lexical queries on the fast path.",
+             or the query is CJK and the semantic path is ready. This is \
+             already the default when search.auto_hybrid=true.",
+        )
+        .switch();
+    let bm25_only = long("bm25-only")
+        .help(
+            "Force pure BM25 for this invocation, overriding search.auto_hybrid \
+             and --auto. Use for deterministic demos, hooks, and CI.",
         )
         .switch();
     let via = long("via")
@@ -1338,6 +1341,7 @@ fn search_command() -> impl Parser<Command> {
         all_projects,
         hybrid,
         auto,
+        bm25_only,
         via,
         traverse_from,
         traverse_depth,

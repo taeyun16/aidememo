@@ -84,10 +84,13 @@ aidememo init --agent claude --agent-force <wiki-root>   overwrite existing agen
 
 ### Read / search
 ```
-aidememo search <query> [-l N] [--current] [--hybrid] [--source-id ID] [--include-archive] [--via URL]
-                                                   BM25 by default (no model load — fast path).
-                                                   --hybrid = also run semantic re-rank (loads
-                                                   model). --include-archive = also search the
+aidememo search <query> [-l N] [--current] [--bm25-only] [--hybrid] [--source-id ID] [--include-archive] [--via URL]
+                                                   auto-hybrid by default: probe BM25 first, then
+                                                   promote only when lexical evidence is weak or
+                                                   the query is CJK and the semantic path is ready.
+                                                   --bm25-only = deterministic
+                                                   no-model fast path. --hybrid = force semantic
+                                                   retrieval on every query. --include-archive = also search the
                                                    backend-specific cold tier (`<store>.cold.redb`
                                                    or `<store>.cold.sqlite`) and merge any
                                                    matches in. --via = dispatch via running

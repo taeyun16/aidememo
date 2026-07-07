@@ -156,8 +156,9 @@ SkillOpt-inspired loop, and `scripts/skillopt-lite-check.sh` gates candidate
 
 ```bash
 aidememo search "cache policy" -l 5
-aidememo search "레디스 장애 원인" --auto -l 5
-aidememo search "cache policy" --hybrid
+aidememo search "레디스 장애 원인" -l 5       # auto-hybrid promotes weak/CJK probes when vectors are ready
+aidememo search "cache policy" --bm25-only    # deterministic lexical fast path
+aidememo search "cache policy" --hybrid       # force semantic on every query
 aidememo query "Redis" --mode hybrid
 aidememo overview
 ```

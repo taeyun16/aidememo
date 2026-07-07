@@ -245,6 +245,50 @@ no candidates. Dense rerank over BM25 candidates cannot recover that case
 because the first-stage candidate set is empty; this is evidence for using LFM
 dense as a first-stage semantic retrieval path, not only as a reranker.
 
+### LFM Project-Docs Candidate Recall
+
+The larger July 7 gate moved beyond the tiny synthetic fixture and used
+`scripts/lfm_mlx_docs_recall_eval.py` against the tracked AideMemo Markdown
+corpus: `README.md`, `AGENTS.md`, the tracked docs files, `scripts/README.md`,
+and the agent SDK README. The script chunks the real docs, validates each gold
+query against a chunk needle, imports the corpus into a temporary AideMemo
+store, and measures `R@8` / hit@1 / MRR for 32 surface, paraphrase, and Korean
+cross-lingual queries.
+
+Command:
+
+```bash
+/private/tmp/aidememo-lfm-venv/bin/python scripts/lfm_mlx_docs_recall_eval.py \
+  --aidememo target/debug/aidememo \
+  --model-dir /private/tmp/lfm25-embedding-mlx-4bit \
+  --summary-only
+```
+
+Result on 327 chunks:
+
+| Path | R@8 | Hit@1 | MRR | Notes |
+|---|---:|---:|---:|---|
+| BM25 | 0.656 | 0.375 | 0.478 | Strong on surface-overlap (`R@8=0.929`) and still decent on paraphrase (`0.727`), but zero on the Korean query slice. |
+| model2vec + HNSW via prewarmed daemon | 0.750 | 0.281 | 0.426 | Recovers some Korean/cross-lingual misses (`3/7`) but hurts head ordering on surface queries. |
+| LFM 4-bit pure dense all-doc rank | 0.688 | 0.219 | 0.338 | Slightly higher recall than BM25 but materially worse head ranking; not a default embedding replacement. |
+| LFM 4-bit rerank of BM25 candidates | 0.656 | 0.250 | 0.398 | Cannot recover first-stage misses and worsens head ordering. |
+| BM25 + LFM only when the BM25 gate promotes | 0.812 | 0.406 | 0.536 | Promoted only the 7 CJK queries; recovered `5/7` there while leaving the 25 BM25-confident queries untouched. |
+
+Latency notes from the same run: LFM model load was 3.56s, document encoding was
+44.9s for 327 chunks, warmed query embedding averaged 30.7ms, and dense scoring
+was negligible at 0.15ms. model2vec HNSW rebuild took 9.27s and daemon
+prewarm/start took 7.51s. The BM25 latency in this script includes fresh CLI
+startup per query, so do not compare it directly to in-process or daemon
+latency; this gate is primarily a quality/candidate-recall test.
+
+Interpretation: the larger real-docs gate confirms the placement boundary. LFM
+4-bit should not replace the default embedding model globally, and LFM dense
+rerank is the wrong fix when BM25 misses the candidate entirely. The useful
+shape is still `search.auto_hybrid=true` plus daemon prewarm, with LFM-style
+semantic retrieval only at the lexical failure point. The next external gate is
+a true LongMemEval or MIRACL-style candidate-recall run once the larger datasets
+are available locally.
+
 ### LFM MLX ColBERT Scenario Checks
 
 Native MLX MaxSim was checked with the 4-bit conversion:
@@ -582,7 +626,7 @@ they address, then measure quality and latency per layer.
 
 | Layer | Candidate model | Current evidence | Next quality gate |
 |---|---|---|---|
-| First-stage semantic retrieval | `mlx-community/LFM2.5-Embedding-350M-4bit` | Best current Mac-local result: dense hit@1 1.00 / MRR 1.00, about 23 ms warmed query embedding, and it recovered a Korean query when BM25 returned no candidates. 8-bit did not improve this fixture. AideMemo now exposes this placement through `aidememo search --auto` / `search.auto_hybrid=true`, which probes BM25 before promoting to semantic retrieval. | Run project-wiki and LongMemEval/MIRACL-style candidate-recall tests where BM25 candidate recall is below 1.0. |
+| First-stage semantic retrieval | `mlx-community/LFM2.5-Embedding-350M-4bit` | Tiny fixture: dense hit@1 1.00 / MRR 1.00 and Korean BM25-miss recovery. Larger tracked-docs gate: pure dense is not a default replacement (`R@8=0.688`, hit@1 0.219), but BM25-gated LFM improves over BM25 (`R@8 0.656 -> 0.812`) by promoting only the CJK failure slice. AideMemo now exposes this placement as the default `search.auto_hybrid=true` policy, which probes BM25 before promoting to semantic retrieval; `aidememo search --bm25-only` is the deterministic escape hatch. | Run true LongMemEval/MIRACL-style candidate-recall tests where BM25 candidate recall is below 1.0, then decide whether LFM belongs behind a local embedding sidecar. |
 | Rerank after lexical/hybrid search | `mlx-community/LFM2.5-ColBERT-350M-4bit` | Native MLX MaxSim rerank improved hit@1 from 0.57 to 0.86; all-doc brute-force reached 1.00 on the tiny fixture, but document token encoding is much heavier than dense. | Gate on `candidate_recall >= 0.95`, then design a warmed sidecar or multi-vector index before using beyond small stores. |
 | Local capture classification | `LiquidAI/LFM2.5-1.2B-Instruct-MLX-4bit` with a fact-type LoRA adapter | Zero-shot closed-label scoring trailed deterministic inference (0.33 vs 0.69 on the original holdout; 0.11 vs 0.39 on the coding-agent corpus test). A corpus-only 240-iteration LoRA reached 0.61 on the 18-case coding-agent test and 0.82 on the older 45-case holdout. | Keep it as a shadow `fact_type_hint` path. Grow reviewed capture logs and validate confidence+margin thresholds before any automatic type promotion. |
 | Query router | Deterministic rules and search confidence, not LFM LM | Tested MLX LMs were weak routers: best observed route accuracy was 0.38 for 230M/350M and 0.25 for 1.2B-Instruct. | Add route-confidence features to the existing deterministic router shape before spending model calls here. |
@@ -599,24 +643,26 @@ routing while reducing large-model calls. A result that shows "no lift" on a
 saturated workload is still useful because it tells the router to stay on the
 cheap path.
 
-Default-on check for `search.auto_hybrid` on July 6:
+Default-on check for `search.auto_hybrid`:
 
 | Environment | Query shape | Result |
 |---|---|---|
-| Fresh HOME, no model cache | strong lexical `Redis timeout` | BM25 default 33 ms; `--auto` 16 ms and stayed lexical |
-| Fresh HOME, no model cache | CJK `레디스 장애 원인` | semantic promotion could not load `minishlab/potion-multilingual-128M`; `--auto` now falls back to BM25 instead of failing |
-| Current HOME, model cached, no HNSW sidecar | CJK `레디스 장애 원인` | `--auto` succeeded but paid model cold load and BM25-prefilter fallback: about 7.8 s |
+| Fresh HOME, no model cache | strong lexical `Redis timeout` | Auto-hybrid stayed lexical; no model load on the confident BM25 path. |
+| Fresh HOME, no model cache and no HNSW sidecar | CJK `레디스 장애 원인` | Auto-hybrid stays on the BM25 probe instead of loading the provider just to discover the missing sidecar. |
+| Current HOME, model cached, no HNSW sidecar | weak lexical `Redis` | Auto-hybrid stays on the BM25 probe; smoke returned the same hit as `--bm25-only` with no HNSW warning or cold model load. |
 | Current HOME, HNSW sidecar present, fresh CLI | CJK `레디스 장애 원인` | still about 7.8 s because query embedding loads the model in the fresh process |
 | Current HOME, HNSW sidecar present, warm HTTP daemon | CJK `레디스 장애 원인` | first daemon call about 7.4 s warm-up; second call about 10 ms |
-| Current HOME, HNSW sidecar present, HTTP daemon with semantic prewarm | CJK `레디스 장애 원인` | startup paid the warm-up; first user `--via --auto` call was 14.9 ms |
+| Current HOME, HNSW sidecar present, HTTP daemon with semantic prewarm | CJK `레디스 장애 원인` | startup paid the warm-up; first user auto-hybrid call was 14.9 ms |
 
-Interpretation: `--auto` is a good per-store / daemon policy, but not a global
-fresh-install default yet. The safe default remains BM25-only CLI search;
-operators should enable `search.auto_hybrid=true` after model cache + sidecar
-readiness, or rely on daemon discovery where the embedding provider is warm.
-When `search.auto_hybrid=true`, `mcp-serve` prewarms the semantic provider on
-startup; `AIDEMEMO_PREWARM_SEMANTIC=1` forces the same behavior for explicit
-daemon experiments.
+Interpretation: auto-hybrid is the default search policy because the confident
+BM25 path stays lexical, the default HNSW policy does not cold-load a provider
+when the sidecar is missing, semantic promotion falls back to BM25 on provider
+failure, and the tracked-docs gate showed the gated path outperformed both BM25
+and pure dense. The explicit escape hatch is `aidememo search --bm25-only` or
+`aidememo config set search.auto_hybrid false` for deterministic demos, hooks,
+and saturated lexical stores. When `search.auto_hybrid=true`, `mcp-serve`
+prewarms the semantic provider on startup; `AIDEMEMO_PREWARM_SEMANTIC=1` forces
+the same behavior for explicit daemon experiments.
 
 ## Performance
 

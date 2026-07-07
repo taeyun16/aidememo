@@ -13,17 +13,22 @@ For a task-shape guide that maps CLI, MCP, and SDK entry points, see
 
 ## Search and query
 
-Use `search` for direct retrieval:
+Use `search` for direct retrieval. By default AideMemo probes BM25 first and
+promotes to semantic retrieval only when the lexical signal is weak or the query
+is CJK and the semantic path is ready:
 
 ```bash
 aidememo search "Redis timeout" --limit 5
+aidememo search "레디스 장애 원인" --limit 5
 ```
 
-Use `--auto` when a store has semantic vectors available but you only want to
-pay for them when BM25 looks weak:
+Use `--bm25-only` for deterministic demos, hooks, and CI checks that should not
+load the embedding model. Use `--hybrid` when you want semantic retrieval on
+every query:
 
 ```bash
-aidememo search "레디스 장애 원인" --auto --limit 5
+aidememo search "Redis timeout" --bm25-only --limit 5
+aidememo search "favorite camera setup" --hybrid --limit 5
 ```
 
 Use `query` for a richer context pack:

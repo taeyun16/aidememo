@@ -1838,11 +1838,12 @@ fn handle_search(
     let config_auto_hybrid = config.search.auto_hybrid;
     with_wiki_mut(path, config, |wiki| {
         let session_id = aidememo_core::ulid::Ulid::new().to_string();
-        // CLI default = BM25 (fast). `--hybrid` opts into the
-        // semantic path; `semantic_weight = 0` in config also forces
-        // BM25 even with the flag (caller-on-caller override).
-        let auto_hybrid = sub.auto || config_auto_hybrid;
-        let bm25_only = !(sub.hybrid || auto_hybrid) || semantic_weight == 0.0;
+        // CLI default follows config.search.auto_hybrid: run a BM25 probe
+        // and promote weak/CJK queries only when the semantic path is ready.
+        // `--hybrid` forces semantic ranking for every query; `--bm25-only`
+        // keeps the deterministic lexical path.
+        let auto_hybrid = !sub.bm25_only && (sub.auto || config_auto_hybrid);
+        let bm25_only = sub.bm25_only || !(sub.hybrid || auto_hybrid) || semantic_weight == 0.0;
         let opts = SearchOpts {
             limit: sub.limit.or(Some(default_limit)),
             min_confidence: sub.min_confidence,
@@ -1911,10 +1912,11 @@ fn run_search_via_daemon(
     let mut arguments = serde_json::json!({
         "query": sub.query,
         "limit": limit,
-        // CLI default = BM25; --hybrid flips it on. Daemon
-        // honours the same opt-in semantics.
-        "bm25_only": !(sub.hybrid || sub.auto || config_auto_hybrid),
-        "auto_hybrid": (sub.auto || config_auto_hybrid) && !sub.hybrid,
+        // CLI default follows config.search.auto_hybrid. The daemon receives
+        // explicit booleans so it mirrors the local path even though MCP also
+        // has its own default policy.
+        "bm25_only": sub.bm25_only || !(sub.hybrid || sub.auto || config_auto_hybrid),
+        "auto_hybrid": !sub.bm25_only && (sub.auto || config_auto_hybrid) && !sub.hybrid,
         // Match the local CLI search path. MCP defaults to current-only
         // for agent "what is true now?" calls, but `aidememo search` has
         // historically searched all facts unless the caller says otherwise.
@@ -2018,11 +2020,12 @@ fn run_search_all_projects(
             session_id: None,
             current_only: false,
             as_of: as_of_ms,
-            bm25_only: !(sub.hybrid || sub.auto || config.search.auto_hybrid)
+            bm25_only: sub.bm25_only
+                || !(sub.hybrid || sub.auto || config.search.auto_hybrid)
                 || semantic_weight == 0.0,
             include_archive: sub.include_archive,
         };
-        let hits = if (sub.auto || config.search.auto_hybrid) && !sub.hybrid {
+        let hits = if !sub.bm25_only && (sub.auto || config.search.auto_hybrid) && !sub.hybrid {
             wiki.adaptive_search(&sub.query, opts)
         } else {
             wiki.hybrid_search(&sub.query, opts)
