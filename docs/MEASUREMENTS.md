@@ -54,7 +54,7 @@ with current scorecards in
 | Workflow trigger Scenario F, 4 sparse tickets | 13/13 invariants; p95 2.48s; max context 3,023 chars; forbidden leakage 0 | CLI, MCP, and Hermes paths create distinct sessions/ticket facts and keep `source_id`-scoped ticket context separated. |
 | Hermes workflow binding Scenario G, 4 sparse tickets | 5/5 invariants; shape parity 4/4; leakage 0; p50 1,795.71ms CLI vs 13.14ms binding | When `aidememo-python` is installed, Hermes composes workflow packs in process: same context contract, about 137x lower p50 after the first model/index warmup. |
 | SDK workflow parity Scenario K, 4 sparse tickets | 8/8 invariants; Python and Node shape parity 4/4 each; leakage 0; p50 CLI 1,864.55ms, Python 16.19ms, Node 13.69ms | `aidememo-python` and `aidememo-napi` expose the same sparse-ticket context contract as CLI while avoiding per-command CLI spawn overhead. |
-| Self-extraction Scenario L, MCP batch + default source | 10/10 invariants; `aidememo_fact_add_many` inserted 7 classified facts in 295.44ms; alpha sparse-ticket workflow recovered decision=1, lesson=1, error=1 with beta leakage 0; `AIDEMEMO_SOURCE_ID` scoped an env-default MCP write and search | If the calling agent classifies facts before `aidememo_fact_add_many`, aidememo preserves typed memory and returns it in the workflow shape agents consume without a built-in LLM extraction pipeline. MCP agents can also set `AIDEMEMO_SOURCE_ID` once instead of repeating `source_id` on every call. |
+| Self-extraction Scenario L, MCP batch + default source | 13/13 invariants; `aidememo_fact_add_many` inserted 7 classified facts in 82.41ms; omitted-type batch inferred preference=1, lesson=1, error=1 with `fact_type_source=inferred`; explicit `note` on an error cue returned `fact_type_hint=error`; alpha sparse-ticket workflow recovered decision=1, lesson=1, error=1 with beta leakage 0; `AIDEMEMO_SOURCE_ID` scoped an env-default MCP write and search | If the calling agent classifies facts before `aidememo_fact_add_many`, aidememo preserves typed memory and returns it in the workflow shape agents consume without a built-in LLM extraction pipeline. When the agent omits `fact_type`, deterministic strong-cue inference prevents the common all-note failure for explicit preference / lesson / error / decision / convention phrases, while explicit `note` is preserved and surfaced with a hint instead of silently overriding caller intent. |
 | MCP install source/backend defaults | `cargo test -p aidememo-cli --bin aidememo mcp_install`: 12/12 tests passed; `aidememo --backend libsqlite mcp-install --target codex --source-id agent-alpha --print --json` reports `source_id=agent-alpha`, `storage_backend=libsqlite`, env detail, and `--backend libsqlite mcp` args | `aidememo --backend <selected> mcp-install --source-id` makes the smooth path installable: the MCP server starts with `AIDEMEMO_SOURCE_ID` and the selected storage backend already set instead of asking users to hand-edit agent config. |
 | Doctor scoped setup hint | `cargo test -p aidememo-cli --bin aidememo`: 120+ tests passed, 1 ignored; temp `aidememo skill install --target opencode --dest ...` output includes `aidememo --backend libsqlite mcp-install --target opencode` and `--source-id <namespace>` | Setup diagnostics now preserve project namespace and backend context: a scoped recent workflow ticket turns the no-MCP doctor hint into `aidememo --backend <selected> mcp-install --target codex --source-id <namespace>`, and skill install output points shared-store users at the same backend-pinned path. |
 | MCP install source/backend defaults Scenario M | 21/21 invariants; elapsed 111.6ms; Codex / Cursor / OpenCode configs all contain `AIDEMEMO_SOURCE_ID=agent-alpha` and `--backend libsqlite`; Claude / Hermes / OpenClaw print-mode commands include env injection plus backend args; MCP write/search without explicit `source_id` returned only `agent-alpha` facts through the installed backend args | The install story is now end-to-end testable without real agent CLIs: generated configs provide the env value and storage backend selector that MCP tools consume for scoped defaults. |
@@ -161,6 +161,462 @@ memory ergonomics, not a SOTA claim.
 HNSW is the default semantic index because it closed a Korean MIRACL candidate
 drop caused by BM25 prefiltering while keeping query latency below brute-force
 cosine on larger corpora.
+
+### LFM ColBERT Sidecar Micro-eval
+
+Command:
+
+```bash
+/private/tmp/aidememo-lfm-venv/bin/python scripts/lfm_colbert_eval.py \
+  --aidememo target/debug/aidememo \
+  --model LiquidAI/LFM2.5-ColBERT-350M \
+  --candidate-limit 8
+```
+
+Result on a 6-question synthetic AideMemo store, with `trust_remote_code=false`:
+
+| Model | Candidate recall | BM25 hit@1 | ColBERT hit@1 | BM25 MRR | ColBERT MRR | Mean BM25 search | Mean ColBERT rerank |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `LiquidAI/LFM2.5-ColBERT-350M` | 1.00 | 0.83 | 1.00 | 0.92 | 1.00 | 31 ms | 403 ms |
+| `LiquidAI/LFM2-ColBERT-350M` | 1.00 | 0.67 | 0.83 | 0.83 | 0.92 | 31 ms | 258 ms |
+
+Interpretation: LFM ColBERT is useful as a warmed sidecar reranker when BM25 or
+hybrid retrieval already has high candidate recall but the head ordering is
+wrong. In the LFM2.5 run, it fixed the "database migration finish faster" case
+from rank 2 to rank 1. This does not solve first-stage misses; if the gold fact
+is absent from the candidate pool, reranking cannot recover it. Do not load the
+model per query in an agent loop. Keep it warm behind a sidecar/daemon and
+reserve it for retrieval-bound, higher-stakes queries where a few hundred
+milliseconds is acceptable.
+
+### LFM Dense Embedding Scenario Checks
+
+Command:
+
+```bash
+/private/tmp/aidememo-lfm-venv/bin/python scripts/lfm_dense_eval.py \
+  --aidememo target/debug/aidememo \
+  --model LiquidAI/LFM2.5-Embedding-350M \
+  --candidate-limit 8
+```
+
+Result with `trust_remote_code=false`:
+
+| Path | Embedding health | Candidate recall | BM25 hit@1 | Dense hit@1 | Dense rerank hit@1 | Mean query embed |
+|---|---|---:|---:|---:|---:|---:|
+| `sentence-transformers`, remote code off | invalid: all document embeddings identical (`max_pairwise_diff_from_first=0.0`) | 0.86 | 0.71 | 0.29 | 0.71 | 249 ms |
+| `mlx-community/LFM2.5-Embedding-350M-4bit` | valid: document embeddings differ (`max_pairwise_diff_from_first=0.195`) | 0.86 | 0.57 | 1.00 | 0.86 | 23 ms |
+| `mlx-community/LFM2.5-Embedding-350M-8bit` | valid: document embeddings differ (`max_pairwise_diff_from_first=0.208`) | 0.86 | 0.57 | 0.86 | 0.86 | 21 ms |
+
+The safe `sentence-transformers` path is not usable for AideMemo quality
+claims: it returns a 1024-dimensional vector, but every tested document vector
+was identical. The model config points `AutoModel` at
+`modeling_lfm2_bidirectional.Lfm2BidirectionalModel`, and Liquid's model card
+states that `trust_remote_code=True` applies the bidirectional encoder patches.
+That code was downloaded for inspection only: 139 lines, importing only
+`torch`, `torch.nn.functional`, and `transformers.models.lfm2`, with no
+`os`/`subprocess`/`socket`/`requests`/`eval`/`exec` usage found. Executing it
+still requires explicit operator approval because `trust_remote_code` runs Hub
+Python in the local process.
+
+MLX dense command:
+
+```bash
+hf download mlx-community/LFM2.5-Embedding-350M-4bit \
+  --local-dir /private/tmp/lfm25-embedding-mlx-4bit
+
+/private/tmp/aidememo-lfm-venv/bin/python scripts/lfm_mlx_dense_eval.py \
+  --aidememo target/debug/aidememo \
+  --model-dir /private/tmp/lfm25-embedding-mlx-4bit \
+  --candidate-limit 8
+```
+
+The MLX 4-bit run is the useful dense result. In the July 6 rerun, it improved
+the synthetic scenario set from BM25 hit@1 0.57 / MRR 0.71 to dense hit@1 1.00
+/ MRR 1.00, with a mean warmed query embedding latency of about 23 ms. The
+8-bit run did not improve this micro-eval (`dense_hit1=0.86`,
+`dense_mrr=0.93`); document encoding was similar in the rerun (130-132 ms for
+the 12-document fixture), so the placement decision is quality-driven rather
+than latency-driven.
+For Mac-local experimentation, 4-bit is the better default until a larger
+quality gate shows an 8-bit lift. The 4-bit run also recovered
+the Korean query "레디스 타임아웃의 원인이 뭐였지" as dense rank 1 when BM25 returned
+no candidates. Dense rerank over BM25 candidates cannot recover that case
+because the first-stage candidate set is empty; this is evidence for using LFM
+dense as a first-stage semantic retrieval path, not only as a reranker.
+
+### LFM MLX ColBERT Scenario Checks
+
+Native MLX MaxSim was checked with the 4-bit conversion:
+
+```bash
+hf download mlx-community/LFM2.5-ColBERT-350M-4bit \
+  --local-dir /private/tmp/lfm25-colbert-mlx-4bit
+
+/private/tmp/aidememo-lfm-venv/bin/python scripts/lfm_mlx_colbert_eval.py \
+  --aidememo target/debug/aidememo \
+  --model-dir /private/tmp/lfm25-colbert-mlx-4bit \
+  --candidate-limit 8 \
+  --summary-only
+```
+
+Result on the same synthetic AideMemo fixture:
+
+| Path | Candidate recall | BM25 hit@1 | ColBERT rerank hit@1 | ColBERT all-doc hit@1 | BM25 MRR | ColBERT rerank MRR | Mean query encode | Mean rerank scoring |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| `mlx-community/LFM2.5-ColBERT-350M-4bit` | 0.86 | 0.57 | 0.86 | 1.00 | 0.71 | 0.86 | 23 ms | 0.18 ms |
+
+Interpretation: MLX ColBERT works locally and is much more operationally
+attractive than the earlier PyLate sidecar for per-query scoring once document
+token vectors are precomputed. It still has a different cost profile from dense
+single-vector retrieval: document token encoding was about 1.87 s for the tiny
+12-document fixture, versus 132 ms for dense 4-bit. That makes it a strong
+candidate for a warmed sidecar / offline index, not an in-process per-query
+model load. It is useful for ranking, and small-corpus brute-force ColBERT can
+recover first-stage misses, but scaling that requires a real multi-vector index
+design rather than pretending it is an HNSW vector swap.
+
+Safer GGUF path checked:
+
+```bash
+hf download LiquidAI/LFM2.5-Embedding-350M-GGUF \
+  LFM2.5-Embedding-350M-Q4_0.gguf \
+  --local-dir /private/tmp/lfm25-embedding-gguf
+```
+
+The Q4_0 GGUF (about 219 MB) downloaded successfully and exposes a
+1024-dimensional LFM2 embedding model. In this sandbox, `llama-cpp-python`
+failed to create a context because the local build still initialized Metal and
+could not create a command queue, even after a CPU-only rebuild attempt. The
+operationally preferred dense path remains an isolated `llama-server
+--embeddings` or TEI/OpenAI-compatible embedding server, then AideMemo's
+`model.query_prefix="query: "` / `model.document_prefix="document: "` config.
+Dense is worth validating further for first-stage multilingual/paraphrase
+recall, not as a per-query Python model load inside the agent process.
+
+### LFM MLX Text-Generation Control Tasks
+
+MLX text-generation models were evaluated on AideMemo control tasks with
+`scripts/lfm_mlx_lm_eval.py`: fact extraction/type classification, query
+routing, and consolidation decisions. The evaluation asks for JSON only and
+scores exact labels. `LiquidAI/LFM2.5-230M-MLX-4bit` and
+`LiquidAI/LFM2.5-350M-MLX-4bit` required a local tokenizer metadata workaround:
+their `tokenizer_config.json` names `TokenizersBackend`, while the current
+`mlx-lm` / `transformers<5` runtime loads the same `tokenizer.json` correctly
+when the class is treated as `PreTrainedTokenizerFast`. The script applies this
+patch in a temporary symlinked directory and does not modify the downloaded
+model repo.
+
+Representative commands:
+
+```bash
+/private/tmp/aidememo-lfm-venv/bin/python scripts/lfm_mlx_lm_eval.py \
+  --model-dir /private/tmp/lfm25-12b-instruct-mlx-4bit \
+  --suite all \
+  --prompt-style compact \
+  --summary-only
+
+/private/tmp/aidememo-lfm-venv/bin/python scripts/lfm_mlx_lm_eval.py \
+  --model-dir /private/tmp/lfm25-230m-mlx-4bit \
+  --suite all \
+  --prompt-style fewshot \
+  --summary-only
+```
+
+Best observed score per model family in this micro-eval:
+
+| Model | Prompt style | Mean latency | Extraction fact_type | Extraction entity recall | Router accuracy | Consolidation accuracy | Placement |
+|---|---|---:|---:|---:|---:|---:|---|
+| `LFM2.5-230M-MLX-4bit` | fewshot | 93 ms | 0.25 | 0.48 | 0.38 | 0.50 | Too inaccurate for automatic writes; possible cheap review signal only. |
+| `LFM2.5-350M-MLX-4bit` | compact/fewshot best-of-suite | 92-105 ms | 0.00 | 0.52 | 0.38 | 0.25 | Not useful enough for extraction; router still worse than deterministic rules. |
+| `LFM2.5-1.2B-Instruct-MLX-4bit` | compact | 324 ms | 0.63 | 0.88 | 0.00 | 0.00 | Best local extraction helper; keep pending-review only. |
+| `LFM2.5-1.2B-Instruct-MLX-4bit` | fewshot | 300 ms | 0.38 | 0.54 | 0.25 | 0.25 | Still not strong enough for routing or automatic consolidation. |
+| `LFM2.5-1.2B-Thinking-MLX-4bit` | compact | 664 ms | 0.00 | 0.00 | 0.00 | 0.00 | Not suitable for JSON control tasks; it emits reasoning traces. |
+
+The useful placement is narrower than the model inventory suggests:
+
+* Use `LFM2.5-1.2B-Instruct-MLX-4bit` only as a local pending-review extraction
+  helper when large-model calls are undesirable. It can propose entities well,
+  but `fact_type` accuracy is not high enough for durable automatic writes.
+* Do not use the tested LFM text-generation models as AideMemo's query router.
+  The deterministic route table plus search-confidence signals remain cheaper
+  and more accurate.
+* Do not use the tested LFM text-generation models for automatic consolidation
+  or branch merge decisions. Even the best result was only 0.50 on a 4-case
+  consolidation slice, which is enough to justify "review signal" but not
+  "write decision."
+* `LFM2.5-1.2B-Thinking-MLX-4bit` needs long reasoning output before an answer;
+  at 256 tokens it still produced no valid JSON in the consolidation smoke and
+  averaged 1.57 s. Keep it out of AideMemo control paths until a different
+  prompt/runtime proves otherwise.
+
+### LFM MLX Closed-Label Fact Type Classifier
+
+The user-visible weakness in capture is narrower than free-form extraction:
+`fact_type` is a closed-label classification problem. To isolate that from JSON
+generation quality, `scripts/lfm_mlx_fact_type_eval.py` scores the likelihood of
+the nine allowed labels (`preference`, `decision`, `lesson`, `error`,
+`convention`, `pattern`, `claim`, `note`, `question`) and compares the best
+label against AideMemo's deterministic strong-cue baseline.
+
+Fixture: 45 hand-labelled cases, balanced 5 per label, mixing explicit cues,
+weak cues, passive `note` examples, and Korean cases that the English cue table
+usually leaves as `note`. The baseline column mirrors
+`aidememo_core::extract::infer_fact_type`; it scored 0.69 overall on this
+fixture.
+
+Representative commands:
+
+```bash
+/private/tmp/aidememo-lfm-venv/bin/python scripts/lfm_mlx_fact_type_eval.py \
+  --model-dir /private/tmp/lfm25-12b-instruct-mlx-4bit \
+  --prompt-style compact \
+  --summary-only
+
+/private/tmp/aidememo-lfm-venv/bin/python scripts/lfm_mlx_fact_type_eval.py \
+  --model-dir /private/tmp/lfm25-350m-mlx-4bit \
+  --prompt-style compact \
+  --template plain \
+  --summary-only
+```
+
+| Model | Prompt/template | Accuracy | Baseline accuracy | Mean latency | Residual rescues | If trusted everywhere |
+|---|---|---:|---:|---:|---:|---|
+| `LFM2.5-230M-MLX-4bit` | compact/chat | 0.11 | 0.69 | 151 ms | 1/13 | Harms 27 baseline-correct cases; collapses mostly to `preference`. |
+| `LFM2.5-230M-MLX-4bit` | compact/plain | 0.11 | 0.69 | 125 ms | 1/13 | Same `preference` prior collapse; not a classifier. |
+| `LFM2.5-350M-MLX-4bit` | compact/chat | 0.27 | 0.69 | 168 ms | 3/13 | Harms 22 baseline-correct cases; over-predicts `pattern`. |
+| `LFM2.5-350M-MLX-4bit` | compact/plain | 0.18 | 0.69 | 138 ms | 3/13 | Still over-predicts `pattern`; confidence is not useful. |
+| `LFM2.5-1.2B-Instruct-MLX-4bit` | compact/chat | 0.33 | 0.69 | 735 ms | 3/13 | Harms 19 baseline-correct cases; useful only as a narrow high-confidence hint. |
+| `LFM2.5-1.2B-Instruct-MLX-4bit` | compact/plain | 0.22 | 0.69 | 607 ms | 1/13 | Worse than chat; no automatic placement. |
+| `LFM2.5-1.2B-Thinking-MLX-4bit` | compact/chat | 0.11 | 0.69 | 734 ms | 1/13 | Collapses mostly to `preference`; keep out of capture control paths. |
+
+The best 1.2B-Instruct run had one narrow positive: at `confidence >= 0.8`, it
+accepted 6/45 cases and got 6/6 correct. Those cases were mostly clear
+`preference`, `lesson`, and labelled `convention` examples, including Korean
+preference / lesson cases that deterministic English cues missed. That is not
+enough coverage for automatic capture, but it is enough to justify this
+placement:
+
+* Keep deterministic inference as the default `fact_add` path.
+* Run LFM only on residual candidates: omitted `fact_type` that defaulted to
+  `note`, explicit `note` with suspicious content, or pending-review batches.
+* Treat LFM output as `fact_type_hint` with confidence/margin metadata. Promote
+  automatically only after a larger false-memory-sensitive benchmark proves a
+  high-precision threshold.
+* Do not place 230M/350M LFM text models in this path; their latency is lower
+  but their label prior collapse makes their hints actively risky.
+
+### LFM 1.2B Fact Type LoRA Smoke
+
+Because `fact_type` is a fixed small label set, a narrow supervised adapter is a
+better fit than asking the base model to infer the taxonomy zero-shot. The first
+local smoke used `LiquidAI/LFM2.5-1.2B-Instruct-MLX-4bit` with MLX LoRA:
+
+```bash
+python3 scripts/lfm_fact_type_sft_data.py \
+  --out /private/tmp/aidememo-lfm-fact-type-sft \
+  --examples-per-label 80
+
+/private/tmp/aidememo-lfm-venv/bin/mlx_lm.lora \
+  --model /private/tmp/lfm25-12b-instruct-mlx-4bit \
+  --train \
+  --data /private/tmp/aidememo-lfm-fact-type-sft \
+  --adapter-path /private/tmp/aidememo-lfm-fact-type-lora-20260707-240i \
+  --fine-tune-type lora \
+  --mask-prompt \
+  --num-layers 8 \
+  --batch-size 1 \
+  --grad-accumulation-steps 8 \
+  --iters 240 \
+  --learning-rate 5e-5 \
+  --steps-per-eval 60 \
+  --val-batches 16 \
+  --max-seq-length 512
+
+/private/tmp/aidememo-lfm-venv/bin/python scripts/lfm_mlx_fact_type_eval.py \
+  --model-dir /private/tmp/lfm25-12b-instruct-mlx-4bit \
+  --adapter-path /private/tmp/aidememo-lfm-fact-type-lora-20260707-240i \
+  --prompt-style compact \
+  --summary-only
+```
+
+Training data: 576 synthetic training rows and 144 validation rows generated
+from AideMemo-specific templates; test data stayed the separate 45-case
+hand-labelled fixture from `lfm_mlx_fact_type_eval.py`. This is enough to test
+whether the adapter path can move the model, but not enough to claim production
+generalisation.
+
+| Run | Validation loss | Holdout accuracy | Baseline accuracy | Residual rescues | Baseline-correct harms | High-confidence precision |
+|---|---:|---:|---:|---:|---:|---:|
+| Base `1.2B-Instruct` compact/chat | n/a | 0.33 | 0.69 | 3/13 | 19 | 6/6 at confidence >= 0.8 |
+| LoRA 60 iter, 8 layers | 2.580 | 0.49 | 0.69 | 5/13 | 15 | 11/16 at confidence >= 0.8 |
+| LoRA 240 iter, 8 layers | 1.476 | 0.84 | 0.69 | 10/13 | 4 | 31/31 at confidence >= 0.8 |
+
+The 240-iteration adapter is the first positive evidence that fine-tuning can
+make LFM useful for AideMemo's capture weakness. It improves `claim`,
+`question`, Korean preference/lesson-style cases, and non-English residuals
+that the deterministic English cue table misses. The remaining weak spot is
+`pattern` (1/5): the adapter confuses implementation-pattern statements with
+`convention`, `claim`, and `decision`.
+
+Placement after this smoke:
+
+* Keep deterministic inference as the zero-cost default.
+* A LoRA-tuned LFM sidecar is worth pursuing for residual/default-note cases and
+  pending-review batches.
+* Do not ship automatic type promotion from this synthetic-only adapter. The
+  next gate is a real capture corpus labelled by the nine AideMemo fact types,
+  with explicit false-memory and baseline-correct-harm metrics.
+
+### Coding-Agent Shadow Corpus Fact Type LoRA
+
+The next step was to move the adapter test away from synthetic-only examples and
+toward the data shape AideMemo should collect in production: coding agents or
+review hooks classify a fact before `aidememo_fact_add`, the reviewed label is
+saved, and a local LFM LoRA is trained in shadow mode.
+
+Seed corpus: `fixtures/fact_type_corpus/coding_agent_shadow_seed.jsonl`.
+
+* 108 reviewed-style coding-agent facts, balanced at 12 rows per fact type.
+* Splits are explicit: 72 train, 18 validation, 18 test.
+* Mixed language coverage: 79 English rows, 29 Korean rows.
+* Scenarios cover code review, release readiness, MCP capture, branch merge,
+  model runtime failures, search evaluation, corpus design, and taxonomy notes.
+
+Dataset generation:
+
+```bash
+python3 scripts/lfm_fact_type_sft_data.py \
+  --out /private/tmp/aidememo-lfm-fact-type-corpus-sft
+
+python3 scripts/lfm_fact_type_sft_data.py \
+  --out /private/tmp/aidememo-lfm-fact-type-corpus-synth40-sft \
+  --examples-per-label 40
+```
+
+Representative training command:
+
+```bash
+/private/tmp/aidememo-lfm-venv/bin/mlx_lm.lora \
+  --model /private/tmp/lfm25-12b-instruct-mlx-4bit \
+  --train \
+  --data /private/tmp/aidememo-lfm-fact-type-corpus-sft \
+  --adapter-path /private/tmp/aidememo-lfm-fact-type-corpus-lora-20260707-240i \
+  --fine-tune-type lora \
+  --mask-prompt \
+  --num-layers 8 \
+  --batch-size 1 \
+  --grad-accumulation-steps 8 \
+  --iters 240 \
+  --learning-rate 5e-5 \
+  --steps-per-eval 60 \
+  --val-batches -1 \
+  --max-seq-length 512
+```
+
+Evaluation command:
+
+```bash
+/private/tmp/aidememo-lfm-venv/bin/python scripts/lfm_mlx_fact_type_eval.py \
+  --model-dir /private/tmp/lfm25-12b-instruct-mlx-4bit \
+  --adapter-path /private/tmp/aidememo-lfm-fact-type-corpus-lora-20260707-240i \
+  --cases-file fixtures/fact_type_corpus/coding_agent_shadow_seed.jsonl \
+  --case-split test \
+  --prompt-style compact \
+  --summary-only
+```
+
+Results from the July 7 Mac MLX run:
+
+| Run | Eval set | Accuracy | Baseline accuracy | Residual rescues | Baseline-correct harms | High-confidence precision |
+|---|---|---:|---:|---:|---:|---:|
+| Base `1.2B-Instruct` | 18-case corpus test | 0.11 | 0.39 | n/a | n/a | 0/1 at confidence >= 0.8 |
+| Corpus-only LoRA 240 iter | 18-case corpus test | 0.61 | 0.39 | 5/11 | 1 | 11/14 at confidence >= 0.8 |
+| Corpus-only LoRA 240 iter | 45-case original holdout | 0.82 | 0.69 | 10/13 | 4 | 33/38 at confidence >= 0.8 |
+| Corpus + 40 synthetic/label LoRA 240 iter | 18-case corpus test | 0.61 | 0.39 | 6/11 | 2 | 7/8 at confidence >= 0.8 |
+| Corpus + 40 synthetic/label LoRA 240 iter | 45-case original holdout | 0.71 | 0.69 | 9/13 | 8 | 24/26 at confidence >= 0.8 |
+
+Interpretation:
+
+* The corpus-only adapter is the best current placement: it beats deterministic
+  inference on the harder coding-agent corpus test and still generalizes to the
+  older 45-case holdout.
+* Synthetic augmentation is not automatically helpful. It made the classifier
+  more selective at high confidence on the 18-case corpus test, but it hurt the
+  older holdout and collapsed every `note` case there into `lesson`.
+* The seed test set is still too small for automatic writes. The right product
+  path is a shadow loop: collect reviewed agent-labelled facts, retrain local
+  LoRA adapters, and expose only high-confidence `fact_type_hint` output until
+  real capture traffic proves low false-memory risk.
+* The weakest labels remain `claim`, `convention`, and `note` because their
+  boundary is semantic rather than cue-driven. Future corpora should oversample
+  these near-miss pairs instead of adding more obvious preference/decision
+  templates.
+
+Implementation follow-up: MCP writes now support an opt-in
+`AIDEMEMO_FACT_TYPE_SHADOW_LOG=/path/to/file.jsonl` side-channel. It appends
+successful `aidememo_fact_add` / `aidememo_fact_add_many` writes with
+`label_source` metadata so agent-explicit labels can become supervised LoRA
+training rows while inferred/default labels and `fact_type_hint` disagreements
+remain audit data by default. The companion `scripts/lfm_fact_type_sidecar.py`
+loads the tuned adapter and returns hint-only `suggested_fact_type` /
+confidence / margin output; it does not write or override the stored fact.
+
+### LFM MLX Vision Smoke
+
+`LiquidAI/LFM2.5-VL-450M-MLX-4bit` downloaded and loaded only after a runtime
+compatibility patch: `mlx-vlm` swaps in a slow SigLIP image processor, but the
+current `transformers` processor class check rejects that object. Relaxing that
+check in the one-off smoke allowed generation to run. The model saw a synthetic
+incident-note screenshot title, but JSON output degenerated into repeated `{`
+tokens, and simpler OCR prompts returned empty text. This is not production
+evidence for screenshot-to-fact capture. Treat VL capture as blocked pending a
+clean `mlx-vlm` / `transformers` compatibility path and a real screenshot
+precision benchmark.
+
+### LFM Model Placement Strategy
+
+The useful result is not "replace the memory system with LFM." The durable
+strategy is to put small LFM models at the exact memory-system failure point
+they address, then measure quality and latency per layer.
+
+| Layer | Candidate model | Current evidence | Next quality gate |
+|---|---|---|---|
+| First-stage semantic retrieval | `mlx-community/LFM2.5-Embedding-350M-4bit` | Best current Mac-local result: dense hit@1 1.00 / MRR 1.00, about 23 ms warmed query embedding, and it recovered a Korean query when BM25 returned no candidates. 8-bit did not improve this fixture. AideMemo now exposes this placement through `aidememo search --auto` / `search.auto_hybrid=true`, which probes BM25 before promoting to semantic retrieval. | Run project-wiki and LongMemEval/MIRACL-style candidate-recall tests where BM25 candidate recall is below 1.0. |
+| Rerank after lexical/hybrid search | `mlx-community/LFM2.5-ColBERT-350M-4bit` | Native MLX MaxSim rerank improved hit@1 from 0.57 to 0.86; all-doc brute-force reached 1.00 on the tiny fixture, but document token encoding is much heavier than dense. | Gate on `candidate_recall >= 0.95`, then design a warmed sidecar or multi-vector index before using beyond small stores. |
+| Local capture classification | `LiquidAI/LFM2.5-1.2B-Instruct-MLX-4bit` with a fact-type LoRA adapter | Zero-shot closed-label scoring trailed deterministic inference (0.33 vs 0.69 on the original holdout; 0.11 vs 0.39 on the coding-agent corpus test). A corpus-only 240-iteration LoRA reached 0.61 on the 18-case coding-agent test and 0.82 on the older 45-case holdout. | Keep it as a shadow `fact_type_hint` path. Grow reviewed capture logs and validate confidence+margin thresholds before any automatic type promotion. |
+| Query router | Deterministic rules and search confidence, not LFM LM | Tested MLX LMs were weak routers: best observed route accuracy was 0.38 for 230M/350M and 0.25 for 1.2B-Instruct. | Add route-confidence features to the existing deterministic router shape before spending model calls here. |
+| Batch consolidation / branch review | No automatic LFM placement yet | Best observed consolidation was 0.50 on a 4-case slice with 230M fewshot; 1.2B-Instruct stayed at 0.25 and Thinking emitted reasoning traces instead of valid JSON. | Treat LFM output as review hints only; require a larger duplicate/supersede/keep-distinct benchmark before automatic writes. |
+| Visual memory capture | Blocked for now | `LFM2.5-VL-450M-MLX-4bit` required a runtime processor compatibility patch and did not produce stable JSON/OCR in the smoke. | Re-test after a clean `mlx-vlm` compatibility path, then build a screenshot/diagram-to-fact precision benchmark. |
+| Audio memory capture | No MLX placement yet | Current checked LFM audio inventory did not provide a Mac-local MLX path comparable to the text/VL candidates. | Keep audio out of core retrieval until there is a local runtime plus WER/fact-precision evidence. |
+
+This is the long-term differentiation from generic memory systems: AideMemo can
+be an instrumented memory runtime where small local models are proven useful by
+scenario gates. The claim should be specific: dense LFM helps when lexical
+candidate generation fails; ColBERT helps when candidate recall is high but
+ranking is wrong; text-generation LFM helps if it improves capture hygiene or
+routing while reducing large-model calls. A result that shows "no lift" on a
+saturated workload is still useful because it tells the router to stay on the
+cheap path.
+
+Default-on check for `search.auto_hybrid` on July 6:
+
+| Environment | Query shape | Result |
+|---|---|---|
+| Fresh HOME, no model cache | strong lexical `Redis timeout` | BM25 default 33 ms; `--auto` 16 ms and stayed lexical |
+| Fresh HOME, no model cache | CJK `레디스 장애 원인` | semantic promotion could not load `minishlab/potion-multilingual-128M`; `--auto` now falls back to BM25 instead of failing |
+| Current HOME, model cached, no HNSW sidecar | CJK `레디스 장애 원인` | `--auto` succeeded but paid model cold load and BM25-prefilter fallback: about 7.8 s |
+| Current HOME, HNSW sidecar present, fresh CLI | CJK `레디스 장애 원인` | still about 7.8 s because query embedding loads the model in the fresh process |
+| Current HOME, HNSW sidecar present, warm HTTP daemon | CJK `레디스 장애 원인` | first daemon call about 7.4 s warm-up; second call about 10 ms |
+| Current HOME, HNSW sidecar present, HTTP daemon with semantic prewarm | CJK `레디스 장애 원인` | startup paid the warm-up; first user `--via --auto` call was 14.9 ms |
+
+Interpretation: `--auto` is a good per-store / daemon policy, but not a global
+fresh-install default yet. The safe default remains BM25-only CLI search;
+operators should enable `search.auto_hybrid=true` after model cache + sidecar
+readiness, or rely on daemon discovery where the embedding provider is warm.
+When `search.auto_hybrid=true`, `mcp-serve` prewarms the semantic provider on
+startup; `AIDEMEMO_PREWARM_SEMANTIC=1` forces the same behavior for explicit
+daemon experiments.
 
 ## Performance
 
@@ -406,6 +862,7 @@ cargo check -p aidememo-cli --no-default-features --features redb
 cargo check -p aidememo-cli --features s3
 cargo test -p aidememo-core --features sqlite backup
 python3 scripts/docs-feature-gate.py
+python3 scripts/docs-site-e2e.py
 scripts/storage-backend-feature-gate.sh
 ```
 

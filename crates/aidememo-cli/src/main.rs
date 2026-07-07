@@ -693,6 +693,7 @@ fn handle_fact(
                 return run_fact_add_via_daemon(
                     &via,
                     &content,
+                    fact_type.as_deref(),
                     entities.as_ref(),
                     tags.as_ref(),
                     source_id.as_deref(),
@@ -796,9 +797,14 @@ fn handle_fact(
                         })
                     });
 
+                let explicit_fact_type = parse_fact_type(fact_type.clone());
+                let fact_type_provided = fact_type.is_some();
+                let (resolved_fact_type, fact_type_source, fact_type_hint) =
+                    resolve_write_fact_type(&content, explicit_fact_type, fact_type_provided);
+
                 let id = wiki.add_fact(FactInput {
                     content: content.clone(),
-                    fact_type: parse_fact_type(fact_type),
+                    fact_type: Some(resolved_fact_type),
                     entity_ids,
                     tags: parse_tags(tags),
                     source,
@@ -827,6 +833,9 @@ fn handle_fact(
                     let payload = serde_json::json!({
                         "id": id.to_string(),
                         "content": record.content,
+                        "fact_type": record.fact_type.to_string(),
+                        "fact_type_source": fact_type_source,
+                        "fact_type_hint": fact_type_hint,
                         "entity_names": entity_names_resolved,
                         "created_at": record.created_at,
                         "auto_created_entities": auto_created,
@@ -841,6 +850,17 @@ fn handle_fact(
                     });
                 }
                 let mut msg = format!("Added fact with ID {}", id);
+                if fact_type_source == "inferred" {
+                    msg.push_str(&format!("\n  inferred fact_type: {}", resolved_fact_type));
+                }
+                if let Some(suggested) = fact_type_hint
+                    .get("suggested_fact_type")
+                    .and_then(|v| v.as_str())
+                {
+                    msg.push_str(&format!(
+                        "\n  fact_type hint: content looks like {suggested}; pass --type {suggested} to activate type-aware ranking"
+                    ));
+                }
                 if !auto_created.is_empty() {
                     let label = if auto_created.len() == 1 {
                         "entity"
@@ -1805,22 +1825,24 @@ fn handle_search(
 
     // Explicit --via wins over discovery.
     if let Some(ref via) = sub.via {
-        return run_search_via_daemon(via, &sub, default_limit, json);
+        return run_search_via_daemon(via, &sub, default_limit, config.search.auto_hybrid, json);
     }
     // Opportunistic discovery: if a `aidememo daemon` is running and serving
     // the same store, dispatch through it so we skip a local backend open and
     // (for hybrid) model load. Set AIDEMEMO_NO_DAEMON=1 to bypass.
     if let Some(via) = cmd::daemon::registered_endpoint(path, &config.store.backend) {
         tracing::debug!(via = %via, "auto-discovered daemon");
-        return run_search_via_daemon(&via, &sub, default_limit, json);
+        return run_search_via_daemon(&via, &sub, default_limit, config.search.auto_hybrid, json);
     }
 
+    let config_auto_hybrid = config.search.auto_hybrid;
     with_wiki_mut(path, config, |wiki| {
         let session_id = aidememo_core::ulid::Ulid::new().to_string();
         // CLI default = BM25 (fast). `--hybrid` opts into the
         // semantic path; `semantic_weight = 0` in config also forces
         // BM25 even with the flag (caller-on-caller override).
-        let bm25_only = !sub.hybrid || semantic_weight == 0.0;
+        let auto_hybrid = sub.auto || config_auto_hybrid;
+        let bm25_only = !(sub.hybrid || auto_hybrid) || semantic_weight == 0.0;
         let opts = SearchOpts {
             limit: sub.limit.or(Some(default_limit)),
             min_confidence: sub.min_confidence,
@@ -1840,6 +1862,8 @@ fn handle_search(
         let results = if let Some(ref start) = sub.traverse_from {
             let depth = sub.traverse_depth.unwrap_or(2);
             wiki.search_with_traverse(&sub.query, start, depth, opts)?
+        } else if auto_hybrid && !sub.hybrid {
+            wiki.adaptive_search(&sub.query, opts)?
         } else {
             wiki.hybrid_search(&sub.query, opts)?
         };
@@ -1879,6 +1903,7 @@ fn run_search_via_daemon(
     base_url: &str,
     sub: &cmd::SearchSub,
     default_limit: usize,
+    config_auto_hybrid: bool,
     _json: bool,
 ) -> Result<String, AideMemoError> {
     let url = format!("{}/mcp", base_url.trim_end_matches('/'));
@@ -1888,7 +1913,8 @@ fn run_search_via_daemon(
         "limit": limit,
         // CLI default = BM25; --hybrid flips it on. Daemon
         // honours the same opt-in semantics.
-        "bm25_only": !sub.hybrid,
+        "bm25_only": !(sub.hybrid || sub.auto || config_auto_hybrid),
+        "auto_hybrid": (sub.auto || config_auto_hybrid) && !sub.hybrid,
         // Match the local CLI search path. MCP defaults to current-only
         // for agent "what is true now?" calls, but `aidememo search` has
         // historically searched all facts unless the caller says otherwise.
@@ -1992,10 +2018,16 @@ fn run_search_all_projects(
             session_id: None,
             current_only: false,
             as_of: as_of_ms,
-            bm25_only: !sub.hybrid || semantic_weight == 0.0,
+            bm25_only: !(sub.hybrid || sub.auto || config.search.auto_hybrid)
+                || semantic_weight == 0.0,
             include_archive: sub.include_archive,
         };
-        match wiki.hybrid_search(&sub.query, opts) {
+        let hits = if (sub.auto || config.search.auto_hybrid) && !sub.hybrid {
+            wiki.adaptive_search(&sub.query, opts)
+        } else {
+            wiki.hybrid_search(&sub.query, opts)
+        };
+        match hits {
             Ok(hits) => {
                 for h in hits {
                     all.push((proj_name.clone(), h));
@@ -2134,6 +2166,7 @@ fn run_query_via_daemon(base_url: &str, sub: &cmd::QuerySub) -> Result<String, A
 fn run_fact_add_via_daemon(
     base_url: &str,
     content: &str,
+    fact_type: Option<&str>,
     entities: Option<&Vec<String>>,
     tags: Option<&Vec<String>>,
     source_id: Option<&str>,
@@ -2158,6 +2191,9 @@ fn run_fact_add_via_daemon(
         })
         .unwrap_or_default();
     let mut args = serde_json::json!({ "content": content });
+    if let Some(fact_type) = fact_type {
+        args["fact_type"] = serde_json::json!(fact_type);
+    }
     if !entity_names.is_empty() {
         args["entities"] = serde_json::json!(entity_names);
     }
@@ -2193,6 +2229,23 @@ fn run_fact_add_via_daemon(
         return Ok(payload.to_string());
     }
     let mut msg = format!("Added fact with ID {id}");
+    if let (Some(source), Some(fact_type)) = (
+        payload.get("fact_type_source").and_then(|v| v.as_str()),
+        payload.get("fact_type").and_then(|v| v.as_str()),
+    ) {
+        if source == "inferred" {
+            msg.push_str(&format!("\nInferred fact_type: {fact_type}"));
+        }
+    }
+    if let Some(suggested) = payload
+        .get("fact_type_hint")
+        .and_then(|v| v.get("suggested_fact_type"))
+        .and_then(|v| v.as_str())
+    {
+        msg.push_str(&format!(
+            "\nFact type hint: content looks like {suggested}; pass --type {suggested} to activate type-aware ranking"
+        ));
+    }
     if !auto_created.is_empty() {
         msg.push_str(&format!(
             "\nAuto-created entities: {}",
@@ -3209,6 +3262,42 @@ pub(crate) fn parse_fact_type(s: Option<String>) -> Option<FactType> {
     // preferences, lesson/lessons/learning, error/err/mistake/
     // failure, etc.). New types added in aidememo-core land here free.
     s.map(|t| FactType::parse(&t))
+}
+
+fn inferred_write_fact_type(content: &str) -> FactType {
+    match aidememo_core::extract::infer_fact_type(content) {
+        FactType::Unknown => FactType::Note,
+        inferred => inferred,
+    }
+}
+
+fn resolve_write_fact_type(
+    content: &str,
+    explicit: Option<FactType>,
+    explicit_was_present: bool,
+) -> (FactType, &'static str, serde_json::Value) {
+    let inferred = inferred_write_fact_type(content);
+    match explicit {
+        Some(fact_type) => {
+            let hint = if explicit_was_present
+                && fact_type == FactType::Note
+                && inferred != FactType::Note
+            {
+                serde_json::json!({
+                    "suggested_fact_type": inferred.to_string(),
+                    "message": format!(
+                        "content has a strong {} cue; use --type {} to activate type-aware ranking",
+                        inferred, inferred
+                    ),
+                })
+            } else {
+                serde_json::Value::Null
+            };
+            (fact_type, "explicit", hint)
+        }
+        None if inferred != FactType::Note => (inferred, "inferred", serde_json::Value::Null),
+        None => (FactType::Note, "default", serde_json::Value::Null),
+    }
 }
 
 fn parse_tags(s: Option<Vec<String>>) -> Option<Vec<String>> {

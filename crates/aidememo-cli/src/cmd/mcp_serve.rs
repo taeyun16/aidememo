@@ -288,7 +288,21 @@ pub fn run_mcp_serve(
         )));
     }
 
+    let prewarm_semantic = should_prewarm_semantic(&config);
     let wiki = AideMemo::open(store_path.as_ref(), config)?;
+    if prewarm_semantic {
+        let started = std::time::Instant::now();
+        match wiki.semantic_prewarm() {
+            Ok(()) => tracing::info!(
+                ms = started.elapsed().as_secs_f64() * 1000.0,
+                "semantic provider prewarmed"
+            ),
+            Err(err) => tracing::warn!(
+                error = %err,
+                "semantic provider prewarm failed; server will fall back on demand"
+            ),
+        }
+    }
 
     let runtime = tokio::runtime::Runtime::new().map_err(|e| {
         aidememo_core::AideMemoError::Internal(format!("failed to create runtime: {}", e))
@@ -343,6 +357,20 @@ pub fn run_mcp_serve(
     })?;
 
     Ok("MCP server stopped".into())
+}
+
+fn should_prewarm_semantic(config: &Config) -> bool {
+    config.search.auto_hybrid || env_bool("AIDEMEMO_PREWARM_SEMANTIC")
+}
+
+fn env_bool(name: &str) -> bool {
+    match std::env::var(name) {
+        Ok(value) => matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        ),
+        Err(_) => false,
+    }
 }
 
 type AuthState = Arc<Option<String>>;
@@ -576,5 +604,15 @@ mod tests {
         assert_eq!(report.request_count, 3);
         assert_eq!(report.routes.health, 1);
         assert_eq!(report.routes.mcp, 2);
+    }
+
+    #[test]
+    fn semantic_prewarm_follows_auto_hybrid_config() {
+        let mut config = Config::default();
+        config.search.auto_hybrid = false;
+        assert!(!should_prewarm_semantic(&config));
+
+        config.search.auto_hybrid = true;
+        assert!(should_prewarm_semantic(&config));
     }
 }

@@ -144,6 +144,165 @@ fn parse_fact_type_arg(arg: Option<&Value>) -> Result<Option<aidememo_core::Fact
     Ok(Some(parsed))
 }
 
+#[derive(Clone, Copy)]
+struct FactTypeWriteMeta {
+    fact_type: aidememo_core::FactType,
+    source: &'static str,
+    hint: Option<aidememo_core::FactType>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct FactTypeShadowSample {
+    id: String,
+    text: String,
+    fact_type: String,
+    label_source: &'static str,
+    fact_type_hint: Option<String>,
+    entities: Vec<String>,
+    source_id: Option<String>,
+    origin: &'static str,
+    captured_at_ms: u64,
+}
+
+fn inferred_write_fact_type(content: &str) -> aidememo_core::FactType {
+    match aidememo_core::extract::infer_fact_type(content) {
+        aidememo_core::FactType::Unknown => aidememo_core::FactType::Note,
+        inferred => inferred,
+    }
+}
+
+fn resolve_write_fact_type(
+    content: &str,
+    explicit: Option<aidememo_core::FactType>,
+    explicit_was_present: bool,
+) -> FactTypeWriteMeta {
+    let inferred = inferred_write_fact_type(content);
+    match explicit {
+        Some(fact_type) => {
+            let hint = if explicit_was_present
+                && fact_type == aidememo_core::FactType::Note
+                && inferred != aidememo_core::FactType::Note
+            {
+                Some(inferred)
+            } else {
+                None
+            };
+            FactTypeWriteMeta {
+                fact_type,
+                source: "explicit",
+                hint,
+            }
+        }
+        None if inferred != aidememo_core::FactType::Note => FactTypeWriteMeta {
+            fact_type: inferred,
+            source: "inferred",
+            hint: None,
+        },
+        None => FactTypeWriteMeta {
+            fact_type: aidememo_core::FactType::Note,
+            source: "default",
+            hint: None,
+        },
+    }
+}
+
+fn fact_type_hint_payload(hint: Option<aidememo_core::FactType>) -> Value {
+    match hint {
+        Some(suggested) => json!({
+            "suggested_fact_type": suggested.to_string(),
+            "message": format!(
+                "content has a strong {} cue; use fact_type=\"{}\" to activate type-aware ranking",
+                suggested, suggested
+            ),
+        }),
+        None => Value::Null,
+    }
+}
+
+const FACT_TYPE_SHADOW_LOG_ENV: &str = "AIDEMEMO_FACT_TYPE_SHADOW_LOG";
+
+fn now_epoch_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+fn fact_type_shadow_log_path_from_env() -> Option<std::path::PathBuf> {
+    let path = std::env::var_os(FACT_TYPE_SHADOW_LOG_ENV)?;
+    if path.is_empty() {
+        return None;
+    }
+    Some(std::path::PathBuf::from(path))
+}
+
+fn append_fact_type_shadow_samples(
+    path: &std::path::Path,
+    samples: &[FactTypeShadowSample],
+) -> Result<usize, String> {
+    if samples.is_empty() {
+        return Ok(0);
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("create {}: {e}", parent.display()))?;
+    }
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .map_err(|e| format!("open {}: {e}", path.display()))?;
+    for sample in samples {
+        let line = serde_json::to_string(sample)
+            .map_err(|e| format!("serialize fact_type shadow sample: {e}"))?;
+        use std::io::Write;
+        writeln!(file, "{line}").map_err(|e| format!("write {}: {e}", path.display()))?;
+    }
+    Ok(samples.len())
+}
+
+fn append_fact_type_shadow_samples_from_env(samples: &[FactTypeShadowSample]) -> Value {
+    let Some(path) = fact_type_shadow_log_path_from_env() else {
+        return Value::Null;
+    };
+    match append_fact_type_shadow_samples(&path, samples) {
+        Ok(recorded) => json!({
+            "enabled": true,
+            "recorded": recorded,
+            "path": path.display().to_string(),
+        }),
+        Err(error) => json!({
+            "enabled": true,
+            "recorded": 0,
+            "path": path.display().to_string(),
+            "error": error,
+        }),
+    }
+}
+
+fn fact_type_shadow_sample(
+    id: impl ToString,
+    content: impl Into<String>,
+    fact_type_meta: FactTypeWriteMeta,
+    entity_names: Vec<String>,
+    source_id: Option<String>,
+    origin: &'static str,
+) -> Option<FactTypeShadowSample> {
+    if matches!(fact_type_meta.fact_type, aidememo_core::FactType::Unknown) {
+        return None;
+    }
+    Some(FactTypeShadowSample {
+        id: id.to_string(),
+        text: content.into(),
+        fact_type: fact_type_meta.fact_type.to_string(),
+        label_source: fact_type_meta.source,
+        fact_type_hint: fact_type_meta.hint.map(|hint| hint.to_string()),
+        entities: entity_names,
+        source_id,
+        origin,
+        captured_at_ms: now_epoch_ms(),
+    })
+}
+
 /// Parse a time-spec MCP argument. Accepts three shapes (in priority):
 ///
 /// 1. `null` / missing → `Ok(None)`
@@ -190,6 +349,10 @@ fn tool_search(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, String> 
         .get("bm25_only")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
+    let auto_hybrid = args
+        .get("auto_hybrid")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     // Default `current_only=true` because most agent queries are
     // "what do we know NOW?" — superseded facts mixed into results was
     // the biggest correctness footgun. Pass `false` explicitly for
@@ -225,25 +388,26 @@ fn tool_search(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, String> 
         .unwrap_or(false);
     let source_id = mcp_source_id(args);
 
-    let results = wiki
-        .hybrid_search(
-            query,
-            aidememo_core::SearchOpts {
-                limit: Some(limit),
-                bm25_only,
-                current_only,
-                since,
-                until,
-                as_of,
-                entity_filter,
-                min_confidence,
-                source_id,
-                session_id: Some(session_id.clone()),
-                include_archive,
-                ..Default::default()
-            },
-        )
-        .map_err(|e| e.to_string())?;
+    let opts = aidememo_core::SearchOpts {
+        limit: Some(limit),
+        bm25_only,
+        current_only,
+        since,
+        until,
+        as_of,
+        entity_filter,
+        min_confidence,
+        source_id,
+        session_id: Some(session_id.clone()),
+        include_archive,
+        ..Default::default()
+    };
+    let results = if auto_hybrid && !bm25_only {
+        wiki.adaptive_search(query, opts)
+    } else {
+        wiki.hybrid_search(query, opts)
+    }
+    .map_err(|e| e.to_string())?;
 
     // Agent UX budget knobs (mirrors aidememo_query). format=text emits
     // markdown bullets — ~4× smaller than JSON envelope. max_chars
@@ -2668,7 +2832,10 @@ fn tool_fact_add(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, String
     let session_id_arg = args.get("session_id").and_then(|v| v.as_str());
     let session_entity_id = resolve_session_entity(wiki, session_id_arg)?;
     attach_session_entity(&mut entity_ids, session_entity_id);
-    let fact_type = parse_fact_type_arg(args.get("fact_type"))?;
+    let fact_type_arg = args.get("fact_type");
+    let fact_type_provided = fact_type_arg.is_some_and(|v| !v.is_null());
+    let fact_type = parse_fact_type_arg(fact_type_arg)?;
+    let fact_type_meta = resolve_write_fact_type(content, fact_type, fact_type_provided);
     let source_id = mcp_source_id(args);
 
     // Pre-add similarity check (non-blocking). BM25-only so we don't
@@ -2709,7 +2876,7 @@ fn tool_fact_add(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, String
 
     let input = aidememo_core::types::FactInput {
         content: content.into(),
-        fact_type,
+        fact_type: Some(fact_type_meta.fact_type),
         entity_ids: if entity_ids.is_empty() {
             None
         } else {
@@ -2736,15 +2903,31 @@ fn tool_fact_add(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, String
         .filter_map(|eid| wiki.entity_get_by_id(*eid).ok())
         .map(|e| e.name)
         .collect();
+    let record_content = record.content.clone();
+    let record_source_id = record.source_id.clone();
+    let shadow_corpus = fact_type_shadow_sample(
+        id,
+        record_content.clone(),
+        fact_type_meta,
+        entity_names_resolved.clone(),
+        record_source_id.clone(),
+        "mcp_fact_add",
+    )
+    .map(|sample| append_fact_type_shadow_samples_from_env(&[sample]))
+    .unwrap_or(Value::Null);
     let payload = json!({
         "id": id.to_string(),
-        "content": record.content,
+        "content": record_content,
+        "fact_type": record.fact_type.to_string(),
+        "fact_type_source": fact_type_meta.source,
+        "fact_type_hint": fact_type_hint_payload(fact_type_meta.hint),
         "entity_names": entity_names_resolved,
         "created_at": record.created_at,
-        "source_id": record.source_id,
+        "source_id": record_source_id,
         "auto_created_entities": auto_created,
         "entity_name_alternatives": alternatives_payload(&alternatives),
         "existing_similar": existing_similar,
+        "shadow_corpus": shadow_corpus,
     });
     Ok(ToolCallResult {
         content: vec![ContentBlock::text(payload.to_string())],
@@ -2770,7 +2953,10 @@ fn tool_fact_add_many(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, S
         });
     }
     let mut inputs = Vec::with_capacity(items.len());
+    let mut per_item_content: Vec<String> = Vec::with_capacity(items.len());
     let mut per_item_entity_names: Vec<Vec<String>> = Vec::with_capacity(items.len());
+    let mut per_item_fact_type_meta: Vec<FactTypeWriteMeta> = Vec::with_capacity(items.len());
+    let mut per_item_source_id: Vec<Option<String>> = Vec::with_capacity(items.len());
     let mut auto_created_total: Vec<String> = Vec::new();
     let mut alternatives_total: Vec<EntityNameAlternative> = Vec::new();
     let default_session_id = args.get("session_id").and_then(|v| v.as_str());
@@ -2841,13 +3027,19 @@ fn tool_fact_add_many(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, S
                     .collect::<Vec<_>>()
             })
             .filter(|v| !v.is_empty());
-        let fact_type = parse_fact_type_arg(obj.get("fact_type"))
-            .map_err(|e| format!("items[{i}].fact_type: {e}"))?;
+        let fact_type_arg = obj.get("fact_type");
+        let fact_type_provided = fact_type_arg.is_some_and(|v| !v.is_null());
+        let fact_type =
+            parse_fact_type_arg(fact_type_arg).map_err(|e| format!("items[{i}].fact_type: {e}"))?;
+        let fact_type_meta = resolve_write_fact_type(&content, fact_type, fact_type_provided);
         let source_id =
             source_id_from_value(obj.get("source_id")).or_else(|| default_source_id.clone());
+        per_item_content.push(content.clone());
+        per_item_source_id.push(source_id.clone());
+        per_item_fact_type_meta.push(fact_type_meta);
         inputs.push(aidememo_core::types::FactInput {
             content,
-            fact_type,
+            fact_type: Some(fact_type_meta.fact_type),
             entity_ids,
             tags,
             source: None,
@@ -2862,18 +3054,39 @@ fn tool_fact_add_many(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, S
     let facts_array: Vec<Value> = ids
         .iter()
         .zip(per_item_entity_names.iter())
-        .map(|(id, names)| {
+        .zip(per_item_fact_type_meta.iter())
+        .map(|((id, names), fact_type_meta)| {
             json!({
                 "id": id.to_string(),
                 "entity_names": names,
+                "fact_type": fact_type_meta.fact_type.to_string(),
+                "fact_type_source": fact_type_meta.source,
+                "fact_type_hint": fact_type_hint_payload(fact_type_meta.hint),
             })
         })
         .collect();
+    let shadow_samples: Vec<FactTypeShadowSample> = ids
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, id)| {
+            let fact_type_meta = per_item_fact_type_meta.get(idx).copied()?;
+            fact_type_shadow_sample(
+                id,
+                per_item_content.get(idx).cloned().unwrap_or_default(),
+                fact_type_meta,
+                per_item_entity_names.get(idx).cloned().unwrap_or_default(),
+                per_item_source_id.get(idx).cloned().unwrap_or_default(),
+                "mcp_fact_add_many",
+            )
+        })
+        .collect();
+    let shadow_corpus = append_fact_type_shadow_samples_from_env(&shadow_samples);
     let payload = json!({
         "count": ids.len(),
         "facts": facts_array,
         "auto_created_entities": auto_created_total,
         "entity_name_alternatives": alternatives_payload(&alternatives_total),
+        "shadow_corpus": shadow_corpus,
     });
     Ok(ToolCallResult {
         content: vec![ContentBlock::text(payload.to_string())],
@@ -3066,7 +3279,7 @@ pub fn list_tools() -> Vec<Tool> {
         Tool {
             name: "aidememo_search".into(),
             description:
-                "Search facts in the wiki using BM25 + semantic vectors. Returns ranked results. Defaults to current-only (excludes superseded facts) — pass `current_only:false` for historical/timeline queries. Pass `bm25_only:true` to skip the embedding model load (cuts cold-start ~700-900ms; loses semantic recall). For graph context (related entities + recent facts) prefer `aidememo_query` instead — it wraps this tool plus traversal in one call."
+                "Search facts in the wiki using BM25 + semantic vectors. Returns ranked results. Defaults to current-only (excludes superseded facts) — pass `current_only:false` for historical/timeline queries. Pass `bm25_only:true` to skip the embedding model load (cuts cold-start ~700-900ms; loses semantic recall), or `auto_hybrid:true` to probe BM25 first and promote to semantic only when lexical evidence is weak. For graph context (related entities + recent facts) prefer `aidememo_query` instead — it wraps this tool plus traversal in one call."
                     .into(),
             input_schema: json!({
                 "type": "object",
@@ -3077,6 +3290,11 @@ pub fn list_tools() -> Vec<Tool> {
                         "type": "boolean",
                         "default": false,
                         "description": "Skip embedding model — pure BM25. Use when agent hot-path latency matters more than semantic recall."
+                    },
+                    "auto_hybrid": {
+                        "type": "boolean",
+                        "default": false,
+                        "description": "Probe BM25 first and promote to semantic search only when the lexical probe is weak or the query is CJK. Ignored when bm25_only=true."
                     },
                     "current_only": {
                         "type": "boolean",
@@ -3429,7 +3647,10 @@ pub fn list_tools() -> Vec<Tool> {
                 could ever embed. Pick the right `fact_type` (preference / lesson / \
                 error / decision / convention / claim / note) so the in-pipeline weighting \
                 (decay-exempt + 2× boost on personalisation tiers) actually fires on the \
-                right facts.\n\nClassification cues (in order of specificity):\n\
+                right facts. If `fact_type` is omitted, AideMemo applies the same deterministic \
+                keyword cue table below and returns `fact_type_source:\"inferred\"` when it \
+                finds a strong non-note type; explicit `fact_type:\"note\"` is preserved but may \
+                return `fact_type_hint` when the content looks mistyped.\n\nClassification cues (in order of specificity):\n\
                 * 'I prefer X' / 'my favorite is Y' / 'I like Z' → preference\n\
                 * 'I decided to X' / 'I chose Y' / 'going with Z' → decision\n\
                 * 'tried X but Y' / 'turns out' / 'wish I had' → lesson\n\
@@ -3446,9 +3667,11 @@ pub fn list_tools() -> Vec<Tool> {
                 auto-created name is fuzzily similar to an existing entity (e.g. typo: \
                 'Postgrs' vs existing 'Postgres'), the candidates appear as \
                 `entity_name_alternatives` so the agent can decide to alias or merge \
-                instead of leaving a fragmented graph. Returns {id, content, entity_names, \
-                created_at, auto_created_entities, entity_name_alternatives, \
-                existing_similar}."
+                instead of leaving a fragmented graph. If AIDEMEMO_FACT_TYPE_SHADOW_LOG is set, \
+                the successful write is also appended to that JSONL corpus for offline \
+                fact_type adapter training; this never changes the stored fact. Returns {id, content, entity_names, \
+                fact_type, fact_type_source, fact_type_hint, created_at, \
+                auto_created_entities, entity_name_alternatives, existing_similar, shadow_corpus}."
                 .into(),
             input_schema: json!({
                 "type": "object",
@@ -3461,7 +3684,7 @@ pub fn list_tools() -> Vec<Tool> {
                     "fact_type": {
                         "type": "string",
                         "enum": ["decision", "pattern", "convention", "claim", "note", "question", "preference", "lesson", "error", "unknown"],
-                        "description": "Self-classify before calling — see the trigger cues in the tool description. Atomic types (decision/pattern/convention) are mutually exclusive per entity — use aidememo_fact_supersede to retire the old one. Non-atomic (claim/note/question/preference/lesson/error) coexist freely."
+                        "description": "Self-classify before calling — see the trigger cues in the tool description. If omitted, strong cues are inferred deterministically; explicit note is preserved and may return fact_type_hint. Atomic types (decision/pattern/convention) are mutually exclusive per entity — use aidememo_fact_supersede to retire the old one. Non-atomic (claim/note/question/preference/lesson/error) coexist freely."
                     },
                     "dedup_check": {
                         "type": "boolean",
@@ -3474,7 +3697,7 @@ pub fn list_tools() -> Vec<Tool> {
         },
         Tool {
             name: "aidememo_fact_add_many".into(),
-            description: "Add many facts in a single transaction. Dramatically faster than many sequential aidememo_fact_add calls because the disk fsync cost is paid once per batch. Each item has the same shape as aidememo_fact_add's args. Classify each item yourself before calling (decision / lesson / error / preference / convention / claim / note) so aidememo's type-aware ranking can surface the right memories later. Pass top-level session_id from aidememo_workflow_start to attach every item to the current workflow, or item.session_id to override per fact. Returns {count, facts:[{id, entity_names}], auto_created_entities} — the dedup'd auto-created list lets you confirm new entities at a glance."
+            description: "Add many facts in a single transaction. Dramatically faster than many sequential aidememo_fact_add calls because the disk fsync cost is paid once per batch. Each item has the same shape as aidememo_fact_add's args. Classify each item yourself before calling (decision / lesson / error / preference / convention / claim / note) so aidememo's type-aware ranking can surface the right memories later; if an item omits fact_type, strong cues are inferred deterministically and returned as fact_type_source:\"inferred\". Pass top-level session_id from aidememo_workflow_start to attach every item to the current workflow, or item.session_id to override per fact. If AIDEMEMO_FACT_TYPE_SHADOW_LOG is set, successful writes are also appended to that JSONL corpus for offline fact_type adapter training; this never changes the stored facts. Returns {count, facts:[{id, entity_names, fact_type, fact_type_source, fact_type_hint}], auto_created_entities, shadow_corpus} — the dedup'd auto-created list lets you confirm new entities at a glance."
                 .into(),
             input_schema: json!({
                 "type": "object",
@@ -4410,6 +4633,123 @@ mod tests {
         let id = aidememo_core::ulid::Ulid::from_string(payload["id"].as_str().unwrap()).unwrap();
         let record = wiki.fact_get(&aidememo_core::FactId(id)).unwrap();
         assert_eq!(record.fact_type, aidememo_core::FactType::Decision);
+    }
+
+    #[test]
+    fn fact_add_infers_missing_fact_type_and_returns_metadata() {
+        let (_dir, wiki) = open_temp_wiki();
+        let result = tool_fact_add(
+            &json!({
+                "content": "Lesson: tried pool-size tuning but DNS was the bottleneck",
+                "entities": ["Redis"],
+                "dedup_check": false
+            }),
+            &wiki,
+        )
+        .unwrap();
+        let payload: Value =
+            serde_json::from_str(result.content[0].text.as_deref().unwrap()).unwrap();
+        let id = aidememo_core::ulid::Ulid::from_string(payload["id"].as_str().unwrap()).unwrap();
+        let record = wiki.fact_get(&aidememo_core::FactId(id)).unwrap();
+
+        assert_eq!(record.fact_type, aidememo_core::FactType::Lesson);
+        assert_eq!(payload["fact_type"].as_str(), Some("lesson"));
+        assert_eq!(payload["fact_type_source"].as_str(), Some("inferred"));
+        assert!(payload["fact_type_hint"].is_null());
+    }
+
+    #[test]
+    fn fact_add_preserves_explicit_note_but_returns_type_hint() {
+        let (_dir, wiki) = open_temp_wiki();
+        let result = tool_fact_add(
+            &json!({
+                "content": "Error: Do not disable webhook signature validation",
+                "entities": ["BillingWebhook"],
+                "fact_type": "note",
+                "dedup_check": false
+            }),
+            &wiki,
+        )
+        .unwrap();
+        let payload: Value =
+            serde_json::from_str(result.content[0].text.as_deref().unwrap()).unwrap();
+        let id = aidememo_core::ulid::Ulid::from_string(payload["id"].as_str().unwrap()).unwrap();
+        let record = wiki.fact_get(&aidememo_core::FactId(id)).unwrap();
+
+        assert_eq!(record.fact_type, aidememo_core::FactType::Note);
+        assert_eq!(payload["fact_type"].as_str(), Some("note"));
+        assert_eq!(payload["fact_type_source"].as_str(), Some("explicit"));
+        assert_eq!(
+            payload["fact_type_hint"]["suggested_fact_type"].as_str(),
+            Some("error")
+        );
+    }
+
+    #[test]
+    fn fact_add_many_infers_missing_fact_types_per_item() {
+        let (_dir, wiki) = open_temp_wiki();
+        let result = tool_fact_add_many(
+            &json!({
+                "items": [
+                    {"content": "Preference: PR summaries include rollback notes", "entities": ["PullRequest"]},
+                    {"content": "Lesson: queue retries duplicate exports without idempotency keys", "entities": ["BillingExport"]},
+                    {"content": "Error: Do not disable webhook signature validation", "entities": ["BillingWebhook"], "fact_type": "note"}
+                ]
+            }),
+            &wiki,
+        )
+        .unwrap();
+        let payload: Value =
+            serde_json::from_str(result.content[0].text.as_deref().unwrap()).unwrap();
+        let facts = payload["facts"].as_array().unwrap();
+
+        assert_eq!(facts[0]["fact_type"].as_str(), Some("preference"));
+        assert_eq!(facts[0]["fact_type_source"].as_str(), Some("inferred"));
+        assert_eq!(facts[1]["fact_type"].as_str(), Some("lesson"));
+        assert_eq!(facts[1]["fact_type_source"].as_str(), Some("inferred"));
+        assert_eq!(facts[2]["fact_type"].as_str(), Some("note"));
+        assert_eq!(
+            facts[2]["fact_type_hint"]["suggested_fact_type"].as_str(),
+            Some("error")
+        );
+    }
+
+    #[test]
+    fn fact_type_shadow_samples_append_jsonl_rows() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("fact-type-shadow.jsonl");
+        let sample = fact_type_shadow_sample(
+            "01JTESTFACTTYPE0000000000",
+            "We decided to keep the LoRA classifier in shadow mode.",
+            FactTypeWriteMeta {
+                fact_type: aidememo_core::FactType::Decision,
+                source: "explicit",
+                hint: None,
+            },
+            vec!["AideMemo".to_string()],
+            Some("agent-alpha".to_string()),
+            "mcp_fact_add",
+        )
+        .unwrap();
+
+        let written = append_fact_type_shadow_samples(&path, &[sample]).unwrap();
+        assert_eq!(written, 1);
+        let body = std::fs::read_to_string(&path).unwrap();
+        let rows: Vec<Value> = body
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            rows[0]["text"].as_str(),
+            Some("We decided to keep the LoRA classifier in shadow mode.")
+        );
+        assert_eq!(rows[0]["fact_type"].as_str(), Some("decision"));
+        assert_eq!(rows[0]["label_source"].as_str(), Some("explicit"));
+        assert_eq!(rows[0]["entities"][0].as_str(), Some("AideMemo"));
+        assert_eq!(rows[0]["source_id"].as_str(), Some("agent-alpha"));
+        assert_eq!(rows[0]["origin"].as_str(), Some("mcp_fact_add"));
     }
 
     #[test]

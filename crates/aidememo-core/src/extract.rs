@@ -24,7 +24,7 @@
 //!    - Matching entity names from the store via case-insensitive
 //!      substring search (covers built-in aliases too).
 //!    - Detecting [`FactType`] from keyword cues (e.g. "we decided"
-//!      → Decision).
+//!      -> Decision).
 //!    - Combining length normalization, entity-match boost, and
 //!      type-detection boost into a `[0.0, 1.0]` confidence.
 //! 4. Sort by confidence and return the top `max_candidates`.
@@ -170,7 +170,7 @@ fn score_candidate(sentence: &str, entity_names: &[String]) -> Option<ExtractCan
         }
     }
 
-    let fact_type = detect_fact_type(&lowered);
+    let fact_type = infer_fact_type(trimmed);
 
     // Confidence assembly:
     //   base                 0.40
@@ -199,24 +199,75 @@ fn score_candidate(sentence: &str, entity_names: &[String]) -> Option<ExtractCan
     })
 }
 
-/// Detect a [`FactType`] from keyword cues. Ordered so that more
-/// specific signals (decision / convention / pattern) win over
-/// generic ones (claim / note).
-fn detect_fact_type(lowered: &str) -> FactType {
-    if lowered.ends_with('?') || lowered.contains(" why ") || lowered.starts_with("why ") {
+/// Detect a [`FactType`] from keyword cues. This is intentionally
+/// deterministic and offline: it is not a replacement for the calling
+/// agent's reasoning, but it catches strong cues when an agent forgets
+/// to pass `fact_type` and keeps the type-aware ranking path from
+/// degrading into all-note memory.
+pub fn infer_fact_type(text: &str) -> FactType {
+    let lowered = text.trim().to_lowercase();
+    if lowered.ends_with('?')
+        || lowered.starts_with("question")
+        || lowered.contains(" why ")
+        || lowered.starts_with("why ")
+    {
         return FactType::Question;
     }
     // Decisions: explicit "we decided", "decision:", "let's go with",
-    // "rolled out". The more declarative the cue, the higher the
-    // signal.
+    // "rolled out". Keep this before convention/error so
+    // "Decision: avoid X" is still recorded as the decision.
     if lowered.contains("decided")
         || lowered.starts_with("decision")
         || lowered.contains("we picked")
         || lowered.contains("we chose")
+        || lowered.contains("i chose")
+        || lowered.contains("i picked")
         || lowered.contains("let's go with")
+        || lowered.contains("going with")
         || lowered.contains("rolled out")
     {
         return FactType::Decision;
+    }
+    // Preferences: durable user/team taste. These feed the
+    // personalisation tier, so do not let obvious first-person cues
+    // fall back to Note.
+    if lowered.starts_with("preference")
+        || lowered.contains("i prefer")
+        || lowered.contains("we prefer")
+        || lowered.contains("user prefers")
+        || lowered.contains("team prefers")
+        || lowered.contains("my favorite")
+        || lowered.contains("my favourite")
+        || lowered.contains("i like ")
+        || lowered.contains("i dislike ")
+    {
+        return FactType::Preference;
+    }
+    // Lessons: what was tried, what happened, or what should be
+    // remembered from an attempt.
+    if lowered.starts_with("lesson")
+        || lowered.contains("we learned")
+        || lowered.contains("i learned")
+        || lowered.contains("learned that")
+        || lowered.contains("tried ")
+        || lowered.contains("turns out")
+        || lowered.contains("wish i had")
+        || lowered.contains("root cause was")
+        || lowered.contains("caused by")
+    {
+        return FactType::Lesson;
+    }
+    // Errors: failure modes or explicit avoid/repeat warnings.
+    if lowered.starts_with("error")
+        || lowered.starts_with("mistake")
+        || lowered.contains("avoid ")
+        || lowered.contains("do not ")
+        || lowered.contains("don't ")
+        || lowered.contains("never again")
+        || lowered.contains("was a mistake")
+        || lowered.contains("failure mode")
+    {
+        return FactType::Error;
     }
     // Conventions: durable rules — "always", "never", "convention",
     // "rule", "house rule".
@@ -233,6 +284,9 @@ fn detect_fact_type(lowered: &str) -> FactType {
     if lowered.contains("pattern")
         || lowered.contains("antipattern")
         || lowered.contains("anti-pattern")
+        || lowered.contains(" is implemented with ")
+        || lowered.contains(" are implemented with ")
+        || (lowered.contains(" uses ") && lowered.contains(" for "))
     {
         return FactType::Pattern;
     }
@@ -335,12 +389,12 @@ fn build_llm_request(
     };
     let system = format!(
         "You extract durable facts from chat / notes / docs for a knowledge wiki. \
-         Output ONLY a JSON object: {{\"facts\":[{{\"content\":\"<sentence>\",\"fact_type\":\"<one of: decision|pattern|convention|claim|note|question>\",\"entities\":[\"X\",\"Y\"],\"confidence\":<0.0-1.0>}}]}}. \
+         Output ONLY a JSON object: {{\"facts\":[{{\"content\":\"<sentence>\",\"fact_type\":\"<one of: decision|pattern|convention|claim|note|question|preference|lesson|error>\",\"entities\":[\"X\",\"Y\"],\"confidence\":<0.0-1.0>}}]}}. \
          At most {cap} facts. \
          Reuse these entity names verbatim when they appear in the text: {entity_list}. \
          Only invent NEW entities when they are explicitly named in the text and missing from that list. \
          Drop greetings, dialog scaffolding (Speaker:, > quotes), acknowledgements. \
-         fact_type rules: decision = 'we will / decided / chose'; pattern = 'X uses Y for Z' / 'X is implemented with Y'; convention = 'always / never / format X as'; claim = factual assertion about external state; note = passive observation / FYI; question = ends with '?' or is an open investigation. \
+         fact_type rules: preference = first-person or team preference; lesson = tried-X-hit-Y / learned / root-cause memory; error = avoid / failure mode / never-again warning; decision = 'we will / decided / chose'; pattern = 'X uses Y for Z' / 'X is implemented with Y'; convention = 'always / never / format X as'; claim = factual assertion about external state; note = passive observation / FYI; question = ends with '?' or is an open investigation. \
          confidence: 0.9 for explicit decisions / clear claims, 0.6 for inferences from context, 0.3 for vague / fragmentary mentions."
     );
     serde_json::json!({
@@ -507,28 +561,44 @@ mod tests {
     #[test]
     fn detect_fact_type_finds_decisions_and_conventions() {
         assert_eq!(
-            detect_fact_type("we decided to use redis for hot caching"),
+            infer_fact_type("we decided to use redis for hot caching"),
             FactType::Decision
         );
         assert_eq!(
-            detect_fact_type("we always run lints before merging"),
+            infer_fact_type("we always run lints before merging"),
             FactType::Convention
         );
         assert_eq!(
-            detect_fact_type("the antipattern here is reading after writing"),
+            infer_fact_type("the antipattern here is reading after writing"),
             FactType::Pattern
         );
         assert_eq!(
-            detect_fact_type("why does the cache miss after restart?"),
+            infer_fact_type("why does the cache miss after restart?"),
             FactType::Question
         );
         assert_eq!(
-            detect_fact_type("we believe latency comes from network hops"),
+            infer_fact_type("we believe latency comes from network hops"),
             FactType::Claim
         );
         assert_eq!(
-            detect_fact_type("the deploy ran fine on staging"),
+            infer_fact_type("the deploy ran fine on staging"),
             FactType::Note
+        );
+    }
+
+    #[test]
+    fn infer_fact_type_finds_personalisation_and_error_types() {
+        assert_eq!(
+            infer_fact_type("Preference: PR summaries should include rollback notes"),
+            FactType::Preference
+        );
+        assert_eq!(
+            infer_fact_type("Lesson: tried pool-size tuning but DNS was the bottleneck"),
+            FactType::Lesson
+        );
+        assert_eq!(
+            infer_fact_type("Error: Do not disable webhook signature validation"),
+            FactType::Error
         );
     }
 

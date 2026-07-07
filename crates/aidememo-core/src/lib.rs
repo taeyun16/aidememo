@@ -272,6 +272,18 @@ impl AideMemo {
         provider.embed(text)
     }
 
+    /// Preload the semantic provider and, when configured, the HNSW sidecar.
+    /// Long-lived servers call this at startup so the first semantic search
+    /// doesn't pay the model cold-load cost on the user's request path.
+    #[cfg(feature = "semantic")]
+    pub fn semantic_prewarm(&self) -> Result<()> {
+        let provider = self.embed_provider()?;
+        if self.config.search.semantic_index == "hnsw" {
+            let _ = self.vector_index_get(provider.as_ref());
+        }
+        Ok(())
+    }
+
     /// Cosine similarity between two equal-length embedding vectors.
     /// Returns 0 when either vector has zero norm. Pure-Rust scalar
     /// loop — kept here so bench / tooling can stay dependency-free.
@@ -415,7 +427,7 @@ impl AideMemo {
 
         if !to_embed.is_empty() {
             let texts: Vec<String> = to_embed.iter().map(|(_, t)| t.clone()).collect();
-            let embeddings = provider.embed_batch(&texts)?;
+            let embeddings = provider.embed_document_batch(&texts)?;
             for ((id, _), v) in to_embed.into_iter().zip(embeddings) {
                 entries.push((id, v));
             }
@@ -581,6 +593,7 @@ impl AideMemo {
     }
 
     pub fn add_fact(&self, input: FactInput) -> Result<FactId> {
+        let input = Self::prepare_fact_input(input);
         let id = {
             let mut store = self.store.write();
             store.fact_add(input)?
@@ -669,6 +682,7 @@ impl AideMemo {
         if inputs.is_empty() {
             return Ok(Vec::new());
         }
+        let inputs: Vec<FactInput> = inputs.into_iter().map(Self::prepare_fact_input).collect();
         let ids = {
             let mut store = self.store.write();
             store.fact_add_many(inputs)?
@@ -678,6 +692,13 @@ impl AideMemo {
         // post-batch state.
         self.bm25_mark_dirty();
         Ok(ids)
+    }
+
+    fn prepare_fact_input(mut input: FactInput) -> FactInput {
+        if input.fact_type.is_none() {
+            input.fact_type = Some(extract::infer_fact_type(&input.content));
+        }
+        input
     }
 
     /// Get a fact by ID.
@@ -964,7 +985,7 @@ impl AideMemo {
             let provider = self.embed_provider()?;
             let mut embeds: HashMap<types::FactId, Vec<f32>> = HashMap::with_capacity(facts.len());
             for f in &facts {
-                let v = provider.embed(&f.content)?;
+                let v = provider.embed_document(&f.content)?;
                 embeds.insert(f.id, v);
             }
 
@@ -1121,7 +1142,7 @@ impl AideMemo {
         let provider = self.embed_provider()?;
         let mut embeds: HashMap<types::FactId, Vec<f32>> = HashMap::with_capacity(facts.len());
         for f in &facts {
-            embeds.insert(f.id, provider.embed(&f.content)?);
+            embeds.insert(f.id, provider.embed_document(&f.content)?);
         }
 
         // Single-link clustering via union-find. Two facts join the
@@ -1432,6 +1453,68 @@ impl AideMemo {
             self.merge_archive_results(query, &mut results, opts, limit, false)?;
         }
         Ok(results)
+    }
+
+    /// Run a cheap BM25 probe first, then promote to semantic retrieval only
+    /// when the lexical signal is weak. This is the routing point for small
+    /// local embedding models such as LFM: they pay for themselves on
+    /// multilingual/paraphrase misses, while saturated lexical queries stay on
+    /// the fast path.
+    #[cfg(feature = "semantic")]
+    #[tracing::instrument(level = "debug", skip(self, opts), fields(query_len = query.len()))]
+    pub fn adaptive_search(&self, query: &str, opts: SearchOpts) -> Result<Vec<SearchResult>> {
+        if opts.bm25_only || self.config.search.semantic_weight == 0.0 {
+            return self.search(query, opts);
+        }
+
+        let user_limit = opts.limit.unwrap_or(self.config.search.default_limit);
+        let probe_limit = user_limit.max(self.config.search.auto_hybrid_min_bm25_hits);
+        let probe_opts = SearchOpts {
+            limit: Some(probe_limit),
+            bm25_only: true,
+            ..opts.clone()
+        };
+        let mut bm25_results = self.search(query, probe_opts)?;
+
+        if should_promote_auto_hybrid(query, &bm25_results, &self.config.search) {
+            tracing::debug!(
+                bm25_hits = bm25_results.len(),
+                bm25_top_score = bm25_results.first().map(|r| r.score),
+                "auto_hybrid promoted to semantic"
+            );
+            return match self.hybrid_search(
+                query,
+                SearchOpts {
+                    limit: Some(user_limit),
+                    bm25_only: false,
+                    ..opts
+                },
+            ) {
+                Ok(results) => Ok(results),
+                Err(err) => {
+                    tracing::warn!(
+                        error = %err,
+                        "auto_hybrid semantic promotion failed; falling back to bm25 probe results"
+                    );
+                    bm25_results.truncate(user_limit);
+                    for (i, result) in bm25_results.iter_mut().enumerate() {
+                        result.rank = i + 1;
+                    }
+                    Ok(bm25_results)
+                }
+            };
+        }
+
+        tracing::debug!(
+            bm25_hits = bm25_results.len(),
+            bm25_top_score = bm25_results.first().map(|r| r.score),
+            "auto_hybrid stayed on bm25"
+        );
+        bm25_results.truncate(user_limit);
+        for (i, result) in bm25_results.iter_mut().enumerate() {
+            result.rank = i + 1;
+        }
+        Ok(bm25_results)
     }
 
     /// Pull cold-tier results in to fill out the hot result list, up
@@ -2040,6 +2123,45 @@ fn cosine_f32(a: &[f32], b: &[f32]) -> f32 {
     }
 }
 
+#[cfg(feature = "semantic")]
+fn should_promote_auto_hybrid(
+    query: &str,
+    bm25_results: &[types::SearchResult],
+    config: &config::SearchConfig,
+) -> bool {
+    if config.semantic_weight == 0.0 {
+        return false;
+    }
+    if config.auto_hybrid_cjk && contains_cjk(query) {
+        return true;
+    }
+    if bm25_results.len() < config.auto_hybrid_min_bm25_hits {
+        return true;
+    }
+    match bm25_results.first() {
+        Some(result) => result.score < config.auto_hybrid_min_top_score,
+        None => true,
+    }
+}
+
+#[cfg(feature = "semantic")]
+fn contains_cjk(text: &str) -> bool {
+    text.chars().any(|ch| {
+        let code = ch as u32;
+        matches!(
+            code,
+            0x1100..=0x11ff
+                | 0x3040..=0x309f
+                | 0x30a0..=0x30ff
+                | 0x3130..=0x318f
+                | 0x31f0..=0x31ff
+                | 0x3400..=0x4dbf
+                | 0x4e00..=0x9fff
+                | 0xac00..=0xd7af
+        )
+    })
+}
+
 // Re-export types for convenience
 pub use types::{
     AdaptEvalReport, AdaptResult, AdaptStatus, AutoRelateOpts, AutoRelateStats, ConsolidateOpts,
@@ -2054,6 +2176,73 @@ pub use types::{
 
 #[cfg(feature = "semantic")]
 pub use types::VectorRecord;
+
+#[cfg(all(test, feature = "semantic"))]
+mod adaptive_search_tests {
+    use super::*;
+
+    fn result(score: f32) -> SearchResult {
+        SearchResult {
+            fact_id: FactId::new(),
+            content: "test fact".to_string(),
+            fact_type: FactType::Note,
+            entity_names: Vec::new(),
+            source: None,
+            source_id: None,
+            score,
+            rank: 1,
+            created_at: 0,
+            observed_at: None,
+            session_id: None,
+        }
+    }
+
+    #[test]
+    fn auto_hybrid_stays_lexical_for_strong_bm25() {
+        let mut config = Config::default().search;
+        config.auto_hybrid_min_bm25_hits = 1;
+        config.auto_hybrid_min_top_score = 1.0;
+        assert!(!should_promote_auto_hybrid(
+            "redis timeout",
+            &[result(2.0)],
+            &config,
+        ));
+    }
+
+    #[test]
+    fn auto_hybrid_promotes_empty_or_weak_bm25() {
+        let mut config = Config::default().search;
+        config.auto_hybrid_min_bm25_hits = 1;
+        config.auto_hybrid_min_top_score = 1.0;
+        assert!(should_promote_auto_hybrid("redis timeout", &[], &config));
+        assert!(should_promote_auto_hybrid(
+            "redis timeout",
+            &[result(0.25)],
+            &config,
+        ));
+    }
+
+    #[test]
+    fn auto_hybrid_promotes_cjk_queries() {
+        let config = Config::default().search;
+        assert!(should_promote_auto_hybrid(
+            "레디스 장애 원인",
+            &[result(3.0)],
+            &config,
+        ));
+    }
+
+    #[test]
+    fn auto_hybrid_honors_semantic_weight_zero() {
+        let mut config = Config::default().search;
+        config.semantic_weight = 0.0;
+        assert!(!should_promote_auto_hybrid(
+            "레디스 장애 원인",
+            &[],
+            &config,
+        ));
+    }
+}
 
 #[cfg(all(test, feature = "sqlite"))]
 mod sqlite_backend_tests {
@@ -2226,6 +2415,65 @@ mod sqlite_backend_tests {
             .fact_get(&live)
             .expect("live fact remains hot");
         assert!(live_after.superseded_at.is_none());
+    }
+
+    #[test]
+    fn add_fact_infers_personalisation_types_when_type_missing() {
+        let (wiki, _dir) = fresh_sqlite();
+
+        let preference = wiki
+            .fact_add(FactInput {
+                content: "Preference: PR summaries should include rollback notes".to_string(),
+                ..Default::default()
+            })
+            .unwrap();
+        let lesson = wiki
+            .fact_add(FactInput {
+                content: "Lesson: tried pool-size tuning but DNS was the bottleneck".to_string(),
+                ..Default::default()
+            })
+            .unwrap();
+        let error = wiki
+            .fact_add(FactInput {
+                content: "Error: Do not disable webhook signature validation".to_string(),
+                ..Default::default()
+            })
+            .unwrap();
+
+        assert_eq!(
+            wiki.fact_get(&preference).unwrap().fact_type,
+            FactType::Preference
+        );
+        assert_eq!(wiki.fact_get(&lesson).unwrap().fact_type, FactType::Lesson);
+        assert_eq!(wiki.fact_get(&error).unwrap().fact_type, FactType::Error);
+    }
+
+    #[test]
+    fn fact_add_many_infers_missing_types_in_batch() {
+        let (wiki, _dir) = fresh_sqlite();
+        let ids = wiki
+            .fact_add_many(vec![
+                FactInput {
+                    content: "Decision: use advisory locks for invoice export".to_string(),
+                    ..Default::default()
+                },
+                FactInput {
+                    content: "Convention: invoice export fixes include idempotency tests"
+                        .to_string(),
+                    ..Default::default()
+                },
+            ])
+            .unwrap();
+
+        assert_eq!(ids.len(), 2);
+        assert_eq!(
+            wiki.fact_get(&ids[0]).unwrap().fact_type,
+            FactType::Decision
+        );
+        assert_eq!(
+            wiki.fact_get(&ids[1]).unwrap().fact_type,
+            FactType::Convention
+        );
     }
 
     #[cfg(feature = "semantic")]
@@ -2661,6 +2909,44 @@ mod sqlite_backend_search_tests {
             .unwrap();
         assert!(result.entity.is_some());
         assert_eq!(result.recent_facts.len(), 1);
+    }
+
+    #[test]
+    fn adaptive_search_falls_back_to_bm25_when_semantic_provider_fails() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("wiki.sqlite");
+        let mut config = Config::default();
+        config.store.backend = "sqlite".to_string();
+        config.model.provider = "missing-provider".to_string();
+        config.search.auto_hybrid_min_top_score = 1000.0;
+        let wiki = AideMemo::open(&path, config).unwrap();
+        let redis = wiki
+            .entity_add(EntityInput {
+                name: "Redis".to_string(),
+                entity_type: Some(EntityType::Technology),
+                ..Default::default()
+            })
+            .unwrap();
+        wiki.fact_add(FactInput {
+            content: "Redis handles hot cache keys".to_string(),
+            fact_type: Some(FactType::Claim),
+            entity_ids: Some(vec![redis]),
+            source_confidence: Some(1.0),
+            ..Default::default()
+        })
+        .unwrap();
+
+        let hits = wiki
+            .adaptive_search(
+                "Redis",
+                SearchOpts {
+                    limit: Some(5),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].content, "Redis handles hot cache keys");
     }
 
     #[cfg(feature = "redb")]

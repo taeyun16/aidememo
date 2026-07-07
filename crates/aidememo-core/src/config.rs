@@ -146,6 +146,15 @@ pub struct ModelConfig {
     /// have different dims); for model2vec it's auto-detected.
     #[serde(default)]
     pub dimension: usize,
+    /// Optional text prefix applied only when embedding search queries.
+    /// Useful for asymmetric retrievers such as LFM2.5-Embedding-350M,
+    /// which expects `query: ` for queries and `document: ` for passages.
+    #[serde(default)]
+    pub query_prefix: String,
+    /// Optional text prefix applied only when embedding stored facts /
+    /// passages. Leave empty for symmetric embedders.
+    #[serde(default)]
+    pub document_prefix: String,
     /// Legacy model2vec compatibility knob. The current model2vec-rs backend
     /// loads quantized safetensors when the model provides them, but this field
     /// no longer forces an in-process f32 -> int8 conversion.
@@ -172,6 +181,8 @@ impl Default for ModelConfig {
             endpoint: String::new(),
             api_key_env: String::new(),
             dimension: 0,
+            query_prefix: String::new(),
+            document_prefix: String::new(),
             quantize: false,
         }
     }
@@ -220,6 +231,27 @@ pub struct SearchConfig {
     ///     the sidecar's model name no longer matches.
     #[serde(default = "default_semantic_index")]
     pub semantic_index: String,
+    /// Automatically promote CLI / tool searches from the cheap BM25 path to
+    /// semantic retrieval when the lexical probe looks weak. Off by default so
+    /// the existing CLI latency contract stays intact; use `aidememo search
+    /// --auto ...` for one-off calls or `aidememo config set
+    /// search.auto_hybrid true` for stores where LFM/HNSW is known to help.
+    #[serde(default)]
+    pub auto_hybrid: bool,
+    /// Minimum number of BM25 hits required before auto-hybrid stays lexical.
+    /// If the probe returns fewer hits, AideMemo runs semantic retrieval.
+    #[serde(default = "default_auto_hybrid_min_bm25_hits")]
+    pub auto_hybrid_min_bm25_hits: usize,
+    /// Minimum top BM25 score required before auto-hybrid stays lexical. Lower
+    /// scores indicate a weak surface-form match and trigger semantic
+    /// retrieval.
+    #[serde(default = "default_auto_hybrid_min_top_score")]
+    pub auto_hybrid_min_top_score: f32,
+    /// Promote CJK queries to semantic retrieval in auto-hybrid mode. The MLX
+    /// LFM dense smoke showed the clearest benefit when Korean wording yielded
+    /// no BM25 candidates.
+    #[serde(default = "default_true")]
+    pub auto_hybrid_cjk: bool,
     /// Multiplicative weighting of `source_confidence` and
     /// `relevance_score` into the final hybrid-search ranking. When
     /// `true` (default), a fact's RRF-fused score is multiplied by
@@ -354,6 +386,14 @@ fn default_semantic_index() -> String {
     "hnsw".to_string()
 }
 
+fn default_auto_hybrid_min_bm25_hits() -> usize {
+    1
+}
+
+fn default_auto_hybrid_min_top_score() -> f32 {
+    1.0
+}
+
 impl Default for SearchConfig {
     fn default() -> Self {
         Self {
@@ -366,6 +406,10 @@ impl Default for SearchConfig {
             graph_depth: default_graph_depth(),
             graph_fact_cap: default_graph_fact_cap(),
             semantic_index: default_semantic_index(),
+            auto_hybrid: false,
+            auto_hybrid_min_bm25_hits: default_auto_hybrid_min_bm25_hits(),
+            auto_hybrid_min_top_score: default_auto_hybrid_min_top_score(),
+            auto_hybrid_cjk: default_true(),
             weight_by_confidence: default_true(),
             time_decay_tau_ms: default_time_decay_tau(),
             use_adapter: default_true(),
@@ -832,6 +876,8 @@ impl ModelConfig {
             "endpoint" => Some(self.endpoint.clone()),
             "api_key_env" => Some(self.api_key_env.clone()),
             "dimension" => Some(self.dimension.to_string()),
+            "query_prefix" => Some(self.query_prefix.clone()),
+            "document_prefix" => Some(self.document_prefix.clone()),
             "quantize" => Some(self.quantize.to_string()),
             _ => None,
         }
@@ -875,6 +921,14 @@ impl ModelConfig {
                 })?;
                 Ok(())
             }
+            "query_prefix" => {
+                self.query_prefix = value.to_string();
+                Ok(())
+            }
+            "document_prefix" => {
+                self.document_prefix = value.to_string();
+                Ok(())
+            }
             "quantize" => {
                 self.quantize = value.parse().map_err(|_| {
                     AideMemoError::InvalidInput(format!("invalid boolean: {}", value))
@@ -898,6 +952,10 @@ impl SearchConfig {
             "graph_depth" => Some(self.graph_depth.to_string()),
             "graph_fact_cap" => Some(self.graph_fact_cap.to_string()),
             "semantic_index" => Some(self.semantic_index.clone()),
+            "auto_hybrid" => Some(self.auto_hybrid.to_string()),
+            "auto_hybrid_min_bm25_hits" => Some(self.auto_hybrid_min_bm25_hits.to_string()),
+            "auto_hybrid_min_top_score" => Some(self.auto_hybrid_min_top_score.to_string()),
+            "auto_hybrid_cjk" => Some(self.auto_hybrid_cjk.to_string()),
             _ => None,
         }
     }
@@ -961,6 +1019,36 @@ impl SearchConfig {
                     )));
                 }
                 self.semantic_index = v;
+                Ok(())
+            }
+            "auto_hybrid" => {
+                self.auto_hybrid = value.parse().map_err(|_| {
+                    AideMemoError::InvalidInput(format!("invalid boolean: {}", value))
+                })?;
+                Ok(())
+            }
+            "auto_hybrid_min_bm25_hits" => {
+                self.auto_hybrid_min_bm25_hits = value.parse().map_err(|_| {
+                    AideMemoError::InvalidInput(format!("invalid integer: {}", value))
+                })?;
+                Ok(())
+            }
+            "auto_hybrid_min_top_score" => {
+                self.auto_hybrid_min_top_score = value.parse().map_err(|_| {
+                    AideMemoError::InvalidInput(format!("invalid float: {}", value))
+                })?;
+                if self.auto_hybrid_min_top_score < 0.0 {
+                    return Err(AideMemoError::InvalidInput(format!(
+                        "search.auto_hybrid_min_top_score must be >= 0, got '{}'",
+                        value
+                    )));
+                }
+                Ok(())
+            }
+            "auto_hybrid_cjk" => {
+                self.auto_hybrid_cjk = value.parse().map_err(|_| {
+                    AideMemoError::InvalidInput(format!("invalid boolean: {}", value))
+                })?;
                 Ok(())
             }
             _ => Err(AideMemoError::ConfigKeyNotFound(format!("search.{}", key))),
@@ -1036,6 +1124,10 @@ mod tests {
         assert_eq!(config.model.name, "minishlab/potion-multilingual-128M");
         assert_eq!(config.model.download_dir, "~/.aidememo/models/downloads");
         assert_eq!(config.search.default_limit, 10);
+        assert!(!config.search.auto_hybrid);
+        assert_eq!(config.search.auto_hybrid_min_bm25_hits, 1);
+        assert_eq!(config.search.auto_hybrid_min_top_score, 1.0);
+        assert!(config.search.auto_hybrid_cjk);
         assert_eq!(config.lint.stale_days, 90);
     }
 
@@ -1053,6 +1145,47 @@ mod tests {
         assert_eq!(
             config.get("model.name"),
             Some("minishlab/potion-base-8M".to_string())
+        );
+
+        config.set("search.auto_hybrid", "true").unwrap();
+        config.set("search.auto_hybrid_min_bm25_hits", "3").unwrap();
+        config
+            .set("search.auto_hybrid_min_top_score", "0.75")
+            .unwrap();
+        config.set("search.auto_hybrid_cjk", "false").unwrap();
+        assert_eq!(config.get("search.auto_hybrid"), Some("true".to_string()));
+        assert_eq!(
+            config.get("search.auto_hybrid_min_bm25_hits"),
+            Some("3".to_string())
+        );
+        assert_eq!(
+            config.get("search.auto_hybrid_min_top_score"),
+            Some("0.75".to_string())
+        );
+        assert_eq!(
+            config.get("search.auto_hybrid_cjk"),
+            Some("false".to_string())
+        );
+    }
+
+    #[test]
+    fn model_prefix_get_set_round_trips() {
+        let mut config = Config::default();
+        assert_eq!(config.get("model.query_prefix"), Some(String::new()));
+        assert_eq!(config.get("model.document_prefix"), Some(String::new()));
+
+        config.set("model.query_prefix", "query: ").unwrap();
+        config.set("model.document_prefix", "document: ").unwrap();
+
+        assert_eq!(config.model.query_prefix, "query: ");
+        assert_eq!(config.model.document_prefix, "document: ");
+        assert_eq!(
+            config.get("model.query_prefix"),
+            Some("query: ".to_string())
+        );
+        assert_eq!(
+            config.get("model.document_prefix"),
+            Some("document: ".to_string())
         );
     }
 

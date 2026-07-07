@@ -141,7 +141,7 @@ question shape requires it:
 | Opening a normal interactive turn | `aidememo_context` | One MCP round-trip for pinned facts, personalisation, recent activity, and topic context. |
 | Follow-up topic dive | `aidememo_query` | Lighter topic retrieval when pinned/recent context is already loaded. |
 | Exact totals, counts, date sets, or timelines | `aidememo_aggregate` | Deterministic arithmetic over matching facts; use it as insurance for cross-fact counting, not for simple recall. |
-| Learned a durable fact | `aidememo_fact_add` / `aidememo_fact_add_many` | Store typed memory explicitly; pass the `session_id` returned by `aidememo_workflow_start` to keep follow-up facts on the workflow thread. |
+| Learned a durable fact | `aidememo_fact_add` / `aidememo_fact_add_many` | Store typed memory explicitly; omitted `fact_type` uses deterministic strong-cue inference, and `session_id` keeps follow-up facts on the workflow thread. |
 | Resuming a long workflow | `aidememo_session_canvas` / `aidememo session canvas` / SDK `session_canvas()` | Fetch a bounded Markdown + Mermaid map of the session with fact-id drill-down instead of injecting the whole thread. |
 | Preparing project context | `aidememo_profile_export` / `aidememo profile export` / SDK `project_profile()` | Generate a read-only `project_profile.md` text view from current typed facts; the store remains the source of truth. |
 
@@ -156,6 +156,7 @@ SkillOpt-inspired loop, and `scripts/skillopt-lite-check.sh` gates candidate
 
 ```bash
 aidememo search "cache policy" -l 5
+aidememo search "레디스 장애 원인" --auto -l 5
 aidememo search "cache policy" --hybrid
 aidememo query "Redis" --mode hybrid
 aidememo overview

@@ -227,6 +227,22 @@ def test_to_fact_batch_and_commit() -> None:
     assert client.fact_batches == [items]
 
 
+def test_to_fact_batch_omits_default_note_so_core_can_infer() -> None:
+    sdk = AideMemoMemorySDK(FakeClient())
+
+    items = sdk.to_fact_batch(
+        [{"content": "Lesson: retries duplicate exports without idempotency keys"}],
+    )
+
+    assert items == [
+        {
+            "content": "Lesson: retries duplicate exports without idempotency keys",
+            "entities": [],
+            "tags": [],
+        }
+    ]
+
+
 def test_remember_converts_and_commits_batch() -> None:
     client = FakeClient()
     sdk = AideMemoMemorySDK(client)

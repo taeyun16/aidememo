@@ -501,7 +501,7 @@ class AideMemoClient:
         self,
         content: str,
         entities: list[str] | None = None,
-        fact_type: str = "note",
+        fact_type: str | None = None,
         tags: list[str] | None = None,
         confidence: float | None = None,
         source_id: str | None = None,
@@ -512,9 +512,10 @@ class AideMemoClient:
             entity_ids = [self._py.resolve_entity(e) for e in (entities or [])]
             kwargs: dict = {
                 "entity_ids": entity_ids,
-                "fact_type": fact_type,
                 "tags": tags or [],
             }
+            if fact_type is not None:
+                kwargs["fact_type"] = fact_type
             if confidence is not None:
                 kwargs["confidence"] = confidence
             if source_id is not None:
@@ -525,9 +526,10 @@ class AideMemoClient:
         if session_id:
             mcp_args: dict[str, Any] = {
                 "content": content,
-                "fact_type": fact_type,
                 "session_id": session_id,
             }
+            if fact_type is not None:
+                mcp_args["fact_type"] = fact_type
             if entities:
                 mcp_args["entities"] = entities
             if tags:
@@ -540,7 +542,9 @@ class AideMemoClient:
             if isinstance(payload, dict) and isinstance(payload.get("id"), str):
                 return payload["id"]
             raise AideMemoUnavailable(f"aidememo_fact_add returned no id: {payload!r}")
-        args = ["fact", "add", content, "--type", fact_type]
+        args = ["fact", "add", content]
+        if fact_type is not None:
+            args += ["--type", fact_type]
         if entities:
             args += ["--entities", ",".join(entities)]
         if tags:
@@ -599,7 +603,7 @@ class AideMemoClient:
                 py_items.append({
                     "content": item["content"],
                     "entity_ids": entity_ids,
-                    "fact_type": item.get("fact_type", "note"),
+                    "fact_type": item.get("fact_type"),
                     "tags": item.get("tags") or [],
                     "confidence": item.get("confidence"),
                     "source_id": source_id,

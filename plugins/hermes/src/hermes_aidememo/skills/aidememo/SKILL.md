@@ -140,6 +140,7 @@ passes an explicit `source_id`.
    - You hit a known recurring failure → `error`
    - User decides on technology / approach → `decision`
    - Project convention → `convention`
+   - If you omit `fact_type`, AideMemo applies deterministic strong-cue inference; explicit `note` is preserved but may return a type hint.
 5. **Long task** → `eval "$(aidememo session new '<topic>')"` once; every `aidememo fact add` thereafter auto-attaches the session entity. Pull the thread later with `aidememo fact list --entity $AIDEMEMO_SESSION_ID`.
 
 ## Hermes composition recipes

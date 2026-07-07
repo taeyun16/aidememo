@@ -8,12 +8,16 @@ zero-token scenario validates that contract without calling an LLM:
   1. Simulate an agent's classified output from a short project transcript.
   2. Insert the batch through MCP aidememo_fact_add_many in one transaction.
   3. Verify fact_type/source_id persistence.
-  4. Start sparse tickets and check decisions / lessons / errors surface while
+  4. Insert a second batch with fact_type omitted and verify strong cues are
+     inferred instead of degrading to note.
+  5. Start sparse tickets and check decisions / lessons / errors surface while
      neighbouring source_id facts do not leak.
 
-The scenario is not a classifier benchmark. It proves that if the agent follows
-the self-extraction prompt table, aidememo stores and retrieves the typed memory in
-the workflow shape coding agents consume.
+The scenario is not an LLM classifier benchmark. It proves that if the agent
+follows the self-extraction prompt table, aidememo stores and retrieves the typed
+memory in the workflow shape coding agents consume; it also guards the fallback
+that deterministic strong-cue inference prevents all-note memory when the agent
+omits fact_type.
 """
 
 from __future__ import annotations
@@ -80,6 +84,31 @@ SELF_EXTRACTED_FACTS: list[dict[str, Any]] = [
         "source_id": "agent-beta",
     },
 ]
+
+UNCLASSIFIED_FACTS: list[dict[str, Any]] = [
+    {
+        "content": "Preference: Agent replies should start with the risk summary before details.",
+        "entities": ["AgentUX"],
+        "source_id": "agent-infer",
+    },
+    {
+        "content": "Lesson: tried sequential CLI fact adds but batch MCP avoided fsync overhead.",
+        "entities": ["MCP", "Writes"],
+        "source_id": "agent-infer",
+    },
+    {
+        "content": "Error: Do not store durable lessons as note when the cue is explicit.",
+        "entities": ["FactTyping"],
+        "source_id": "agent-infer",
+    },
+]
+
+EXPLICIT_NOTE_HINT_FACT: dict[str, Any] = {
+    "content": "Error: Do not mark explicit failure modes as generic notes.",
+    "fact_type": "note",
+    "entities": ["FactTyping"],
+    "source_id": "agent-note-hint",
+}
 
 
 def run(
@@ -280,12 +309,29 @@ def main() -> int:
         {"query": "source defaults MCP scoping", "bm25_only": True, "limit": 5},
         env={"AIDEMEMO_SOURCE_ID": "agent-env"},
     )
+    inferred_payload = mcp_tool_call(
+        "aidememo_fact_add_many",
+        {"items": UNCLASSIFIED_FACTS},
+    )
+    note_hint_payload = mcp_tool_call(
+        "aidememo_fact_add_many",
+        {"items": [EXPLICIT_NOTE_HINT_FACT]},
+    )
 
     alpha_facts = fact_list("agent-alpha")
     beta_facts = fact_list("agent-beta")
     env_facts = fact_list("agent-env")
+    inferred_facts = fact_list("agent-infer")
+    note_hint_facts = fact_list("agent-note-hint")
     alpha_type_counts = Counter(fact.get("fact_type") for fact in alpha_facts)
     beta_type_counts = Counter(fact.get("fact_type") for fact in beta_facts)
+    inferred_type_counts = Counter(fact.get("fact_type") for fact in inferred_facts)
+    inferred_sources = [
+        fact.get("fact_type_source")
+        for fact in (inferred_payload.get("facts") or [])
+        if isinstance(fact, dict)
+    ]
+    note_hint = ((note_hint_payload.get("facts") or [{}])[0] or {}).get("fact_type_hint") or {}
 
     billing_pack, billing_latency = workflow_start(
         "Fix duplicate billing export job",
@@ -320,6 +366,13 @@ def main() -> int:
         "env_default_source_id_scopes_search": contains(
             env_search_payload.get("results", []), "AIDEMEMO_SOURCE_ID for MCP scoping"
         ),
+        "missing_fact_type_batch_infers_strong_cues": dict(inferred_type_counts)
+        == {"preference": 1, "lesson": 1, "error": 1},
+        "inferred_batch_reports_fact_type_source": inferred_sources
+        == ["inferred", "inferred", "inferred"],
+        "explicit_note_returns_type_hint": note_hint_payload.get("count") == 1
+        and dict(Counter(fact.get("fact_type") for fact in note_hint_facts)) == {"note": 1}
+        and note_hint.get("suggested_fact_type") == "error",
         "billing_workflow_has_session": billing_summary["session_id_present"]
         and billing_summary["ticket_fact_id_present"],
         "billing_workflow_recovers_typed_priors": all(
@@ -344,11 +397,15 @@ def main() -> int:
             "payload": add_payload,
             "env_default_payload": env_default_payload,
             "env_search_payload": env_search_payload,
+            "inferred_payload": inferred_payload,
+            "note_hint_payload": note_hint_payload,
         },
         "fact_type_counts": {
             "agent-alpha": dict(alpha_type_counts),
             "agent-beta": dict(beta_type_counts),
             "agent-env": dict(Counter(fact.get("fact_type") for fact in env_facts)),
+            "agent-infer": dict(inferred_type_counts),
+            "agent-note-hint": dict(Counter(fact.get("fact_type") for fact in note_hint_facts)),
         },
         "workflow": {
             "agent-alpha": billing_summary,

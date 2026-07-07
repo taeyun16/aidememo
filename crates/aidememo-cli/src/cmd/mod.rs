@@ -337,6 +337,11 @@ pub struct SearchSub {
     /// search.semantic_weight …` for users on languages with weak
     /// BM25 tokenisation, e.g. Korean).
     pub hybrid: bool,
+    /// Probe BM25 first and automatically promote to semantic retrieval only
+    /// when lexical evidence is weak. Useful for LFM/HNSW deployments where
+    /// the embedding model should be used at the recall failure point instead
+    /// of on every CLI query.
+    pub auto: bool,
     /// Optional `aidememo mcp-serve` endpoint (e.g. `http://localhost:3000`).
     /// When set, dispatch the search via `aidememo_search` JSON-RPC against
     /// that daemon instead of opening the store in-process.
@@ -1016,7 +1021,7 @@ fn fact_command() -> impl Parser<Command> {
     let content = positional::<String>("CONTENT");
     let fact_type = long("type")
         .short('t')
-        .help("Fact type (decision, pattern, convention, claim, note)")
+        .help("Fact type (decision, pattern, convention, claim, note, preference, lesson, error). Omit to infer from strong cues.")
         .argument::<String>("TYPE")
         .optional();
     let entities = singleton_list(
@@ -1304,6 +1309,12 @@ fn search_command() -> impl Parser<Command> {
              Pair with --via for warm daemon mode.",
         )
         .switch();
+    let auto = long("auto")
+        .help(
+            "Probe BM25 first, then use semantic search only when BM25 is weak \
+             or the query is CJK. Keeps easy lexical queries on the fast path.",
+        )
+        .switch();
     let via = long("via")
         .help(
             "Dispatch via a running `aidememo mcp-serve` daemon at this URL \
@@ -1326,6 +1337,7 @@ fn search_command() -> impl Parser<Command> {
         json,
         all_projects,
         hybrid,
+        auto,
         via,
         traverse_from,
         traverse_depth,

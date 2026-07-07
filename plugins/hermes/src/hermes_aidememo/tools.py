@@ -150,7 +150,7 @@ def _make_handlers(client: AideMemoClient) -> list[tuple[str, dict, Callable[...
                 "id": client.fact_add(
                     str(args.get("content") or ""),
                     entities=entities,
-                    fact_type=str(args.get("fact_type") or "note"),
+                    fact_type=args.get("fact_type"),
                     tags=tags,
                     source_id=args.get("source_id"),
                 )
@@ -353,13 +353,13 @@ def _make_handlers(client: AideMemoClient) -> list[tuple[str, dict, Callable[...
             "aidememo_fact_add",
             _schema(
                 "aidememo_fact_add",
-                "Append a fact to the wiki. Always link to existing entities (call aidememo_entity_list first if unsure).",
+                "Append a fact to the wiki. Pick fact_type when you know it; if omitted, aidememo infers strong preference/lesson/error/decision/convention cues and returns type metadata.",
                 {
                     "type": "object",
                     "properties": {
                         "content": {"type": "string", "description": "The fact text - short, declarative."},
                         "entities": {"type": "array", "items": {"type": "string"}, "description": "Entity names this fact links to."},
-                        "fact_type": {"type": "string", "description": "decision | pattern | convention | claim | note | question. Default note."},
+                        "fact_type": {"type": "string", "description": "decision | pattern | convention | claim | note | question | preference | lesson | error. Omit to let strong cues infer the type; explicit note is preserved."},
                         "tags": {"type": "array", "items": {"type": "string"}},
                         "source_id": {"type": "string", "description": "Optional source namespace / tenant / upstream id. If omitted, Hermes falls back to plugins.aidememo.source_id or AIDEMEMO_SOURCE_ID when set."},
                     },
@@ -367,14 +367,14 @@ def _make_handlers(client: AideMemoClient) -> list[tuple[str, dict, Callable[...
                 },
             ),
             _fact_add,
-            "Append a fact to the wiki. Always link to existing entities (call aidememo_entity_list first if unsure).",
+            "Append a typed fact to the wiki; omitted fact_type uses strong-cue inference.",
             "📝",
         ),
         (
             "aidememo_fact_add_many",
             _schema(
                 "aidememo_fact_add_many",
-                "Append many already-classified facts in one batch. Use after Hermes self-extracts decisions, lessons, errors, preferences, or experiment observations from a turn.",
+                "Append many facts in one batch. Prefer already-classified decisions, lessons, errors, and preferences; omitted fact_type uses strong-cue inference and returns fact_type_source.",
                 {
                     "type": "object",
                     "properties": {

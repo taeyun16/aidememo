@@ -37,11 +37,37 @@ pub trait EmbeddingProvider: Send + Sync {
     /// Embed a single text.
     fn embed(&self, text: &str) -> Result<Vec<f32>>;
 
+    /// Embed a search query. Symmetric embedders use the raw text;
+    /// asymmetric embedders can add query-side prompts here.
+    fn embed_query(&self, text: &str) -> Result<Vec<f32>> {
+        self.embed(text)
+    }
+
+    /// Embed stored document/fact text. Symmetric embedders use the raw
+    /// text; asymmetric embedders can add passage-side prompts here.
+    fn embed_document(&self, text: &str) -> Result<Vec<f32>> {
+        self.embed(text)
+    }
+
     /// Embed a batch in one call when the provider supports it. Default
     /// impl is a serial loop; override in providers that expose a real
     /// batch endpoint (Model2Vec, OpenAI).
     fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
         texts.iter().map(|t| self.embed(t)).collect()
+    }
+
+    /// Batch document embedding. Defaults to the symmetric batch path.
+    fn embed_document_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+        self.embed_batch(texts)
+    }
+}
+
+#[cfg(feature = "semantic")]
+fn apply_prefix(prefix: &str, text: &str) -> String {
+    if prefix.is_empty() {
+        text.to_string()
+    } else {
+        format!("{prefix}{text}")
     }
 }
 
@@ -96,6 +122,8 @@ mod model2vec {
         inner: StaticModel,
         name: String,
         dim: usize,
+        query_prefix: String,
+        document_prefix: String,
     }
 
     impl Model2VecProvider {
@@ -145,6 +173,8 @@ mod model2vec {
                 inner,
                 name: config.model.name.clone(),
                 dim,
+                query_prefix: config.model.query_prefix.clone(),
+                document_prefix: config.model.document_prefix.clone(),
             })
         }
     }
@@ -159,8 +189,29 @@ mod model2vec {
         fn embed(&self, text: &str) -> Result<Vec<f32>> {
             Ok(self.inner.encode_single(text))
         }
+        fn embed_query(&self, text: &str) -> Result<Vec<f32>> {
+            Ok(self
+                .inner
+                .encode_single(&super::apply_prefix(&self.query_prefix, text)))
+        }
+        fn embed_document(&self, text: &str) -> Result<Vec<f32>> {
+            Ok(self
+                .inner
+                .encode_single(&super::apply_prefix(&self.document_prefix, text)))
+        }
         fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
             Ok(self.inner.encode(texts))
+        }
+        fn embed_document_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+            if self.document_prefix.is_empty() {
+                self.embed_batch(texts)
+            } else {
+                let prefixed = texts
+                    .iter()
+                    .map(|text| super::apply_prefix(&self.document_prefix, text))
+                    .collect::<Vec<_>>();
+                Ok(self.inner.encode(&prefixed))
+            }
         }
     }
 
@@ -189,6 +240,8 @@ mod openai {
         api_key: Option<String>,
         dimension: usize,
         nice_name: String,
+        query_prefix: String,
+        document_prefix: String,
     }
 
     impl OpenAICompatibleProvider {
@@ -221,6 +274,8 @@ mod openai {
                 api_key,
                 dimension: dim,
                 nice_name,
+                query_prefix: config.model.query_prefix.clone(),
+                document_prefix: config.model.document_prefix.clone(),
             })
         }
     }
@@ -245,6 +300,14 @@ mod openai {
             let mut v = self.embed_batch(&[text.to_string()])?;
             Ok(v.pop().unwrap_or_default())
         }
+        fn embed_query(&self, text: &str) -> Result<Vec<f32>> {
+            let prefixed = super::apply_prefix(&self.query_prefix, text);
+            self.embed(&prefixed)
+        }
+        fn embed_document(&self, text: &str) -> Result<Vec<f32>> {
+            let prefixed = super::apply_prefix(&self.document_prefix, text);
+            self.embed(&prefixed)
+        }
         fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
             if texts.is_empty() {
                 return Ok(Vec::new());
@@ -267,6 +330,17 @@ mod openai {
                 .into_json()
                 .map_err(|e| AideMemoError::Internal(format!("embedding response parse: {e}")))?;
             Ok(parsed.data.into_iter().map(|d| d.embedding).collect())
+        }
+        fn embed_document_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+            if self.document_prefix.is_empty() {
+                self.embed_batch(texts)
+            } else {
+                let prefixed = texts
+                    .iter()
+                    .map(|text| super::apply_prefix(&self.document_prefix, text))
+                    .collect::<Vec<_>>();
+                self.embed_batch(&prefixed)
+            }
         }
     }
 }
@@ -292,6 +366,8 @@ mod tei {
         dimension: usize,
         nice_name: String,
         max_input_length: Option<usize>,
+        query_prefix: String,
+        document_prefix: String,
         /// Hard cap on `texts.len()` per HTTP request. TEI rejects
         /// batches larger than `max_client_batch_size` (default 32)
         /// with HTTP 413; bigger requests hit the gateway's body
@@ -364,6 +440,8 @@ mod tei {
                 dimension,
                 nice_name,
                 max_input_length,
+                query_prefix: config.model.query_prefix.clone(),
+                document_prefix: config.model.document_prefix.clone(),
                 max_client_batch_size,
             })
         }
@@ -428,6 +506,14 @@ mod tei {
             let mut v = self.embed_batch(&[text.to_string()])?;
             Ok(v.pop().unwrap_or_default())
         }
+        fn embed_query(&self, text: &str) -> Result<Vec<f32>> {
+            let prefixed = super::apply_prefix(&self.query_prefix, text);
+            self.embed(&prefixed)
+        }
+        fn embed_document(&self, text: &str) -> Result<Vec<f32>> {
+            let prefixed = super::apply_prefix(&self.document_prefix, text);
+            self.embed(&prefixed)
+        }
         fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
             if texts.is_empty() {
                 return Ok(Vec::new());
@@ -468,6 +554,17 @@ mod tei {
             }
             Ok(out)
         }
+        fn embed_document_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+            if self.document_prefix.is_empty() {
+                self.embed_batch(texts)
+            } else {
+                let prefixed = texts
+                    .iter()
+                    .map(|text| super::apply_prefix(&self.document_prefix, text))
+                    .collect::<Vec<_>>();
+                self.embed_batch(&prefixed)
+            }
+        }
     }
 }
 
@@ -501,6 +598,8 @@ mod fastembed_provider {
         inner: Mutex<TextEmbedding>,
         model_name: String,
         dim: usize,
+        query_prefix: String,
+        document_prefix: String,
     }
 
     impl FastembedProvider {
@@ -531,6 +630,8 @@ mod fastembed_provider {
                 inner: Mutex::new(inner),
                 model_name: model_id,
                 dim,
+                query_prefix: config.model.query_prefix.clone(),
+                document_prefix: config.model.document_prefix.clone(),
             })
         }
     }
@@ -550,6 +651,14 @@ mod fastembed_provider {
             out.pop()
                 .ok_or_else(|| AideMemoError::Internal("fastembed returned empty batch".into()))
         }
+        fn embed_query(&self, text: &str) -> Result<Vec<f32>> {
+            let prefixed = super::apply_prefix(&self.query_prefix, text);
+            self.embed(&prefixed)
+        }
+        fn embed_document(&self, text: &str) -> Result<Vec<f32>> {
+            let prefixed = super::apply_prefix(&self.document_prefix, text);
+            self.embed(&prefixed)
+        }
         fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
             if texts.is_empty() {
                 return Ok(Vec::new());
@@ -558,6 +667,17 @@ mod fastembed_provider {
             guard
                 .embed(texts, None)
                 .map_err(|e| AideMemoError::Internal(format!("fastembed embed_batch: {e}")))
+        }
+        fn embed_document_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+            if self.document_prefix.is_empty() {
+                self.embed_batch(texts)
+            } else {
+                let prefixed = texts
+                    .iter()
+                    .map(|text| super::apply_prefix(&self.document_prefix, text))
+                    .collect();
+                self.embed_batch(&prefixed)
+            }
         }
     }
 

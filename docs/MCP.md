@@ -8,6 +8,8 @@ description: Register AideMemo as an MCP server and use its core tools.
 AideMemo exposes the same memory store through MCP so agents can search and
 write memory as tools.
 For the complete tool inventory, see [`Feature Inventory`](FEATURES.md).
+For guidance on choosing the right tool per turn, see
+[`Agent Workflows`](AGENT_WORKFLOWS.md).
 
 ## Stdio MCP
 
@@ -59,6 +61,9 @@ Most agent workflows only need these tools:
 | `aidememo_context` | The agent needs opening-turn project context |
 | `aidememo_query` | The agent needs a focused topic dive |
 | `aidememo_search` | The agent needs pinpoint retrieval |
+| `aidememo_aggregate` | The agent needs exact counts, totals, date sets, or timelines |
+| `aidememo_session_canvas` | The agent is resuming a long tracked workflow |
+| `aidememo_profile_export` | The agent needs a compact read-only project profile |
 | `aidememo_fact_add` | The agent learned a new fact |
 | `aidememo_fact_add_many` | The agent learned several facts and should batch them |
 

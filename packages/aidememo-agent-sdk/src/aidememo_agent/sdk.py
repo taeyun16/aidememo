@@ -236,7 +236,7 @@ class AideMemoMemorySDK:
         self,
         observations: Iterable[dict[str, Any]],
         *,
-        default_fact_type: str = "note",
+        default_fact_type: str | None = None,
         default_entities: list[str] | None = None,
         source_id: str | None = None,
         session_id: str | None = None,
@@ -249,10 +249,12 @@ class AideMemoMemorySDK:
                 continue
             item = {
                 "content": content,
-                "fact_type": obs.get("fact_type") or default_fact_type,
                 "entities": obs.get("entities") or default_entities or [],
                 "tags": obs.get("tags") or tags or [],
             }
+            fact_type = obs.get("fact_type") or default_fact_type
+            if fact_type:
+                item["fact_type"] = fact_type
             if obs.get("confidence") is not None:
                 item["confidence"] = obs["confidence"]
             if obs.get("source_id") or source_id:
@@ -269,7 +271,7 @@ class AideMemoMemorySDK:
         self,
         observations: Iterable[dict[str, Any]],
         *,
-        default_fact_type: str = "note",
+        default_fact_type: str | None = None,
         default_entities: list[str] | None = None,
         source_id: str | None = None,
         session_id: str | None = None,

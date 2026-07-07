@@ -12,6 +12,9 @@ that memory through a CLI, MCP tools, and SDKs.
 Use it when your agent needs project memory that survives across sessions,
 editors, and model providers.
 
+For the system map, read [`Architecture`](ARCHITECTURE.md). For the per-turn
+tool choice guide, read [`Agent Workflows`](AGENT_WORKFLOWS.md).
+
 ## What it gives you
 
 | Need | AideMemo feature |

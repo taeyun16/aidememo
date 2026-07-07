@@ -8,6 +8,8 @@ description: Common AideMemo CLI commands with examples.
 The CLI is the fastest way to add, inspect, and maintain memory.
 For the complete top-level command inventory, see
 [`Feature Inventory`](FEATURES.md).
+For a task-shape guide that maps CLI, MCP, and SDK entry points, see
+[`Agent Workflows`](AGENT_WORKFLOWS.md).
 
 ## Search and query
 
@@ -15,6 +17,13 @@ Use `search` for direct retrieval:
 
 ```bash
 aidememo search "Redis timeout" --limit 5
+```
+
+Use `--auto` when a store has semantic vectors available but you only want to
+pay for them when BM25 looks weak:
+
+```bash
+aidememo search "레디스 장애 원인" --auto --limit 5
 ```
 
 Use `query` for a richer context pack:

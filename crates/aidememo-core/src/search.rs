@@ -488,7 +488,7 @@ mod semantic {
             if let Some(v) = cache.get(query) {
                 v.clone()
             } else {
-                let v = provider.embed(query)?;
+                let v = provider.embed_query(query)?;
                 cache.put(query.to_string(), v.clone());
                 v
             }
@@ -551,7 +551,7 @@ mod semantic {
             if let Some(v) = cache.get(query) {
                 v.clone()
             } else {
-                let v = provider.embed(query)?;
+                let v = provider.embed_query(query)?;
                 cache.put(query.to_string(), v.clone());
                 v
             }
@@ -640,7 +640,7 @@ mod semantic {
                 .iter()
                 .map(|&idx| fact_semantic_text_cached(&facts[idx], &entity_names))
                 .collect();
-            let new_embeddings = provider.embed_batch(&miss_texts)?;
+            let new_embeddings = provider.embed_document_batch(&miss_texts)?;
             let mut writer = fact_cache.write();
             for (slot, embedding) in miss_indices.iter().zip(new_embeddings.iter()) {
                 let fact_id = facts[*slot].id;

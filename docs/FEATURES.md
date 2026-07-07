@@ -14,6 +14,7 @@ Run the gate with:
 
 ```bash
 python3 scripts/docs-feature-gate.py
+python3 scripts/docs-site-e2e.py
 ```
 
 ## CLI commands
@@ -136,7 +137,7 @@ both the `aidememo-python` fast path and the CLI fallback.
 
 ## Gate contract
 
-`scripts/docs-feature-gate.py` enforces four drift checks:
+`scripts/docs-feature-gate.py` enforces four source-level drift checks:
 
 1. Every command listed by `aidememo --help` must appear in this page as
    `` `aidememo <command>` ``.
@@ -147,6 +148,12 @@ both the `aidememo-python` fast path and the CLI fallback.
 4. Public storage positioning must continue to describe SQLite as the default
    backend and redb as the optional Cargo-feature backend.
 
-The gate cannot prove that prose is semantically perfect. It does make feature
-drift noisy: adding or renaming a CLI command or MCP tool without updating this
-inventory, or reverting the storage positioning, fails CI.
+`scripts/docs-site-e2e.py` then builds the rendered Docusaurus site and verifies
+that the public route graph still matches the sidebar/homepage contract, all
+baseUrl-scoped links/assets/anchors resolve, page H1s match the Markdown source,
+and architecture-doc implementation paths still exist in the repo.
+
+The gates cannot prove that prose is semantically perfect. They do make feature
+and structure drift noisy: adding or renaming a CLI command or MCP tool without
+updating this inventory, breaking the deployed `/aidememo/` route graph, or
+reverting the storage positioning fails CI.
