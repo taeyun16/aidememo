@@ -152,6 +152,7 @@ if [[ -n "$VERSION" ]]; then
 else
     run "release version gate" "$ROOT_DIR/scripts/aidememo-release-version.sh"
 fi
+run "registry readiness gate" python3 "$ROOT_DIR/scripts/registry-readiness-check.py"
 
 if [[ "$RUN_ACTIONLINT" == "1" ]]; then
     if have "$ACTIONLINT_BIN"; then

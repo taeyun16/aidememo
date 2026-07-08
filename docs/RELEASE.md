@@ -67,8 +67,20 @@ scripts/release-preflight.sh
 ```
 
 This includes the version pins, workflow syntax lint, docs feature coverage
-gate, docs-site build, binding smoke, agent SDK/Hermes wheel smoke, workflow
-smoke, and SDK promotion check.
+gate, registry readiness gate, docs-site build, binding smoke, agent SDK/Hermes
+wheel smoke, workflow smoke, and SDK promotion check.
+
+The registry readiness gate is offline and should pass before creating or
+editing registry entries:
+
+```bash
+python3 scripts/registry-readiness-check.py
+```
+
+It verifies that PyPI trusted-publisher project names, workflow names,
+GitHub environments, npm root/platform package names, and this release document
+stay aligned. It also rejects first-party publish workflows that drift back to
+long-lived publish-token assumptions.
 
 `maturin` is intentionally run through `uvx` using the pinned spec from
 `mise.toml`, not from whichever `maturin` happens to be on `PATH`.

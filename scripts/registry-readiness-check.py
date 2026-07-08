@@ -1,0 +1,266 @@
+#!/usr/bin/env python3
+"""Validate first-release registry/workflow mappings without network access."""
+
+from __future__ import annotations
+
+import json
+import re
+import sys
+import tomllib
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+DOC = ROOT / "docs" / "RELEASE.md"
+OWNER_REPO = "taeyun16/aidememo"
+PYPI_ENV = "pypi-publish"
+NPM_ENV = "npm-publish"
+
+
+def read(path: Path) -> str:
+    return path.read_text(encoding="utf-8")
+
+
+def load_toml(path: Path) -> dict:
+    with path.open("rb") as handle:
+        return tomllib.load(handle)
+
+
+def fail(failures: list[str], label: str, detail: str) -> None:
+    failures.append(f"{label}: {detail}")
+
+
+def ok(rows: list[str], label: str) -> None:
+    rows.append(f"ok: {label}")
+
+
+def require_contains(failures: list[str], text: str, needle: str, label: str) -> None:
+    if needle not in text:
+        fail(failures, label, f"missing {needle!r}")
+
+
+def require_regex(failures: list[str], text: str, pattern: str, label: str) -> None:
+    if not re.search(pattern, text, flags=re.MULTILINE):
+        fail(failures, label, f"missing pattern {pattern!r}")
+
+
+def project_version(path: Path) -> tuple[str, str]:
+    project = load_toml(path)["project"]
+    return project["name"], project["version"]
+
+
+def validate_pypi_package(
+    failures: list[str],
+    rows: list[str],
+    *,
+    package: str,
+    pyproject: Path,
+    workflow: Path,
+    env_var: str,
+    dry_run_script: str,
+    artifact: str,
+    workspace_version: str,
+    release_doc: str,
+) -> None:
+    start_failures = len(failures)
+    label = f"PyPI {package}"
+    name, version = project_version(pyproject)
+    if name != package:
+        fail(failures, label, f"{pyproject} project.name={name!r}")
+    if version != workspace_version:
+        fail(
+            failures,
+            label,
+            f"{pyproject} project.version={version!r} != workspace {workspace_version!r}",
+        )
+
+    doc_row = (
+        f"| `{package}` | `{OWNER_REPO}` | `{workflow.name}` | `{PYPI_ENV}` | Workflow ready |"
+    )
+    require_contains(failures, release_doc, doc_row, f"{label} docs row")
+
+    text = read(workflow)
+    require_contains(failures, text, f"name: {package} publish", f"{label} workflow name")
+    require_contains(failures, text, "workflow_dispatch:", f"{label} manual trigger")
+    require_regex(failures, text, r"^\s+version:\s*$", f"{label} version input")
+    require_regex(failures, text, r"^\s+dry_run:\s*$", f"{label} dry-run input")
+    require_regex(failures, text, r"^\s+default:\s+true\s*$", f"{label} dry-run default")
+    require_contains(failures, text, f"{env_var}: ${{{{ inputs.version }}}}", f"{label} version env")
+    require_contains(failures, text, dry_run_script, f"{label} dry-run script")
+    require_contains(failures, text, f"name: {artifact}", f"{label} artifact upload")
+    require_contains(failures, text, "if: ${{ ! inputs.dry_run }}", f"{label} publish guard")
+    require_contains(failures, text, f"environment: {PYPI_ENV}", f"{label} environment")
+    require_contains(failures, text, "id-token: write", f"{label} OIDC permission")
+    require_contains(
+        failures,
+        text,
+        "pypa/gh-action-pypi-publish@release/v1",
+        f"{label} PyPI action",
+    )
+    require_contains(failures, text, "packages-dir: dist", f"{label} dist directory")
+    for forbidden in ("PYPI_API_TOKEN", "pypi-token", "password:"):
+        if forbidden in text:
+            fail(failures, label, f"workflow should not require long-lived PyPI token {forbidden!r}")
+    if len(failures) == start_failures:
+        ok(rows, label)
+
+
+def validate_npm(failures: list[str], rows: list[str], workspace_version: str, release_doc: str) -> None:
+    start_failures = len(failures)
+    label = "npm aidememo-napi"
+    package_path = ROOT / "crates" / "aidememo-napi" / "package.json"
+    root_pkg = json.loads(read(package_path))
+    if root_pkg["name"] != "aidememo-napi":
+        fail(failures, label, f"root package name={root_pkg['name']!r}")
+    if root_pkg["version"] != workspace_version:
+        fail(
+            failures,
+            label,
+            f"root package version={root_pkg['version']!r} != workspace {workspace_version!r}",
+        )
+    if root_pkg.get("publishConfig", {}).get("access") != "public":
+        fail(failures, label, "root package publishConfig.access must be public")
+
+    optional = root_pkg.get("optionalDependencies", {})
+    platform_dir = ROOT / "crates" / "aidememo-napi" / "npm"
+    platform_packages = []
+    for path in sorted(platform_dir.glob("*/package.json")):
+        data = json.loads(read(path))
+        platform_packages.append(data["name"])
+        if optional.get(data["name"]) != workspace_version:
+            fail(
+                failures,
+                label,
+                f"root optionalDependency for {data['name']} != {workspace_version}",
+            )
+        if data["version"] != workspace_version:
+            fail(failures, label, f"{path} version={data['version']!r}")
+        if data.get("publishConfig", {}).get("access") != "public":
+            fail(failures, label, f"{path} publishConfig.access must be public")
+
+    expected_packages = ["aidememo-napi", *platform_packages]
+    for package in expected_packages:
+        require_regex(
+            failures,
+            release_doc,
+            rf"(?:^|\n)(?:\d+\. |)\`{re.escape(package)}\`",
+            f"npm docs package {package}",
+        )
+
+    workflow = ROOT / ".github" / "workflows" / "aidememo-napi-publish.yml"
+    text = read(workflow)
+    require_contains(failures, text, "name: aidememo-napi publish", f"{label} workflow name")
+    require_contains(failures, text, "workflow_dispatch:", f"{label} manual trigger")
+    require_regex(failures, text, r"^\s+version:\s*$", f"{label} version input")
+    require_regex(failures, text, r"^\s+dry_run:\s*$", f"{label} dry-run input")
+    require_regex(failures, text, r"^\s+default:\s+true\s*$", f"{label} dry-run default")
+    require_contains(
+        failures,
+        text,
+        "AIDEMEMO_NAPI_EXPECT_VERSION: ${{ inputs.version }}",
+        f"{label} version env",
+    )
+    require_contains(failures, text, "id-token: write", f"{label} OIDC permission")
+    require_contains(failures, text, f"environment: {NPM_ENV}", f"{label} environment")
+    require_contains(failures, text, 'registry-url: "https://registry.npmjs.org"', f"{label} registry")
+    require_contains(failures, text, "AIDEMEMO_NAPI_PUBLISH_SCOPE: platform", f"{label} platform scope")
+    require_contains(failures, text, "AIDEMEMO_NAPI_PUBLISH_SCOPE: root", f"{label} root scope")
+    require_contains(failures, text, "AIDEMEMO_NAPI_PUBLISH_MODE:", f"{label} publish mode")
+    for os_name in ("ubuntu-latest", "macos-latest", "windows-latest"):
+        require_contains(failures, text, os_name, f"{label} matrix {os_name}")
+    for forbidden in ("NPM_TOKEN", "_authToken", "npm token"):
+        if forbidden in text:
+            fail(failures, label, f"workflow should not require long-lived npm token {forbidden!r}")
+
+    if len(failures) == start_failures:
+        ok(rows, f"{label} ({len(expected_packages)} packages)")
+
+
+def validate_non_oidc_registry_notes(failures: list[str], rows: list[str], release_doc: str) -> None:
+    start_failures = len(failures)
+    require_contains(
+        failures,
+        release_doc,
+        "Rust crates currently publish from an operator machine",
+        "Rust crates registry note",
+    )
+    require_contains(
+        failures,
+        release_doc,
+        "There is no Hex\npublish workflow or repository `HEX_API_KEY` requirement yet",
+        "Hex registry note",
+    )
+    rust_publish_workflows = sorted((ROOT / ".github" / "workflows").glob("*cargo*publish*.yml"))
+    if rust_publish_workflows:
+        fail(
+            failures,
+            "Rust crates registry note",
+            "found cargo publish workflow(s) but docs say local operator publish: "
+            + ", ".join(path.name for path in rust_publish_workflows),
+        )
+    if len(failures) == start_failures:
+        ok(rows, "non-OIDC registry notes")
+
+
+def main() -> int:
+    failures: list[str] = []
+    rows: list[str] = []
+    release_doc = read(DOC)
+    workspace_version = load_toml(ROOT / "Cargo.toml")["workspace"]["package"]["version"]
+
+    validate_pypi_package(
+        failures,
+        rows,
+        package="aidememo-python",
+        pyproject=ROOT / "crates" / "aidememo-python" / "pyproject.toml",
+        workflow=ROOT / ".github" / "workflows" / "aidememo-python-publish.yml",
+        env_var="AIDEMEMO_PYTHON_EXPECT_VERSION",
+        dry_run_script="AIDEMEMO_PYTHON_DIST_DIR=dist scripts/aidememo-python-publish-dry-run.sh",
+        artifact="aidememo-python-dist",
+        workspace_version=workspace_version,
+        release_doc=release_doc,
+    )
+    validate_pypi_package(
+        failures,
+        rows,
+        package="aidememo-agent-sdk",
+        pyproject=ROOT / "packages" / "aidememo-agent-sdk" / "pyproject.toml",
+        workflow=ROOT / ".github" / "workflows" / "aidememo-agent-sdk-publish.yml",
+        env_var="AIDEMEMO_AGENT_SDK_EXPECT_VERSION",
+        dry_run_script="AIDEMEMO_AGENT_SDK_DIST_DIR=dist scripts/aidememo-agent-sdk-publish-dry-run.sh",
+        artifact="aidememo-agent-sdk-dist",
+        workspace_version=workspace_version,
+        release_doc=release_doc,
+    )
+    validate_pypi_package(
+        failures,
+        rows,
+        package="hermes-aidememo",
+        pyproject=ROOT / "plugins" / "hermes" / "pyproject.toml",
+        workflow=ROOT / ".github" / "workflows" / "hermes-aidememo-publish.yml",
+        env_var="HERMES_AIDEMEMO_EXPECT_VERSION",
+        dry_run_script="HERMES_AIDEMEMO_DIST_DIR=dist scripts/hermes-aidememo-publish-dry-run.sh",
+        artifact="hermes-aidememo-dist",
+        workspace_version=workspace_version,
+        release_doc=release_doc,
+    )
+    validate_npm(failures, rows, workspace_version, release_doc)
+    validate_non_oidc_registry_notes(failures, rows, release_doc)
+
+    print("registry readiness check")
+    for row in rows:
+        print(row)
+    if failures:
+        print("\nfailures:", file=sys.stderr)
+        for item in failures:
+            print(f"- {item}", file=sys.stderr)
+        return 1
+    print(
+        "OK: registry readiness check passed "
+        f"(version={workspace_version}, pypi=3, npm=6, docs/workflows aligned)"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
