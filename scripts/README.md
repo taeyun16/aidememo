@@ -64,7 +64,8 @@ These are research harnesses, not the first-stop user path.
 | Query expansion / decomposition | `expand_queries.py`, `longmemeval_decompose_queries.py`, `longmemeval_hyde_questions.py` |
 | Consolidation analysis | `gac_analyze.py` |
 | Overview eval | `overview_eval.py` |
-| LFM / MLX experiments | `lfm_colbert_rerank.py`, `lfm_colbert_eval.py`, `lfm_dense_eval.py`, `lfm_mlx_dense_eval.py`, `lfm_mlx_docs_recall_eval.py`, `lfm_mlx_colbert_eval.py`, `lfm_mlx_lm_eval.py`, `lfm_mlx_fact_type_eval.py`, `lfm_fact_type_sft_data.py`, `lfm_fact_type_sidecar.py` |
+| Privacy filtering | `privacy_filter_sidecar.py`, `privacy_filter_mlx_sidecar.py` |
+| LFM / MLX experiments | `lfm_colbert_rerank.py`, `lfm_colbert_eval.py`, `lfm_dense_eval.py`, `lfm_mlx_dense_eval.py`, `lfm_mlx_docs_recall_eval.py`, `lfm_mlx_embedding_sidecar.py`, `lfm_mlx_colbert_eval.py`, `lfm_mlx_lm_eval.py`, `lfm_mlx_fact_type_eval.py`, `lfm_fact_type_sft_data.py`, `lfm_fact_type_sidecar.py`, `lfm_fact_type_threshold_eval.py`, `lfm_fact_type_log_fixture.py`, `lfm_fact_type_hf_probe.py`, `lfm_hf_agent_trace_retrieval_fixture.py` |
 
 The Rust benchmark binaries live in `benchmarks/src/bin`. Scenario-style
 multi-agent checks live in `bench/multi-agent`.

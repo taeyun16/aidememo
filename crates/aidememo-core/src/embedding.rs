@@ -12,6 +12,9 @@
 //! - `openai` issues blocking HTTP POSTs to the configured endpoint. Each
 //!   query/ingest pass is one batch request, so latency is dominated by the
 //!   provider, not by us.
+//! - `lfm-sidecar` is a TEI-compatible alias intended for a local MLX LFM
+//!   embedding server. It keeps Mac-only model runtime code out of the Rust
+//!   core while still participating in `auto_hybrid` and HNSW rebuild.
 //! - Switching providers requires a re-embed of existing facts (different
 //!   models produce incompatible vectors). For now we just compute on the
 //!   fly during search, so swap is risk-free.
@@ -75,9 +78,9 @@ fn apply_prefix(prefix: &str, text: &str) -> String {
 /// for `aidememo model providers` and for help-text auto-listing.
 pub fn known_providers() -> &'static [&'static str] {
     if cfg!(feature = "fastembed") {
-        &["model2vec", "openai", "tei", "fastembed"]
+        &["model2vec", "openai", "tei", "lfm-sidecar", "fastembed"]
     } else {
-        &["model2vec", "openai", "tei"]
+        &["model2vec", "openai", "tei", "lfm-sidecar"]
     }
 }
 
@@ -96,7 +99,9 @@ pub fn load_provider(config: &Config) -> Result<Box<dyn EmbeddingProvider>> {
         "openai" | "openai-compat" | "openai-compatible" | "ollama" => Ok(Box::new(
             openai::OpenAICompatibleProvider::from_config(config)?,
         )),
-        "tei" | "text-embeddings-inference" => Ok(Box::new(tei::TeiProvider::from_config(config)?)),
+        "tei" | "text-embeddings-inference" | "lfm-sidecar" | "lfm-mlx" | "mlx-sidecar" => {
+            Ok(Box::new(tei::TeiProvider::from_config(config)?))
+        }
         #[cfg(feature = "fastembed")]
         "fastembed" | "bge" | "onnx" => Ok(Box::new(
             fastembed_provider::FastembedProvider::from_config(config)?,
@@ -672,7 +677,7 @@ mod fastembed_provider {
             if self.document_prefix.is_empty() {
                 self.embed_batch(texts)
             } else {
-                let prefixed = texts
+                let prefixed: Vec<String> = texts
                     .iter()
                     .map(|text| super::apply_prefix(&self.document_prefix, text))
                     .collect();
@@ -790,5 +795,13 @@ mod fastembed_provider {
             // recoverable from the error alone.
             assert!(err.contains("bge-small-en-v1.5"));
         }
+    }
+}
+
+#[cfg(all(test, feature = "semantic"))]
+mod tests {
+    #[test]
+    fn known_providers_include_lfm_sidecar_alias() {
+        assert!(super::known_providers().contains(&"lfm-sidecar"));
     }
 }

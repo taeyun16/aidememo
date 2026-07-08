@@ -64,7 +64,7 @@ jobs:
       - run: npm --prefix website ci
       - run: npm --prefix website audit --omit=dev
       - run: python3 scripts/docs-feature-gate.py
-      - run: npm --prefix website run build
+      - run: python3 scripts/docs-site-e2e.py
 
   # Static checks share one cache and one toolchain install. fmt is a
   # cheap fail-fast at the top; clippy + doc dominate the wall time.

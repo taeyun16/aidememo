@@ -69,6 +69,77 @@ with current scorecards in
 | SkillOpt-lite profile gate | `scripts/skillopt-lite-check.sh` validates the bundled `aidememo-skill/SKILL.md` as the current trainable memory profile candidate, then runs `aidememo skill check`, `git diff --check`, `cargo check -p aidememo-cli`, `scripts/demo-workflow.sh`, and `scripts/sdk-promotion-check.sh`; optional Scenario L/M/N gates run with `AIDEMEMO_SKILLOPT_RUN_SCENARIOS=1` | This turns SkillOpt's useful discipline into a local `aidememo` product boundary: memory skill edits are bounded, auditable, and accepted only after zero-token workflow / SDK gates pass. |
 | SkillOpt-lite periodic cycle | `scripts/skillopt-lite-cycle.sh --max-cycles 1` checks the current profile when no candidate is queued, records the accepted dry-run under `target/skillopt-lite/runs.jsonl`, and stores the full gate output in `target/skillopt-lite/logs/`; passing candidates are applied only with `--apply` | Periodic skill/profile improvement can run without dirtying the repo or turning rejected candidates into failures by default; rejected edits are preserved for optimizer feedback. |
 
+## Privacy Filter Write Guard
+
+July 8 local run on macOS arm64 with `openai/privacy-filter` installed from
+`openai/privacy-filter.git` commit `f7f00ca7` and checkpoint cached at
+`~/.opf/privacy_filter`:
+
+| Path | Result | Interpretation |
+|---|---:|---|
+| Checkpoint download | 2.6 GB under `~/.opf/privacy_filter`; venv 503 MB | Too large for default-on. Keep disabled until explicitly configured. |
+| OPF direct Python API | first inference 2369.6 ms; warm 25-run mean 233.1 ms, p50 229.3 ms, max 281.6 ms | OPF constructor is lazy; the first redaction pays model load. Warm CPU latency is acceptable for write-side guard, not read hot path. |
+| HTTP sidecar (`scripts/privacy_filter_sidecar.py`) | first `/filter` 2402.6 ms; warm mean 247.9 ms, p50 244.2 ms, max 291.4 ms | HTTP overhead is modest compared with model inference. Run a daemon/sidecar for repeated agent writes. |
+| Warm sidecar RSS | ~3,977,872 KB (`ps rss`) | About 3.8 GB resident once warm. This is an opt-in team/project safety layer, not the default memory loop. |
+| `aidememo fact add` baseline | mean 22.3 ms, p50 16.7 ms for 10 writes | Baseline remains the right default path. |
+| `aidememo fact add` with privacy guard | mean 261.3 ms, p50 261.2 ms for 10 writes | Adds ~240 ms/write on CPU. Good for safety-sensitive capture, too expensive for every high-volume scratch write unless batched. |
+| Redaction smoke | email + phone stored as `[private_email]` / `[private_phone]`; `private_person` kept for review policy | Utility-preserving default: person names remain entity-usable unless policy changes. |
+| Block smoke | `OPENAI_API_KEY=sk-proj-...` rejected with `privacy filter blocked fact write; labels=secret` | Secret persistence is fail-closed in `privacy.mode=redact` because default `block_labels = ["secret"]`. |
+
+Detection notes from the 5-case smoke:
+
+| Case | Labels observed | Caveat |
+|---|---|---|
+| Email + phone | `private_person`, `private_email`, `private_phone` | Good write-guard fit. |
+| Secret-like OpenAI key | `secret` | Correctly blocked by AideMemo. |
+| Address/date sentence | none | Do not claim broad PII coverage from this smoke; needs fixture-level recall before default-on. |
+| Code decision with no PII | none | Good no-op behavior. |
+| Korean sentence with email | `private_person`, `private_email` | Korean + email shape worked in this sample. |
+
+Artifacts:
+`/private/tmp/aidememo-privacy-filter-bench.json`,
+`/private/tmp/aidememo-privacy-filter-http-bench.json`, and
+`/private/tmp/aidememo-privacy-write-bench.json`.
+
+### MLX Quantized Follow-up
+
+July 8 follow-up on the same macOS arm64 host with
+`mlx-embeddings` installed from GitHub main (`0.1.1`, commit `9b28270`)
+because PyPI `0.1.0` does not load `model_type = "openai_privacy_filter"`.
+All three MLX variants passed the five-case smoke used for this run
+(email/phone, secret, address/date, no-PII code fact, Korean email). The first
+attempt with an ad-hoc loader shim produced false misses; only the official
+`mlx-embeddings` 0.1.1 loader numbers below should be treated as evidence.
+
+| Path | Size / RSS | Latency | Detection result | Interpretation |
+|---|---:|---:|---|---|
+| `mlx-community/openai-privacy-filter-4bit` | 780 MB; 1,328,752 KB RSS | direct warm mean 18.5 ms, p50 17.9 ms | no missing expected labels; Korean email plus person | Good quality smoke; slightly larger than mxfp4. |
+| `mlx-community/openai-privacy-filter-mxfp4` | 739 MB; 1,286,336 KB RSS | direct warm mean 19.5 ms, p50 19.2 ms | no missing expected labels; both synthetic secrets detected | Best local default candidate among measured MLX variants. |
+| `mlx-community/openai-privacy-filter-8bit` | 1.4 GB; 2,006,368 KB RSS | direct warm mean 18.0 ms, p50 17.3 ms | no missing expected labels | No practical win over mxfp4 for this write-guard path. |
+| mxfp4 HTTP sidecar | 1,281,424 KB RSS | first `/filter` 48.4 ms; warm mean 18.6 ms, p50 18.4 ms | email/person/phone, secret, address/date, Korean email all detected | HTTP overhead is effectively hidden once warm. Use a single-threaded server; `ThreadingHTTPServer` hit an MLX stream/thread-local error. |
+| `aidememo fact add` via mxfp4 sidecar | same sidecar | baseline mean 24.0 ms, p50 22.5 ms; privacy mean 53.4 ms, p50 51.1 ms | email/phone persisted as `[private_email]` / `[private_phone]`; secret write blocked | Adds about 29 ms p50 over baseline, far better than CPU OPF's ~240 ms overhead. |
+
+Current product conclusion: MLX/mxfp4 makes the privacy guard viable as a
+recommended prewarmed project/team option on Apple Silicon, but not a universal
+default yet. It still needs a 739 MB model download, about 1.28 GB warm RSS,
+Metal access, and the unpublished `mlx-embeddings` 0.1.1 path until PyPI catches
+up. Keep `privacy.provider` disabled by default, then make `mxfp4` the preferred
+sidecar recipe for stores that opt into write-time privacy filtering.
+
+Safety follow-up: both the official OPF CPU path and the MLX mxfp4 path labelled
+a bare `sk-proj-abc123` token as `private_person` when it lacked an
+`OPENAI_API_KEY=`-style cue. AideMemo now adds a deterministic local secret
+prefilter before applying sidecar spans, so common key prefixes such as
+`sk-proj-`, `sk-`, `github_pat_`, `ghp_`, `gho_`, `xoxb-`, `AKIA`, and `AIza`
+still become `secret` and hit the default block policy.
+
+Artifacts:
+`/private/tmp/aidememo-privacy-filter-mlx-4bit-bench-v2.json`,
+`/private/tmp/aidememo-privacy-filter-mlx-mxfp4-bench-v2.json`,
+`/private/tmp/aidememo-privacy-filter-mlx-8bit-bench-v2.json`,
+`/private/tmp/aidememo-privacy-filter-mlx-mxfp4-http-bench.json`, and
+`/private/tmp/aidememo-privacy-write-mlx-mxfp4-bench.json`.
+
 ## Agentic Loop Calibration
 
 `aidememo_aggregate` should be described as a deterministic arithmetic primitive, not
@@ -264,22 +335,23 @@ Command:
   --summary-only
 ```
 
-Result on 327 chunks:
+July 8 rerun after forcing the lexical baseline through
+`aidememo search --bm25-only`; the tracked docs had grown to 335 chunks:
 
 | Path | R@8 | Hit@1 | MRR | Notes |
 |---|---:|---:|---:|---|
-| BM25 | 0.656 | 0.375 | 0.478 | Strong on surface-overlap (`R@8=0.929`) and still decent on paraphrase (`0.727`), but zero on the Korean query slice. |
-| model2vec + HNSW via prewarmed daemon | 0.750 | 0.281 | 0.426 | Recovers some Korean/cross-lingual misses (`3/7`) but hurts head ordering on surface queries. |
-| LFM 4-bit pure dense all-doc rank | 0.688 | 0.219 | 0.338 | Slightly higher recall than BM25 but materially worse head ranking; not a default embedding replacement. |
-| LFM 4-bit rerank of BM25 candidates | 0.656 | 0.250 | 0.398 | Cannot recover first-stage misses and worsens head ordering. |
-| BM25 + LFM only when the BM25 gate promotes | 0.812 | 0.406 | 0.536 | Promoted only the 7 CJK queries; recovered `5/7` there while leaving the 25 BM25-confident queries untouched. |
+| BM25 | 0.656 | 0.312 | 0.446 | Strong on surface-overlap (`R@8=0.929`) and still decent on paraphrase (`0.727`), but zero on the Korean query slice. |
+| model2vec + HNSW via prewarmed daemon | 0.750 | 0.250 | 0.410 | Recovers some Korean/cross-lingual misses (`3/7`) but hurts head ordering on surface queries. |
+| LFM 4-bit pure dense all-doc rank | 0.625 | 0.250 | 0.349 | Worse than BM25 overall: `R@8 -0.031`, hit@1 `-0.062`, MRR `-0.097`. Not a default embedding replacement. |
+| LFM 4-bit rerank of BM25 candidates | 0.656 | 0.250 | 0.391 | Cannot recover first-stage misses and worsens head ordering. |
+| BM25 + LFM only when the BM25 gate promotes | 0.812 | 0.344 | 0.499 | Promoted only the 7 CJK queries; `R@8 +0.156`, hit@1 `+0.031`, MRR `+0.054` over BM25 while leaving the 25 BM25-confident queries untouched. |
 
-Latency notes from the same run: LFM model load was 3.56s, document encoding was
-44.9s for 327 chunks, warmed query embedding averaged 30.7ms, and dense scoring
-was negligible at 0.15ms. model2vec HNSW rebuild took 9.27s and daemon
-prewarm/start took 7.51s. The BM25 latency in this script includes fresh CLI
-startup per query, so do not compare it directly to in-process or daemon
-latency; this gate is primarily a quality/candidate-recall test.
+Latency notes from the same run: LFM model load was 4.40s, document encoding was
+45.47s for 335 chunks, warmed query embedding averaged 27.02ms, and dense
+scoring averaged 1.24ms. model2vec HNSW rebuild took 9.16s and daemon start took
+7.77s. The BM25 latency in this script includes fresh CLI startup per query, so
+do not compare it directly to in-process or daemon latency; this gate is
+primarily a quality/candidate-recall test.
 
 Interpretation: the larger real-docs gate confirms the placement boundary. LFM
 4-bit should not replace the default embedding model globally, and LFM dense
@@ -288,6 +360,14 @@ shape is still `search.auto_hybrid=true` plus daemon prewarm, with LFM-style
 semantic retrieval only at the lexical failure point. The next external gate is
 a true LongMemEval or MIRACL-style candidate-recall run once the larger datasets
 are available locally.
+
+Implementation follow-up: `scripts/lfm_mlx_docs_recall_eval.py` now accepts
+external corpus JSONL plus query/qrels files, so larger LongMemEval/MIRACL-style
+candidate-recall gates can run without changing the script. Use
+`--no-default-docs --corpus-jsonl corpus.jsonl --queries-jsonl queries.jsonl
+--qrels-tsv qrels.tsv --max-cases N`. The BM25 baseline path is forced through
+`aidememo search --bm25-only` so the default `auto_hybrid` policy does not
+contaminate lexical baseline rows.
 
 ### LFM MLX ColBERT Scenario Checks
 
@@ -580,6 +660,221 @@ Results from the July 7 Mac MLX run:
 | Corpus + 40 synthetic/label LoRA 240 iter | 18-case corpus test | 0.61 | 0.39 | 6/11 | 2 | 7/8 at confidence >= 0.8 |
 | Corpus + 40 synthetic/label LoRA 240 iter | 45-case original holdout | 0.71 | 0.69 | 9/13 | 8 | 24/26 at confidence >= 0.8 |
 
+July 8 sidecar-threshold rerun:
+
+```bash
+/private/tmp/aidememo-lfm-venv/bin/python scripts/lfm_fact_type_sidecar.py \
+  --model-dir /private/tmp/lfm25-12b-instruct-mlx-4bit \
+  --adapter-path /private/tmp/aidememo-lfm-fact-type-corpus-lora-20260707-240i \
+  --input-jsonl fixtures/fact_type_corpus/coding_agent_shadow_seed.jsonl \
+  --input-split test \
+  --output-jsonl /private/tmp/aidememo-fact-type-hints-test.jsonl
+
+python3 scripts/lfm_fact_type_threshold_eval.py \
+  --labels-jsonl fixtures/fact_type_corpus/coding_agent_shadow_seed.jsonl \
+  --label-split test \
+  --predictions-jsonl /private/tmp/aidememo-fact-type-hints-test.jsonl
+```
+
+With a strict zero-baseline-harm gate, no threshold was viable on the 18-case
+test split. Relaxing the gate to allow one baseline-correct harm selected
+`confidence >= 0.80`: 14/18 hints accepted, 11 correct, 3 incorrect, precision
+0.786, false-memory rate 0.214, residual rescues 5, baseline-correct harms 1,
+net rescue-minus-harm +4. The single harm was a high-confidence `note ->
+pattern`, so confidence alone is not yet sufficient for automatic writes.
+
+July 8 real-log probe:
+
+```bash
+python3 scripts/lfm_fact_type_log_fixture.py \
+  --out-dir /private/tmp/aidememo-lfm-log-probes-v2 \
+  --max-rows 72 \
+  --max-per-label 12
+
+/private/tmp/aidememo-lfm-venv/bin/python scripts/lfm_fact_type_sidecar.py \
+  --model-dir /private/tmp/lfm25-12b-instruct-mlx-4bit \
+  --adapter-path /private/tmp/aidememo-lfm-fact-type-corpus-lora-20260707-240i \
+  --input-jsonl fixtures/fact_type_corpus/coding_agent_shadow_seed.jsonl \
+  --input-jsonl /private/tmp/aidememo-lfm-log-probes-v2/agentstep_fact_type_probe.jsonl \
+  --input-jsonl /private/tmp/aidememo-lfm-log-probes-v2/hermes_fact_type_probe.jsonl \
+  --input-split test \
+  --output-jsonl /private/tmp/aidememo-lfm-log-probes-v2/fact_type_hints_all_101.jsonl
+```
+
+`lfm_fact_type_log_fixture.py` produces weak-labelled probes from local
+AgentStep traces and Hermes session logs without copying raw logs into the repo.
+These are not reviewed labels; they are a stress test for behavior-log-shaped
+text. The sidecar used only local MLX scoring, with no external LLM calls. On
+101 rows, per-row scoring averaged 1092.79ms, p50 884.59ms, max 3759.32ms
+because some raw tool evidence rows are long.
+
+At `confidence >= 0.80`, no margin filter:
+
+| Dataset | Rows | Baseline acc. | LFM acc. | Accepted | Precision | False-memory rate | Residual rescues | Baseline-correct harms | Net |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| Reviewed coding-agent test | 18 | 0.389 | 0.611 | 14/18 | 0.786 | 0.214 | 5 | 1 | +4 |
+| AgentStep trace weak probe | 39 | 0.333 | 0.462 | 31/39 | 0.516 | 0.484 | 6 | 3 | +3 |
+| Hermes session weak probe | 44 | 0.545 | 0.636 | 33/44 | 0.788 | 0.212 | 7 | 4 | +3 |
+| Combined | 101 | 0.436 | 0.564 | 78/101 | 0.679 | 0.321 | 18 | 8 | +10 |
+
+Higher thresholds helped the Hermes-shaped data but not raw AgentStep route
+events. Hermes reached precision 0.852 at `confidence >= 0.90` (27/44 accepted,
+7 rescues, 2 harms) and 0.875 at `confidence >= 0.98` (16/44 accepted, 7
+rescues, 1 harm). AgentStep stayed below 0.80 precision even at `confidence >=
+0.98` because route/cache rows such as "target action call_tool" and
+"cache-hit behavior" sit on ambiguous `decision` / `lesson` / `error` boundaries.
+
+Interpretation: lowering the visible hint threshold to 0.80 is useful for
+shadow review and UI surfacing when the input is already a candidate memory
+fact, but it is still not safe for automatic fact_type override. For raw
+behavior traces, first convert events into explicit memory-candidate facts or
+keep them as `note` / trace metadata; do not ask the LoRA classifier to infer a
+durable memory type directly from every route/tool event.
+
+July 8 Hugging Face public-trace probe:
+
+```bash
+python3 scripts/lfm_fact_type_hf_probe.py \
+  --out-dir /private/tmp/aidememo-lfm-hf-probes-v3 \
+  --source-rows 100 \
+  --max-rows-per-dataset 100 \
+  --max-per-label 25
+
+/private/tmp/aidememo-lfm-venv/bin/python scripts/lfm_fact_type_sidecar.py \
+  --model-dir /private/tmp/lfm25-12b-instruct-mlx-4bit \
+  --adapter-path /private/tmp/aidememo-lfm-fact-type-corpus-lora-20260707-240i \
+  --input-jsonl /private/tmp/aidememo-lfm-hf-probes-v3/combined_hf_fact_type_probe.jsonl \
+  --input-split test \
+  --output-jsonl /private/tmp/aidememo-lfm-hf-probes-v3/fact_type_hints_hf_254.jsonl
+```
+
+Datasets:
+
+| Probe | Hugging Face dataset | Config / split | Source rows | Probe rows |
+|---|---|---|---:|---:|
+| Hermes | `lambda/hermes-agent-reasoning-traces` | `kimi` / `train` | 100 | 88 |
+| TauBench | `sammshen/taubench-sonnet-traces` | `default` / `train` | 100 | 66 |
+| SWE-smith | `SWE-bench/SWE-smith-trajectories` | `default` / `tool` | 100 | 100 |
+| Combined | above | above | 300 | 254 |
+
+`lfm_fact_type_hf_probe.py` fetches public Dataset Viewer rows, redacts emails
+and long IDs, and emits compact weak-labelled candidate-memory rows. These are
+structural labels, not reviewed truth. They intentionally stress the sidecar on
+raw agent trace shapes: tool calls, tool observations, task prompts, policies,
+and outcome metadata. Local MLX sidecar scoring for the 254-row combined file
+averaged 1261.80ms per row, p50 1019.12ms, max 4173.06ms.
+
+At `confidence >= 0.80`, no margin filter:
+
+| Dataset | Rows | Baseline acc. | LFM acc. | Accepted | Precision | False-memory rate | Residual rescues | Baseline-correct harms | Net |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| Hermes HF trace weak probe | 88 | 0.239 | 0.239 | 55/88 | 0.273 | 0.727 | 10 | 9 | +1 |
+| TauBench HF trace weak probe | 66 | 0.121 | 0.348 | 43/66 | 0.419 | 0.581 | 16 | 0 | +16 |
+| SWE-smith HF trace weak probe | 100 | 0.180 | 0.210 | 62/100 | 0.242 | 0.758 | 11 | 7 | +4 |
+| Combined HF trace weak probe | 254 | 0.185 | 0.256 | 160/254 | 0.300 | 0.700 | 37 | 16 | +21 |
+
+Raising the threshold alone did not make raw traces safe. On the 254-row
+combined file, `confidence >= 0.98` accepted 71 rows with precision 0.352,
+false-memory rate 0.648, 19 rescues, and 11 harms. The accepted-label confusion
+explains the failure mode: raw `decision` tool-call rows were usually predicted
+as `pattern`, raw `question` user prompts often looked like `preference`, and
+raw `note` tool observations sometimes looked like `error`.
+
+The same run becomes much more useful after deterministic extraction has
+already filtered the stream down to durable memory-candidate labels
+(`preference`, `lesson`, `error`, `convention`, `pattern`, `claim`) and left
+raw `decision` / `note` / `question` events as trace metadata.
+
+High-signal subset: 81 rows (`error=4`, `convention=23`, `pattern=12`,
+`preference=1`, `claim=21`, `lesson=20`).
+
+| Gate | Accepted | Precision | False-memory rate | Residual rescues | Baseline-correct harms | Net |
+|---|---:|---:|---:|---:|---:|---:|
+| `confidence >= 0.80` | 54/81 | 0.556 | 0.444 | 30 | 0 | +30 |
+| `confidence >= 0.95` | 32/81 | 0.781 | 0.219 | 25 | 0 | +25 |
+| `confidence >= 0.98` | 19/81 | 0.947 | 0.053 | 18 | 0 | +18 |
+
+Placement after the public-trace gate: do not run the LFM classifier directly
+over every raw trace event, and do not treat `confidence >= 0.80` as an
+automatic write threshold. The useful long-term path is a two-stage local loop:
+deterministically extract/filter candidate memories first, then let the LoRA
+sidecar add high-confidence `fact_type_hint` values for pending review or UI
+surfacing. For automatic type promotion, the next threshold to test on reviewed
+traffic is closer to `confidence >= 0.98` on high-signal candidates, not 0.80
+on raw traces.
+
+July 8 expanded Hugging Face multi-model gate:
+
+The larger public-trace probe fetched 300 source rows from each of three HF
+agent-trace datasets and produced 539 compact weak-labelled candidate-memory
+rows:
+
+| HF source | Source rows | Probe rows |
+|---|---:|---:|
+| `lambda/hermes-agent-reasoning-traces` (`kimi` / `train`) | 300 | 165 |
+| `sammshen/taubench-sonnet-traces` (`default` / `train`) | 300 | 134 |
+| `SWE-bench/SWE-smith-trajectories` (`default` / `tool`) | 300 | 240 |
+
+Fact-type sidecar on the expanded high-signal subset
+(`error=18`, `convention=25`, `pattern=13`, `preference=4`, `claim=50`,
+`lesson=45`; 155 rows):
+
+| Gate | Accepted | Precision | False-memory rate | Baseline-correct harms | Residual rescues | Mean / p50 latency |
+|---|---:|---:|---:|---:|---:|---:|
+| `confidence >= 0.95` | 56/155 | 0.839 | 0.161 | 0 | 47 | 1198 / 958 ms |
+| `confidence >= 0.98` | 39/155 | 0.923 | 0.077 | 0 | 36 | 1198 / 958 ms |
+
+Raw prediction accuracy was 0.503 against weak labels, versus deterministic
+baseline accuracy 0.006 on this intentionally high-signal subset. The 0.98 gate
+still misses the desired 0.95 precision bar, but the false-memory rate is low
+enough for pending review / UI hinting and again shows why automatic writes
+need reviewed production labels before promotion.
+
+For retrieval, `scripts/lfm_hf_agent_trace_retrieval_fixture.py` converted the
+same HF probe rows into BEIR/MIRACL-style corpus, query, and qrels files. The
+balanced large retrieval slice used 180 documents (60 per HF source) and 540
+queries: `surface`, deterministic paraphrase, and Korean/CJK-style wrappers.
+
+| Method | R@8 | Hit@1 | MRR | Latency / setup |
+|---|---:|---:|---:|---|
+| BM25 | 0.991 | 0.839 | 0.891 | 59.64 ms/query fresh CLI |
+| model2vec + HNSW daemon | 0.991 | 0.694 | 0.794 | 103.78 ms/query; rebuild 8.11s; daemon start 7.50s |
+| LFM 350M pure dense | 0.887 | 0.557 | 0.672 | query embed 25.64 ms; score 0.13 ms; doc encode 10.40s |
+| LFM rerank of BM25 candidates | 0.991 | 0.656 | 0.773 | cannot recover BM25 candidate misses |
+| BM25 + guarded LFM auto | 0.993 | 0.839 | 0.892 | promoted 2/540 weak BM25 cases |
+
+Scenario detail from the 180-doc slice:
+
+| Scenario | BM25 R@8 / Hit@1 | LFM dense R@8 / Hit@1 | Guarded auto R@8 / Hit@1 |
+|---|---:|---:|---:|
+| surface | 1.000 / 0.944 | 0.956 / 0.761 | 1.000 / 0.944 |
+| paraphrase | 0.983 / 0.756 | 0.872 / 0.494 | 0.989 / 0.756 |
+| CJK-style wrapper | 0.989 / 0.817 | 0.833 / 0.417 | 0.989 / 0.817 |
+
+The first attempt used the older "CJK always promotes" simulation and dropped
+auto-Hybrid MRR from 0.891 to 0.784 because these HF trace CJK queries still
+contained strong English tool/file anchors. AideMemo now guards CJK promotion:
+CJK can promote more eagerly when BM25 evidence is not strong, but strong BM25
+matches stay lexical.
+
+BGE / BERT-family baseline: the CLI now forwards `--features fastembed` to
+`aidememo-core/fastembed`, so `bge-small-en-v1.5` can be tested through the
+same HNSW semantic path. The full 180-doc BGE loop was manually aborted after
+more than 7 minutes in the fastembed daemon query loop. A smaller balanced
+60-doc / 180-query slice completed:
+
+| Method | R@8 | Hit@1 | MRR | Latency / setup |
+|---|---:|---:|---:|---|
+| BM25 | 0.989 | 0.850 | 0.909 | 38.05 ms/query fresh CLI |
+| model2vec + HNSW daemon | 0.989 | 0.756 | 0.854 | 57.81 ms/query; rebuild 8.03s |
+| LFM 350M pure dense | 0.978 | 0.633 | 0.755 | query embed 30.87 ms; doc encode 3.31s |
+| `fastembed` BGE-small-en-v1.5 | 0.994 | 0.833 | 0.896 | 1680.30 ms/query; rebuild 2.68s |
+
+BGE had the best R@8 on the small slice and matched BM25 on surface queries,
+but it was slower by one to two orders of magnitude on repeated daemon queries
+and did not beat BM25 on Hit@1 / MRR. Treat it as an offline or high-stakes
+reranking/semantic comparison baseline, not the default hot path.
+
 Interpretation:
 
 * The corpus-only adapter is the best current placement: it beats deterministic
@@ -626,9 +921,9 @@ they address, then measure quality and latency per layer.
 
 | Layer | Candidate model | Current evidence | Next quality gate |
 |---|---|---|---|
-| First-stage semantic retrieval | `mlx-community/LFM2.5-Embedding-350M-4bit` | Tiny fixture: dense hit@1 1.00 / MRR 1.00 and Korean BM25-miss recovery. Larger tracked-docs gate: pure dense is not a default replacement (`R@8=0.688`, hit@1 0.219), but BM25-gated LFM improves over BM25 (`R@8 0.656 -> 0.812`) by promoting only the CJK failure slice. AideMemo now exposes this placement as the default `search.auto_hybrid=true` policy, which probes BM25 before promoting to semantic retrieval; `aidememo search --bm25-only` is the deterministic escape hatch. | Run true LongMemEval/MIRACL-style candidate-recall tests where BM25 candidate recall is below 1.0, then decide whether LFM belongs behind a local embedding sidecar. |
+| First-stage semantic retrieval | `mlx-community/LFM2.5-Embedding-350M-4bit` | Tiny fixture: dense hit@1 1.00 / MRR 1.00 and Korean BM25-miss recovery. Larger tracked-docs gate: pure dense is not a default replacement (`R@8=0.688`, hit@1 0.219), but BM25-gated LFM improved over BM25 (`R@8 0.656 -> 0.812`) by promoting only the CJK failure slice. HF agent-trace retrieval confirmed the boundary: pure LFM dense underperformed BM25 (`R@8 0.887 vs 0.991` on 180 docs / 540 queries), while guarded auto stayed effectively neutral and promoted only 2 weak BM25 cases. | Keep `search.auto_hybrid=true` as a BM25-first guarded path. Run true candidate-recall tests where BM25 recall is materially below 1.0 before expanding LFM promotion. |
 | Rerank after lexical/hybrid search | `mlx-community/LFM2.5-ColBERT-350M-4bit` | Native MLX MaxSim rerank improved hit@1 from 0.57 to 0.86; all-doc brute-force reached 1.00 on the tiny fixture, but document token encoding is much heavier than dense. | Gate on `candidate_recall >= 0.95`, then design a warmed sidecar or multi-vector index before using beyond small stores. |
-| Local capture classification | `LiquidAI/LFM2.5-1.2B-Instruct-MLX-4bit` with a fact-type LoRA adapter | Zero-shot closed-label scoring trailed deterministic inference (0.33 vs 0.69 on the original holdout; 0.11 vs 0.39 on the coding-agent corpus test). A corpus-only 240-iteration LoRA reached 0.61 on the 18-case coding-agent test and 0.82 on the older 45-case holdout. | Keep it as a shadow `fact_type_hint` path. Grow reviewed capture logs and validate confidence+margin thresholds before any automatic type promotion. |
+| Local capture classification | `LiquidAI/LFM2.5-1.2B-Instruct-MLX-4bit` with a fact-type LoRA adapter | Zero-shot closed-label scoring trailed deterministic inference (0.33 vs 0.69 on the original holdout; 0.11 vs 0.39 on the coding-agent corpus test). A corpus-only 240-iteration LoRA reached 0.61 on the 18-case coding-agent test and 0.82 on the older 45-case holdout. On expanded HF high-signal traces, `confidence >= 0.98` accepted 39/155 hints at precision 0.923 with 0 baseline-correct harms. | Keep it as a shadow `fact_type_hint` path. Grow reviewed capture logs and validate confidence+margin thresholds before any automatic type promotion. |
 | Query router | Deterministic rules and search confidence, not LFM LM | Tested MLX LMs were weak routers: best observed route accuracy was 0.38 for 230M/350M and 0.25 for 1.2B-Instruct. | Add route-confidence features to the existing deterministic router shape before spending model calls here. |
 | Batch consolidation / branch review | No automatic LFM placement yet | Best observed consolidation was 0.50 on a 4-case slice with 230M fewshot; 1.2B-Instruct stayed at 0.25 and Thinking emitted reasoning traces instead of valid JSON. | Treat LFM output as review hints only; require a larger duplicate/supersede/keep-distinct benchmark before automatic writes. |
 | Visual memory capture | Blocked for now | `LFM2.5-VL-450M-MLX-4bit` required a runtime processor compatibility patch and did not produce stable JSON/OCR in the smoke. | Re-test after a clean `mlx-vlm` compatibility path, then build a screenshot/diagram-to-fact precision benchmark. |
@@ -657,12 +952,31 @@ Default-on check for `search.auto_hybrid`:
 Interpretation: auto-hybrid is the default search policy because the confident
 BM25 path stays lexical, the default HNSW policy does not cold-load a provider
 when the sidecar is missing, semantic promotion falls back to BM25 on provider
-failure, and the tracked-docs gate showed the gated path outperformed both BM25
-and pure dense. The explicit escape hatch is `aidememo search --bm25-only` or
-`aidememo config set search.auto_hybrid false` for deterministic demos, hooks,
-and saturated lexical stores. When `search.auto_hybrid=true`, `mcp-serve`
-prewarms the semantic provider on startup; `AIDEMEMO_PREWARM_SEMANTIC=1` forces
-the same behavior for explicit daemon experiments.
+failure, and the tracked-docs gate showed the gated path can outperform both
+BM25 and pure dense when lexical recall is genuinely weak. The HF agent-trace
+gate narrowed the policy: CJK no longer promotes unconditionally; Korean
+wrappers around strong English anchors stay lexical. The explicit escape hatch
+is `aidememo search --bm25-only` or `aidememo config set search.auto_hybrid
+false` for deterministic demos, hooks, and saturated lexical stores. When
+`search.auto_hybrid=true`, `mcp-serve` prewarms the semantic provider on
+startup; `AIDEMEMO_PREWARM_SEMANTIC=1` forces the same behavior for explicit
+daemon experiments.
+
+Implementation follow-up: `scripts/lfm_mlx_embedding_sidecar.py` exposes
+`mlx-community/LFM2.5-Embedding-350M-4bit` through TEI-compatible `/embed` and
+`/info` endpoints. AideMemo maps `model.provider=lfm-sidecar` to the existing
+TEI provider path, so the model can sit behind the real `auto_hybrid` + HNSW
+flow without linking MLX into the Rust process. July 8 local sidecar smoke on
+port 18088 reported model load 3.52s, dimension 1024, and 10 warm `/embed`
+query calls at mean 24.24ms / p50 22.50ms / max 39.59ms. This matches the
+daemon-prewarm placement: startup pays the load, promoted queries pay roughly
+20-30ms for the LFM query vector before HNSW lookup.
+
+For fact-type rollout, `scripts/lfm_fact_type_threshold_eval.py` joins reviewed
+shadow-label JSONL with `lfm_fact_type_sidecar.py --jsonl` predictions and
+reports precision, false-memory rate, baseline-correct harms, and residual
+rescues across confidence/margin grids. Use that gate before promoting any
+`fact_type_hint` automatically.
 
 ## Performance
 

@@ -168,10 +168,10 @@ fi
 
 if [[ "$RUN_DOCS" == "1" ]]; then
     run "docs feature gate" "$ROOT_DIR/scripts/docs-feature-gate.py"
-    run "docs site build" npm --prefix "$ROOT_DIR/website" run build
+    run "docs site e2e" "$ROOT_DIR/scripts/docs-site-e2e.py"
 else
     record_skip "docs feature gate" "AIDEMEMO_RELEASE_PREFLIGHT_DOCS=0"
-    record_skip "docs site build" "AIDEMEMO_RELEASE_PREFLIGHT_DOCS=0"
+    record_skip "docs site e2e" "AIDEMEMO_RELEASE_PREFLIGHT_DOCS=0"
 fi
 
 if [[ "$RUN_STORAGE_BACKEND" == "1" ]]; then

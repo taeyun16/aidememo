@@ -24,6 +24,12 @@ pub struct Config {
     /// model/endpoint to opt into LLM extraction.
     #[serde(default)]
     pub extract: ExtractConfig,
+    /// Optional write-time privacy guard. Disabled by default. Set
+    /// `privacy.provider = "openai-privacy-filter"` and point
+    /// `privacy.endpoint` at a local sidecar to screen fact content before
+    /// persistence.
+    #[serde(default)]
+    pub privacy: PrivacyConfig,
     /// Memory-lifecycle behaviour: auto-supersede on atomic-type
     /// conflict, semantic dedup at write, etc. Off by default to
     /// preserve the historical "every fact_add creates a new fact"
@@ -118,8 +124,9 @@ impl Default for StoreConfig {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ModelConfig {
-    /// Embedding provider: "model2vec" (default, offline) or "openai"
-    /// (HTTP — works for OpenAI / Ollama / OpenRouter / vLLM / LocalAI).
+    /// Embedding provider: "model2vec" (default, offline), "openai"
+    /// (HTTP — works for OpenAI / Ollama / OpenRouter / vLLM / LocalAI),
+    /// "tei", or "lfm-sidecar" (TEI-compatible local MLX bridge).
     #[serde(default = "default_provider")]
     pub provider: String,
     /// Model name. For model2vec this is the HuggingFace handle; for
@@ -233,8 +240,9 @@ pub struct SearchConfig {
     pub semantic_index: String,
     /// Automatically promote CLI / tool searches from the cheap BM25 path to
     /// semantic retrieval when the lexical probe looks weak. On by default as
-    /// the balanced path: strong lexical queries stay BM25-only, while weak or
-    /// CJK queries can use the semantic provider when a semantic path is ready.
+    /// the balanced path: strong lexical queries stay BM25-only, while weak
+    /// lexical probes can use the semantic provider when a semantic path is
+    /// ready.
     /// With the default HNSW index, auto-hybrid does not load the provider just
     /// to discover a missing sidecar. Set `search.auto_hybrid=false` or pass a
     /// per-call BM25-only flag for deterministic demos/hooks.
@@ -249,9 +257,10 @@ pub struct SearchConfig {
     /// retrieval.
     #[serde(default = "default_auto_hybrid_min_top_score")]
     pub auto_hybrid_min_top_score: f32,
-    /// Promote CJK queries to semantic retrieval in auto-hybrid mode. The MLX
-    /// LFM dense smoke showed the clearest benefit when Korean wording yielded
-    /// no BM25 candidates.
+    /// Let CJK queries promote more eagerly when lexical evidence is not
+    /// strong. The MLX LFM dense smoke showed the clearest benefit when Korean
+    /// wording yielded no BM25 candidates, but HF agent traces showed that
+    /// Korean wrappers around strong English anchors should stay lexical.
     #[serde(default = "default_true")]
     pub auto_hybrid_cjk: bool,
     /// Multiplicative weighting of `source_confidence` and
@@ -660,6 +669,160 @@ impl ExtractConfig {
     }
 }
 
+/// Write-time privacy filtering config. Drives an optional local sidecar
+/// that returns OpenAI Privacy Filter-compatible spans. Empty `provider`
+/// means disabled, preserving the zero-token default write path.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct PrivacyConfig {
+    /// Provider name. Empty disables the guard. Supported value:
+    /// `"openai-privacy-filter"` (alias: `"opf"`).
+    #[serde(default)]
+    pub provider: String,
+    /// Action mode: `"report"` keeps content unchanged, `"redact"` blocks
+    /// `block_labels` and masks `redact_labels`, `"block"` rejects writes
+    /// containing `block_labels` or `redact_labels`.
+    #[serde(default = "default_privacy_mode")]
+    pub mode: String,
+    /// Local sidecar endpoint. If this is a base URL, `/filter` is appended.
+    #[serde(default)]
+    pub endpoint: String,
+    /// Optional env var containing a bearer token for the sidecar.
+    #[serde(default)]
+    pub api_key_env: String,
+    /// Labels that should reject a write in `redact` or `block` mode.
+    #[serde(default = "default_privacy_block_labels")]
+    pub block_labels: Vec<String>,
+    /// Labels that are masked in `redact` mode and rejected in `block` mode.
+    #[serde(default = "default_privacy_redact_labels")]
+    pub redact_labels: Vec<String>,
+    /// Labels that are only surfaced for review by default.
+    #[serde(default = "default_privacy_review_labels")]
+    pub review_labels: Vec<String>,
+    /// Whether future write responses should include label/count summaries.
+    /// The core guard never stores original detected spans.
+    #[serde(default = "default_true")]
+    pub store_summary: bool,
+}
+
+fn default_privacy_mode() -> String {
+    "report".to_string()
+}
+
+fn default_privacy_block_labels() -> Vec<String> {
+    vec!["secret".to_string()]
+}
+
+fn default_privacy_redact_labels() -> Vec<String> {
+    vec![
+        "private_email".to_string(),
+        "private_phone".to_string(),
+        "private_address".to_string(),
+        "account_number".to_string(),
+        "private_url".to_string(),
+        "private_date".to_string(),
+    ]
+}
+
+fn default_privacy_review_labels() -> Vec<String> {
+    vec!["private_person".to_string()]
+}
+
+impl Default for PrivacyConfig {
+    fn default() -> Self {
+        Self {
+            provider: String::new(),
+            mode: default_privacy_mode(),
+            endpoint: String::new(),
+            api_key_env: String::new(),
+            block_labels: default_privacy_block_labels(),
+            redact_labels: default_privacy_redact_labels(),
+            review_labels: default_privacy_review_labels(),
+            store_summary: true,
+        }
+    }
+}
+
+impl PrivacyConfig {
+    pub fn enabled(&self) -> bool {
+        !self.provider.trim().is_empty()
+    }
+
+    fn get(&self, key: &str) -> Option<String> {
+        match key {
+            "provider" => Some(self.provider.clone()),
+            "mode" => Some(self.mode.clone()),
+            "endpoint" => Some(self.endpoint.clone()),
+            "api_key_env" => Some(self.api_key_env.clone()),
+            "block_labels" => Some(self.block_labels.join(",")),
+            "redact_labels" => Some(self.redact_labels.join(",")),
+            "review_labels" => Some(self.review_labels.join(",")),
+            "store_summary" => Some(self.store_summary.to_string()),
+            _ => None,
+        }
+    }
+
+    fn set(&mut self, key: &str, value: &str) -> Result<()> {
+        match key {
+            "provider" => {
+                let v = value.trim().to_ascii_lowercase();
+                if !matches!(v.as_str(), "" | "openai-privacy-filter" | "opf") {
+                    return Err(AideMemoError::InvalidInput(format!(
+                        "privacy.provider must be one of [\"\", \"openai-privacy-filter\", \"opf\"], got '{value}'"
+                    )));
+                }
+                self.provider = v;
+                Ok(())
+            }
+            "mode" => {
+                let v = value.trim().to_ascii_lowercase();
+                if !matches!(v.as_str(), "report" | "redact" | "block") {
+                    return Err(AideMemoError::InvalidInput(format!(
+                        "privacy.mode must be 'report', 'redact', or 'block', got '{value}'"
+                    )));
+                }
+                self.mode = v;
+                Ok(())
+            }
+            "endpoint" => {
+                self.endpoint = value.trim().to_string();
+                Ok(())
+            }
+            "api_key_env" => {
+                self.api_key_env = value.trim().to_string();
+                Ok(())
+            }
+            "block_labels" => {
+                self.block_labels = parse_label_list(value);
+                Ok(())
+            }
+            "redact_labels" => {
+                self.redact_labels = parse_label_list(value);
+                Ok(())
+            }
+            "review_labels" => {
+                self.review_labels = parse_label_list(value);
+                Ok(())
+            }
+            "store_summary" => {
+                self.store_summary = value.trim().parse::<bool>().map_err(|e| {
+                    AideMemoError::InvalidInput(format!("privacy.store_summary: {e}"))
+                })?;
+                Ok(())
+            }
+            _ => Err(AideMemoError::ConfigKeyNotFound(format!("privacy.{}", key))),
+        }
+    }
+}
+
+fn parse_label_list(value: &str) -> Vec<String> {
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_ascii_lowercase())
+        .collect()
+}
+
 /// Memory-lifecycle config. Toggles the OMEGA-style write-time
 /// behaviours that diverge from the historical aidememo "every fact_add
 /// creates a new fact" semantics.
@@ -785,6 +948,7 @@ impl Config {
             ["lint", k] => self.lint.get(k),
             ["rerank", k] => self.rerank.get(k),
             ["extract", k] => self.extract.get(k),
+            ["privacy", k] => self.privacy.get(k),
             ["lifecycle", k] => self.lifecycle.get(k),
             _ => None,
         }
@@ -800,6 +964,7 @@ impl Config {
             ["lint", k] => self.lint.set(k, value),
             ["rerank", k] => self.rerank.set(k, value),
             ["extract", k] => self.extract.set(k, value),
+            ["privacy", k] => self.privacy.set(k, value),
             ["lifecycle", k] => self.lifecycle.set(k, value),
             _ => Err(AideMemoError::ConfigKeyNotFound(key.to_string())),
         }
@@ -1189,6 +1354,69 @@ mod tests {
             config.get("model.document_prefix"),
             Some("document: ".to_string())
         );
+    }
+
+    #[test]
+    fn privacy_config_defaults_disabled_but_policy_is_ready() {
+        let config = Config::default();
+        assert_eq!(config.get("privacy.provider"), Some(String::new()));
+        assert_eq!(config.get("privacy.mode"), Some("report".to_string()));
+        assert_eq!(
+            config.get("privacy.block_labels"),
+            Some("secret".to_string())
+        );
+        assert_eq!(
+            config.get("privacy.review_labels"),
+            Some("private_person".to_string())
+        );
+        assert!(!config.privacy.enabled());
+    }
+
+    #[test]
+    fn privacy_config_get_set_round_trips() {
+        let mut config = Config::default();
+        config
+            .set("privacy.provider", "openai-privacy-filter")
+            .unwrap();
+        config.set("privacy.mode", "redact").unwrap();
+        config
+            .set("privacy.endpoint", "http://127.0.0.1:8090")
+            .unwrap();
+        config
+            .set("privacy.redact_labels", "private_email, private_phone")
+            .unwrap();
+        config.set("privacy.store_summary", "false").unwrap();
+
+        assert!(config.privacy.enabled());
+        assert_eq!(
+            config.get("privacy.provider"),
+            Some("openai-privacy-filter".to_string())
+        );
+        assert_eq!(config.get("privacy.mode"), Some("redact".to_string()));
+        assert_eq!(
+            config.get("privacy.endpoint"),
+            Some("http://127.0.0.1:8090".to_string())
+        );
+        assert_eq!(
+            config.get("privacy.redact_labels"),
+            Some("private_email,private_phone".to_string())
+        );
+        assert_eq!(
+            config.get("privacy.store_summary"),
+            Some("false".to_string())
+        );
+    }
+
+    #[test]
+    fn privacy_config_rejects_unknown_provider_and_mode() {
+        let mut config = Config::default();
+        let err = config
+            .set("privacy.provider", "remote-llm")
+            .expect_err("unknown provider");
+        assert!(format!("{err}").contains("privacy.provider"));
+
+        let err = config.set("privacy.mode", "delete").expect_err("bad mode");
+        assert!(format!("{err}").contains("privacy.mode"));
     }
 
     #[test]

@@ -2,6 +2,7 @@ import clsx from 'clsx';
 import Heading from '@theme/Heading';
 import Layout from '@theme/Layout';
 import Link from '@docusaurus/Link';
+import useBaseUrl from '@docusaurus/useBaseUrl';
 
 import styles from './index.module.css';
 
@@ -23,17 +24,34 @@ const docLinks: DocLink[] = [
     to: '/docs/QUICKSTART',
   },
   {
+    title: 'Architecture',
+    description: 'See how CLI, MCP, SDKs, bindings, core, stores, and indexes fit together.',
+    to: '/docs/ARCHITECTURE',
+  },
+  {
     title: 'MCP Setup',
     description: 'Register AideMemo with local agents and use the core memory tools.',
     to: '/docs/MCP',
   },
+  {
+    title: 'Agent Workflows',
+    description: 'Choose workflow, context, query, aggregate, canvas, and profile calls by task shape.',
+    to: '/docs/AGENT_WORKFLOWS',
+  },
+  {
+    title: 'Measurements',
+    description: 'Review the validation ledger behind workflow, SDK, retrieval, and sharing claims.',
+    to: '/docs/MEASUREMENTS',
+  },
 ];
 
 function HomepageHeader() {
+  const logoSrc = useBaseUrl('img/aidememo-logo.png');
+
   return (
     <header className={styles.hero}>
       <div className="container">
-        <img className={styles.logoMark} src="/img/aidememo-logo.png" alt="AideMemo logo" />
+        <img className={styles.logoMark} src={logoSrc} alt="AideMemo logo" />
         <p className={styles.eyebrow}>AideMemo Docs</p>
         <Heading as="h1" className={styles.title}>
           Agent-friendly SDK memory for coding agents.

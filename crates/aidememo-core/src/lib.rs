@@ -19,6 +19,7 @@ pub mod index;
 pub mod ingest;
 pub mod lint;
 pub mod migrate;
+pub mod privacy;
 pub mod relations;
 #[cfg(feature = "semantic")]
 pub mod rerank;
@@ -606,7 +607,7 @@ impl AideMemo {
     }
 
     pub fn add_fact(&self, input: FactInput) -> Result<FactId> {
-        let input = Self::prepare_fact_input(input);
+        let input = self.prepare_fact_input(input)?;
         let id = {
             let mut store = self.store.write();
             store.fact_add(input)?
@@ -695,7 +696,10 @@ impl AideMemo {
         if inputs.is_empty() {
             return Ok(Vec::new());
         }
-        let inputs: Vec<FactInput> = inputs.into_iter().map(Self::prepare_fact_input).collect();
+        let inputs: Vec<FactInput> = inputs
+            .into_iter()
+            .map(|input| self.prepare_fact_input(input))
+            .collect::<Result<Vec<_>>>()?;
         let ids = {
             let mut store = self.store.write();
             store.fact_add_many(inputs)?
@@ -707,11 +711,12 @@ impl AideMemo {
         Ok(ids)
     }
 
-    fn prepare_fact_input(mut input: FactInput) -> FactInput {
+    fn prepare_fact_input(&self, mut input: FactInput) -> Result<FactInput> {
         if input.fact_type.is_none() {
             input.fact_type = Some(extract::infer_fact_type(&input.content));
         }
-        input
+        input.content = privacy::screen_fact_content(input.content, &self.config.privacy)?;
+        Ok(input)
     }
 
     /// Get a fact by ID.
@@ -1432,7 +1437,12 @@ impl AideMemo {
     pub fn ingest(&self, wiki_root: &Path, incremental: bool) -> Result<ingest::IngestStats> {
         let stats = {
             let mut store = self.store.write();
-            ingest::ingest_wiki(wiki_root, &mut *store, incremental)?
+            ingest::ingest_wiki_with_privacy(
+                wiki_root,
+                &mut *store,
+                incremental,
+                &self.config.privacy,
+            )?
         };
         self.bm25_mark_dirty();
         // Auto-rebuild the HNSW index if the user opted into the
@@ -2153,14 +2163,18 @@ fn should_promote_auto_hybrid(
     if config.semantic_weight == 0.0 {
         return false;
     }
-    if config.auto_hybrid_cjk && contains_cjk(query) {
-        return true;
-    }
     if bm25_results.len() < config.auto_hybrid_min_bm25_hits {
         return true;
     }
     match bm25_results.first() {
-        Some(result) => result.score < config.auto_hybrid_min_top_score,
+        Some(result) => {
+            if result.score < config.auto_hybrid_min_top_score {
+                return true;
+            }
+            config.auto_hybrid_cjk
+                && contains_cjk(query)
+                && result.score < config.auto_hybrid_min_top_score * 2.0
+        }
         None => true,
     }
 }
@@ -2245,10 +2259,15 @@ mod adaptive_search_tests {
     }
 
     #[test]
-    fn auto_hybrid_promotes_cjk_queries() {
+    fn auto_hybrid_promotes_cjk_queries_when_lexical_evidence_is_not_strong() {
         let config = Config::default().search;
         assert!(should_promote_auto_hybrid(
             "레디스 장애 원인",
+            &[result(1.25)],
+            &config,
+        ));
+        assert!(!should_promote_auto_hybrid(
+            "레디스 장애 원인 redis timeout",
             &[result(3.0)],
             &config,
         ));

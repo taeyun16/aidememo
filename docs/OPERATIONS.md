@@ -8,6 +8,134 @@ description: Practical guidance for stores, source scoping, daemon mode, and mai
 This page covers the operational choices users usually need after the first
 quickstart.
 
+## Default local-only path
+
+AideMemo's default path does not call external LLM APIs. The calling agent may
+be an LLM, but AideMemo itself stores, searches, and serves memory through local
+deterministic code plus optional local embedding sidecars.
+
+| Surface | Default behavior | External LLM call? | Local model load? | Opt-in upgrade |
+|---|---|---:|---:|---|
+| Store | SQLite file with local BM25 and graph indexes | No | No | redb backend, S3 backup/branch transport |
+| `fact add` / MCP writes | Preserve explicit `fact_type`; if omitted, use deterministic strong-cue inference and otherwise store `note` | No | No | shadow `fact_type_hint` logs and reviewed LFM LoRA sidecar |
+| Privacy guard | Disabled until configured; no PII model is loaded on the default path | No | No | local OpenAI Privacy Filter sidecar before persistence |
+| Search | BM25 probe first; `search.auto_hybrid=true` promotes only weak lexical probes when the semantic sidecar is ready | No | No for confident BM25 or missing sidecar | force `--hybrid`, MLX LFM embedding sidecar, fastembed/BGE eval path |
+| Daemon / MCP server | Reuse one warm local process for repeated agent calls | No | Prewarm only when semantic config is enabled and ready | `AIDEMEMO_PREWARM_SEMANTIC=1`, remote TEI-compatible local network service |
+| Extraction | Heuristic/local capture only | No | No | `extract.provider=openai` is explicit opt-in |
+| Rerank | Off | No | No | TEI/ColBERT/BGE rerank sidecar |
+| SDK / bindings | Same Rust core in process or via CLI fallback | No | Follows the selected search path | agent-specific capture policies before `fact_add` |
+
+That is the product boundary: the default memory loop is zero-token and
+vendor-independent, while small local models are measured sidecars placed only
+where BM25 or deterministic capture is known to be weak.
+
+## Use write-time privacy filtering
+
+OpenAI Privacy Filter
+([model](https://huggingface.co/openai/privacy-filter),
+[source](https://github.com/openai/privacy-filter), and
+[model card](https://cdn.openai.com/pdf/c66281ed-b638-456a-8ce1-97e9f5264a90/OpenAI-Privacy-Filter-Model-Card.pdf))
+can run as an opt-in pre-persistence guard. It is a bidirectional
+token-classification model, not a generative LLM, and is intended for on-prem
+PII detection and masking workflows. The official model card lists eight span
+categories:
+`account_number`, `private_address`, `private_email`, `private_person`,
+`private_phone`, `private_url`, `private_date`, and `secret`.
+
+Do not treat it as a blanket anonymization or compliance guarantee. AideMemo
+keeps this guard disabled by default, then fails closed when you explicitly
+enable it and the sidecar cannot be reached.
+
+AideMemo applies the guard inside `AideMemo::add_fact` / `fact_add_many`, so
+CLI, MCP, extract-apply, pending approve, and native bindings that call the core
+write API share the same pre-store behavior.
+
+Before sidecar policy is applied, AideMemo also runs a deterministic local
+secret prefilter for common API-key prefixes (`sk-proj-`, `sk-`, `github_pat_`,
+`ghp_`, `gho_`, `xoxb-`, `AKIA`, `AIza`). This covers the observed OPF failure
+mode where a bare key-like token can be labelled as `private_person` instead of
+`secret`.
+
+| Write surface | Placement | Default policy to test |
+|---|---|---|
+| CLI `aidememo fact add` | Before `FactInput` is persisted; daemon path reuses a warm local filter process | `report` first, then `redact` for high-confidence non-name spans |
+| MCP `aidememo_fact_add` / `aidememo_fact_add_many` | Shared helper before batch insert so single and batch writes match | Batch `redact`; detected labels are logged, original spans are not persisted |
+| `aidememo extract --apply` and pending approve | Filter the candidate content after extraction but before approval writes | Block `secret`; redact email/phone/address/account/url/date; review person names |
+| Markdown ingest | Optional project-level guard for imported notes and logs | `report` mode unless the project explicitly opts into destructive redaction |
+
+Run the local sidecar:
+
+```bash
+python3 -m pip install git+https://github.com/openai/privacy-filter.git
+python3 scripts/privacy_filter_sidecar.py --device cpu --port 8090
+```
+
+On Apple Silicon, the measured lower-latency path is the MLX mxfp4 conversion:
+
+```bash
+python3 -m pip install git+https://github.com/Blaizzy/mlx-embeddings.git
+hf download mlx-community/openai-privacy-filter-mxfp4 \
+  --local-dir /private/tmp/openai-privacy-filter-mlx-mxfp4
+python3 scripts/privacy_filter_mlx_sidecar.py \
+  --model-dir /private/tmp/openai-privacy-filter-mlx-mxfp4 \
+  --port 8091
+```
+
+Enable the write guard:
+
+```bash
+aidememo config set privacy.provider openai-privacy-filter
+aidememo config set privacy.endpoint http://127.0.0.1:8090  # or the MLX sidecar port
+aidememo config set privacy.mode redact
+```
+
+Equivalent config shape:
+
+```toml
+[privacy]
+provider = "openai-privacy-filter"   # empty disables the guard
+mode = "report"                      # report | redact | block
+endpoint = "http://127.0.0.1:8090"   # local sidecar; no remote inference by default
+api_key_env = ""
+block_labels = ["secret"]
+redact_labels = ["private_email", "private_phone", "private_address", "account_number", "private_url", "private_date"]
+review_labels = ["private_person"]
+store_summary = true                 # reserved for label/count summaries; raw spans are never stored
+```
+
+Keep `private_person` separate from the first automatic-redaction pass. In
+project memory, names can be legitimate entity keys, but in personal/team logs
+they can also be sensitive. Treat this as a policy decision, not a model
+accuracy decision.
+
+Measured local CPU cost on macOS arm64 after the checkpoint is warm:
+sidecar `/filter` p50 was about 244 ms and `aidememo fact add` with the guard
+was about 261 ms p50, versus about 17 ms p50 without privacy filtering. Warm
+sidecar RSS was about 3.8 GB. Keep this opt-in for safety-sensitive writes or
+team/project stores rather than enabling it for every scratch-memory capture.
+
+On Apple Silicon, prefer the MLX mxfp4 sidecar once the runtime is available:
+`mlx-community/openai-privacy-filter-mxfp4` measured at about 739 MB on disk,
+1.28 GB warm RSS, sidecar `/filter` p50 about 18 ms, and `aidememo fact add`
+p50 about 51 ms versus a 22.5 ms baseline. The measured MLX path requires
+`mlx-embeddings` 0.1.1 from GitHub main until the PyPI release catches up, and
+the sidecar should be single-threaded because MLX stream state is thread-local.
+This makes the guard a strong prewarmed opt-in for shared/project stores, but
+still not a universal default.
+
+Evaluation gate before enabling writes:
+
+1. Build a fixture from synthetic examples, local agent traces, and redacted
+   public traces with expected spans and labels.
+2. Measure span recall for `secret`, email, phone, address, URL, account/date,
+   and person-name cases separately.
+3. Track utility loss: entity recall, fact-type accuracy, retrieval R@K, and
+   answerability before/after redaction.
+4. Require zero raw secret persistence in strict mode and inspect all false
+   negatives before promotion.
+5. Pin the source to the official OpenAI repository/model handle. Avoid
+   typosquatted repositories that mimic the model card.
+
 ## Choose a store layout
 
 | Layout | Use when |
@@ -112,8 +240,8 @@ aidememo search "favorite camera setup" --hybrid
 
 Auto-hybrid is the default search policy. AideMemo first runs a BM25 probe and
 promotes to semantic retrieval when the probe is empty, the top score is weak,
-or the query is CJK. Keep the default thresholds unless a store-specific eval
-shows a better cutoff:
+or the query is CJK and BM25 evidence is not strong. Keep the default
+thresholds unless a store-specific eval shows a better cutoff:
 
 ```bash
 aidememo config set search.auto_hybrid true
@@ -132,8 +260,8 @@ aidememo config set search.auto_hybrid false
 With the default HNSW semantic index, auto-hybrid does not cold-load the
 embedding provider when the HNSW sidecar is missing; it stays on the BM25 probe
 until `aidememo vector-rebuild` creates the sidecar. In a fresh CLI process with
-a sidecar present, promoted CJK queries still pay the embedding-model cold load.
-The auto-hybrid path falls back to BM25 if semantic promotion fails. For
+a sidecar present, promoted weak/CJK queries still pay the embedding-model cold
+load. The auto-hybrid path falls back to BM25 if semantic promotion fails. For
 repeated agent calls, run through the daemon so the model is warm.
 
 For daemon-backed stores, `search.auto_hybrid=true` prewarms the semantic
@@ -152,7 +280,8 @@ switch:
 
 | AideMemo surface | First LFM candidate | Use when | Do not use when |
 |---|---|---|---|
-| First-stage semantic retrieval | `mlx-community/LFM2.5-Embedding-350M-4bit` | BM25 returns weak/empty candidates, especially CJK / multilingual queries. The larger tracked-docs gate did not justify a global dense replacement, but BM25-gated LFM improved `R@8` from 0.656 to 0.812 by promoting only the CJK failure slice. Keep `search.auto_hybrid=true` and use a warm daemon for repeated calls. | Plain lexical/code/doc search is already saturated, or you would run LFM dense for every query. |
+| First-stage semantic retrieval | `mlx-community/LFM2.5-Embedding-350M-4bit` | BM25 returns weak/empty candidates, especially multilingual queries without strong lexical anchors. The tracked-docs gate improved `R@8` from 0.656 to 0.812 by promoting only the lexical failure slice; the HF agent-trace gate showed pure LFM dense underperforms when BM25 is already strong. Keep `search.auto_hybrid=true` and use a warm daemon for repeated calls. | Plain lexical/code/doc search is already saturated, or you would run LFM dense for every query. |
+| BERT-family semantic baseline | `fastembed` / `bge-small-en-v1.5` | Offline or high-stakes comparison where a heavier BERT-style encoder is acceptable. On the HF 60-doc slice it reached `R@8=0.994`, close to BM25/BGE head quality, and is useful as a validation baseline. | Agent hot paths: measured daemon query mean was ~1680 ms/query, far slower than LFM query embedding (~31 ms) and BM25/model2vec paths. |
 | Reranking | `mlx-community/LFM2.5-ColBERT-350M-4bit` or `LiquidAI/LFM2.5-ColBERT-350M` sidecar | BM25/hybrid candidate recall is high but the top result is often misordered. | The right fact is absent from the candidate set unless you deliberately build an all-doc / multi-vector ColBERT index. |
 | Fact extraction / type classification | `LiquidAI/LFM2.5-1.2B-Instruct-MLX-4bit` with a fact-type LoRA adapter | You want local high-confidence `fact_type_hint` candidates for residual/default-note cases or pending review. The corpus-only 240-iteration LoRA beat deterministic inference on both the seed coding-agent corpus test and the older 45-case holdout. | You need automatic high-precision writes from unlabelled real traffic. Grow and validate a reviewed shadow corpus first. |
 | Query routing | deterministic rules + search confidence | You need to choose BM25-only vs dense vs ColBERT vs aggregate. | Do not spend an LFM text-generation call here yet; the MLX LM router micro-eval was weaker than rules. |
@@ -213,6 +342,29 @@ python3 scripts/lfm_mlx_dense_eval.py \
 The MLX path needs Metal access. In headless or sandboxed sessions, `mlx` may
 fail with `No Metal device available`; run it from a process that can see the
 Apple GPU.
+
+To put the MLX LFM embedder behind the real AideMemo semantic path, run the
+TEI-compatible sidecar and configure the experimental provider alias:
+
+```bash
+/private/tmp/aidememo-lfm-venv/bin/python scripts/lfm_mlx_embedding_sidecar.py \
+  --model-dir /private/tmp/lfm25-embedding-mlx-4bit \
+  --port 8088
+
+aidememo config set model.provider lfm-sidecar
+aidememo config set model.endpoint http://127.0.0.1:8088
+aidememo config set model.name mlx-community/LFM2.5-Embedding-350M-4bit
+aidememo config set model.dimension 1024
+aidememo config set model.query_prefix "query: "
+aidememo config set model.document_prefix "document: "
+aidememo vector-rebuild --current-only
+aidememo daemon start
+aidememo search "레디스 장애 원인" -l 8
+```
+
+This keeps MLX and Liquid model code outside the Rust process while still using
+the normal `auto_hybrid` + HNSW flow. If the sidecar is not running, semantic
+promotion fails non-fatally and AideMemo falls back to the BM25 probe.
 
 Use `LiquidAI/LFM2.5-1.2B-Instruct-MLX-4bit` for local fact extraction and type
 classification experiments only as a pending-review helper. The Mac MLX
@@ -308,6 +460,109 @@ python3 scripts/lfm_fact_type_sft_data.py \
 ```
 
 Run the tuned adapter as a hint-only sidecar:
+
+```bash
+/private/tmp/aidememo-lfm-venv/bin/python scripts/lfm_fact_type_sidecar.py \
+  --model-dir /private/tmp/lfm25-12b-instruct-mlx-4bit \
+  --adapter-path /private/tmp/aidememo-lfm-fact-type-corpus-lora \
+  --confidence-threshold 0.8 \
+  --input-jsonl ~/.aidememo/fact-type-shadow.jsonl \
+  --input-split test \
+  --output-jsonl /private/tmp/aidememo-fact-type-hints.jsonl
+
+python3 scripts/lfm_fact_type_threshold_eval.py \
+  --labels-jsonl ~/.aidememo/fact-type-shadow.jsonl \
+  --label-split test \
+  --predictions-jsonl /private/tmp/aidememo-fact-type-hints.jsonl \
+  --min-precision 0.95 \
+  --max-baseline-correct-harms 0
+```
+
+To stress-test the same sidecar on local agent behavior logs without external
+LLM calls, build weak-labelled probes from AgentStep / Hermes logs and run the
+same threshold gate:
+
+```bash
+python3 scripts/lfm_fact_type_log_fixture.py \
+  --out-dir /private/tmp/aidememo-lfm-log-probes \
+  --max-rows 72 \
+  --max-per-label 12
+```
+
+To run the broader public-trace gate, build weak-labelled probes from Hugging
+Face agent traces. This fetches rows through the Dataset Viewer API, redacts
+emails and long identifiers, and writes only compact candidate-memory JSONL
+under `/private/tmp`:
+
+```bash
+python3 scripts/lfm_fact_type_hf_probe.py \
+  --out-dir /private/tmp/aidememo-lfm-hf-probes \
+  --source-rows 100 \
+  --max-rows-per-dataset 100 \
+  --max-per-label 25
+
+/private/tmp/aidememo-lfm-venv/bin/python scripts/lfm_fact_type_sidecar.py \
+  --model-dir /private/tmp/lfm25-12b-instruct-mlx-4bit \
+  --adapter-path /private/tmp/aidememo-lfm-fact-type-corpus-lora \
+  --input-jsonl /private/tmp/aidememo-lfm-hf-probes/combined_hf_fact_type_probe.jsonl \
+  --input-split test \
+  --output-jsonl /private/tmp/aidememo-lfm-hf-probes/fact_type_hints_hf.jsonl
+
+python3 scripts/lfm_fact_type_threshold_eval.py \
+  --labels-jsonl /private/tmp/aidememo-lfm-hf-probes/combined_hf_fact_type_probe.jsonl \
+  --label-split test \
+  --predictions-jsonl /private/tmp/aidememo-lfm-hf-probes/fact_type_hints_hf.jsonl \
+  --confidence-grid 0.80,0.90,0.95,0.98
+```
+
+Treat this as a raw-trace stress test, not reviewed truth. The July 8 public
+HF run showed that `confidence >= 0.80` is too loose on raw trace events, but
+high-confidence hints become useful after deterministic extraction has already
+filtered the stream down to durable memory-candidate categories. The script
+also writes `high_signal_hf_fact_type_probe.jsonl` for that second gate.
+
+To test retrieval placement on the same HF traces, convert the compact probe
+rows into corpus / query / qrels files, then run BM25, model2vec, LFM dense,
+and optional fastembed/BGE profiles:
+
+```bash
+python3 scripts/lfm_hf_agent_trace_retrieval_fixture.py \
+  --probe-jsonl /private/tmp/aidememo-lfm-hf-probes/combined_hf_fact_type_probe.jsonl \
+  --out-dir /private/tmp/aidememo-lfm-hf-retrieval \
+  --variants surface,paraphrase,cjk \
+  --max-docs-per-source 60
+
+/private/tmp/aidememo-lfm-venv/bin/python scripts/lfm_mlx_docs_recall_eval.py \
+  --aidememo target/debug/aidememo \
+  --no-default-docs \
+  --corpus-jsonl /private/tmp/aidememo-lfm-hf-retrieval/hf_agent_trace_corpus.jsonl \
+  --queries-jsonl /private/tmp/aidememo-lfm-hf-retrieval/hf_agent_trace_queries.jsonl \
+  --qrels-tsv /private/tmp/aidememo-lfm-hf-retrieval/hf_agent_trace_qrels.tsv \
+  --model-dir /private/tmp/lfm25-embedding-mlx-4bit \
+  --candidate-limit 8 \
+  --summary-only \
+  --output-json /private/tmp/aidememo-lfm-hf-retrieval/eval_summary.json
+```
+
+For the BGE/BERT-family fastembed baseline, build the CLI with the optional
+feature and keep the slice smaller unless you are running an offline batch:
+
+```bash
+cargo build -p aidememo-cli --features fastembed
+
+/private/tmp/aidememo-lfm-venv/bin/python scripts/lfm_mlx_docs_recall_eval.py \
+  --aidememo target/debug/aidememo \
+  --no-default-docs \
+  --corpus-jsonl /private/tmp/aidememo-lfm-hf-retrieval/hf_agent_trace_corpus.jsonl \
+  --queries-jsonl /private/tmp/aidememo-lfm-hf-retrieval/hf_agent_trace_queries.jsonl \
+  --qrels-tsv /private/tmp/aidememo-lfm-hf-retrieval/hf_agent_trace_qrels.tsv \
+  --model-dir /private/tmp/lfm25-embedding-mlx-4bit \
+  --fastembed-model bge-small-en-v1.5 \
+  --candidate-limit 8 \
+  --summary-only
+```
+
+For one-off manual hints, pass text directly:
 
 ```bash
 /private/tmp/aidememo-lfm-venv/bin/python scripts/lfm_fact_type_sidecar.py \

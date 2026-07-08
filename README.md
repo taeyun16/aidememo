@@ -32,7 +32,9 @@ and in-process bindings.
 It is deliberately not a hosted memory SaaS, a full agent runtime, or a vector
 database you have to operate. The default path is local and serverless: agents
 can either call MCP tools directly or use `aidememo-agent-sdk` when they can execute
-Python and need to keep intermediate memory state in code.
+Python and need to keep intermediate memory state in code. AideMemo's default
+memory loop calls no external LLM API; remote extraction, embedding, and rerank
+services are explicit opt-ins.
 
 ```mermaid
 flowchart LR
@@ -53,6 +55,8 @@ flowchart LR
 |---|---|
 | Agent-friendly SDK memory | `aidememo-agent-sdk` gives code-executing agents `Memory.open`, `search_rows`, `coverage_by`, `aggregate_many`, and `remember`. |
 | Local agent memory | Single binary + single embedded store. No Postgres, Qdrant, Neo4j, or hosted vendor. |
+| Zero-token default path | Default capture, typed writes, BM25-first search, and MCP/SDK reads run locally without external LLM API calls. |
+| Opt-in privacy guard | Local OpenAI Privacy Filter sidecars can report, redact, or block sensitive spans before facts are persisted. |
 | More than vector recall | Typed facts, entities, relations, graph traversal, temporal validity, aggregation. |
 | Agent-native access | SDK for code-first composition, MCP over stdio/HTTP for model-visible tools, plus a compact CLI for humans. |
 | Shared team/project memory | Optional `source_id` scoping, multi-project stores, and a daemon path for shared writes. |
@@ -156,7 +160,7 @@ SkillOpt-inspired loop, and `scripts/skillopt-lite-check.sh` gates candidate
 
 ```bash
 aidememo search "cache policy" -l 5
-aidememo search "레디스 장애 원인" -l 5       # auto-hybrid promotes weak/CJK probes when vectors are ready
+aidememo search "레디스 장애 원인" -l 5       # auto-hybrid promotes only weak lexical/CJK probes when vectors are ready
 aidememo search "cache policy" --bm25-only    # deterministic lexical fast path
 aidememo search "cache policy" --hybrid       # force semantic on every query
 aidememo query "Redis" --mode hybrid

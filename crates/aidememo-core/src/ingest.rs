@@ -12,7 +12,9 @@ use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
 use crate::backend::StoreBackend;
+use crate::config::PrivacyConfig;
 use crate::error::AideMemoError;
+use crate::privacy;
 use crate::relations::{TypedRelation, extract_typed_relations};
 use crate::types::{EntityInput, EntityType, FactInput, FactType, RelationInput, RelationType};
 
@@ -88,6 +90,25 @@ pub fn ingest_wiki<B: StoreBackend>(
     wiki_root: &Path,
     store: &mut B,
     _incremental: bool,
+) -> Result<IngestStats, AideMemoError> {
+    ingest_wiki_inner(wiki_root, store, _incremental, None)
+}
+
+/// Perform an ingest with the same write-time privacy guard as `AideMemo::add_fact`.
+pub fn ingest_wiki_with_privacy<B: StoreBackend>(
+    wiki_root: &Path,
+    store: &mut B,
+    incremental: bool,
+    privacy_config: &PrivacyConfig,
+) -> Result<IngestStats, AideMemoError> {
+    ingest_wiki_inner(wiki_root, store, incremental, Some(privacy_config))
+}
+
+fn ingest_wiki_inner<B: StoreBackend>(
+    wiki_root: &Path,
+    store: &mut B,
+    _incremental: bool,
+    privacy_config: Option<&PrivacyConfig>,
 ) -> Result<IngestStats, AideMemoError> {
     let wiki_root = wiki_root.to_path_buf();
     let mut stats = IngestStats::default();
@@ -214,8 +235,23 @@ pub fn ingest_wiki<B: StoreBackend>(
                         section.fact_type
                     };
                     let source = Some(format!("{}#{}", parsed.rel_path, section.anchor));
+                    let content = match privacy_config {
+                        Some(config) => {
+                            match privacy::screen_fact_content(section.content.clone(), config) {
+                                Ok(content) => content,
+                                Err(e) => {
+                                    stats.errors.push(format!(
+                                        "{}#{}: privacy filter: {}",
+                                        parsed.rel_path, section.anchor, e
+                                    ));
+                                    continue;
+                                }
+                            }
+                        }
+                        None => section.content.clone(),
+                    };
                     let fact_input = FactInput {
-                        content: section.content.clone(),
+                        content,
                         fact_type: Some(fact_type),
                         entity_ids: Some(vec![entity_id]),
                         tags: None,

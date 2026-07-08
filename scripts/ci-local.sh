@@ -134,7 +134,7 @@ sdk() {
 
 docs() {
     run "$ROOT_DIR/scripts/docs-feature-gate.py"
-    run npm --prefix "$ROOT_DIR/website" run build
+    run "$ROOT_DIR/scripts/docs-site-e2e.py"
 }
 
 demo() {

@@ -12,6 +12,7 @@ const config = {
   trailingSlash: false,
   onBrokenLinks: 'warn',
   markdown: {
+    mermaid: true,
     hooks: {
       onBrokenMarkdownLinks: 'warn',
     },
@@ -30,7 +31,7 @@ const config = {
           path: '../docs',
           routeBasePath: 'docs',
           sidebarPath: require.resolve('./sidebars.js'),
-          exclude: ['MEASUREMENTS.md', 'SDK_POSITIONING.md', 'SKILLOPT_LITE.md'],
+          exclude: ['SDK_POSITIONING.md', 'SKILLOPT_LITE.md'],
           editUrl: ({docPath}) =>
             `https://github.com/taeyun16/aidememo/blob/main/docs/${docPath}`,
         },
@@ -41,6 +42,7 @@ const config = {
       },
     ],
   ],
+  themes: ['@docusaurus/theme-mermaid'],
 
   themeConfig:
     /** @type {import('@docusaurus/preset-classic').ThemeConfig} */
@@ -83,8 +85,16 @@ const config = {
                 to: '/docs/INTRODUCTION',
               },
               {
+                label: 'Architecture',
+                to: '/docs/ARCHITECTURE',
+              },
+              {
                 label: 'Quickstart',
                 to: '/docs/QUICKSTART',
+              },
+              {
+                label: 'Agent Workflows',
+                to: '/docs/AGENT_WORKFLOWS',
               },
               {
                 label: 'MCP Setup',

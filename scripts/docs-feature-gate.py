@@ -13,8 +13,94 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 FEATURES_DOC = ROOT / "docs" / "FEATURES.md"
+ARCHITECTURE_DOC = ROOT / "docs" / "ARCHITECTURE.md"
+AGENT_WORKFLOWS_DOC = ROOT / "docs" / "AGENT_WORKFLOWS.md"
+MEASUREMENTS_DOC = ROOT / "docs" / "MEASUREMENTS.md"
 MCP_TOOLS_RS = ROOT / "crates" / "aidememo-cli" / "src" / "cmd" / "mcp_tools.rs"
 SIDEBAR_JS = ROOT / "website" / "sidebars.js"
+DOCUSAURUS_CONFIG = ROOT / "website" / "docusaurus.config.js"
+WEBSITE_PACKAGE = ROOT / "website" / "package.json"
+HOMEPAGE_TSX = ROOT / "website" / "src" / "pages" / "index.tsx"
+
+REQUIRED_SIDEBAR_DOCS = [
+    "INTRODUCTION",
+    "ARCHITECTURE",
+    "INSTALLATION",
+    "QUICKSTART",
+    "CLI",
+    "MCP",
+    "AGENT_WORKFLOWS",
+    "SDK",
+    "FEATURES",
+    "OPERATIONS",
+    "BRANCHES",
+    "MEASUREMENTS",
+    "RELEASE",
+]
+
+REQUIRED_HOMEPAGE_DOCS = [
+    "INTRODUCTION",
+    "QUICKSTART",
+    "ARCHITECTURE",
+    "MCP",
+    "AGENT_WORKFLOWS",
+    "MEASUREMENTS",
+]
+
+DOC_CONTENT_REQUIREMENTS = [
+    (
+        ARCHITECTURE_DOC,
+        [
+            "aidememo-core",
+            "AideMemo API",
+            "StoreKind",
+            "SQLite default",
+            "redb optional",
+            "BM25",
+            "semantic HNSW",
+            "aidememo-cli",
+            "aidememo mcp",
+            "aidememo mcp-serve",
+            "aidememo-agent-sdk",
+            "aidememo-python",
+            "aidememo-napi",
+            "aidememo-nif",
+            "aidememo-ffi",
+            "scripts/docs-feature-gate.py",
+            "scripts/docs-site-e2e.py",
+        ],
+    ),
+    (
+        AGENT_WORKFLOWS_DOC,
+        [
+            "aidememo_workflow_start",
+            "aidememo_context",
+            "aidememo_query",
+            "aidememo_search",
+            "aidememo_aggregate",
+            "aidememo_fact_add",
+            "aidememo_fact_add_many",
+            "aidememo_session_canvas",
+            "aidememo_profile_export",
+            "Memory.open",
+            "search_rows",
+            "coverage_by",
+            "aggregate_many",
+            "remember",
+        ],
+    ),
+    (
+        MEASUREMENTS_DOC,
+        [
+            "Workflow trigger Scenario F",
+            "SDK workflow parity Scenario K",
+            "Self-extraction Scenario L",
+            "Branch Log Push / Merge",
+            "docs-feature-gate",
+            "docs-site-e2e",
+        ],
+    ),
+]
 
 FORBIDDEN_GLOBS = [
     "README.md",
@@ -202,6 +288,107 @@ def check_storage_positioning() -> list[str]:
     return errors
 
 
+def contains_doc_id(text: str, doc_id: str) -> bool:
+    return (
+        f"'{doc_id}'" in text
+        or f'"{doc_id}"' in text
+        or f"/docs/{doc_id}" in text
+        or f"docs/{doc_id}.md" in text
+    )
+
+
+def mermaid_diagram_count(text: str) -> int:
+    return len(re.findall(r"```mermaid\b", text))
+
+
+def mermaid_blocks(text: str) -> list[str]:
+    return re.findall(r"```mermaid\s*\n(.*?)```", text, flags=re.DOTALL)
+
+
+def check_mermaid_static_lint(path: Path, text: str) -> list[str]:
+    errors: list[str] = []
+    reserved_node_ids = {
+        "class",
+        "click",
+        "default",
+        "end",
+        "flowchart",
+        "graph",
+        "linkstyle",
+        "sequenceDiagram",
+        "stateDiagram",
+        "style",
+        "subgraph",
+    }
+    rel = path.relative_to(ROOT)
+    for block_index, block in enumerate(mermaid_blocks(text), start=1):
+        if not block.strip():
+            errors.append(f"{rel}: Mermaid block {block_index} is empty")
+            continue
+        for line_no, line in enumerate(block.splitlines(), start=1):
+            stripped = line.strip()
+            match = re.match(r"([A-Za-z][A-Za-z0-9_]*)\s*[\[\(\{]", stripped)
+            if match and match.group(1) in reserved_node_ids:
+                errors.append(
+                    f"{rel}: Mermaid block {block_index} line {line_no} uses reserved node id "
+                    f"{match.group(1)!r}; choose a more specific id"
+                )
+    return errors
+
+
+def check_docusaurus_contract() -> list[str]:
+    errors: list[str] = []
+    sidebar = SIDEBAR_JS.read_text(encoding="utf-8")
+    config = DOCUSAURUS_CONFIG.read_text(encoding="utf-8")
+    package = WEBSITE_PACKAGE.read_text(encoding="utf-8")
+    homepage = HOMEPAGE_TSX.read_text(encoding="utf-8")
+
+    for doc_id in REQUIRED_SIDEBAR_DOCS:
+        if not contains_doc_id(sidebar, doc_id):
+            errors.append(f"website/sidebars.js does not expose docs/{doc_id}.md")
+
+    for doc_id in REQUIRED_HOMEPAGE_DOCS:
+        if f"/docs/{doc_id}" not in homepage:
+            errors.append(f"website/src/pages/index.tsx does not link to /docs/{doc_id}")
+
+    if "mermaid: true" not in config:
+        errors.append("website/docusaurus.config.js must enable markdown.mermaid so diagrams render")
+    if "@docusaurus/theme-mermaid" not in config:
+        errors.append("website/docusaurus.config.js must include @docusaurus/theme-mermaid")
+    if '"@docusaurus/theme-mermaid"' not in package:
+        errors.append("website/package.json must depend on @docusaurus/theme-mermaid")
+
+    for path, tokens in DOC_CONTENT_REQUIREMENTS:
+        if not path.exists():
+            errors.append(f"{path.relative_to(ROOT)} is missing")
+            continue
+        text = path.read_text(encoding="utf-8")
+        errors.extend(check_mermaid_static_lint(path, text))
+        normalized_text = re.sub(r"\s+", " ", text)
+        rel = path.relative_to(ROOT)
+        for token in tokens:
+            normalized_token = re.sub(r"\s+", " ", token)
+            if normalized_token not in normalized_text:
+                errors.append(f"{rel}: missing implementation-doc contract token {token!r}")
+
+    if ARCHITECTURE_DOC.exists():
+        architecture = ARCHITECTURE_DOC.read_text(encoding="utf-8")
+        diagram_count = mermaid_diagram_count(architecture)
+        if diagram_count < 3:
+            errors.append(
+                f"docs/ARCHITECTURE.md must include at least 3 Mermaid diagrams; found {diagram_count}"
+            )
+        if "flowchart" not in architecture or "sequenceDiagram" not in architecture:
+            errors.append("docs/ARCHITECTURE.md must include both flowchart and sequenceDiagram Mermaid views")
+
+    if AGENT_WORKFLOWS_DOC.exists():
+        workflows = AGENT_WORKFLOWS_DOC.read_text(encoding="utf-8")
+        if mermaid_diagram_count(workflows) < 1:
+            errors.append("docs/AGENT_WORKFLOWS.md must include a Mermaid decision flow")
+
+    return errors
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -214,6 +401,7 @@ def main() -> int:
     binary = resolve_binary(args.bin)
     errors = []
     errors.extend(check_feature_inventory(binary))
+    errors.extend(check_docusaurus_contract())
     errors.extend(check_stale_wording())
     errors.extend(check_storage_positioning())
 
@@ -227,9 +415,11 @@ def main() -> int:
     cli_count = len(cli_commands)
     cli_subcommand_count = sum(len(items) for items in cli_subcommands.values())
     tool_count = len(parse_mcp_tools())
+    diagram_count = mermaid_diagram_count(ARCHITECTURE_DOC.read_text(encoding="utf-8"))
     print(
         "docs feature gate passed: "
-        f"{cli_count} CLI commands, {cli_subcommand_count} CLI subcommands, {tool_count} MCP tools covered"
+        f"{cli_count} CLI commands, {cli_subcommand_count} CLI subcommands, "
+        f"{tool_count} MCP tools covered, {diagram_count} architecture diagrams"
     )
     return 0
 

@@ -291,19 +291,23 @@ class Chunk:
     path: str
     heading: str
     text: str
+    doc_id: str | None = None
 
     @property
     def content(self) -> str:
         return f"[chunk:{self.id}]\npath: {self.path}\nheading: {self.heading}\n\n{self.text}"
 
 
-def run_json(cmd: list[str]) -> Any:
-    proc = subprocess.run(cmd, check=True, text=True, capture_output=True)
+def run_json(cmd: list[str], env: dict[str, str] | None = None) -> Any:
+    proc = subprocess.run(cmd, check=True, text=True, capture_output=True, env=env)
     return json.loads(proc.stdout)
 
 
-def run_capture(cmd: list[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(cmd, check=True, text=True, capture_output=True)
+def run_capture(
+    cmd: list[str],
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(cmd, check=True, text=True, capture_output=True, env=env)
 
 
 def free_loopback_port() -> int:
@@ -334,10 +338,11 @@ def start_mcp_daemon(
     aidememo: str,
     store: Path,
     timeout_s: float,
+    env_base: dict[str, str] | None = None,
 ) -> tuple[subprocess.Popen[str], str, float]:
     port = free_loopback_port()
     url = f"http://127.0.0.1:{port}"
-    env = os.environ.copy()
+    env = (env_base or os.environ).copy()
     env["AIDEMEMO_PREWARM_SEMANTIC"] = "1"
     env.setdefault("RUST_LOG", "error")
     started = time.perf_counter()
@@ -439,7 +444,20 @@ def split_long_block(block: str, max_chars: int) -> list[str]:
     return [piece for piece in pieces if piece]
 
 
-def chunk_section(path: str, heading: str, body: str, start_idx: int, max_chars: int) -> list[Chunk]:
+def stable_chunk_id(raw: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9_.:/=-]+", "_", raw.strip())
+    return cleaned.strip("_") or "doc"
+
+
+def chunk_section(
+    path: str,
+    heading: str,
+    body: str,
+    start_idx: int,
+    max_chars: int,
+    *,
+    doc_id: str | None = None,
+) -> list[Chunk]:
     paragraphs = [p.strip() for p in re.split(r"\n\s*\n", body.strip()) if p.strip()]
     if not paragraphs:
         return []
@@ -453,10 +471,11 @@ def chunk_section(path: str, heading: str, body: str, start_idx: int, max_chars:
                 idx = start_idx + len(chunks)
                 chunks.append(
                     Chunk(
-                        id=f"{path}#{idx:04d}",
+                        id=f"{stable_chunk_id(doc_id or path)}#{idx:04d}",
                         path=path,
                         heading=heading,
                         text="\n\n".join(current).strip(),
+                        doc_id=doc_id,
                     )
                 )
                 current = [part]
@@ -466,10 +485,11 @@ def chunk_section(path: str, heading: str, body: str, start_idx: int, max_chars:
         idx = start_idx + len(chunks)
         chunks.append(
             Chunk(
-                id=f"{path}#{idx:04d}",
+                id=f"{stable_chunk_id(doc_id or path)}#{idx:04d}",
                 path=path,
                 heading=heading,
                 text="\n\n".join(current).strip(),
+                doc_id=doc_id,
             )
         )
     return chunks
@@ -505,7 +525,121 @@ def collect_docs(root: Path, patterns: list[str], max_chars: int) -> list[Chunk]
     return chunks
 
 
-def load_cases(path: Path | None) -> list[dict[str, str]]:
+def first_str(row: dict[str, Any], keys: list[str]) -> str:
+    for key in keys:
+        value = row.get(key)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return ""
+
+
+def load_corpus_jsonl(path: Path, max_chars: int) -> list[Chunk]:
+    chunks: list[Chunk] = []
+    with path.open(encoding="utf-8") as f:
+        for line_no, line in enumerate(f, start=1):
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            doc_id = first_str(row, ["doc_id", "docid", "id", "pid", "_id"])
+            text = first_str(row, ["text", "content", "contents", "passage", "body"])
+            title = first_str(row, ["title", "heading"]) or "(jsonl)"
+            source_path = first_str(row, ["path", "source", "url"]) or doc_id or f"{path}:{line_no}"
+            if not doc_id:
+                doc_id = f"{path.stem}-{line_no}"
+            if not text:
+                raise SystemExit(f"{path}:{line_no}: corpus row missing text/content")
+            body = f"# {title}\n\n{text}" if title and title != "(jsonl)" else text
+            chunks.extend(
+                chunk_section(
+                    source_path,
+                    title,
+                    body,
+                    len(chunks),
+                    max_chars,
+                    doc_id=doc_id,
+                )
+            )
+    return chunks
+
+
+def load_queries_jsonl(path: Path) -> dict[str, dict[str, str]]:
+    queries: dict[str, dict[str, str]] = {}
+    with path.open(encoding="utf-8") as f:
+        for line_no, line in enumerate(f, start=1):
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            query_id = first_str(row, ["query_id", "qid", "id", "_id"])
+            query = first_str(row, ["query", "question", "text"])
+            if not query_id or not query:
+                raise SystemExit(f"{path}:{line_no}: query row needs id/query fields")
+            queries[query_id] = {
+                "query": query,
+                "scenario": first_str(row, ["scenario"]) or "",
+            }
+    return queries
+
+
+def load_qrels_tsv(
+    path: Path,
+    *,
+    min_score: float,
+) -> dict[str, list[str]]:
+    qrels: dict[str, list[str]] = {}
+    with path.open(encoding="utf-8") as f:
+        for line_no, line in enumerate(f, start=1):
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            parts = stripped.split()
+            if len(parts) < 2:
+                raise SystemExit(f"{path}:{line_no}: qrels row needs at least query_id doc_id")
+            if len(parts) >= 4:
+                query_id, doc_id, score_s = parts[0], parts[2], parts[3]
+            elif len(parts) == 3:
+                query_id, doc_id, score_s = parts[0], parts[1], parts[2]
+            else:
+                query_id, doc_id, score_s = parts[0], parts[1], "1"
+            try:
+                score = float(score_s)
+            except ValueError as exc:
+                raise SystemExit(f"{path}:{line_no}: invalid qrel score {score_s!r}") from exc
+            if score >= min_score:
+                qrels.setdefault(query_id, []).append(doc_id)
+    return qrels
+
+
+def cases_from_qrels(
+    queries_path: Path,
+    qrels_path: Path,
+    *,
+    min_score: float,
+    max_cases: int | None,
+    scenario: str,
+) -> list[dict[str, Any]]:
+    queries = load_queries_jsonl(queries_path)
+    qrels = load_qrels_tsv(qrels_path, min_score=min_score)
+    cases: list[dict[str, Any]] = []
+    for query_id in sorted(qrels):
+        query_row = queries.get(query_id)
+        if query_row is None:
+            continue
+        cases.append(
+            {
+                "id": query_id,
+                "scenario": query_row.get("scenario") or scenario,
+                "query": query_row["query"],
+                "gold_doc_ids": sorted(set(qrels[query_id])),
+            }
+        )
+        if max_cases is not None and len(cases) >= max_cases:
+            break
+    if not cases:
+        raise SystemExit("no cases matched queries/qrels")
+    return cases
+
+
+def load_cases(path: Path | None) -> list[dict[str, Any]]:
     if path is None:
         return DEFAULT_CASES
     if path.suffix == ".json":
@@ -520,19 +654,54 @@ def load_cases(path: Path | None) -> list[dict[str, str]]:
     return rows
 
 
-def validate_cases(chunks: list[Chunk], cases: list[dict[str, str]]) -> dict[str, list[str]]:
+def as_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(v) for v in value]
+    return [str(value)]
+
+
+def chunk_matches_doc_id(chunk: Chunk, doc_id: str) -> bool:
+    safe = stable_chunk_id(doc_id)
+    return (
+        chunk.doc_id == doc_id
+        or chunk.path == doc_id
+        or chunk.id == doc_id
+        or chunk.id.startswith(f"{safe}#")
+    )
+
+
+def validate_cases(chunks: list[Chunk], cases: list[dict[str, Any]]) -> dict[str, list[str]]:
     gold_by_case: dict[str, list[str]] = {}
     missing = []
     for case in cases:
         path = case.get("path")
-        gold = case["gold"].lower()
-        matches = [
-            chunk.id
-            for chunk in chunks
-            if (not path or chunk.path == path) and gold in chunk.content.lower()
-        ]
+        gold_doc_ids = as_list(case.get("gold_doc_ids") or case.get("gold_doc_id"))
+        gold_ids = as_list(case.get("gold_ids") or case.get("gold_id"))
+        matches: list[str] = []
+        if gold_doc_ids or gold_ids:
+            gold_id_set = {stable_chunk_id(gold_id) for gold_id in gold_ids}
+            for chunk in chunks:
+                if chunk.id in gold_ids or stable_chunk_id(chunk.id) in gold_id_set:
+                    matches.append(chunk.id)
+                    continue
+                if any(chunk_matches_doc_id(chunk, doc_id) for doc_id in gold_doc_ids):
+                    matches.append(chunk.id)
+        elif "gold" in case:
+            gold = str(case["gold"]).lower()
+            matches = [
+                chunk.id
+                for chunk in chunks
+                if (not path or chunk.path == path) and gold in chunk.content.lower()
+            ]
+        else:
+            raise SystemExit(f"case {case.get('id')}: expected gold/gold_id/gold_doc_id")
         if not matches:
-            missing.append(f"{case['id']} path={path!r} gold={case['gold']!r}")
+            missing.append(
+                f"{case['id']} path={path!r} gold={case.get('gold')!r} "
+                f"gold_ids={gold_ids!r} gold_doc_ids={gold_doc_ids!r}"
+            )
         gold_by_case[case["id"]] = matches
     if missing:
         raise SystemExit("gold text not found in docs chunks:\n" + "\n".join(missing))
@@ -614,6 +783,110 @@ def seed_store(aidememo: str, store: Path, chunks: list[Chunk]) -> float:
     return (time.perf_counter() - started) * 1000
 
 
+def method_slug(prefix: str, model: str) -> str:
+    slug = re.sub(r"[^A-Za-z0-9]+", "_", model.lower()).strip("_")
+    return f"{prefix}_{slug}" if slug else prefix
+
+
+def temp_home_env(home: Path) -> dict[str, str]:
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env.setdefault("RUST_LOG", "error")
+    return env
+
+
+def configure_embedding_profile(
+    aidememo: str,
+    env: dict[str, str],
+    *,
+    provider: str,
+    model: str,
+    cache_dir: Path | None,
+) -> None:
+    settings = [
+        ("model.provider", provider),
+        ("model.name", model),
+        ("search.semantic_index", "hnsw"),
+        ("search.auto_hybrid", "false"),
+    ]
+    if cache_dir is not None:
+        settings.append(("model.cache_dir", str(cache_dir)))
+        settings.append(("model.download_dir", str(cache_dir / "downloads")))
+    for key, value in settings:
+        run_capture([aidememo, "config", "set", key, value], env=env)
+
+
+def evaluate_semantic_profile(
+    *,
+    aidememo: str,
+    store: Path,
+    rows: list[dict[str, Any]],
+    cases: list[dict[str, Any]],
+    gold_by_case: dict[str, list[str]],
+    method: str,
+    env: dict[str, str],
+    limit: int,
+    daemon_start_timeout: float,
+) -> dict[str, Any]:
+    stats: dict[str, Any] = {"available": False}
+    rebuild_started = time.perf_counter()
+    try:
+        proc = run_capture(
+            [
+                aidememo,
+                "--store",
+                str(store),
+                "vector-rebuild",
+                "--current-only",
+                "--json",
+            ],
+            env=env,
+        )
+        stats.update(
+            {
+                "available": True,
+                "rebuild_ms": round((time.perf_counter() - rebuild_started) * 1000, 2),
+                "stdout": proc.stdout.strip(),
+            }
+        )
+    except subprocess.CalledProcessError as exc:
+        stats.update(
+            {
+                "rebuild_ms": round((time.perf_counter() - rebuild_started) * 1000, 2),
+                "stderr": exc.stderr.strip()[-2000:],
+            }
+        )
+        return stats
+
+    daemon: subprocess.Popen[str] | None = None
+    query_ms: list[float] = []
+    try:
+        daemon, url, daemon_ms = start_mcp_daemon(
+            aidememo,
+            store,
+            daemon_start_timeout,
+            env_base=env,
+        )
+        stats["daemon_start_ms"] = round(daemon_ms, 2)
+        rows_by_id = {str(row["id"]): row for row in rows}
+        for case in cases:
+            started = time.perf_counter()
+            hits = mcp_search(url, case["query"], limit, bm25_only=False)
+            query_ms.append((time.perf_counter() - started) * 1000)
+            rank = rank_hits(hits, set(gold_by_case[case["id"]]))
+            row = rows_by_id[str(case["id"])]
+            row[f"{method}_rank"] = rank
+            row[f"{method}_top"] = (
+                chunk_id_from_content(str(hits[0].get("content", ""))) if hits else None
+            )
+        stats["search_ms_mean"] = round(mean(query_ms), 2)
+    except (TimeoutError, OSError, RuntimeError, urllib.error.URLError) as exc:
+        stats["search_error"] = str(exc)[-2000:]
+    finally:
+        stop_process(daemon)
+    return stats
+
+
 CHUNK_RE = re.compile(r"\[chunk:([^\]]+)\]")
 
 
@@ -687,8 +960,6 @@ def auto_promote(
     min_hits: int,
     min_top_score: float,
 ) -> tuple[bool, str]:
-    if contains_cjk(query):
-        return True, "cjk"
     if len(hits) < min_hits:
         return True, "few_hits"
     top_score = 0.0
@@ -699,6 +970,8 @@ def auto_promote(
             top_score = 0.0
     if top_score < min_top_score:
         return True, "weak_top_score"
+    if contains_cjk(query) and top_score < min_top_score * 2.0:
+        return True, "cjk_weak_top_score"
     return False, "bm25_confident"
 
 
@@ -722,6 +995,38 @@ def main() -> None:
     parser.add_argument("--max-chars", type=int, default=1800)
     parser.add_argument("--case-file", type=Path)
     parser.add_argument("--doc", action="append", dest="docs")
+    parser.add_argument(
+        "--no-default-docs",
+        action="store_true",
+        help="Do not load the built-in AideMemo Markdown corpus.",
+    )
+    parser.add_argument(
+        "--corpus-jsonl",
+        action="append",
+        type=Path,
+        help=(
+            "External corpus JSONL. Rows accept doc_id/docid/id plus "
+            "text/content/contents/passage and optional title/path."
+        ),
+    )
+    parser.add_argument(
+        "--queries-jsonl",
+        type=Path,
+        help="MIRACL/BEIR-style query JSONL with query_id/id and query/text fields.",
+    )
+    parser.add_argument(
+        "--qrels-tsv",
+        type=Path,
+        help="Whitespace qrels: qid docid score or qid 0 docid score.",
+    )
+    parser.add_argument("--qrels-min-score", type=float, default=1.0)
+    parser.add_argument("--max-cases", type=int)
+    parser.add_argument("--external-scenario", default="external-candidate-recall")
+    parser.add_argument(
+        "--self-test-external",
+        action="store_true",
+        help="Run a tiny JSONL+qrels fixture through the external-corpus loader.",
+    )
     parser.add_argument("--skip-model2vec", action="store_true")
     parser.add_argument(
         "--model2vec-mode",
@@ -729,23 +1034,109 @@ def main() -> None:
         default="daemon",
         help="How to run AideMemo's current semantic provider after vector-rebuild.",
     )
+    parser.add_argument(
+        "--fastembed-model",
+        action="append",
+        default=[],
+        help=(
+            "Also evaluate an AideMemo fastembed semantic profile, e.g. "
+            "bge-small-en-v1.5 or all-mini-lm-l6-v2. Requires an aidememo "
+            "binary built with --features fastembed."
+        ),
+    )
+    parser.add_argument(
+        "--fastembed-cache-dir",
+        type=Path,
+        default=Path.home() / ".aidememo" / "models",
+        help="Absolute cache dir shared by temporary fastembed HOME configs.",
+    )
     parser.add_argument("--daemon-start-timeout", type=float, default=90.0)
     parser.add_argument("--skip-lfm", action="store_true")
     parser.add_argument("--auto-min-bm25-hits", type=int, default=1)
     parser.add_argument("--auto-min-top-score", type=float, default=1.0)
     parser.add_argument("--summary-only", action="store_true")
+    parser.add_argument("--output-json", type=Path, help="Also write the result payload here.")
     args = parser.parse_args()
 
+    self_test_tmp: tempfile.TemporaryDirectory[str] | None = None
+    if args.self_test_external:
+        self_test_tmp = tempfile.TemporaryDirectory(prefix="aidememo-lfm-docs-external-")
+        tmp_root = Path(self_test_tmp.name)
+        corpus_path = tmp_root / "corpus.jsonl"
+        queries_path = tmp_root / "queries.jsonl"
+        qrels_path = tmp_root / "qrels.tsv"
+        corpus_path.write_text(
+            "\n".join(
+                [
+                    json.dumps(
+                        {
+                            "doc_id": "doc-redis",
+                            "title": "Redis outage notes",
+                            "text": "Redis timeout policy uses exponential backoff.",
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "doc_id": "doc-hnsw",
+                            "title": "Vector rebuild notes",
+                            "text": "Run vector-rebuild after changing embedding models.",
+                        }
+                    ),
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        queries_path.write_text(
+            "\n".join(
+                [
+                    json.dumps({"query_id": "q1", "query": "redis timeout backoff"}),
+                    json.dumps({"query_id": "q2", "query": "rebuild vectors after model swap"}),
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        qrels_path.write_text("q1 0 doc-redis 1\nq2 0 doc-hnsw 1\n", encoding="utf-8")
+        args.no_default_docs = True
+        args.corpus_jsonl = [corpus_path]
+        args.queries_jsonl = queries_path
+        args.qrels_tsv = qrels_path
+        args.skip_lfm = True
+        args.skip_model2vec = True
+        args.max_cases = args.max_cases or 2
+        args.summary_only = True
+
     root = args.repo_root.resolve()
-    chunks = collect_docs(root, args.docs or DEFAULT_DOCS, args.max_chars)
+    doc_patterns: list[str] = []
+    if args.docs:
+        doc_patterns.extend(args.docs)
+    elif not args.no_default_docs:
+        doc_patterns.extend(DEFAULT_DOCS)
+    chunks = collect_docs(root, doc_patterns, args.max_chars) if doc_patterns else []
+    for corpus_path in args.corpus_jsonl or []:
+        chunks.extend(load_corpus_jsonl(corpus_path, args.max_chars))
     if not chunks:
-        raise SystemExit("no Markdown chunks found")
-    cases = load_cases(args.case_file)
+        raise SystemExit("no corpus chunks found")
+    if args.queries_jsonl or args.qrels_tsv:
+        if not args.queries_jsonl or not args.qrels_tsv:
+            raise SystemExit("--queries-jsonl and --qrels-tsv must be passed together")
+        cases = cases_from_qrels(
+            args.queries_jsonl,
+            args.qrels_tsv,
+            min_score=args.qrels_min_score,
+            max_cases=args.max_cases,
+            scenario=args.external_scenario,
+        )
+    else:
+        cases = load_cases(args.case_file)
+        if args.max_cases is not None:
+            cases = cases[: args.max_cases]
     gold_by_case = validate_cases(chunks, cases)
     chunk_by_id = {chunk.id: chunk for chunk in chunks}
     documents = [chunk.content for chunk in chunks]
 
-    model_stats: dict[str, Any] = {"lfm": None, "model2vec": None}
+    model_stats: dict[str, Any] = {"lfm": None, "model2vec": None, "fastembed": {}}
     lfm_doc_embeddings = None
     rank_dense = None
     if not args.skip_lfm:
@@ -837,6 +1228,7 @@ def main() -> None:
                         "search",
                         query,
                         "--json",
+                        "--bm25-only",
                         "-l",
                         str(args.candidate_limit),
                     ]
@@ -955,6 +1347,43 @@ def main() -> None:
                     "lfm_dense_top": lfm_dense_top,
                 }
                 rows.append(row)
+
+            if args.fastembed_model:
+                stop_process(model2vec_daemon)
+                model2vec_daemon = None
+                for fastembed_model in args.fastembed_model:
+                    method = method_slug("fastembed", fastembed_model)
+                    profile_home = Path(tmp) / f"home-{method}"
+                    (profile_home / ".aidememo").mkdir(parents=True, exist_ok=True)
+                    env = temp_home_env(profile_home)
+                    try:
+                        configure_embedding_profile(
+                            args.aidememo,
+                            env,
+                            provider="fastembed",
+                            model=fastembed_model,
+                            cache_dir=args.fastembed_cache_dir.expanduser().resolve(),
+                        )
+                        stats = evaluate_semantic_profile(
+                            aidememo=args.aidememo,
+                            store=store,
+                            rows=rows,
+                            cases=cases,
+                            gold_by_case=gold_by_case,
+                            method=method,
+                            env=env,
+                            limit=args.candidate_limit,
+                            daemon_start_timeout=args.daemon_start_timeout,
+                        )
+                    except subprocess.CalledProcessError as exc:
+                        stats = {
+                            "available": False,
+                            "config_error": exc.stderr.strip()[-2000:],
+                        }
+                    model_stats["fastembed"][method] = {
+                        "model": fastembed_model,
+                        **stats,
+                    }
         finally:
             stop_process(model2vec_daemon)
 
@@ -963,6 +1392,9 @@ def main() -> None:
         methods.append("model2vec")
     if not args.skip_lfm:
         methods.extend(["lfm_dense", "lfm_rerank", "lfm_auto"])
+    for method, stats in model_stats.get("fastembed", {}).items():
+        if stats.get("available"):
+            methods.append(method)
 
     summary = summarize(rows, methods)
     if not args.skip_lfm:
@@ -994,10 +1426,12 @@ def main() -> None:
     payload: dict[str, Any] = {
         "summary": summary,
         "corpus": {
-            "doc_patterns": args.docs or DEFAULT_DOCS,
+            "doc_patterns": doc_patterns,
+            "external_corpus_jsonl": [str(path) for path in args.corpus_jsonl or []],
             "chunks": len(chunks),
             "cases": len(cases),
             "paths": sorted({chunk.path for chunk in chunks}),
+            "docs_loaded": len(doc_patterns),
             "seed_ms": round(seed_ms, 2),
         },
         "latency": {
@@ -1012,6 +1446,13 @@ def main() -> None:
     }
     if not args.summary_only:
         payload["rows"] = rows
+
+    if args.output_json is not None:
+        args.output_json.parent.mkdir(parents=True, exist_ok=True)
+        args.output_json.write_text(
+            json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
 
     print(json.dumps(payload, indent=2, ensure_ascii=False))
 

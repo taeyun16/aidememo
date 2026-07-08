@@ -86,8 +86,9 @@ aidememo init --agent claude --agent-force <wiki-root>   overwrite existing agen
 ```
 aidememo search <query> [-l N] [--current] [--bm25-only] [--hybrid] [--source-id ID] [--include-archive] [--via URL]
                                                    auto-hybrid by default: probe BM25 first, then
-                                                   promote only when lexical evidence is weak or
-                                                   the query is CJK and the semantic path is ready.
+                                                   promote only when lexical evidence is weak.
+                                                   CJK queries can promote more eagerly, but stay
+                                                   lexical when BM25 evidence is strong.
                                                    --bm25-only = deterministic
                                                    no-model fast path. --hybrid = force semantic
                                                    retrieval on every query. --include-archive = also search the
@@ -207,6 +208,25 @@ aidememo config get/set/list
 aidememo config set store.durability eventual    # opt in
 aidememo config set store.durability immediate   # default (recommended)
 
+# Privacy guard — disabled by default. It does not call an external
+# LLM; when enabled it calls a local OpenAI Privacy Filter-compatible
+# sidecar before fact persistence. CPU OPF is too heavy for default-on
+# (~261 ms p50 writes, ~3.8 GB RSS). On Apple Silicon, prefer the
+# measured MLX mxfp4 sidecar for opt-in shared/project stores
+# (~51 ms p50 fact_add vs ~22.5 ms baseline, ~1.28 GB RSS).
+#
+python3 scripts/privacy_filter_mlx_sidecar.py \
+  --model-dir /private/tmp/openai-privacy-filter-mlx-mxfp4 \
+  --port 8091
+aidememo config set privacy.provider openai-privacy-filter
+aidememo config set privacy.endpoint http://127.0.0.1:8091
+aidememo config set privacy.mode redact
+#
+# Local deterministic secret-prefix detection runs before sidecar policy, so
+# common bare key prefixes such as sk-proj-, sk-, github_pat_, ghp_, gho_,
+# xoxb-, AKIA, and AIza still hit the default secret block policy.
+# Detail: docs/OPERATIONS.md, "Use write-time privacy filtering".
+
 # Embedding model — when to switch off the model2vec default:
 #
 # Default is `model2vec` / `potion-multilingual-128M` (28 MB,
@@ -323,9 +343,10 @@ crates/aidememo-core/src/
   graph.rs      traverse / path_find
   search.rs     BM25 + semantic hybrid (current_only filter, time windows)
   ingest.rs     markdown → entity/fact/relation parser (frontmatter dates)
+  privacy.rs    optional write-time privacy guard (local OPF sidecar + secret prefilter)
   types.rs      EntityType (Custom variant), FactRecord (superseded_at/by),
                 QueryOpts (current_only), …
-  config.rs     Config { store, model, search, lint, projects, default_project }
+  config.rs     Config { store, model, search, privacy, lint, projects, default_project }
   error.rs      AideMemoError + Result<T>
   lint.rs       graph health checks
   migrate.rs    schema migrations

@@ -52,6 +52,10 @@ def load_input_rows(args: argparse.Namespace) -> list[dict[str, str]]:
                 }
                 if raw.get("fact_type"):
                     row["fact_type"] = str(raw["fact_type"])
+                if raw.get("split"):
+                    row["split"] = str(raw["split"])
+                if args.input_split != "all" and row.get("split") != args.input_split:
+                    continue
                 rows.append(row)
 
     if not rows and not sys.stdin.isatty():
@@ -98,7 +102,18 @@ def main() -> None:
     parser.add_argument("--adapter-path", type=Path)
     parser.add_argument("--text", action="append")
     parser.add_argument("--input-jsonl", action="append", type=Path)
+    parser.add_argument(
+        "--input-split",
+        choices=["train", "valid", "test", "all"],
+        default="all",
+        help="Filter --input-jsonl rows by split before classification.",
+    )
     parser.add_argument("--jsonl", action="store_true", help="Emit one hint per line")
+    parser.add_argument(
+        "--output-jsonl",
+        type=Path,
+        help="Write one hint per line to this path instead of stdout.",
+    )
     parser.add_argument("--prompt-style", choices=["fewshot", "compact"], default="compact")
     parser.add_argument("--template", choices=["chat", "plain"], default="chat")
     parser.add_argument("--normalize", choices=["mean", "sum"], default="mean")
@@ -155,9 +170,13 @@ def main() -> None:
                 )
             )
 
-    if args.jsonl:
-        for hint in hints:
-            print(json.dumps(hint, ensure_ascii=False))
+    if args.jsonl or args.output_jsonl is not None:
+        lines = [json.dumps(hint, ensure_ascii=False) for hint in hints]
+        if args.output_jsonl is not None:
+            args.output_jsonl.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            return
+        for line in lines:
+            print(line)
         return
 
     print(

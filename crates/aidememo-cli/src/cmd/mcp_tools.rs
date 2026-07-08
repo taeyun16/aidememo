@@ -2953,10 +2953,8 @@ fn tool_fact_add_many(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, S
         });
     }
     let mut inputs = Vec::with_capacity(items.len());
-    let mut per_item_content: Vec<String> = Vec::with_capacity(items.len());
     let mut per_item_entity_names: Vec<Vec<String>> = Vec::with_capacity(items.len());
     let mut per_item_fact_type_meta: Vec<FactTypeWriteMeta> = Vec::with_capacity(items.len());
-    let mut per_item_source_id: Vec<Option<String>> = Vec::with_capacity(items.len());
     let mut auto_created_total: Vec<String> = Vec::new();
     let mut alternatives_total: Vec<EntityNameAlternative> = Vec::new();
     let default_session_id = args.get("session_id").and_then(|v| v.as_str());
@@ -3034,8 +3032,6 @@ fn tool_fact_add_many(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, S
         let fact_type_meta = resolve_write_fact_type(&content, fact_type, fact_type_provided);
         let source_id =
             source_id_from_value(obj.get("source_id")).or_else(|| default_source_id.clone());
-        per_item_content.push(content.clone());
-        per_item_source_id.push(source_id.clone());
         per_item_fact_type_meta.push(fact_type_meta);
         inputs.push(aidememo_core::types::FactInput {
             content,
@@ -3049,8 +3045,9 @@ fn tool_fact_add_many(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, S
         });
     }
     let ids = wiki.fact_add_many(inputs).map_err(|e| e.to_string())?;
-    // Build a per-item record array reusing data we already have — no
-    // extra fact_get calls needed in the batch path.
+    // Build the public per-item array from metadata we already have. Shadow
+    // logging below intentionally fetches persisted records so it never writes
+    // pre-redaction content.
     let facts_array: Vec<Value> = ids
         .iter()
         .zip(per_item_entity_names.iter())
@@ -3070,12 +3067,13 @@ fn tool_fact_add_many(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, S
         .enumerate()
         .filter_map(|(idx, id)| {
             let fact_type_meta = per_item_fact_type_meta.get(idx).copied()?;
+            let record = wiki.fact_get(id).ok()?;
             fact_type_shadow_sample(
                 id,
-                per_item_content.get(idx).cloned().unwrap_or_default(),
+                record.content,
                 fact_type_meta,
                 per_item_entity_names.get(idx).cloned().unwrap_or_default(),
-                per_item_source_id.get(idx).cloned().unwrap_or_default(),
+                record.source_id,
                 "mcp_fact_add_many",
             )
         })

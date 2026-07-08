@@ -148,5 +148,5 @@ What is not covered yet:
 - A first-class `branch delete` command.
 - Bidirectional live replication between running stores.
 
-For the current validation evidence, see `docs/MEASUREMENTS.md`,
+For the current validation evidence, see [`Measurements`](MEASUREMENTS.md),
 "Branch Log Push / Merge".
