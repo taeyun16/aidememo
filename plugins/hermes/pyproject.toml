@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "hermes-aidememo"
-version = "1.0.0"
+version = "0.1.0"
 description = "AideMemo plugin for Hermes Agent — tools, slash commands, and lifecycle hooks for the AideMemo knowledge graph"
 readme = "README.md"
 requires-python = ">=3.9"

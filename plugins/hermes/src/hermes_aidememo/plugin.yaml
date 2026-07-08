@@ -1,5 +1,5 @@
 name: aidememo
-version: "1.0.0"
+version: "0.1.0"
 description: |
   AideMemo integration for Hermes Agent. Wraps the local aidememo knowledge
   graph as native tools, slash commands, and lifecycle hooks: every new

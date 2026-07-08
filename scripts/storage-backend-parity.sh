@@ -18,21 +18,10 @@ trap cleanup EXIT
 find_port() {
     python3 - <<'PY'
 import socket
-import sys
 
-for port in range(38873, 38920):
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        sock.bind(("127.0.0.1", port))
-    except OSError:
-        continue
-    finally:
-        sock.close()
-    print(port)
-    break
-else:
-    print("no free port found for MCP smoke", file=sys.stderr)
-    raise SystemExit(1)
+with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+    sock.bind(("127.0.0.1", 0))
+    print(sock.getsockname()[1])
 PY
 }
 
@@ -86,6 +75,7 @@ HOME="$REDB_HOME" "$BIN" --store "$REDB_STORE" ingest "$WIKI_DIR" >/dev/null
 HOME="$REDB_HOME" "$BIN" --store "$REDB_STORE" export --output "$EXPORT" >/dev/null
 
 HOME="$SQLITE_HOME" "$BIN" config set store.backend sqlite >/dev/null
+HOME="$SQLITE_HOME" "$BIN" config set search.auto_hybrid false >/dev/null
 backend="$(HOME="$SQLITE_HOME" "$BIN" config get store.backend)"
 if [[ "$backend" != "sqlite" ]]; then
     echo "expected sqlite backend, got $backend" >&2
@@ -130,7 +120,8 @@ fi
 
 PORT="$(find_port)"
 LOG="$BASE/mcp.log"
-HOME="$SQLITE_HOME" "$BIN" --store "$MCP_STORE" mcp-serve --port "$PORT" >"$LOG" 2>&1 &
+nohup env HOME="$SQLITE_HOME" "$BIN" --store "$MCP_STORE" mcp-serve --port "$PORT" \
+    >"$LOG" 2>&1 < /dev/null &
 PID=$!
 mcp_cleanup() {
     kill "$PID" >/dev/null 2>&1 || true
@@ -138,13 +129,27 @@ mcp_cleanup() {
 }
 trap 'mcp_cleanup; cleanup' EXIT
 
-for _ in $(seq 1 80); do
+for _ in $(seq 1 300); do
     if curl -fsS "http://127.0.0.1:$PORT/health" >/dev/null 2>&1; then
         break
     fi
+    if ! kill -0 "$PID" >/dev/null 2>&1; then
+        echo "mcp-serve exited before becoming healthy on port $PORT" >&2
+        if [[ -s "$LOG" ]]; then
+            cat "$LOG" >&2
+        fi
+        wait "$PID" >/dev/null 2>&1 || true
+        exit 1
+    fi
     sleep 0.1
 done
-curl -fsS "http://127.0.0.1:$PORT/health" >/dev/null
+if ! curl -fsS "http://127.0.0.1:$PORT/health" >/dev/null; then
+    echo "mcp-serve did not become healthy on port $PORT" >&2
+    if [[ -s "$LOG" ]]; then
+        cat "$LOG" >&2
+    fi
+    exit 1
+fi
 curl -fsS -X POST "http://127.0.0.1:$PORT/mcp" \
     -H 'content-type: application/json' \
     --data '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"aidememo_fact_add","arguments":{"content":"SQLite MCP parity fact","entities":["SQLite"],"fact_type":"claim","dedup_check":false}}}' \
@@ -217,6 +222,7 @@ mcp_cleanup
 trap cleanup EXIT
 
 DAEMON_PORT="$(find_port)"
+HOME="$DAEMON_HOME" "$BIN" config set search.auto_hybrid false >/dev/null
 HOME="$DAEMON_HOME" "$BIN" --backend libsqlite daemon start \
     --store "$DAEMON_STORE" \
     --port "$DAEMON_PORT" >/dev/null

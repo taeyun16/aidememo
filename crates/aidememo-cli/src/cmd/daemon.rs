@@ -38,6 +38,8 @@ use std::time::{Duration, Instant};
 
 use crate::cmd::Command;
 
+const START_HEALTH_TIMEOUT: Duration = Duration::from_secs(30);
+
 #[derive(Debug, Clone)]
 pub enum DaemonSub {
     Start {
@@ -298,8 +300,9 @@ fn start_daemon(
     // on Unix because std::process::Child::drop is a no-op there.)
     let _ = child;
 
-    // Wait up to 5s for /health to come up.
-    let deadline = Instant::now() + Duration::from_secs(5);
+    // Wait long enough for a cold daemon that needs to open a store and warm
+    // optional model/index state before /health is reachable.
+    let deadline = Instant::now() + START_HEALTH_TIMEOUT;
     while Instant::now() < deadline {
         if probe_health(port) {
             let reg = DaemonRegistry {
@@ -320,7 +323,8 @@ fn start_daemon(
         std::thread::sleep(Duration::from_millis(100));
     }
     Err(AideMemoError::Internal(format!(
-        "daemon spawned (pid={pid}) but /health didn't respond within 5s — see {}",
+        "daemon spawned (pid={pid}) but /health didn't respond within {}s — see {}",
+        START_HEALTH_TIMEOUT.as_secs(),
         log_path.display()
     )))
 }

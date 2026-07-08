@@ -13,4 +13,4 @@ from .plugin import register
 from .sdk import Memory, AideMemoMemorySDK
 
 __all__ = ["Memory", "AideMemoClient", "AideMemoMemorySDK", "register"]
-__version__ = "1.0.0"
+__version__ = "0.1.0"

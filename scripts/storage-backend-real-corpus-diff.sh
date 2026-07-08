@@ -31,6 +31,7 @@ LIBSQLITE_EXPORT="$BASE/libsqlite.jsonl"
 mkdir -p "$REDB_HOME" "$SQLITE_HOME" "$LIBSQLITE_HOME" "$CORPUS_DIR"
 
 HOME="$REDB_HOME" "$BIN" config set store.backend redb >/dev/null
+HOME="$REDB_HOME" "$BIN" config set search.auto_hybrid false >/dev/null
 
 python3 - "$ROOT_DIR" "$CORPUS_DIR" <<'PY'
 from pathlib import Path
@@ -65,8 +66,10 @@ PY
 
 HOME="$REDB_HOME" "$BIN" --store "$REDB_STORE" ingest "$CORPUS_DIR" >/dev/null
 HOME="$SQLITE_HOME" "$BIN" config set store.backend sqlite >/dev/null
+HOME="$SQLITE_HOME" "$BIN" config set search.auto_hybrid false >/dev/null
 HOME="$SQLITE_HOME" "$BIN" --store "$SQLITE_STORE" ingest "$CORPUS_DIR" >/dev/null
 HOME="$LIBSQLITE_HOME" "$BIN" config set store.backend libsqlite >/dev/null
+HOME="$LIBSQLITE_HOME" "$BIN" config set search.auto_hybrid false >/dev/null
 HOME="$LIBSQLITE_HOME" "$BIN" --store "$LIBSQLITE_STORE" ingest "$CORPUS_DIR" >/dev/null
 
 redb_stats="$(HOME="$REDB_HOME" "$BIN" --store "$REDB_STORE" --json stats)"
@@ -199,7 +202,7 @@ def run_search(home, store, query):
     env = os.environ.copy()
     env["HOME"] = home
     proc = subprocess.run(
-        [bin_path, "--store", store, "--json", "search", query, "--limit", "8"],
+        [bin_path, "--store", store, "--json", "search", query, "--limit", "8", "--bm25-only"],
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,

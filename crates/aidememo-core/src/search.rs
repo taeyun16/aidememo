@@ -48,8 +48,10 @@ impl<'a, B: StoreBackend + ?Sized> SearchEngine<'a, B> {
         let limit = opts.limit.unwrap_or(self.config.search.default_limit);
         let min_confidence = opts.min_confidence.unwrap_or(self.config.search.min_trust);
 
+        let candidate_limit = limit.max(limit.saturating_mul(8).min(512));
         let index = self.index.read();
-        let bm25_results: Vec<bm25::SearchResult<FactId>> = index.engine.search(query, limit);
+        let bm25_results: Vec<bm25::SearchResult<FactId>> =
+            index.engine.search(query, candidate_limit);
 
         let mut results = Vec::new();
 
@@ -105,6 +107,23 @@ impl<'a, B: StoreBackend + ?Sized> SearchEngine<'a, B> {
                 }
             }
         }
+
+        results.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.content.cmp(&b.content))
+                .then_with(|| a.source.cmp(&b.source))
+                .then_with(|| a.source_id.cmp(&b.source_id))
+                .then_with(|| a.fact_type.to_string().cmp(&b.fact_type.to_string()))
+                .then_with(|| a.entity_names.cmp(&b.entity_names))
+                .then_with(|| a.observed_at.cmp(&b.observed_at))
+                .then_with(|| a.fact_id.0.cmp(&b.fact_id.0))
+        });
+        for (rank, result) in results.iter_mut().enumerate() {
+            result.rank = rank + 1;
+        }
+        results.truncate(limit);
 
         Ok(results)
     }
@@ -1165,6 +1184,53 @@ mod tests {
         );
         assert_eq!(beta.len(), 1);
         assert!(beta.iter().all(|r| r.source_id.as_deref() == Some("beta")));
+    }
+
+    #[test]
+    fn bm25_search_tiebreaks_on_stable_fields() {
+        let (mut store, _dir) = create_test_store();
+        let redis_id = store
+            .entity_add(EntityInput {
+                name: "Redis".to_string(),
+                entity_type: Some(EntityType::Technology),
+                ..Default::default()
+            })
+            .unwrap();
+
+        for content in [
+            "zeta redis cache token parity",
+            "alpha redis cache token parity",
+        ] {
+            store
+                .fact_add(FactInput {
+                    content: content.to_string(),
+                    fact_type: Some(FactType::Note),
+                    entity_ids: Some(vec![redis_id]),
+                    source_confidence: Some(1.0),
+                    ..Default::default()
+                })
+                .unwrap();
+        }
+
+        let config = Config::default();
+        let bm25_state = RwLock::new(Bm25IndexState::new());
+        let engine = SearchEngine::new(&store, &config, &bm25_state);
+
+        let results = engine
+            .search(
+                "redis cache token parity",
+                SearchOpts {
+                    limit: Some(2),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].content, "alpha redis cache token parity");
+        assert_eq!(results[1].content, "zeta redis cache token parity");
+        assert_eq!(results[0].rank, 1);
+        assert_eq!(results[1].rank, 2);
     }
 
     // semantic::hybrid_search initialises the embedding provider
