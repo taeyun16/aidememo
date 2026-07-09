@@ -111,6 +111,7 @@ DOC_CONTENT_REQUIREMENTS = [
             "docs-feature-gate",
             "docs-site-e2e",
             "cargo-package-readiness",
+            "public-registry-smoke",
         ],
     ),
     (
@@ -118,6 +119,8 @@ DOC_CONTENT_REQUIREMENTS = [
         [
             "scripts/cargo-package-readiness.sh",
             "AIDEMEMO_CARGO_PACKAGE_CHECK_DEPENDENTS=1",
+            "scripts/public-registry-smoke.sh",
+            "AIDEMEMO_PUBLIC_REGISTRY_SMOKE_MODE=verify",
             "aidememo-core",
         ],
     ),
@@ -520,7 +523,7 @@ def check_onboarding_contract(binary: Path) -> list[str]:
     errors.extend(
         require_tokens(
             SCRIPTS_README,
-            ["fresh-checkout-smoke.sh", "cargo-package-readiness.sh"],
+            ["fresh-checkout-smoke.sh", "cargo-package-readiness.sh", "public-registry-smoke.sh"],
             "script inventory",
         )
     )

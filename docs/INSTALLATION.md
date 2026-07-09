@@ -45,6 +45,7 @@ For local development, the repo pins tool versions in `mise.toml`.
 mise run changelog-release-check
 mise run release-preflight
 mise run cargo-package-readiness
+mise run public-registry-smoke
 scripts/fresh-checkout-smoke.sh
 mise run docs-build
 mise run ci-lint
@@ -60,6 +61,9 @@ after that core crate is published at the matching version.
 `scripts/fresh-checkout-smoke.sh` copies the checkout to a temporary directory
 without `target` or `node_modules`, builds the CLI, and verifies the deterministic
 quickstart path.
+`public-registry-smoke` is a post-release plan by default; after a real
+registry publish, run it with `AIDEMEMO_PUBLIC_REGISTRY_SMOKE_MODE=verify` to
+install the public packages in temporary environments.
 
 The native Python binding release path uses `uvx` to run the pinned `maturin`
 build tool, so `mise install` is enough to reproduce the local wheel and

@@ -193,14 +193,24 @@ workflow mode is dry-run:
 
 ## 6. Post-release checks
 
-After each registry publish:
+Before the registries are live, the post-release smoke can run in plan mode and
+print the exact install checks it will perform:
 
 ```bash
-cargo install aidememo-cli
-python -m pip install aidememo-agent-sdk
-python -m pip install "aidememo-agent-sdk[binding]"
-npm install aidememo-napi
+scripts/public-registry-smoke.sh
 ```
+
+After each registry publish, run verify mode:
+
+```bash
+AIDEMEMO_PUBLIC_REGISTRY_SMOKE_MODE=verify scripts/public-registry-smoke.sh
+```
+
+This installs `aidememo-cli`, `aidememo-agent-sdk`,
+`aidememo-agent-sdk[binding]`, `hermes-aidememo`, and `aidememo-napi` from
+public registries into temporary environments and imports / runs the installed
+packages. Use `AIDEMEMO_PUBLIC_REGISTRY_SMOKE_*` toggles to narrow the check when
+only one registry was published.
 
 Then update README and docs to remove "from checkout until release" caveats for
 the packages that are actually available from public registries.

@@ -40,6 +40,10 @@ run = "python3 scripts/changelog-release-check.py"
 description = "Run the Rust cargo publish dry-run readiness gate"
 run = "./scripts/cargo-package-readiness.sh"
 
+[tasks.public-registry-smoke]
+description = "Plan post-release public registry install checks"
+run = "./scripts/public-registry-smoke.sh"
+
 [tasks.python-pack-smoke]
 description = "Build and install-smoke the aidememo-python wheel via uvx+maturin"
 run = "./scripts/aidememo-python-pack-smoke.sh"

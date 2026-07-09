@@ -245,6 +245,62 @@ def validate_cargo_package_ci(failures: list[str], rows: list[str], release_doc:
         ok(rows, label)
 
 
+def validate_public_registry_smoke(failures: list[str], rows: list[str], release_doc: str) -> None:
+    start_failures = len(failures)
+    label = "public registry smoke"
+    script = ROOT / "scripts" / "public-registry-smoke.sh"
+    scripts_readme = read(ROOT / "scripts" / "README.md")
+    measurements = read(ROOT / "docs" / "MEASUREMENTS.md")
+    installation = read(ROOT / "docs" / "INSTALLATION.md")
+    mise = read(ROOT / "mise.toml")
+
+    if not script.exists():
+        fail(failures, label, "scripts/public-registry-smoke.sh is missing")
+    else:
+        text = read(script)
+        require_contains(
+            failures,
+            text,
+            "AIDEMEMO_PUBLIC_REGISTRY_SMOKE_MODE",
+            f"{label} mode env",
+        )
+        require_contains(failures, text, "cargo install aidememo-cli", f"{label} cargo plan")
+        require_contains(failures, text, "aidememo-agent-sdk[binding]", f"{label} binding plan")
+        require_contains(failures, text, "npm install aidememo-napi", f"{label} npm plan")
+    require_contains(
+        failures,
+        release_doc,
+        "AIDEMEMO_PUBLIC_REGISTRY_SMOKE_MODE=verify scripts/public-registry-smoke.sh",
+        f"{label} release verify command",
+    )
+    require_contains(
+        failures,
+        scripts_readme,
+        "public-registry-smoke.sh",
+        f"{label} script inventory",
+    )
+    require_contains(
+        failures,
+        measurements,
+        "scripts/public-registry-smoke.sh",
+        f"{label} measurement docs",
+    )
+    require_contains(
+        failures,
+        installation,
+        "mise run public-registry-smoke",
+        f"{label} installation docs",
+    )
+    require_contains(
+        failures,
+        mise,
+        "[tasks.public-registry-smoke]",
+        f"{label} mise task",
+    )
+    if len(failures) == start_failures:
+        ok(rows, label)
+
+
 def main() -> int:
     failures: list[str] = []
     rows: list[str] = []
@@ -290,6 +346,7 @@ def main() -> int:
     validate_npm(failures, rows, workspace_version, release_doc)
     validate_non_oidc_registry_notes(failures, rows, release_doc)
     validate_cargo_package_ci(failures, rows, release_doc)
+    validate_public_registry_smoke(failures, rows, release_doc)
 
     print("registry readiness check")
     for row in rows:
@@ -301,7 +358,7 @@ def main() -> int:
         return 1
     print(
         "OK: registry readiness check passed "
-        f"(version={workspace_version}, pypi=3, npm=6, cargo-package-ci, docs/workflows aligned)"
+        f"(version={workspace_version}, pypi=3, npm=6, cargo-package-ci, public-registry-smoke, docs/workflows aligned)"
     )
     return 0
 
