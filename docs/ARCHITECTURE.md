@@ -173,7 +173,7 @@ currently checks:
   [`Feature Inventory`](FEATURES.md);
 - public numeric claims such as MCP tool counts, CLI command counts, architecture
   diagram counts, and AGENTS core-tool counts match implementation-derived
-  values;
+  values; the count-claim detector self-tests this rejection path on every run;
 - core explanatory docs such as this page, [`Agent Workflows`](AGENT_WORKFLOWS.md),
   and [`Measurements`](MEASUREMENTS.md) are exposed through Docusaurus;
 - Mermaid is enabled so system diagrams render as diagrams, not inert code;

@@ -151,6 +151,10 @@ both the `aidememo-python` fast path and the CLI fallback.
 5. Public storage positioning must continue to describe SQLite as the default
    backend and redb as the optional Cargo-feature backend.
 
+The gate also runs an internal count-claim self-test by default. Use
+`python3 scripts/docs-feature-gate.py --self-test` when you only need to verify
+that the drift detector still rejects stale numeric claims.
+
 `scripts/docs-site-e2e.py` then builds the rendered Docusaurus site and verifies
 that the public route graph still matches the sidebar/homepage contract, all
 baseUrl-scoped links/assets/anchors resolve, page H1s match the Markdown source,

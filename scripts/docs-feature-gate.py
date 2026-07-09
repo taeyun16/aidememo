@@ -305,7 +305,30 @@ def check_count_claims(
         if tool not in mcp_tools:
             errors.append(f"AGENTS.md core MCP tool {tool!r} is not declared in cmd/mcp_tools.rs::list_tools()")
 
-    claim_patterns = [
+    claim_patterns = count_claim_patterns(
+        cli_count=cli_count,
+        cli_subcommand_count=cli_subcommand_count,
+        tool_count=tool_count,
+        architecture_diagram_count=architecture_diagram_count,
+        core_tool_count=core_tool_count,
+    )
+
+    for path in public_files_for_count_claims():
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        rel = str(path.relative_to(ROOT))
+        errors.extend(check_count_claim_text(text, rel, claim_patterns))
+    return errors
+
+
+def count_claim_patterns(
+    *,
+    cli_count: int,
+    cli_subcommand_count: int,
+    tool_count: int,
+    architecture_diagram_count: int,
+    core_tool_count: int,
+) -> list[tuple[re.Pattern[str], int, str]]:
+    return [
         (re.compile(r"\b(?P<count>\d+)\s+MCP\s+tools?\b"), tool_count, "MCP tool count"),
         (re.compile(r"\b(?P<count>\d+)-tool dispatch\b"), tool_count, "MCP dispatch count"),
         (re.compile(r"\b(?P<count>\d+)\s+CLI commands?\b"), cli_count, "CLI command count"),
@@ -319,19 +342,83 @@ def check_count_claims(
         (re.compile(r"\blead with the core (?P<count>\d+)\b"), core_tool_count, "core MCP tool count"),
     ]
 
-    for path in public_files_for_count_claims():
-        text = path.read_text(encoding="utf-8", errors="ignore")
-        rel = path.relative_to(ROOT)
-        for pattern, expected, label in claim_patterns:
-            for match in pattern.finditer(text):
-                observed = int(match.group("count"))
-                if observed != expected:
-                    line_no = text.count("\n", 0, match.start()) + 1
-                    snippet = text[match.start() : match.end()]
-                    errors.append(
-                        f"{rel}:{line_no}: {label} claim {snippet!r} says {observed}, "
-                        f"but implementation/docs table currently reports {expected}"
-                    )
+
+def check_count_claim_text(
+    text: str,
+    rel: str,
+    claim_patterns: list[tuple[re.Pattern[str], int, str]],
+) -> list[str]:
+    errors: list[str] = []
+    for pattern, expected, label in claim_patterns:
+        for match in pattern.finditer(text):
+            observed = int(match.group("count"))
+            if observed != expected:
+                line_no = text.count("\n", 0, match.start()) + 1
+                snippet = text[match.start() : match.end()]
+                errors.append(
+                    f"{rel}:{line_no}: {label} claim {snippet!r} says {observed}, "
+                    f"but implementation/docs table currently reports {expected}"
+                )
+    return errors
+
+
+def check_count_claim_self_test() -> list[str]:
+    errors: list[str] = []
+    tool_count = len(parse_mcp_tools())
+    core_tool_count = len(parse_agents_core_tools())
+    cli_count = 42
+    cli_subcommand_count = 61
+    architecture_diagram_count = 4
+    claim_patterns = count_claim_patterns(
+        cli_count=cli_count,
+        cli_subcommand_count=cli_subcommand_count,
+        tool_count=tool_count,
+        architecture_diagram_count=architecture_diagram_count,
+        core_tool_count=core_tool_count,
+    )
+    good = "\n".join(
+        [
+            f"{tool_count} MCP tools",
+            f"{tool_count}-tool dispatch",
+            f"{cli_count} CLI commands",
+            f"{cli_subcommand_count} CLI subcommands",
+            f"{architecture_diagram_count} architecture diagrams",
+            f"Tool surface — {core_tool_count} core",
+            f"should lead with the core {core_tool_count}",
+        ]
+    )
+    unexpected = check_count_claim_text(good, "count-claim-self-test-good.md", claim_patterns)
+    if unexpected:
+        errors.append("count claim self-test rejected matching claims: " + "; ".join(unexpected))
+
+    bad = "\n".join(
+        [
+            f"{tool_count + 1} MCP tools",
+            f"{tool_count + 1}-tool dispatch",
+            f"{cli_count + 1} CLI commands",
+            f"{cli_subcommand_count + 1} CLI subcommands",
+            f"{architecture_diagram_count + 1} architecture diagrams",
+            f"Tool surface — {core_tool_count + 1} core",
+            f"should lead with the core {core_tool_count + 1}",
+        ]
+    )
+    drift_errors = check_count_claim_text(bad, "count-claim-self-test-bad.md", claim_patterns)
+    expected_labels = {
+        "MCP tool count",
+        "MCP dispatch count",
+        "CLI command count",
+        "CLI subcommand count",
+        "architecture diagram count",
+        "core MCP tool count",
+    }
+    found_labels = {label for label in expected_labels if any(label in error for error in drift_errors)}
+    missing = sorted(expected_labels - found_labels)
+    if missing:
+        errors.append(
+            "count claim self-test did not detect drift for: "
+            + ", ".join(missing)
+            + f"; errors={drift_errors!r}"
+        )
     return errors
 
 
@@ -472,7 +559,22 @@ def main() -> int:
         default=os.environ.get("AIDEMEMO_BIN"),
         help="Path to the aidememo binary. Defaults to building target/debug/aidememo from current sources.",
     )
+    parser.add_argument(
+        "--self-test",
+        action="store_true",
+        help="Run the docs drift detector self-tests without building the aidememo binary.",
+    )
     args = parser.parse_args()
+
+    if args.self_test:
+        errors = check_count_claim_self_test()
+        if errors:
+            print("docs feature gate self-test failed:", file=sys.stderr)
+            for error in errors:
+                print(f"- {error}", file=sys.stderr)
+            return 1
+        print("docs feature gate self-test passed")
+        return 0
 
     binary = resolve_binary(args.bin)
     cli_commands, cli_subcommands = parse_cli_surface(binary)
@@ -482,6 +584,7 @@ def main() -> int:
     diagram_count = mermaid_diagram_count(ARCHITECTURE_DOC.read_text(encoding="utf-8"))
 
     errors = []
+    errors.extend(check_count_claim_self_test())
     errors.extend(check_feature_inventory(binary))
     errors.extend(
         check_count_claims(
