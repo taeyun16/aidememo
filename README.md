@@ -163,7 +163,8 @@ aidememo search "cache policy" -l 5
 aidememo search "레디스 장애 원인" -l 5       # auto-hybrid promotes only weak lexical/CJK probes when vectors are ready
 aidememo search "cache policy" --bm25-only    # deterministic lexical fast path
 aidememo search "cache policy" --hybrid       # force semantic on every query
-aidememo query "Redis" --mode hybrid
+aidememo query "Redis" --bm25-only            # deterministic context pack
+aidememo query "Redis" --mode hybrid          # richer context, may use semantic retrieval
 aidememo overview
 ```
 

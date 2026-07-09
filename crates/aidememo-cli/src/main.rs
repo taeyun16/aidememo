@@ -2118,7 +2118,7 @@ fn handle_query(
             since: since_ms,
             current_only: false,
             mode,
-            bm25_only: false,
+            bm25_only: sub.bm25_only,
             source_id: sub.source_id.clone(),
         };
         let result = wiki.query(&sub.topic, opts)?;
@@ -2146,6 +2146,7 @@ fn run_query_via_daemon(base_url: &str, sub: &cmd::QuerySub) -> Result<String, A
         "depth": sub.depth.unwrap_or(2),
         "recent_limit": sub.recent_limit.unwrap_or(10),
         "mode": mode,
+        "bm25_only": sub.bm25_only,
     });
     if let Some(source_id) = &sub.source_id {
         arguments["source_id"] = serde_json::Value::String(source_id.clone());

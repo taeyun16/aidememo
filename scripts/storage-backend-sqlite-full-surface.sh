@@ -101,6 +101,8 @@ am_json() {
 }
 
 HOME="$HOME_DIR" "$BIN" config set store.backend "$BACKEND" >/dev/null
+HOME="$HOME_DIR" "$BIN" config set search.auto_hybrid false >/dev/null
+HOME="$HOME_DIR" "$BIN" config set search.semantic_weight 0 >/dev/null
 backend="$(HOME="$HOME_DIR" "$BIN" config get store.backend)"
 if [[ "$backend" != "$BACKEND" ]]; then
     echo "expected $BACKEND backend, got $backend" >&2

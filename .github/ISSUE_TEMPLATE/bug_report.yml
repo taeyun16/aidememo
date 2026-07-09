@@ -14,7 +14,7 @@ body:
     id: version
     attributes:
       label: Version or commit
-      description: Output of `aidememo --version`, package version, or commit SHA.
+      description: Package version, Git commit SHA, or install source.
     validations:
       required: true
   - type: dropdown

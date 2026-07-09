@@ -35,6 +35,7 @@ Use `query` for a richer context pack:
 
 ```bash
 aidememo query "Redis worker timeout" --limit 8 --depth 2 --recent-limit 5
+aidememo query "Redis worker timeout" --bm25-only --limit 8
 ```
 
 Use `--source-id` when multiple agents, teams, or projects share a store:

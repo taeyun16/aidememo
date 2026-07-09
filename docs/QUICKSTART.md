@@ -60,7 +60,7 @@ am search "Redis timeout"
 Use `query` when you want search plus nearby graph context:
 
 ```bash
-am query "Fix Redis timeout in worker" --limit 5 --depth 2
+am query "Fix Redis timeout in worker" --bm25-only --limit 5 --depth 2
 ```
 
 ## 4. Start a workflow from a ticket

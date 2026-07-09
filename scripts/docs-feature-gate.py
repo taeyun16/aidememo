@@ -12,10 +12,21 @@ import sys
 
 
 ROOT = Path(__file__).resolve().parents[1]
+README = ROOT / "README.md"
 FEATURES_DOC = ROOT / "docs" / "FEATURES.md"
 ARCHITECTURE_DOC = ROOT / "docs" / "ARCHITECTURE.md"
 AGENT_WORKFLOWS_DOC = ROOT / "docs" / "AGENT_WORKFLOWS.md"
+INSTALLATION_DOC = ROOT / "docs" / "INSTALLATION.md"
+QUICKSTART_DOC = ROOT / "docs" / "QUICKSTART.md"
 MEASUREMENTS_DOC = ROOT / "docs" / "MEASUREMENTS.md"
+SCRIPTS_README = ROOT / "scripts" / "README.md"
+INSTALL_SCRIPT = ROOT / "scripts" / "install.sh"
+CONTRIBUTING = ROOT / "CONTRIBUTING.md"
+SECURITY = ROOT / "SECURITY.md"
+PR_TEMPLATE = ROOT / ".github" / "PULL_REQUEST_TEMPLATE.md"
+BUG_TEMPLATE = ROOT / ".github" / "ISSUE_TEMPLATE" / "bug_report.yml"
+FEATURE_TEMPLATE = ROOT / ".github" / "ISSUE_TEMPLATE" / "feature_request.yml"
+ISSUE_TEMPLATE_CONFIG = ROOT / ".github" / "ISSUE_TEMPLATE" / "config.yml"
 MCP_TOOLS_RS = ROOT / "crates" / "aidememo-cli" / "src" / "cmd" / "mcp_tools.rs"
 SIDEBAR_JS = ROOT / "website" / "sidebars.js"
 DOCUSAURUS_CONFIG = ROOT / "website" / "docusaurus.config.js"
@@ -451,6 +462,114 @@ def check_storage_positioning() -> list[str]:
     return errors
 
 
+def require_tokens(path: Path, tokens: list[str], label: str) -> list[str]:
+    errors: list[str] = []
+    text = path.read_text(encoding="utf-8")
+    normalized_text = re.sub(r"\s+", " ", text)
+    rel = path.relative_to(ROOT)
+    for token in tokens:
+        normalized_token = re.sub(r"\s+", " ", token)
+        if normalized_token not in normalized_text:
+            errors.append(f"{rel}: missing {label} token {token!r}")
+    return errors
+
+
+def check_onboarding_contract(binary: Path) -> list[str]:
+    errors: list[str] = []
+    errors.extend(
+        require_tokens(
+            INSTALL_SCRIPT,
+            ["cargo install --git", "--bin \"$BIN_NAME\" aidememo-cli"],
+            "installer",
+        )
+    )
+    errors.extend(
+        require_tokens(
+            README,
+            [
+                "curl -fsSL https://raw.githubusercontent.com/taeyun16/aidememo/main/scripts/install.sh | bash",
+                "cargo install --path crates/aidememo-cli",
+            ],
+            "public install",
+        )
+    )
+    errors.extend(
+        require_tokens(
+            INSTALLATION_DOC,
+            ["From a checkout", "scripts/fresh-checkout-smoke.sh"],
+            "checkout install",
+        )
+    )
+    errors.extend(
+        require_tokens(
+            QUICKSTART_DOC,
+            ['am query "Fix Redis timeout in worker" --bm25-only'],
+            "deterministic quickstart",
+        )
+    )
+    errors.extend(
+        require_tokens(
+            SCRIPTS_README,
+            ["fresh-checkout-smoke.sh"],
+            "script inventory",
+        )
+    )
+    query_help = run_help(binary, "query")
+    if "--bm25-only" not in query_help:
+        errors.append("aidememo query --help is missing --bm25-only; quickstart deterministic query would drift")
+    return errors
+
+
+def check_community_contract() -> list[str]:
+    errors: list[str] = []
+    errors.extend(
+        require_tokens(
+            CONTRIBUTING,
+            ["Quality gates", "Filing issues", "No AI attribution in commit messages."],
+            "contributor guide",
+        )
+    )
+    errors.extend(
+        require_tokens(
+            SECURITY,
+            ["Reporting a Vulnerability", "taeyun16@pm.me", "Do not open a public GitHub issue"],
+            "security policy",
+        )
+    )
+    errors.extend(
+        require_tokens(
+            PR_TEMPLATE,
+            ["Summary", "Validation", "registry-release implications"],
+            "PR template",
+        )
+    )
+    errors.extend(
+        require_tokens(
+            BUG_TEMPLATE,
+            ["Version or commit", "Package version, Git commit SHA, or install source.", "Redact secrets."],
+            "bug template",
+        )
+    )
+    errors.extend(
+        require_tokens(
+            FEATURE_TEMPLATE,
+            ["Use case", "Proposed interface", "Alternatives considered"],
+            "feature request template",
+        )
+    )
+    errors.extend(
+        require_tokens(
+            ISSUE_TEMPLATE_CONFIG,
+            ["blank_issues_enabled: true", "security/policy"],
+            "issue template config",
+        )
+    )
+    bug_text = BUG_TEMPLATE.read_text(encoding="utf-8")
+    if "aidememo --version" in bug_text:
+        errors.append(".github/ISSUE_TEMPLATE/bug_report.yml asks for `aidememo --version`, but the CLI does not expose that flag")
+    return errors
+
+
 def contains_doc_id(text: str, doc_id: str) -> bool:
     return (
         f"'{doc_id}'" in text
@@ -597,6 +716,8 @@ def main() -> int:
     errors.extend(check_docusaurus_contract())
     errors.extend(check_stale_wording())
     errors.extend(check_storage_positioning())
+    errors.extend(check_onboarding_contract(binary))
+    errors.extend(check_community_contract())
 
     if errors:
         print("docs feature gate failed:", file=sys.stderr)

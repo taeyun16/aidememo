@@ -377,6 +377,7 @@ pub struct QuerySub {
     pub last: Option<String>,
     pub mode: Option<String>,
     pub source_id: Option<String>,
+    pub bm25_only: bool,
     pub topic: String,
 }
 
@@ -1400,6 +1401,9 @@ fn query_command() -> impl Parser<Command> {
         .help("Filter search/recent facts by source namespace / tenant / upstream id")
         .argument::<String>("SOURCE_ID")
         .optional();
+    let bm25_only = long("bm25-only")
+        .help("Skip semantic embedding lookup for deterministic demos/hooks")
+        .switch();
     let topic = positional::<String>("TOPIC");
 
     construct!(QuerySub {
@@ -1409,6 +1413,7 @@ fn query_command() -> impl Parser<Command> {
         last,
         mode,
         source_id,
+        bm25_only,
         topic
     })
     .map(Command::Query)

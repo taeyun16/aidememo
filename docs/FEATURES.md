@@ -137,7 +137,7 @@ both the `aidememo-python` fast path and the CLI fallback.
 
 ## Gate contract
 
-`scripts/docs-feature-gate.py` enforces five source-level drift checks:
+`scripts/docs-feature-gate.py` enforces source-level drift checks:
 
 1. Every command listed by `aidememo --help` must appear in this page as
    `` `aidememo <command>` ``.
@@ -150,6 +150,10 @@ both the `aidememo-python` fast path and the CLI fallback.
    strings must not contain known stale lowercase product wording.
 5. Public storage positioning must continue to describe SQLite as the default
    backend and redb as the optional Cargo-feature backend.
+6. Onboarding docs must keep the installer, checkout path, and deterministic
+   `query --bm25-only` quickstart aligned with the CLI.
+7. Community files must keep contributor, security, issue, and PR templates
+   present and consistent with the implemented CLI surface.
 
 The gate also runs an internal count-claim self-test by default. Use
 `python3 scripts/docs-feature-gate.py --self-test` when you only need to verify

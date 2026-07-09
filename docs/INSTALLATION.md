@@ -44,6 +44,7 @@ For local development, the repo pins tool versions in `mise.toml`.
 ```bash
 mise run changelog-release-check
 mise run release-preflight
+scripts/fresh-checkout-smoke.sh
 mise run docs-build
 mise run ci-lint
 mise run ci-test
@@ -52,6 +53,9 @@ mise run ci-test
 `changelog-release-check` is the fast release-note gate. It verifies that
 `CHANGELOG.md` has been cut for the current workspace version before the broader
 release preflight runs packaging, docs, registry, and workflow checks.
+`scripts/fresh-checkout-smoke.sh` copies the checkout to a temporary directory
+without `target` or `node_modules`, builds the CLI, and verifies the deterministic
+quickstart path.
 
 The native Python binding release path uses `uvx` to run the pinned `maturin`
 build tool, so `mise install` is enough to reproduce the local wheel and

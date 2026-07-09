@@ -7,8 +7,10 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 python3 - "$ROOT_DIR" <<'PY'
 import json
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -28,10 +30,17 @@ class Check:
     detail: str
 
 
-def run(cmd: list[str], timeout: int = 300) -> tuple[bool, str]:
+def run(
+    cmd: list[str],
+    timeout: int = 300,
+    *,
+    cwd: Path | None = None,
+    env: dict[str, str] | None = None,
+) -> tuple[bool, str]:
     proc = subprocess.run(
         cmd,
-        cwd=ROOT,
+        cwd=cwd or ROOT,
+        env=env,
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -97,7 +106,81 @@ def optional_scenario_k(checks: list[Check]) -> None:
             )
         )
         return
-    ok, out = run(["python3", "bench/multi-agent/scenario_k_sdk_workflow_parity.py"], timeout=300)
+
+    base = Path(tempfile.mkdtemp(prefix="aidememo-sdk-scenario-k."))
+    keep_tmp = os.environ.get("AIDEMEMO_SDK_PROMOTION_KEEP_TMP", "0") == "1"
+    out = ""
+    try:
+        venv = base / "venv"
+        wheels = base / "wheels"
+        wheels.mkdir(parents=True, exist_ok=True)
+
+        ok, out = run(["cargo", "build", "-p", "aidememo-cli"], timeout=300)
+        if not ok:
+            checks.append(Check(package, "workflow parity scenario", "fail", out.splitlines()[-1] if out else "cargo build failed"))
+            return
+
+        napi_dir = ROOT / "crates" / "aidememo-napi"
+        if not (napi_dir / "node_modules" / ".bin" / "napi").exists():
+            ok, out = run(["npm", "install"], timeout=300, cwd=napi_dir)
+            if not ok:
+                checks.append(Check(package, "workflow parity scenario", "fail", out.splitlines()[-1] if out else "npm install failed"))
+                return
+        ok, out = run(["npm", "run", "build"], timeout=300, cwd=napi_dir)
+        if not ok:
+            checks.append(Check(package, "workflow parity scenario", "fail", out.splitlines()[-1] if out else "npm run build failed"))
+            return
+
+        ok, out = run([str(ROOT / "scripts" / "pyo3-python.sh")], timeout=60)
+        if not ok:
+            checks.append(Check(package, "workflow parity scenario", "fail", out.splitlines()[-1] if out else "PyO3 Python resolver failed"))
+            return
+        pyo3_python = out.splitlines()[-1].strip()
+
+        ok, out = run([str(ROOT / "scripts" / "uv.sh"), "venv", "--seed", "-p", pyo3_python, str(venv)], timeout=300)
+        if not ok:
+            checks.append(Check(package, "workflow parity scenario", "fail", out.splitlines()[-1] if out else "venv creation failed"))
+            return
+
+        ok, out = run(
+            [
+                str(ROOT / "scripts" / "maturin.sh"),
+                "build",
+                "--release",
+                "-i",
+                str(venv / "bin" / "python"),
+                "-o",
+                str(wheels),
+            ],
+            timeout=900,
+            cwd=ROOT / "crates" / "aidememo-python",
+        )
+        if not ok:
+            checks.append(Check(package, "workflow parity scenario", "fail", out.splitlines()[-1] if out else "maturin build failed"))
+            return
+        wheel = next(iter(sorted(wheels.glob("aidememo_python-*.whl"))), None)
+        if wheel is None:
+            checks.append(Check(package, "workflow parity scenario", "fail", f"missing aidememo_python wheel in {wheels}"))
+            return
+        ok, out = run([str(venv / "bin" / "python"), "-m", "pip", "--disable-pip-version-check", "install", str(wheel)], timeout=300)
+        if not ok:
+            checks.append(Check(package, "workflow parity scenario", "fail", out.splitlines()[-1] if out else "wheel install failed"))
+            return
+
+        scenario_env = os.environ.copy()
+        scenario_env["AIDEMEMO_BIN"] = str(ROOT / "target" / "debug" / "aidememo")
+        scenario_env["AIDEMEMO_E2E_BASE"] = str(base / "scenario-k")
+        ok, out = run(
+            [str(venv / "bin" / "python"), "bench/multi-agent/scenario_k_sdk_workflow_parity.py"],
+            timeout=300,
+            env=scenario_env,
+        )
+    finally:
+        if keep_tmp:
+            print(f"kept Scenario K temp dir: {base}", file=sys.stderr)
+        else:
+            shutil.rmtree(base, ignore_errors=True)
+
     detail = "Scenario K failed"
     if out:
         try:

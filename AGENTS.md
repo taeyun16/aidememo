@@ -100,8 +100,11 @@ aidememo search <query> [-l N] [--current] [--bm25-only] [--hybrid] [--source-id
                                                    `aidememo mcp-serve` daemon (warm model, ~5-50 ms)
                                                    --source-id scopes retrieval to one source /
                                                    tenant / upstream namespace.
-aidememo query <topic> [-l N] [-d N] [--recent-limit N] [-m naive|local|hybrid|global] [--source-id ID]
-                                                   unified search+traverse+recent
+aidememo query <topic> [-l N] [-d N] [--recent-limit N] [--bm25-only] [-m naive|local|hybrid|global] [--source-id ID]
+                                                   unified search+traverse+recent.
+                                                   --bm25-only skips semantic
+                                                   embedding lookup for
+                                                   deterministic demos/hooks.
 aidememo recent [-n N] [--type T] [--last 30d]          last 7d facts (default)
 aidememo traverse <entity> [-d N]                        forward graph walk
 aidememo path <from> <to>                                shortest path
