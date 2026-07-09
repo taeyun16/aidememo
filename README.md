@@ -331,7 +331,7 @@ and temporal memory semantics, not a SOTA benchmark claim.
 | Retrieval | BM25, semantic HNSW, hybrid RRF, optional TEI / fastembed rerank |
 | Graph | entities, facts, relations, traversal, shortest path, Mermaid / DOT export |
 | Time | `supersede`, `current_only`, `as_of`, archive / cold tier |
-| Agent tools | 25 MCP tools including `aidememo_workflow_start`, `aidememo_context`, `aidememo_query`, `aidememo_aggregate`, `aidememo_fact_add_many` |
+| Agent tools | 27 MCP tools including `aidememo_workflow_start`, `aidememo_context`, `aidememo_query`, `aidememo_aggregate`, `aidememo_fact_add_many` |
 | Capture | `aidememo_extract`, pending review queue, `aidememo pending list/stats/approve/reject`, opt-in Hermes/OpenClaw capture adapter |
 | Artifacts | `aidememo session canvas`, `aidememo profile export` for bounded, auditable Markdown views over typed facts |
 | Ops | `doctor` / MCP `aidememo_doctor`, `overview`, `bench`, `vector-rebuild`, `consolidate`, `auto-relate` |

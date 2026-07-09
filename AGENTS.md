@@ -358,7 +358,7 @@ crates/aidememo-cli/src/
   output.rs          Format::{Table, Json} renderers + format_query_result
   cmd/mod.rs         bpaf top-level + per-command parsers (--project / --json)
   cmd/{init,watch,model,feedback,adapt,doctor,recent,edit,graph,project}.rs
-  cmd/mcp_tools.rs   shared MCP JSON-RPC types + 25-tool dispatch
+  cmd/mcp_tools.rs   shared MCP JSON-RPC types + 27-tool dispatch
   cmd/mcp_stdio.rs   `aidememo mcp` (stdio)
   cmd/mcp_serve.rs   `aidememo mcp-serve` (HTTP + SSE)
 ```
@@ -416,8 +416,8 @@ crates/aidememo-cli/src/
 | `aidememo mcp` | stdio (newline-delimited JSON-RPC) | local agents (Claude Code, Codex CLI) |
 | `aidememo mcp-serve --port 3000` | HTTP POST `/mcp` + SSE `/sse` | browser/remote clients |
 
-**Tool surface — 4 core, then standard, then advanced.** Agent prompts
-should lead with the core 4; the rest are there when needed.
+**Tool surface — 5 core, then standard, then advanced.** Agent prompts
+should lead with the core 5; the rest are there when needed.
 
 **Core (90% of agent traffic)**:
 

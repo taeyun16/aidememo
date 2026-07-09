@@ -137,15 +137,18 @@ both the `aidememo-python` fast path and the CLI fallback.
 
 ## Gate contract
 
-`scripts/docs-feature-gate.py` enforces four source-level drift checks:
+`scripts/docs-feature-gate.py` enforces five source-level drift checks:
 
 1. Every command listed by `aidememo --help` must appear in this page as
    `` `aidememo <command>` ``.
 2. Every MCP tool declared in `cmd/mcp_tools.rs::list_tools()` must appear in
    this page as a backticked tool name.
-3. The Docusaurus sidebar must include this page, and public-facing docs/source
+3. Count claims in public docs, such as MCP tool counts, CLI command counts,
+   architecture diagram counts, and AGENTS core-tool counts, must match the
+   implementation-derived numbers.
+4. The Docusaurus sidebar must include this page, and public-facing docs/source
    strings must not contain known stale lowercase product wording.
-4. Public storage positioning must continue to describe SQLite as the default
+5. Public storage positioning must continue to describe SQLite as the default
    backend and redb as the optional Cargo-feature backend.
 
 `scripts/docs-site-e2e.py` then builds the rendered Docusaurus site and verifies

@@ -172,6 +172,18 @@ STORAGE_POSITIONING_REQUIREMENTS = [
     ),
 ]
 
+COUNT_CLAIM_GLOBS = [
+    "README.md",
+    "AGENTS.md",
+    "docs/*.md",
+    "scripts/README.md",
+    "aidememo-skill/*.md",
+    "aidememo-skill/hooks/*.md",
+    "packages/*/README.md",
+    "plugins/*/README.md",
+    "crates/*/README.md",
+]
+
 
 def resolve_binary(requested: str | None) -> Path:
     if requested:
@@ -220,9 +232,26 @@ def parse_mcp_tools() -> list[str]:
     return sorted(dict.fromkeys(tools))
 
 
+def parse_agents_core_tools() -> list[str]:
+    text = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+    start = text.find("**Core (90% of agent traffic)**:")
+    end = text.find("**Standard", start)
+    if start == -1 or end == -1:
+        return []
+    section = text[start:end]
+    return re.findall(r"\|\s+\*\*`(aidememo_[a-z_]+)`\*\*", section)
+
+
 def public_files_for_wording() -> list[Path]:
     files: list[Path] = []
     for pattern in FORBIDDEN_GLOBS:
+        files.extend(ROOT.glob(pattern))
+    return sorted({p for p in files if p.is_file() and ".git" not in p.parts and "target" not in p.parts})
+
+
+def public_files_for_count_claims() -> list[Path]:
+    files: list[Path] = []
+    for pattern in COUNT_CLAIM_GLOBS:
         files.extend(ROOT.glob(pattern))
     return sorted({p for p in files if p.is_file() and ".git" not in p.parts and "target" not in p.parts})
 
@@ -256,6 +285,53 @@ def check_feature_inventory(binary: Path) -> list[str]:
     if "FEATURES" not in sidebar:
         errors.append("website/sidebars.js does not expose docs/FEATURES.md")
 
+    return errors
+
+
+def check_count_claims(
+    *,
+    cli_count: int,
+    cli_subcommand_count: int,
+    mcp_tools: list[str],
+    architecture_diagram_count: int,
+) -> list[str]:
+    errors: list[str] = []
+    tool_count = len(mcp_tools)
+    core_tools = parse_agents_core_tools()
+    core_tool_count = len(core_tools)
+    if not core_tools:
+        errors.append("AGENTS.md core MCP tool table could not be parsed")
+    for tool in core_tools:
+        if tool not in mcp_tools:
+            errors.append(f"AGENTS.md core MCP tool {tool!r} is not declared in cmd/mcp_tools.rs::list_tools()")
+
+    claim_patterns = [
+        (re.compile(r"\b(?P<count>\d+)\s+MCP\s+tools?\b"), tool_count, "MCP tool count"),
+        (re.compile(r"\b(?P<count>\d+)-tool dispatch\b"), tool_count, "MCP dispatch count"),
+        (re.compile(r"\b(?P<count>\d+)\s+CLI commands?\b"), cli_count, "CLI command count"),
+        (re.compile(r"\b(?P<count>\d+)\s+CLI subcommands?\b"), cli_subcommand_count, "CLI subcommand count"),
+        (
+            re.compile(r"\b(?P<count>\d+)\s+architecture diagrams?\b"),
+            architecture_diagram_count,
+            "architecture diagram count",
+        ),
+        (re.compile(r"Tool surface\s+.\s+(?P<count>\d+)\s+core\b"), core_tool_count, "core MCP tool count"),
+        (re.compile(r"\blead with the core (?P<count>\d+)\b"), core_tool_count, "core MCP tool count"),
+    ]
+
+    for path in public_files_for_count_claims():
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        rel = path.relative_to(ROOT)
+        for pattern, expected, label in claim_patterns:
+            for match in pattern.finditer(text):
+                observed = int(match.group("count"))
+                if observed != expected:
+                    line_no = text.count("\n", 0, match.start()) + 1
+                    snippet = text[match.start() : match.end()]
+                    errors.append(
+                        f"{rel}:{line_no}: {label} claim {snippet!r} says {observed}, "
+                        f"but implementation/docs table currently reports {expected}"
+                    )
     return errors
 
 
@@ -399,8 +475,22 @@ def main() -> int:
     args = parser.parse_args()
 
     binary = resolve_binary(args.bin)
+    cli_commands, cli_subcommands = parse_cli_surface(binary)
+    cli_count = len(cli_commands)
+    cli_subcommand_count = sum(len(items) for items in cli_subcommands.values())
+    mcp_tools = parse_mcp_tools()
+    diagram_count = mermaid_diagram_count(ARCHITECTURE_DOC.read_text(encoding="utf-8"))
+
     errors = []
     errors.extend(check_feature_inventory(binary))
+    errors.extend(
+        check_count_claims(
+            cli_count=cli_count,
+            cli_subcommand_count=cli_subcommand_count,
+            mcp_tools=mcp_tools,
+            architecture_diagram_count=diagram_count,
+        )
+    )
     errors.extend(check_docusaurus_contract())
     errors.extend(check_stale_wording())
     errors.extend(check_storage_positioning())
@@ -411,11 +501,7 @@ def main() -> int:
             print(f"- {error}", file=sys.stderr)
         return 1
 
-    cli_commands, cli_subcommands = parse_cli_surface(binary)
-    cli_count = len(cli_commands)
-    cli_subcommand_count = sum(len(items) for items in cli_subcommands.values())
-    tool_count = len(parse_mcp_tools())
-    diagram_count = mermaid_diagram_count(ARCHITECTURE_DOC.read_text(encoding="utf-8"))
+    tool_count = len(mcp_tools)
     print(
         "docs feature gate passed: "
         f"{cli_count} CLI commands, {cli_subcommand_count} CLI subcommands, "
