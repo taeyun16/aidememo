@@ -118,6 +118,10 @@ The full profile also runs the Rust package readiness gate. Standalone use is:
 scripts/cargo-package-readiness.sh
 ```
 
+CI also runs the same gate in the `cargo-package-readiness` job. That PR guard
+enforces `aidememo-core` packageability while keeping dependent Rust crates as
+the documented publish-order skip until `aidememo-core` exists on crates.io.
+
 ## 3. Rust crates
 
 Publish in dependency order:

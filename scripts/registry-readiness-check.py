@@ -202,6 +202,49 @@ def validate_non_oidc_registry_notes(failures: list[str], rows: list[str], relea
         ok(rows, "non-OIDC registry notes")
 
 
+def validate_cargo_package_ci(failures: list[str], rows: list[str], release_doc: str) -> None:
+    start_failures = len(failures)
+    label = "Cargo package readiness CI"
+    ci_text = read(ROOT / ".github" / "workflows" / "ci.yml")
+    scripts_readme = read(ROOT / "scripts" / "README.md")
+    measurements = read(ROOT / "docs" / "MEASUREMENTS.md")
+
+    require_contains(failures, ci_text, "cargo-package-readiness:", f"{label} job id")
+    require_contains(failures, ci_text, "name: Rust package readiness", f"{label} job name")
+    require_contains(
+        failures,
+        ci_text,
+        "AIDEMEMO_CARGO_PACKAGE_CHECK_DEPENDENTS: \"0\"",
+        f"{label} dependent skip default",
+    )
+    require_contains(
+        failures,
+        ci_text,
+        "scripts/cargo-package-readiness.sh",
+        f"{label} script call",
+    )
+    require_contains(
+        failures,
+        release_doc,
+        "scripts/cargo-package-readiness.sh",
+        f"{label} release docs",
+    )
+    require_contains(
+        failures,
+        scripts_readme,
+        "cargo-package-readiness.sh",
+        f"{label} script inventory",
+    )
+    require_contains(
+        failures,
+        measurements,
+        "CI `cargo-package-readiness` job",
+        f"{label} measurement docs",
+    )
+    if len(failures) == start_failures:
+        ok(rows, label)
+
+
 def main() -> int:
     failures: list[str] = []
     rows: list[str] = []
@@ -246,6 +289,7 @@ def main() -> int:
     )
     validate_npm(failures, rows, workspace_version, release_doc)
     validate_non_oidc_registry_notes(failures, rows, release_doc)
+    validate_cargo_package_ci(failures, rows, release_doc)
 
     print("registry readiness check")
     for row in rows:
@@ -257,7 +301,7 @@ def main() -> int:
         return 1
     print(
         "OK: registry readiness check passed "
-        f"(version={workspace_version}, pypi=3, npm=6, docs/workflows aligned)"
+        f"(version={workspace_version}, pypi=3, npm=6, cargo-package-ci, docs/workflows aligned)"
     )
     return 0
 

@@ -133,6 +133,31 @@ jobs:
       # `cargo test -p aidememo-core --features semantic` already exercises
       # it end-to-end here.
 
+  cargo-package-readiness:
+    name: Rust package readiness
+    needs: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.96.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ubuntu-aidememo-v2
+          save-if: false
+      - name: cargo package readiness
+        env:
+          AIDEMEMO_CARGO_PACKAGE_CHECK_DEPENDENTS: "0"
+        run: scripts/cargo-package-readiness.sh
+
   # Backend replacement compatibility guard. The matrix test job covers the
   # SQLite-only CLI surface; this job keeps the heavier cross-backend and SDK
   # gates visible in PR checks without duplicating them on macOS.
