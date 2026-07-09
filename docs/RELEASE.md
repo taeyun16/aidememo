@@ -66,9 +66,22 @@ Run the local release gate from a clean checkout:
 scripts/release-preflight.sh
 ```
 
-This includes the version pins, workflow syntax lint, docs feature coverage
-gate, registry readiness gate, docs-site build, binding smoke, agent SDK/Hermes
-wheel smoke, workflow smoke, and SDK promotion check.
+This includes the version pins, changelog release gate, workflow syntax lint,
+docs feature coverage gate, registry readiness gate, docs-site build, binding
+smoke, agent SDK/Hermes wheel smoke, workflow smoke, and SDK promotion check.
+
+The changelog release gate is offline and should pass after cutting the current
+release notes out of `Unreleased`:
+
+```bash
+mise run changelog-release-check
+python3 scripts/changelog-release-check.py 0.1.0
+```
+
+It verifies that `CHANGELOG.md` has an empty `[Unreleased]` section, one dated
+current-version section immediately below it, and non-empty release-note
+content. Set `AIDEMEMO_RELEASE_PREFLIGHT_CHANGELOG=0` only for focused
+non-release debugging.
 
 The registry readiness gate is offline and should pass before creating or
 editing registry entries:

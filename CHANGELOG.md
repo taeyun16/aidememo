@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-07-09
+
 ### Added
 
 - **TEI integration** — first-class support for HuggingFace
@@ -107,9 +109,7 @@ What landed:
   that confirmed `fact_add`'s ~4 ms floor is the macOS APFS fsync
   cost, not algorithmic.
 
-## [0.1.0] — 2026-04 (initial cut)
-
-### Added
+### Initial Release
 
 - Phase 1–6 complete:
   - BM25 + semantic hybrid search

@@ -158,7 +158,7 @@ semantic conflicts between competing decisions remain application policy.
 | Storage dispatch | `crates/aidememo-core/src/backend.rs`, `sqlite_store.rs`, `store.rs` | [`Operations`](OPERATIONS.md), [`Feature Inventory`](FEATURES.md) |
 | Python agent SDK | `packages/aidememo-agent-sdk/src/aidememo_agent/sdk.py` | [`Python SDK`](SDK.md), [`Agent Workflows`](AGENT_WORKFLOWS.md) |
 | Native bindings | `crates/aidememo-python`, `crates/aidememo-napi`, `crates/aidememo-nif`, `crates/aidememo-ffi` | [`Python SDK`](SDK.md), package READMEs |
-| Validation and release gates | `scripts/docs-feature-gate.py`, `scripts/docs-site-e2e.py`, `scripts/*smoke*.sh`, `scripts/ci-local.sh` | [`Measurements`](MEASUREMENTS.md), [`Release Checklist`](RELEASE.md) |
+| Validation and release gates | `scripts/changelog-release-check.py`, `scripts/registry-readiness-check.py`, `scripts/docs-feature-gate.py`, `scripts/docs-site-e2e.py`, `scripts/*smoke*.sh`, `scripts/ci-local.sh` | [`Measurements`](MEASUREMENTS.md), [`Release Checklist`](RELEASE.md) |
 
 ## Documentation contract
 

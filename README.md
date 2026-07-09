@@ -313,6 +313,7 @@ parallel.
 | `hermes-aidememo` pack smoke | wheel install + SDK re-export / bundled skill / opt-in capture adapter checks passed in `4.43s` |
 | `aidememo-agent-sdk` publish workflow | PyPI payload dry-run + trusted-publisher workflow defaults to dry-run |
 | `hermes-aidememo` publish workflow | PyPI payload dry-run + trusted-publisher workflow defaults to dry-run |
+| Changelog release gate | `CHANGELOG.md` cut for workspace `0.1.0`, empty `Unreleased`, dated `0.1.0` notes |
 | SkillOpt-lite profile gate | validates candidate memory-profile tokens, `aidememo skill check`, workflow demo, and SDK promotion gate |
 | SkillOpt-lite periodic cycle | records accepted / rejected skill-profile candidates under `target/skillopt-lite`; applies only with `--apply` |
 | `aidememo-napi` package split | root JS/types package + current-platform optional package install smoke passed |
@@ -430,7 +431,8 @@ numbers behind claims in this README.
 
 Full comparison: [`COMPARE.md`](COMPARE.md). SDK promotion criteria:
 [`docs/SDK_POSITIONING.md`](docs/SDK_POSITIONING.md). Current measurements and
-release gates: [`docs/MEASUREMENTS.md`](docs/MEASUREMENTS.md).
+release gates, including changelog and registry preflight:
+[`docs/MEASUREMENTS.md`](docs/MEASUREMENTS.md).
 
 ## Repository Guide
 

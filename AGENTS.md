@@ -39,6 +39,8 @@ cargo test -p aidememo-cli --bin aidememo
 ./scripts/ci-local.sh lint
 ./scripts/ci-local.sh demo               # first-run workflow memory smoke
 ./scripts/ci-local.sh test
+mise run changelog-release-check         # verify CHANGELOG.md is cut for current workspace version
+./scripts/release-preflight.sh           # full local release gate; includes changelog + registry checks
 # Tests that download a HuggingFace embedding model are #[ignore]'d
 # (CI skips them — first run hits HF lock races). Run locally for the
 # full surface once the model is cached:

@@ -30,8 +30,8 @@ of these are true:
    checkout.
 2. The public API has a workflow-level example for sparse ticket start,
    context/query, fact write, and source-scoped search.
-3. Release preflight covers version drift, package contents, install smoke,
-   and publish dry-run for that package.
+3. Release preflight covers version drift, changelog cut, package contents,
+   install smoke, and publish dry-run for that package.
 4. Runtime version reporting matches package metadata.
 5. Error handling is idiomatic for the language rather than just passing Rust
    error strings through. Python should expose typed exceptions; Node should at

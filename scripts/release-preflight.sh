@@ -34,6 +34,7 @@ else
 fi
 
 RUN_BINDINGS="${AIDEMEMO_RELEASE_PREFLIGHT_BINDINGS:-1}"
+RUN_CHANGELOG="${AIDEMEMO_RELEASE_PREFLIGHT_CHANGELOG:-1}"
 RUN_WORKFLOW="${AIDEMEMO_RELEASE_PREFLIGHT_WORKFLOW:-1}"
 RUN_DOCS="${AIDEMEMO_RELEASE_PREFLIGHT_DOCS:-1}"
 RUN_STORAGE_BACKEND="${AIDEMEMO_RELEASE_PREFLIGHT_STORAGE_BACKEND:-1}"
@@ -151,6 +152,15 @@ if [[ -n "$VERSION" ]]; then
     run "release version gate" "$ROOT_DIR/scripts/aidememo-release-version.sh" "$VERSION"
 else
     run "release version gate" "$ROOT_DIR/scripts/aidememo-release-version.sh"
+fi
+if [[ "$RUN_CHANGELOG" == "1" ]]; then
+    if [[ -n "$VERSION" ]]; then
+        run "changelog release gate" python3 "$ROOT_DIR/scripts/changelog-release-check.py" "$VERSION"
+    else
+        run "changelog release gate" python3 "$ROOT_DIR/scripts/changelog-release-check.py"
+    fi
+else
+    record_skip "changelog release gate" "AIDEMEMO_RELEASE_PREFLIGHT_CHANGELOG=0"
 fi
 run "registry readiness gate" python3 "$ROOT_DIR/scripts/registry-readiness-check.py"
 
