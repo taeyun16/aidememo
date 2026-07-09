@@ -354,6 +354,92 @@ def validate_public_registry_smoke(failures: list[str], rows: list[str], release
         ok(rows, label)
 
 
+def validate_release_preflight_workflow(failures: list[str], rows: list[str], release_doc: str) -> None:
+    start_failures = len(failures)
+    label = "release preflight workflow"
+    workflow = ROOT / ".github" / "workflows" / "release-preflight.yml"
+    scripts_readme = read(ROOT / "scripts" / "README.md")
+    measurements = read(ROOT / "docs" / "MEASUREMENTS.md")
+    installation = read(ROOT / "docs" / "INSTALLATION.md")
+
+    if not workflow.exists():
+        fail(failures, label, ".github/workflows/release-preflight.yml is missing")
+    else:
+        text = read(workflow)
+        require_contains(failures, text, "name: release preflight", f"{label} workflow name")
+        require_contains(failures, text, "workflow_dispatch:", f"{label} workflow dispatch")
+        require_regex(failures, text, r"^\s+version:\s*$", f"{label} version input")
+        require_regex(failures, text, r"^\s+profile:\s*$", f"{label} profile input")
+        require_contains(failures, text, "publish_dry_runs:", f"{label} publish dry-run input")
+        require_contains(failures, text, "cargo_package:", f"{label} cargo package input")
+        require_contains(failures, text, "optional_bindings:", f"{label} optional binding input")
+        require_contains(
+            failures,
+            text,
+            "AIDEMEMO_RELEASE_PREFLIGHT_PROFILE: ${{ inputs.profile }}",
+            f"{label} profile env",
+        )
+        require_contains(
+            failures,
+            text,
+            "AIDEMEMO_RELEASE_PREFLIGHT_CARGO_PACKAGE:",
+            f"{label} cargo package env",
+        )
+        require_contains(
+            failures,
+            text,
+            "AIDEMEMO_RELEASE_PREFLIGHT_PUBLISH:",
+            f"{label} publish env",
+        )
+        require_contains(
+            failures,
+            text,
+            "AIDEMEMO_RELEASE_PREFLIGHT_BINDINGS_OPTIONAL:",
+            f"{label} optional binding env",
+        )
+        require_contains(
+            failures,
+            text,
+            'python -m pip install "uv==0.11.21"',
+            f"{label} uv install",
+        )
+        require_contains(
+            failures,
+            text,
+            "go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.1",
+            f"{label} actionlint install",
+        )
+        require_contains(failures, text, "npm --prefix website ci", f"{label} docs deps")
+        require_contains(failures, text, "scripts/release-preflight.sh", f"{label} script call")
+
+    require_contains(
+        failures,
+        release_doc,
+        ".github/workflows/release-preflight.yml",
+        f"{label} release docs",
+    )
+    require_contains(
+        failures,
+        scripts_readme,
+        ".github/workflows/release-preflight.yml",
+        f"{label} script inventory",
+    )
+    require_contains(
+        failures,
+        measurements,
+        ".github/workflows/release-preflight.yml",
+        f"{label} measurement docs",
+    )
+    require_contains(
+        failures,
+        installation,
+        ".github/workflows/release-preflight.yml",
+        f"{label} installation docs",
+    )
+    if len(failures) == start_failures:
+        ok(rows, label)
+
+
 def main() -> int:
     failures: list[str] = []
     rows: list[str] = []
@@ -400,6 +486,7 @@ def main() -> int:
     validate_non_oidc_registry_notes(failures, rows, release_doc)
     validate_cargo_package_ci(failures, rows, release_doc)
     validate_public_registry_smoke(failures, rows, release_doc)
+    validate_release_preflight_workflow(failures, rows, release_doc)
 
     print("registry readiness check")
     for row in rows:
@@ -411,7 +498,8 @@ def main() -> int:
         return 1
     print(
         "OK: registry readiness check passed "
-        f"(version={workspace_version}, pypi=3, npm=6, cargo-package-ci, public-registry-smoke, docs/workflows aligned)"
+        f"(version={workspace_version}, pypi=3, npm=6, cargo-package-ci, "
+        "public-registry-smoke, release-preflight-workflow, docs/workflows aligned)"
     )
     return 0
 

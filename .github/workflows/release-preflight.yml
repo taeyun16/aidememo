@@ -1,0 +1,122 @@
+name: release preflight
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version to validate; empty uses workspace pins"
+        required: false
+        type: string
+      profile:
+        description: "release-preflight profile"
+        required: true
+        default: "local"
+        type: choice
+        options:
+          - local
+          - full
+      cargo_package:
+        description: "Run Rust cargo publish dry-run readiness"
+        required: true
+        default: false
+        type: boolean
+      publish_dry_runs:
+        description: "Run Python and npm publish dry-runs"
+        required: true
+        default: false
+        type: boolean
+      optional_bindings:
+        description: "Run optional Python, Elixir, and C binding smokes"
+        required: true
+        default: false
+        type: boolean
+      sdk_smoke:
+        description: "Run SDK package smokes inside sdk-promotion-check"
+        required: true
+        default: false
+        type: boolean
+      sdk_scenario_k:
+        description: "Run Scenario K inside sdk-promotion-check"
+        required: true
+        default: false
+        type: boolean
+      require_public_sdk:
+        description: "Fail until public SDK registry installs are verified"
+        required: true
+        default: false
+        type: boolean
+
+concurrency:
+  group: release-preflight-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  CARGO_NET_RETRY: 10
+  CARGO_NET_GIT_FETCH_WITH_CLI: true
+  RUSTUP_MAX_RETRIES: 10
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
+  RELEASE_VERSION: ${{ inputs.version }}
+  AIDEMEMO_RELEASE_PREFLIGHT_PROFILE: ${{ inputs.profile }}
+  AIDEMEMO_RELEASE_PREFLIGHT_CARGO_PACKAGE: ${{ inputs.cargo_package && '1' || '0' }}
+  AIDEMEMO_RELEASE_PREFLIGHT_PUBLISH: ${{ inputs.publish_dry_runs && '1' || '0' }}
+  AIDEMEMO_RELEASE_PREFLIGHT_BINDINGS_OPTIONAL: ${{ inputs.optional_bindings && '1' || '0' }}
+  AIDEMEMO_RELEASE_PREFLIGHT_SDK_SMOKE: ${{ inputs.sdk_smoke && '1' || '0' }}
+  AIDEMEMO_RELEASE_PREFLIGHT_SDK_SCENARIO_K: ${{ inputs.sdk_scenario_k && '1' || '0' }}
+  AIDEMEMO_RELEASE_PREFLIGHT_SDK_REQUIRE_PUBLIC: ${{ inputs.require_public_sdk && '1' || '0' }}
+
+jobs:
+  preflight:
+    name: release preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: |
+            website/package-lock.json
+            crates/aidememo-napi/package-lock.json
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24.x"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.96.0
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-preflight-v1
+
+      - name: install release tools
+        env:
+          GOBIN: ${{ runner.temp }}/go/bin
+        run: |
+          mkdir -p "$GOBIN"
+          python -m pip install "uv==0.11.21"
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.1
+          npm --prefix website ci
+
+      - name: release preflight
+        env:
+          AIDEMEMO_RELEASE_PREFLIGHT_ACTIONLINT_BIN: ${{ runner.temp }}/go/bin/actionlint
+        run: |
+          if [[ -n "$RELEASE_VERSION" ]]; then
+            scripts/release-preflight.sh "$RELEASE_VERSION"
+          else
+            scripts/release-preflight.sh
+          fi

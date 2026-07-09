@@ -117,6 +117,7 @@ DOC_CONTENT_REQUIREMENTS = [
     (
         RELEASE_DOC,
         [
+            ".github/workflows/release-preflight.yml",
             "scripts/cargo-package-readiness.sh",
             "AIDEMEMO_CARGO_PACKAGE_CHECK_DEPENDENTS=1",
             "scripts/public-registry-smoke.sh",

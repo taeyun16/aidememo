@@ -66,6 +66,12 @@ Run the local release gate from a clean checkout:
 scripts/release-preflight.sh
 ```
 
+The same gate is also available as the manual GitHub workflow
+`.github/workflows/release-preflight.yml`. Use `profile=local` for the normal
+release-candidate pass. Use `profile=full` only when you also want the Rust
+package dry-run or Python/npm publish dry-runs, and turn those on explicitly
+with the workflow inputs.
+
 This includes the version pins, changelog release gate, workflow syntax lint,
 docs feature coverage gate, registry readiness gate, docs-site build, binding
 smoke, agent SDK/Hermes wheel smoke, workflow smoke, and SDK promotion check.

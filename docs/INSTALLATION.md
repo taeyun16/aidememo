@@ -52,6 +52,9 @@ mise run ci-lint
 mise run ci-test
 ```
 
+The same release preflight is available in GitHub Actions as
+`.github/workflows/release-preflight.yml` for a runner-backed pre-publish pass.
+
 `changelog-release-check` is the fast release-note gate. It verifies that
 `CHANGELOG.md` has been cut for the current workspace version before the broader
 release preflight runs docs, registry, and workflow checks. The full release
