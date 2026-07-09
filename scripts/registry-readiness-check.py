@@ -204,13 +204,13 @@ def validate_non_oidc_registry_notes(failures: list[str], rows: list[str], relea
 
 def validate_cargo_package_ci(failures: list[str], rows: list[str], release_doc: str) -> None:
     start_failures = len(failures)
-    label = "Cargo package readiness CI"
+    label = "Cargo publish dry-run CI"
     ci_text = read(ROOT / ".github" / "workflows" / "ci.yml")
     scripts_readme = read(ROOT / "scripts" / "README.md")
     measurements = read(ROOT / "docs" / "MEASUREMENTS.md")
 
     require_contains(failures, ci_text, "cargo-package-readiness:", f"{label} job id")
-    require_contains(failures, ci_text, "name: Rust package readiness", f"{label} job name")
+    require_contains(failures, ci_text, "name: Rust publish dry-run readiness", f"{label} job name")
     require_contains(
         failures,
         ci_text,

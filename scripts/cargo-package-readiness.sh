@@ -130,7 +130,7 @@ normalize_bool() {
     esac
 }
 
-package_flags() {
+publish_flags() {
     local flags=()
     if [[ "$ALLOW_DIRTY" == "1" ]]; then
         flags+=(--allow-dirty)
@@ -141,15 +141,15 @@ package_flags() {
     printf '%s\n' "${flags[@]}"
 }
 
-run_cargo_package() {
+run_cargo_publish_dry_run() {
     local package="$1"
     local flags=()
     while IFS= read -r flag; do
         if [[ -n "$flag" ]]; then
             flags+=("$flag")
         fi
-    done < <(package_flags)
-    run_timed "cargo package $package" cargo package -p "$package" "${flags[@]}"
+    done < <(publish_flags)
+    run_timed "cargo publish --dry-run $package" cargo publish -p "$package" --dry-run "${flags[@]}"
 }
 
 cd "$ROOT_DIR"
@@ -163,7 +163,7 @@ RUN_VERSION_GATE="$(normalize_bool "$RUN_VERSION_GATE")"
 CHECK_DEPENDENTS="$(normalize_bool "$CHECK_DEPENDENTS")"
 VERSION="$(workspace_version)"
 
-echo "cargo package readiness"
+echo "cargo publish dry-run readiness"
 echo "version: $VERSION"
 echo "allow_dirty: $ALLOW_DIRTY"
 echo "verify_package: $VERIFY_PACKAGE"
@@ -177,19 +177,19 @@ else
     record_skip "release version gate" "AIDEMEMO_CARGO_PACKAGE_VERSION_GATE=0"
 fi
 
-run_cargo_package "$CORE_PACKAGE"
+run_cargo_publish_dry_run "$CORE_PACKAGE"
 
 if [[ "$CHECK_DEPENDENTS" == "1" ]]; then
     for package in "${DEPENDENT_PACKAGES[@]}"; do
-        run_cargo_package "$package"
+        run_cargo_publish_dry_run "$package"
     done
 else
     for package in "${DEPENDENT_PACKAGES[@]}"; do
         record_skip \
-            "cargo package $package" \
+            "cargo publish --dry-run $package" \
             "publish $CORE_PACKAGE $VERSION first, then set AIDEMEMO_CARGO_PACKAGE_CHECK_DEPENDENTS=1"
     done
 fi
 
 echo
-echo "OK: cargo package readiness completed"
+echo "OK: cargo publish dry-run readiness completed"

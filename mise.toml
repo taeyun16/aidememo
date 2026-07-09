@@ -37,7 +37,7 @@ description = "Verify CHANGELOG.md is cut for the current release version"
 run = "python3 scripts/changelog-release-check.py"
 
 [tasks.cargo-package-readiness]
-description = "Run the Rust cargo package readiness gate"
+description = "Run the Rust cargo publish dry-run readiness gate"
 run = "./scripts/cargo-package-readiness.sh"
 
 [tasks.python-pack-smoke]

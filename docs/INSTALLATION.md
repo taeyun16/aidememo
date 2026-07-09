@@ -54,9 +54,9 @@ mise run ci-test
 `changelog-release-check` is the fast release-note gate. It verifies that
 `CHANGELOG.md` has been cut for the current workspace version before the broader
 release preflight runs docs, registry, and workflow checks. The full release
-preflight and `cargo-package-readiness` gate cover Rust package payloads:
-`aidememo-core` packages first, and dependent Rust crates are checked only after
-that core crate is published at the matching version.
+preflight and `cargo-package-readiness` gate cover Rust publish dry-runs:
+`aidememo-core` is verified first, and dependent Rust crates are checked only
+after that core crate is published at the matching version.
 `scripts/fresh-checkout-smoke.sh` copies the checkout to a temporary directory
 without `target` or `node_modules`, builds the CLI, and verifies the deterministic
 quickstart path.

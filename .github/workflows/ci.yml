@@ -134,7 +134,7 @@ jobs:
       # it end-to-end here.
 
   cargo-package-readiness:
-    name: Rust package readiness
+    name: Rust publish dry-run readiness
     needs: lint
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -153,7 +153,7 @@ jobs:
         with:
           shared-key: ubuntu-aidememo-v2
           save-if: false
-      - name: cargo package readiness
+      - name: cargo publish dry-run readiness
         env:
           AIDEMEMO_CARGO_PACKAGE_CHECK_DEPENDENTS: "0"
         run: scripts/cargo-package-readiness.sh

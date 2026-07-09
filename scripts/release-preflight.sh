@@ -224,11 +224,11 @@ else
 fi
 
 if [[ "$RUN_CARGO_PACKAGE" == "1" ]]; then
-    run_without_child_summary "Rust cargo package readiness" env \
+    run_without_child_summary "Rust publish dry-run readiness" env \
         AIDEMEMO_CARGO_PACKAGE_VERSION_GATE=0 \
         "$ROOT_DIR/scripts/cargo-package-readiness.sh"
 else
-    record_skip "Rust cargo package readiness" "AIDEMEMO_RELEASE_PREFLIGHT_CARGO_PACKAGE=0"
+    record_skip "Rust publish dry-run readiness" "AIDEMEMO_RELEASE_PREFLIGHT_CARGO_PACKAGE=0"
 fi
 
 if [[ "$RUN_PUBLISH" == "1" ]]; then
