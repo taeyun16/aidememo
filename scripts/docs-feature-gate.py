@@ -19,6 +19,7 @@ AGENT_WORKFLOWS_DOC = ROOT / "docs" / "AGENT_WORKFLOWS.md"
 INSTALLATION_DOC = ROOT / "docs" / "INSTALLATION.md"
 QUICKSTART_DOC = ROOT / "docs" / "QUICKSTART.md"
 MEASUREMENTS_DOC = ROOT / "docs" / "MEASUREMENTS.md"
+RELEASE_DOC = ROOT / "docs" / "RELEASE.md"
 SCRIPTS_README = ROOT / "scripts" / "README.md"
 INSTALL_SCRIPT = ROOT / "scripts" / "install.sh"
 CONTRIBUTING = ROOT / "CONTRIBUTING.md"
@@ -109,6 +110,15 @@ DOC_CONTENT_REQUIREMENTS = [
             "Branch Log Push / Merge",
             "docs-feature-gate",
             "docs-site-e2e",
+            "cargo-package-readiness",
+        ],
+    ),
+    (
+        RELEASE_DOC,
+        [
+            "scripts/cargo-package-readiness.sh",
+            "AIDEMEMO_CARGO_PACKAGE_CHECK_DEPENDENTS=1",
+            "aidememo-core",
         ],
     ),
 ]
@@ -510,7 +520,7 @@ def check_onboarding_contract(binary: Path) -> list[str]:
     errors.extend(
         require_tokens(
             SCRIPTS_README,
-            ["fresh-checkout-smoke.sh"],
+            ["fresh-checkout-smoke.sh", "cargo-package-readiness.sh"],
             "script inventory",
         )
     )

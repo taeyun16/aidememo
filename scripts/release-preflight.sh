@@ -25,10 +25,12 @@ esac
 
 if [[ "$PROFILE" == "full" ]]; then
     RUN_PUBLISH="${AIDEMEMO_RELEASE_PREFLIGHT_PUBLISH:-1}"
+    RUN_CARGO_PACKAGE="${AIDEMEMO_RELEASE_PREFLIGHT_CARGO_PACKAGE:-1}"
     RUN_BINDINGS_OPTIONAL="${AIDEMEMO_RELEASE_PREFLIGHT_BINDINGS_OPTIONAL:-1}"
     REQUIRE_ACTIONLINT="${AIDEMEMO_RELEASE_PREFLIGHT_REQUIRE_ACTIONLINT:-1}"
 else
     RUN_PUBLISH="${AIDEMEMO_RELEASE_PREFLIGHT_PUBLISH:-0}"
+    RUN_CARGO_PACKAGE="${AIDEMEMO_RELEASE_PREFLIGHT_CARGO_PACKAGE:-0}"
     RUN_BINDINGS_OPTIONAL="${AIDEMEMO_RELEASE_PREFLIGHT_BINDINGS_OPTIONAL:-0}"
     REQUIRE_ACTIONLINT="${AIDEMEMO_RELEASE_PREFLIGHT_REQUIRE_ACTIONLINT:-0}"
 fi
@@ -221,16 +223,29 @@ else
     record_skip "sdk promotion check" "AIDEMEMO_RELEASE_PREFLIGHT_SDK_PROMOTION=0"
 fi
 
+if [[ "$RUN_CARGO_PACKAGE" == "1" ]]; then
+    run_without_child_summary "Rust cargo package readiness" env \
+        AIDEMEMO_CARGO_PACKAGE_VERSION_GATE=0 \
+        "$ROOT_DIR/scripts/cargo-package-readiness.sh"
+else
+    record_skip "Rust cargo package readiness" "AIDEMEMO_RELEASE_PREFLIGHT_CARGO_PACKAGE=0"
+fi
+
 if [[ "$RUN_PUBLISH" == "1" ]]; then
     run_without_child_summary "aidememo-python publish dry-run" "$ROOT_DIR/scripts/aidememo-python-publish-dry-run.sh"
     run_without_child_summary "aidememo-agent-sdk publish dry-run" "$ROOT_DIR/scripts/aidememo-agent-sdk-publish-dry-run.sh"
     run_without_child_summary "hermes-aidememo publish dry-run" "$ROOT_DIR/scripts/hermes-aidememo-publish-dry-run.sh"
     run_without_child_summary "aidememo-napi publish dry-run" "$ROOT_DIR/scripts/aidememo-napi-publish-dry-run.sh"
 else
-    record_skip "aidememo-python publish dry-run" "set AIDEMEMO_RELEASE_PREFLIGHT_PROFILE=full"
-    record_skip "aidememo-agent-sdk publish dry-run" "set AIDEMEMO_RELEASE_PREFLIGHT_PROFILE=full"
-    record_skip "hermes-aidememo publish dry-run" "set AIDEMEMO_RELEASE_PREFLIGHT_PROFILE=full"
-    record_skip "aidememo-napi publish dry-run" "set AIDEMEMO_RELEASE_PREFLIGHT_PROFILE=full"
+    if [[ "$PROFILE" == "full" ]]; then
+        PUBLISH_SKIP_REASON="AIDEMEMO_RELEASE_PREFLIGHT_PUBLISH=0"
+    else
+        PUBLISH_SKIP_REASON="set AIDEMEMO_RELEASE_PREFLIGHT_PROFILE=full"
+    fi
+    record_skip "aidememo-python publish dry-run" "$PUBLISH_SKIP_REASON"
+    record_skip "aidememo-agent-sdk publish dry-run" "$PUBLISH_SKIP_REASON"
+    record_skip "hermes-aidememo publish dry-run" "$PUBLISH_SKIP_REASON"
+    record_skip "aidememo-napi publish dry-run" "$PUBLISH_SKIP_REASON"
 fi
 
 echo

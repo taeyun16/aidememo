@@ -112,11 +112,10 @@ For a full registry dry-run:
 AIDEMEMO_RELEASE_PREFLIGHT_PROFILE=full scripts/release-preflight.sh 0.1.0
 ```
 
-The core package must pass packaging before any dependent package can be
-published:
+The full profile also runs the Rust package readiness gate. Standalone use is:
 
 ```bash
-cargo package -p aidememo-core
+scripts/cargo-package-readiness.sh
 ```
 
 ## 3. Rust crates
@@ -130,6 +129,15 @@ Publish in dependency order:
 `aidememo-cli` and all native bindings depend on `aidememo-core`, so their
 `cargo package` checks will fail against crates.io until `aidememo-core` is
 published at the matching version.
+
+The readiness script packages `aidememo-core` by default and records dependent
+Rust crates as a deliberate skip until that first publish-order blocker is
+removed. After `aidememo-core` is visible on crates.io at the matching version,
+run the full dependent check:
+
+```bash
+AIDEMEMO_CARGO_PACKAGE_CHECK_DEPENDENTS=1 scripts/cargo-package-readiness.sh
+```
 
 ## 4. Python packages
 

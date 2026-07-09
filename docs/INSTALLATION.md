@@ -44,6 +44,7 @@ For local development, the repo pins tool versions in `mise.toml`.
 ```bash
 mise run changelog-release-check
 mise run release-preflight
+mise run cargo-package-readiness
 scripts/fresh-checkout-smoke.sh
 mise run docs-build
 mise run ci-lint
@@ -52,7 +53,10 @@ mise run ci-test
 
 `changelog-release-check` is the fast release-note gate. It verifies that
 `CHANGELOG.md` has been cut for the current workspace version before the broader
-release preflight runs packaging, docs, registry, and workflow checks.
+release preflight runs docs, registry, and workflow checks. The full release
+preflight and `cargo-package-readiness` gate cover Rust package payloads:
+`aidememo-core` packages first, and dependent Rust crates are checked only after
+that core crate is published at the matching version.
 `scripts/fresh-checkout-smoke.sh` copies the checkout to a temporary directory
 without `target` or `node_modules`, builds the CLI, and verifies the deterministic
 quickstart path.
