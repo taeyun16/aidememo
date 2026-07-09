@@ -249,6 +249,7 @@ def validate_public_registry_smoke(failures: list[str], rows: list[str], release
     start_failures = len(failures)
     label = "public registry smoke"
     script = ROOT / "scripts" / "public-registry-smoke.sh"
+    workflow = ROOT / ".github" / "workflows" / "public-registry-smoke.yml"
     scripts_readme = read(ROOT / "scripts" / "README.md")
     measurements = read(ROOT / "docs" / "MEASUREMENTS.md")
     installation = read(ROOT / "docs" / "INSTALLATION.md")
@@ -267,11 +268,57 @@ def validate_public_registry_smoke(failures: list[str], rows: list[str], release
         require_contains(failures, text, "cargo install aidememo-cli", f"{label} cargo plan")
         require_contains(failures, text, "aidememo-agent-sdk[binding]", f"{label} binding plan")
         require_contains(failures, text, "npm install aidememo-napi", f"{label} npm plan")
+
+    if not workflow.exists():
+        fail(failures, label, ".github/workflows/public-registry-smoke.yml is missing")
+    else:
+        text = read(workflow)
+        require_contains(failures, text, "name: public registry smoke", f"{label} workflow name")
+        require_contains(failures, text, "workflow_dispatch:", f"{label} workflow dispatch")
+        require_regex(failures, text, r"^\s+version:\s*$", f"{label} version input")
+        require_regex(failures, text, r"^\s+mode:\s*$", f"{label} mode input")
+        require_contains(failures, text, "type: choice", f"{label} mode choice")
+        require_contains(
+            failures,
+            text,
+            "AIDEMEMO_PUBLIC_REGISTRY_VERSION: ${{ inputs.version }}",
+            f"{label} version env",
+        )
+        require_contains(
+            failures,
+            text,
+            "AIDEMEMO_PUBLIC_REGISTRY_SMOKE_MODE: ${{ inputs.mode }}",
+            f"{label} mode env",
+        )
+        require_contains(
+            failures,
+            text,
+            "AIDEMEMO_PUBLIC_REGISTRY_SMOKE_AGENT_SDK_BINDING:",
+            f"{label} binding env",
+        )
+        require_contains(
+            failures,
+            text,
+            'registry-url: "https://registry.npmjs.org"',
+            f"{label} npm registry",
+        )
+        require_contains(
+            failures,
+            text,
+            "scripts/public-registry-smoke.sh",
+            f"{label} workflow script",
+        )
     require_contains(
         failures,
         release_doc,
         "AIDEMEMO_PUBLIC_REGISTRY_SMOKE_MODE=verify scripts/public-registry-smoke.sh",
         f"{label} release verify command",
+    )
+    require_contains(
+        failures,
+        release_doc,
+        ".github/workflows/public-registry-smoke.yml",
+        f"{label} release workflow docs",
     )
     require_contains(
         failures,
@@ -284,6 +331,12 @@ def validate_public_registry_smoke(failures: list[str], rows: list[str], release
         measurements,
         "scripts/public-registry-smoke.sh",
         f"{label} measurement docs",
+    )
+    require_contains(
+        failures,
+        measurements,
+        ".github/workflows/public-registry-smoke.yml",
+        f"{label} measurement workflow docs",
     )
     require_contains(
         failures,

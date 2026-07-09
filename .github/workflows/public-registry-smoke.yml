@@ -1,0 +1,92 @@
+name: public registry smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Exact public package version to verify"
+        required: true
+        type: string
+      mode:
+        description: "Run plan before publish, verify after publish"
+        required: true
+        default: "plan"
+        type: choice
+        options:
+          - plan
+          - verify
+      rust:
+        description: "Check crates.io aidememo-cli install"
+        required: true
+        default: true
+        type: boolean
+      agent_sdk:
+        description: "Check PyPI aidememo-agent-sdk install"
+        required: true
+        default: true
+        type: boolean
+      agent_sdk_binding:
+        description: "Check PyPI aidememo-agent-sdk[binding] install"
+        required: true
+        default: true
+        type: boolean
+      hermes:
+        description: "Check PyPI hermes-aidememo install"
+        required: true
+        default: true
+        type: boolean
+      napi:
+        description: "Check npm aidememo-napi install"
+        required: true
+        default: true
+        type: boolean
+
+concurrency:
+  group: public-registry-smoke-${{ github.ref }}-${{ inputs.version }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  CARGO_NET_RETRY: 10
+  CARGO_NET_GIT_FETCH_WITH_CLI: true
+  RUSTUP_MAX_RETRIES: 10
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  AIDEMEMO_PUBLIC_REGISTRY_VERSION: ${{ inputs.version }}
+  AIDEMEMO_PUBLIC_REGISTRY_SMOKE_MODE: ${{ inputs.mode }}
+  AIDEMEMO_PUBLIC_REGISTRY_SMOKE_RUST: ${{ inputs.rust && '1' || '0' }}
+  AIDEMEMO_PUBLIC_REGISTRY_SMOKE_AGENT_SDK: ${{ inputs.agent_sdk && '1' || '0' }}
+  AIDEMEMO_PUBLIC_REGISTRY_SMOKE_AGENT_SDK_BINDING: ${{ inputs.agent_sdk_binding && '1' || '0' }}
+  AIDEMEMO_PUBLIC_REGISTRY_SMOKE_HERMES: ${{ inputs.hermes && '1' || '0' }}
+  AIDEMEMO_PUBLIC_REGISTRY_SMOKE_NAPI: ${{ inputs.napi && '1' || '0' }}
+
+jobs:
+  smoke:
+    name: public registry smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.96.0
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: public-registry-smoke-v1
+
+      - name: public registry smoke
+        run: scripts/public-registry-smoke.sh

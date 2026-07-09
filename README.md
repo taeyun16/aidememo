@@ -313,7 +313,7 @@ parallel.
 | `aidememo-agent-sdk` pack smoke | wheel install + `Memory` / `AideMemoClient` / `AideMemoMemorySDK` artifact-method checks passed in `3.38s` |
 | `hermes-aidememo` pack smoke | wheel install + SDK re-export / bundled skill / opt-in capture adapter checks passed in `4.43s` |
 | Rust publish readiness | `aidememo-core` `cargo publish --dry-run` verified; dependent Rust crates are a documented publish-order skip until core is live on crates.io |
-| Public registry smoke | `plan` mode records post-release `cargo`, `pip`, and `npm` install checks; `verify` mode installs from public registries after publish |
+| Public registry smoke | `plan` mode records post-release `cargo`, `pip`, and `npm` install checks; `verify` mode installs from public registries after publish, locally or through the manual GitHub workflow |
 | `aidememo-agent-sdk` publish workflow | PyPI payload dry-run + trusted-publisher workflow defaults to dry-run |
 | `hermes-aidememo` publish workflow | PyPI payload dry-run + trusted-publisher workflow defaults to dry-run |
 | Changelog release gate | `CHANGELOG.md` cut for workspace `0.1.0`, empty `Unreleased`, dated `0.1.0` notes |

@@ -120,6 +120,7 @@ DOC_CONTENT_REQUIREMENTS = [
             "scripts/cargo-package-readiness.sh",
             "AIDEMEMO_CARGO_PACKAGE_CHECK_DEPENDENTS=1",
             "scripts/public-registry-smoke.sh",
+            ".github/workflows/public-registry-smoke.yml",
             "AIDEMEMO_PUBLIC_REGISTRY_SMOKE_MODE=verify",
             "aidememo-core",
         ],

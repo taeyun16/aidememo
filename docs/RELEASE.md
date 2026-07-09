@@ -206,6 +206,12 @@ After each registry publish, run verify mode:
 AIDEMEMO_PUBLIC_REGISTRY_SMOKE_MODE=verify scripts/public-registry-smoke.sh
 ```
 
+The same check is available as the manual GitHub workflow
+`.github/workflows/public-registry-smoke.yml`. Keep `mode=plan` before the
+registries are live, then run the exact released version with `mode=verify`
+after publishing. The workflow exposes per-registry toggles so a partial
+publish can verify only the registry that changed.
+
 This installs `aidememo-cli`, `aidememo-agent-sdk`,
 `aidememo-agent-sdk[binding]`, `hermes-aidememo`, and `aidememo-napi` from
 public registries into temporary environments and imports / runs the installed
