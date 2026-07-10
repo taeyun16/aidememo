@@ -57,8 +57,8 @@ def _call_openai(api_key, model, messages, max_tokens, base_url, timeout=60, tem
     url = base_url.rstrip("/") + "/chat/completions"
     # temperature=0 default for reproducibility, but reasoning models like
     # MiniMax-M2.7 still show ±5pt run-to-run variance because they sample
-    # from think-token paths even at temp=0. Caller can override (e.g. for
-    # self-consistency voting we want diversity at temp=0.5).
+    # from think-token paths even at temp=0. Callers can override this for
+    # explicitly stochastic evaluation runs.
     body = {
         "model": model,
         "messages": messages,
