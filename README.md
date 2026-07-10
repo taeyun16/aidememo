@@ -21,6 +21,10 @@
   </p>
 </div>
 
+<p align="center">
+  <strong>English</strong> | <a href="./README.ko.md">한국어</a>
+</p>
+
 ---
 
 **AideMemo** (`aidememo`) is an agent-friendly SDK memory system for Claude Code, Codex, Cursor,
@@ -175,6 +179,14 @@ aidememo query "Redis" --bm25-only            # deterministic context pack
 aidememo query "Redis" --mode hybrid          # richer context, may use semantic retrieval
 aidememo overview
 ```
+
+For optional Mac-local experiments, AideMemo can connect an MLX LFM embedding
+model through the TEI-compatible `lfm-sidecar` provider. Keep it behind the
+default BM25-first auto-hybrid gate: current measurements do not support using
+LFM as the global embedding replacement. The LFM 1.2B LoRA fact-type path is
+also shadow/review-only and must not make automatic write decisions. See
+[`Operations`](docs/OPERATIONS.md#try-liquid-ai-lfm-models) for setup and
+[`Evidence`](docs/EVIDENCE.md#model-placement) for the measured boundaries.
 
 ### Write durable memory
 
@@ -342,11 +354,11 @@ and temporal memory semantics, not a SOTA benchmark claim.
 
 | Area | Features |
 |---|---|
-| Retrieval | BM25, semantic HNSW, hybrid RRF, optional TEI / fastembed rerank |
+| Retrieval | BM25, semantic HNSW, hybrid RRF, optional TEI / `lfm-sidecar`, fastembed and rerank paths |
 | Graph | entities, facts, relations, traversal, shortest path, Mermaid / DOT export |
 | Time | `supersede`, `current_only`, `as_of`, archive / cold tier |
 | Agent tools | 27 MCP tools including `aidememo_workflow_start`, `aidememo_context`, `aidememo_query`, `aidememo_aggregate`, `aidememo_fact_add_many` |
-| Capture | `aidememo_extract`, pending review queue, `aidememo pending list/stats/approve/reject`, opt-in Hermes/OpenClaw capture adapter |
+| Capture | `aidememo_extract`, pending review queue, review-only LFM LoRA `fact_type_hint` shadow path, opt-in Hermes/OpenClaw capture adapter |
 | Artifacts | `aidememo session canvas`, `aidememo profile export` for bounded, auditable Markdown views over typed facts |
 | Ops | `doctor` / MCP `aidememo_doctor`, `overview`, `bench`, `vector-rebuild`, `consolidate`, `auto-relate` |
 | Sharing | `source_id`, multi-project stores, stdio MCP, HTTP/SSE MCP, daemon discovery, branch logs for cloud agents and speculative memory runs |
