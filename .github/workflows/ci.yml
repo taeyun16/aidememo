@@ -212,6 +212,8 @@ jobs:
       # an audit.toml in repo root).
       - run: |
           cargo audit \
+            --ignore RUSTSEC-2026-0194 \
+            --ignore RUSTSEC-2026-0195 \
             --ignore RUSTSEC-2026-0104 \
             --ignore RUSTSEC-2026-0098 \
             --ignore RUSTSEC-2026-0099 \

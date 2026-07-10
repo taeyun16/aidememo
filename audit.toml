@@ -1,12 +1,20 @@
 # `cargo-audit` configuration.
 #
-# CI runs `rustsec/audit-check` on every push (see .github/workflows/ci.yml
-# `audit` job). The advisories below are known and tracked but cannot be
-# fixed today without a larger upgrade. Each entry has an owner reason +
-# what unblocks the fix; review during 0.2.0 prep.
+# CI runs `cargo audit` on every push (see .github/workflows/ci.yml `audit`
+# job). The advisories below are known and tracked but either need a larger
+# upgrade or occur only in inactive optional lockfile entries. Each entry has
+# an owner reason and removal condition; review during 0.2.0 prep.
 
 [advisories]
 ignore = [
+    # quick-xml 0.38.x is present only through oneio's optional `s3`
+    # dependency graph. AideMemo enables oneio's default HTTPS features,
+    # not oneio/s3; its own `s3` feature uses aws-sdk-s3 instead. cargo-audit
+    # scans optional lockfile entries even when no shipped feature compiles
+    # them. Remove these once oneio widens its quick-xml requirement.
+    "RUSTSEC-2026-0194",
+    "RUSTSEC-2026-0195",
+
     # rustls-webpki transitive (pulled in by ureq/reqwest's TLS stack).
     # Both panic and name-constraint advisories are about server-cert
     # validation paths; aidememo only uses TLS as a *client* against pinned
