@@ -33,9 +33,9 @@ assert_redb_absent() {
     echo "==> cargo tree $* # redb must be absent ($label)"
     local tree
     tree="$("${cargo_cmd[@]}" tree "$@")"
-    if rg '(^| )redb v[0-9]' <<<"$tree" >/dev/null; then
+    if grep -Eq '(^| )redb v[0-9]' <<<"$tree"; then
         echo "redb unexpectedly present in $label dependency tree" >&2
-        rg '(^| )redb v[0-9]' <<<"$tree" >&2
+        grep -E '(^| )redb v[0-9]' <<<"$tree" >&2
         exit 1
     fi
 }
@@ -47,7 +47,7 @@ assert_redb_present() {
     echo "==> cargo tree $* # redb must be present ($label)"
     local tree
     tree="$("${cargo_cmd[@]}" tree "$@")"
-    if ! rg '(^| )redb v[0-9]' <<<"$tree" >/dev/null; then
+    if ! grep -Eq '(^| )redb v[0-9]' <<<"$tree"; then
         echo "redb missing from $label dependency tree" >&2
         exit 1
     fi
