@@ -184,7 +184,7 @@ aidememo overview
 두어야 합니다. 현재 측정은 LFM을 전역 기본 임베딩으로 대체하는 것을
 지지하지 않습니다. LFM 1.2B LoRA 팩트 타입 경로도 shadow/review 전용이며
 자동 쓰기 결정을 내려서는 안 됩니다. 설정은
-[`운영`](docs/OPERATIONS.md#try-liquid-ai-lfm-models), 측정 경계는
+[`LFM 실험`](docs/LFM_EXPERIMENTS.md), 측정 경계는
 [`검증 근거`](docs/EVIDENCE.md#model-placement)를 참고하세요.
 
 ### 지속 가능한 메모리 쓰기

@@ -18,6 +18,7 @@ const sidebars = {
         'SDK',
         'FEATURES',
         'OPERATIONS',
+        'LFM_EXPERIMENTS',
         'BRANCHES',
         'EVIDENCE',
         'MEASUREMENTS',

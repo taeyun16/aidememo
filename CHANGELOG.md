@@ -107,8 +107,8 @@ What landed:
 - **Profile env vars** — `AIDEMEMO_LINT_PROFILE` and `AIDEMEMO_SEARCH_PROFILE`
   emit per-phase elapsed times when set. No-op when unset.
 - **`benchmarks/src/bin/`** — four perf runners now ship: the
-  reproducible `performance` matrix that writes
-  `benchmarks/results/performance.json`, plus focused
+  `performance` matrix (its environment-sensitive local JSON is ignored unless
+  promoted with provenance), plus focused
   `lint_profile`, `search_profile`, and a raw-redb `fsync_probe`
   that confirmed `fact_add`'s ~4 ms floor is the macOS APFS fsync
   cost, not algorithmic.

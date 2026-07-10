@@ -185,7 +185,7 @@ model through the TEI-compatible `lfm-sidecar` provider. Keep it behind the
 default BM25-first auto-hybrid gate: current measurements do not support using
 LFM as the global embedding replacement. The LFM 1.2B LoRA fact-type path is
 also shadow/review-only and must not make automatic write decisions. See
-[`Operations`](docs/OPERATIONS.md#try-liquid-ai-lfm-models) for setup and
+[`LFM Experiments`](docs/LFM_EXPERIMENTS.md) for setup and
 [`Evidence`](docs/EVIDENCE.md#model-placement) for the measured boundaries.
 
 ### Write durable memory

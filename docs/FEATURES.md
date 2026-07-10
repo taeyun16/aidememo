@@ -157,6 +157,9 @@ both the `aidememo-python` fast path and the CLI fallback.
 8. The Korean locale must keep its homepage messages, translated-doc coverage,
    source fingerprints, and explicit English fallbacks synchronized with the
    public sidebar.
+9. The English and Korean root READMEs must keep reciprocal language links and
+   install commands, while `COMPARE.md` participates in count, wording, and
+   storage-positioning drift checks.
 
 The gate also runs an internal count-claim self-test by default. Use
 `python3 scripts/docs-feature-gate.py --self-test` when you only need to verify

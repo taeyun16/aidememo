@@ -1,9 +1,10 @@
 //! Experiment 10.4 — performance matrix.
 //!
 //! Builds a synthetic wiki at multiple scales and measures p50/p95/p99
-//! latency for each operation listed in PLAN.md §10.4. Writes results
-//! to `benchmarks/results/performance.json` so the JSON is reproducible
-//! across runs and easy to diff against PLAN's targets.
+//! latency for the core read/write operations below. Writes the local result to
+//! `benchmarks/results/performance.json`; that environment-sensitive file is
+//! ignored until a snapshot is promoted with backend, commit, toolchain, and
+//! host provenance in `docs/MEASUREMENTS.md`.
 //!
 //! Run:
 //!   cargo run --release --bin performance
@@ -199,7 +200,7 @@ fn run_scale(scale: usize, rows: &mut Vec<Row>) {
     let op_t0 = Instant::now();
     // search_bm25 (warm) — pure BM25 via AideMemo::search. No
     // embedding work, so this is the apples-to-apples view of the
-    // BM25 inverted-index lookup against PLAN.md's target table.
+    // BM25 inverted-index lookup against the legacy v0.1 target table below.
     let mut idx = 0usize;
     let search_bm25_times = time_n(200, || {
         let q = queries[idx % queries.len()];
@@ -434,8 +435,9 @@ fn print_table(rows: &[Row]) {
     }
 }
 
-/// PLAN.md §9.1 / §10.4 p95 latency targets (ms). Returns None when a
-/// (op, scale) cell isn't on the published table.
+/// Legacy v0.1 p95 latency targets (ms). These constants are retained only as
+/// a stable local comparison baseline. Returns None when an `(op, scale)` cell
+/// is not represented.
 fn target_p95(op: &str, scale: usize) -> Option<f64> {
     let idx = match scale {
         100 => 0,
@@ -463,7 +465,7 @@ fn target_p95(op: &str, scale: usize) -> Option<f64> {
 
 fn print_target_comparison(rows: &[Row]) {
     println!();
-    println!("Comparison vs PLAN.md §9.1 p95 targets:");
+    println!("Comparison vs legacy v0.1 p95 targets:");
     println!(
         "{:>10}  {:<14}  {:>12}  {:>12}  {:>10}",
         "scale", "op", "p95 (ms)", "target (ms)", "ratio"

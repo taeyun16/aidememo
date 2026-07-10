@@ -1,7 +1,7 @@
 //! Phase breakdown for `AideMemo::hybrid_search` on the
 //! BM25-prefilter path (semantic_index = "naive"), where the perf
 //! bench shows search_hybrid sitting at ~5-10 ms p95 — within 2× of
-//! PLAN.md's target. The HNSW path already passes; this profiler is
+//! the legacy v0.1 target. The HNSW path already passes; this profiler is
 //! about understanding the remaining miss on the fallback path.
 //!
 //! Sets `AIDEMEMO_SEARCH_PROFILE=1` so each phase

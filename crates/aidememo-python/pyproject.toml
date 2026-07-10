@@ -32,6 +32,8 @@ Repository = "https://github.com/taeyun16/aidememo"
 module-name = "aidememo_python"
 features = ["pyo3/extension-module"]
 strip = true
+# Keep the workspace-level optional fastembed patch path self-contained in the
+# sdist even though the default Python wheel uses the Model2Vec provider.
 include = [
     { path = "vendor/LICENSE", format = "sdist" },
     { path = "vendor/tokenizers/LICENSE", format = "sdist" },

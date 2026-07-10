@@ -867,16 +867,16 @@ pub(crate) struct MemoryEntry {
     pub detail: String,
 }
 
-/// Per-fact RAM cost of the BM25 inverted index, drawn from PLAN.md
-/// §9.1's "1만 fact 기준 ~5 MB" estimate.
+/// Per-fact RAM cost of the BM25 inverted index, retained from the original
+/// v0.1 budget of roughly 5 MB for 10,000 facts.
 const MEMORY_PER_FACT_BM25: u64 = 500;
 
 /// Per-fact cost of a quantized fact embedding sitting in
 /// `fact_embed_cache`: 256 i8 dims + serde overhead.
 const MEMORY_PER_FACT_EMBED_CACHE: u64 = 272;
 
-/// Per-fact cost of the in-memory HNSW (graph node + the f32 vector
-/// it points at). PLAN.md §9.1 budgets ~1 KB/fact at 256 dims.
+/// Per-fact cost of the in-memory HNSW (graph node + the f32 vector it points
+/// at), using the original v0.1 budget of roughly 1 KB/fact at 256 dimensions.
 const MEMORY_PER_FACT_HNSW: u64 = 1024;
 
 impl MemoryReport {

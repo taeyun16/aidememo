@@ -13,6 +13,8 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 README = ROOT / "README.md"
+README_KO = ROOT / "README.ko.md"
+COMPARE = ROOT / "COMPARE.md"
 FEATURES_DOC = ROOT / "docs" / "FEATURES.md"
 ARCHITECTURE_DOC = ROOT / "docs" / "ARCHITECTURE.md"
 AGENT_WORKFLOWS_DOC = ROOT / "docs" / "AGENT_WORKFLOWS.md"
@@ -20,6 +22,7 @@ INSTALLATION_DOC = ROOT / "docs" / "INSTALLATION.md"
 QUICKSTART_DOC = ROOT / "docs" / "QUICKSTART.md"
 EVIDENCE_DOC = ROOT / "docs" / "EVIDENCE.md"
 MEASUREMENTS_DOC = ROOT / "docs" / "MEASUREMENTS.md"
+LFM_EXPERIMENTS_DOC = ROOT / "docs" / "LFM_EXPERIMENTS.md"
 RELEASE_DOC = ROOT / "docs" / "RELEASE.md"
 SCRIPTS_README = ROOT / "scripts" / "README.md"
 INSTALL_SCRIPT = ROOT / "scripts" / "install.sh"
@@ -53,6 +56,7 @@ REQUIRED_SIDEBAR_DOCS = [
     "BRANCHES",
     "EVIDENCE",
     "MEASUREMENTS",
+    "LFM_EXPERIMENTS",
     "RELEASE",
 ]
 
@@ -135,6 +139,17 @@ DOC_CONTENT_REQUIREMENTS = [
         ],
     ),
     (
+        LFM_EXPERIMENTS_DOC,
+        [
+            "not bundled with AideMemo",
+            "not the global default",
+            "aidememo config set model.provider lfm-sidecar",
+            "scripts/lfm_mlx_docs_recall_eval.py",
+            "scripts/lfm_fact_type_threshold_eval.py",
+            "AIDEMEMO_FACT_TYPE_SHADOW_LOG",
+        ],
+    ),
+    (
         RELEASE_DOC,
         [
             ".github/workflows/release-preflight.yml",
@@ -153,6 +168,8 @@ DOC_CONTENT_REQUIREMENTS = [
 
 FORBIDDEN_GLOBS = [
     "README.md",
+    "README.ko.md",
+    "COMPARE.md",
     "AGENTS.md",
     "CLAUDE.md",
     "docs/*.md",
@@ -199,6 +216,20 @@ STORAGE_POSITIONING_REQUIREMENTS = [
         ],
     ),
     (
+        ROOT / "README.ko.md",
+        [
+            "SQLite가 기본 로컬 백엔드",
+            "redb를 선택하려면 `--features redb`",
+        ],
+    ),
+    (
+        ROOT / "COMPARE.md",
+        [
+            "one embedded SQLite file by default",
+            "optional redb Cargo feature",
+        ],
+    ),
+    (
         ROOT / "AGENTS.md",
         [
             "SQLite by default, redb as an optional Cargo feature",
@@ -223,6 +254,8 @@ STORAGE_POSITIONING_REQUIREMENTS = [
 
 COUNT_CLAIM_GLOBS = [
     "README.md",
+    "README.ko.md",
+    "COMPARE.md",
     "AGENTS.md",
     "docs/*.md",
     "scripts/README.md",
@@ -527,8 +560,20 @@ def check_onboarding_contract(binary: Path) -> list[str]:
             [
                 "curl -fsSL https://raw.githubusercontent.com/taeyun16/aidememo/main/scripts/install.sh | bash",
                 "cargo install --path crates/aidememo-cli",
+                '<a href="./README.ko.md">한국어</a>',
             ],
             "public install",
+        )
+    )
+    errors.extend(
+        require_tokens(
+            README_KO,
+            [
+                "curl -fsSL https://raw.githubusercontent.com/taeyun16/aidememo/main/scripts/install.sh | bash",
+                "cargo install --path crates/aidememo-cli",
+                '<a href="./README.md">English</a>',
+            ],
+            "Korean public install",
         )
     )
     errors.extend(
@@ -555,6 +600,20 @@ def check_onboarding_contract(binary: Path) -> list[str]:
     query_help = run_help(binary, "query")
     if "--bm25-only" not in query_help:
         errors.append("aidememo query --help is missing --bm25-only; quickstart deterministic query would drift")
+    return errors
+
+
+def check_script_inventory() -> list[str]:
+    errors: list[str] = []
+    inventory = SCRIPTS_README.read_text(encoding="utf-8")
+    names = sorted(set(re.findall(r"`([^`/\s]+\.(?:py|sh|mjs))`", inventory)))
+    scripts_dir = ROOT / "scripts"
+    for name in names:
+        if "*" in name:
+            if not any(scripts_dir.glob(name)):
+                errors.append(f"scripts/README.md inventory pattern has no matches: {name}")
+        elif not (scripts_dir / name).is_file():
+            errors.append(f"scripts/README.md inventories missing script: scripts/{name}")
     return errors
 
 
@@ -806,6 +865,7 @@ def main() -> int:
     errors.extend(check_stale_wording())
     errors.extend(check_storage_positioning())
     errors.extend(check_onboarding_contract(binary))
+    errors.extend(check_script_inventory())
     errors.extend(check_community_contract())
 
     if errors:

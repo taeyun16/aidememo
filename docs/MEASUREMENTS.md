@@ -988,21 +988,17 @@ rescues across confidence/margin grids. Use that gate before promoting any
 
 ## Performance
 
-Reference numbers from `benchmarks/src/bin/performance.rs` on a 10,000-fact
-synthetic wiki, p95 latency, default config:
+The unlabelled April 2026 output from `benchmarks/src/bin/performance.rs` was
+retired after SQLite became the default backend. Its redb-era values are not
+current default-path evidence and should not be compared with new runs without
+the original backend and execution envelope.
 
-| Operation | p95 |
-|---|---:|
-| `traverse_d3` | ~0.01 ms |
-| `search_bm25` | ~0.5 ms |
-| `search_hybrid` | ~3.4 ms |
-| `lint` | ~34 ms |
-| `fact_add_many` per fact | ~0.07 ms |
-| `fact_add` single | ~5 ms |
-| `startup` open + first traverse | ~12 ms |
-
-`fact_add` is limited by the OS fsync floor under immediate durability. Use
-`fact_add_many` or `store.durability = eventual` when ingest throughput matters.
+The runner still writes a local `benchmarks/results/performance.json` for
+development comparisons, but that file is ignored by default. Promote a future
+snapshot only with the commit, backend, durability mode, toolchain, host, model
+readiness, exact operation names, and reproduction command. Until then, use the
+dated backend probe below for the public storage comparison and the
+scenario-specific sections above for daemon and model latency.
 
 ### Storage Backend Probe
 
@@ -1519,7 +1515,8 @@ focused on durable documentation and executable benchmarks. When adding a new
 finding:
 
 1. Put reusable code under `benchmarks/`, `bench/`, or `scripts/`.
-2. Store machine-readable outputs under `bench/**/results` or
-   `benchmarks/results`.
+2. Store durable machine-readable outputs under `bench/**/results` or
+   `benchmarks/results` and link them from a dated measurement with backend and
+   execution-envelope provenance. Keep transient local outputs ignored.
 3. Summarize the user-facing result in this file or in the relevant
    `RESULTS.md`.

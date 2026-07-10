@@ -68,3 +68,7 @@ dhat-heap.json
 # Local-only LongMemEval E2E intermediates
 aidememo_retrievals_*.jsonl
 aidememo_e2e_*/
+
+# Environment-sensitive benchmark output. Promote a snapshot only after adding
+# backend, commit, toolchain, and host provenance to docs/MEASUREMENTS.md.
+/benchmarks/results/performance.json
