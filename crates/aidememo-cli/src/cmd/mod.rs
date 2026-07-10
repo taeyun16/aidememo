@@ -343,9 +343,8 @@ pub struct SearchSub {
     /// Optional `aidememo mcp-serve` endpoint (e.g. `http://localhost:3000`).
     /// When set, dispatch the search via `aidememo_search` JSON-RPC against
     /// that daemon instead of opening the store in-process.
-    /// Trades the ~70 ms `aidememo --bm25` cold-start for ~10–20 ms warm
-    /// over a single HTTP round-trip — the daemon keeps the model
-    /// loaded.
+    /// Avoids reopening the store or cold-loading the model for each CLI
+    /// invocation; the daemon keeps both warm across HTTP round-trips.
     pub via: Option<String>,
     pub traverse_from: Option<String>,
     pub traverse_depth: Option<u32>,

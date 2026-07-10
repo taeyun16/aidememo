@@ -1,10 +1,9 @@
 //! `aidememo daemon` — manage a long-lived `aidememo mcp-serve` background process.
 //!
-//! Why this exists: a fresh `aidememo search` CLI spawn pays ~70 ms (BM25)
-//! to ~1 s (hybrid + cold model load) every invocation. A daemon
-//! amortises both the store open and the embedding model load so the
-//! same query takes ~5 ms (BM25) or ~43 ms (HNSW) — see
-//! `bench/beads-vs-aidememo/scenario_5_daemon_warm.py`.
+//! Why this exists: a fresh `aidememo search` CLI spawn reopens the store and
+//! may cold-load the embedding model on every invocation. A daemon amortises
+//! both costs. See `docs/MEASUREMENTS.md` for dated daemon and model latency
+//! measurements.
 //!
 //! Subcommands
 //! -----------
