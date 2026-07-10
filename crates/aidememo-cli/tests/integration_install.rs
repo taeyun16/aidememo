@@ -181,10 +181,11 @@ fn mcp_install_codex_writes_fresh_config() {
     let parsed: toml::Value = body.parse().unwrap();
     let aidememo = &parsed["mcp_servers"]["aidememo"];
     assert_eq!(aidememo["command"].as_str(), Some("aidememo"));
-    assert_eq!(
-        aidememo["args"].as_array().unwrap()[0].as_str(),
-        Some("mcp")
-    );
+    let args = aidememo["args"].as_array().unwrap();
+    assert_eq!(args.len(), 3);
+    assert_eq!(args[0].as_str(), Some("--backend"));
+    assert_eq!(args[1].as_str(), Some("sqlite"));
+    assert_eq!(args[2].as_str(), Some("mcp"));
 }
 
 #[test]
@@ -372,7 +373,10 @@ fn mcp_install_cursor_writes_fresh_config() {
     let body = std::fs::read_to_string(&cfg_path).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
     assert_eq!(parsed["mcpServers"]["aidememo"]["command"], "aidememo");
-    assert_eq!(parsed["mcpServers"]["aidememo"]["args"][0], "mcp");
+    assert_eq!(
+        parsed["mcpServers"]["aidememo"]["args"],
+        serde_json::json!(["--backend", "sqlite", "mcp"])
+    );
 }
 
 #[test]
@@ -638,9 +642,9 @@ fn doctor_fix_lists_install_commands_for_gaps() {
     assert!(!stdout.contains("aidememo skill install --target cursor"));
     // MCP fixes only for confirmed-missing (file-edit), not for
     // unverifiable shell-out targets.
-    assert!(stdout.contains("aidememo mcp-install --target codex"));
-    assert!(stdout.contains("aidememo mcp-install --target cursor"));
-    assert!(!stdout.contains("aidememo mcp-install --target openclaw"));
+    assert!(stdout.contains("aidememo --backend sqlite mcp-install --target codex"));
+    assert!(stdout.contains("aidememo --backend sqlite mcp-install --target cursor"));
+    assert!(!stdout.contains("aidememo --backend sqlite mcp-install --target openclaw"));
 }
 
 #[test]
@@ -693,7 +697,11 @@ fn doctor_json_includes_fixes_array() {
             .iter()
             .any(|c| c.contains("aidememo skill install"))
     );
-    assert!(commands.iter().any(|c| c.contains("aidememo mcp-install")));
+    assert!(
+        commands
+            .iter()
+            .any(|c| c.contains("aidememo --backend sqlite mcp-install"))
+    );
     assert!(
         commands
             .iter()
