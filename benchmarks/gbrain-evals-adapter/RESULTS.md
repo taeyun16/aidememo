@@ -1,6 +1,7 @@
 # aidememo Adapter Results
 
 Fresh-checkout validation for `benchmarks/gbrain-evals-adapter/aidememo-adapter.ts`.
+Command examples use `AIDEMEMO_ROOT=/path/to/aidememo` for the local checkout.
 
 ## 2026-05-19 — BrainBench Multi-Adapter Smoke
 
@@ -8,7 +9,7 @@ Environment:
 
 - `garrytan/gbrain-evals` commit: `ef7794f`
 - Bun: `1.3.11`
-- aidememo binary: `/Users/mixlink/dev/aidememo/target/debug/aidememo`
+- aidememo binary: `$AIDEMEMO_ROOT/target/debug/aidememo`
 - Adapter mode: `AIDEMEMO_ADAPTER_MODE=bm25`
 - Adapter daemon: unset
 - Adapter limit: `AIDEMEMO_ADAPTER_LIMIT=10`
@@ -20,7 +21,7 @@ Setup:
 git clone --depth 1 https://github.com/garrytan/gbrain-evals "$TMP/gbrain-evals"
 cd "$TMP/gbrain-evals"
 bun install
-cp /Users/mixlink/dev/aidememo/benchmarks/gbrain-evals-adapter/aidememo-adapter.ts \
+cp "$AIDEMEMO_ROOT/benchmarks/gbrain-evals-adapter/aidememo-adapter.ts" \
   eval/runner/adapters/aidememo.ts
 # Register AideMemoAdapter in eval/runner/multi-adapter.ts.
 ```
@@ -28,7 +29,7 @@ cp /Users/mixlink/dev/aidememo/benchmarks/gbrain-evals-adapter/aidememo-adapter.
 Adapter smoke:
 
 ```bash
-AIDEMEMO_BIN=/Users/mixlink/dev/aidememo/target/debug/aidememo \
+AIDEMEMO_BIN="$AIDEMEMO_ROOT/target/debug/aidememo" \
 AIDEMEMO_ADAPTER_MODE=bm25 \
 bun test ./eval/runner/adapters/aidememo-smoke.test.ts
 ```
@@ -45,7 +46,7 @@ BrainBench scorecard:
 ```bash
 /usr/bin/time -p env \
   BRAINBENCH_N=1 \
-  AIDEMEMO_BIN=/Users/mixlink/dev/aidememo/target/debug/aidememo \
+  AIDEMEMO_BIN="$AIDEMEMO_ROOT/target/debug/aidememo" \
   AIDEMEMO_ADAPTER_MODE=bm25 \
   AIDEMEMO_ADAPTER_LIMIT=10 \
   bun eval/runner/multi-adapter.ts --adapter=aidememo
@@ -64,7 +65,7 @@ Same fresh checkout and registration patch as above.
 Adapter smoke:
 
 ```bash
-AIDEMEMO_BIN=/Users/mixlink/dev/aidememo/target/debug/aidememo \
+AIDEMEMO_BIN="$AIDEMEMO_ROOT/target/debug/aidememo" \
 AIDEMEMO_ADAPTER_MODE=bm25 \
 AIDEMEMO_ADAPTER_DAEMON=1 \
 bun test ./eval/runner/adapters/aidememo-smoke.test.ts
@@ -82,7 +83,7 @@ BrainBench scorecards:
 ```bash
 /usr/bin/time -p env \
   BRAINBENCH_N=1 \
-  AIDEMEMO_BIN=/Users/mixlink/dev/aidememo/target/debug/aidememo \
+  AIDEMEMO_BIN="$AIDEMEMO_ROOT/target/debug/aidememo" \
   AIDEMEMO_ADAPTER_MODE=bm25 \
   AIDEMEMO_ADAPTER_DAEMON=1 \
   AIDEMEMO_ADAPTER_LIMIT=10 \
@@ -92,7 +93,7 @@ BrainBench scorecards:
 ```bash
 /usr/bin/time -p env \
   BRAINBENCH_N=1 \
-  AIDEMEMO_BIN=/Users/mixlink/dev/aidememo/target/debug/aidememo \
+  AIDEMEMO_BIN="$AIDEMEMO_ROOT/target/debug/aidememo" \
   AIDEMEMO_ADAPTER_MODE=hybrid \
   AIDEMEMO_ADAPTER_DAEMON=1 \
   AIDEMEMO_ADAPTER_LIMIT=10 \
@@ -142,7 +143,7 @@ Bun-shaped harness.
 Setup:
 
 - `aidememo-napi`: `npm install && npm run build`
-- CLI binary: `/Users/mixlink/dev/aidememo/target/debug/aidememo`
+- CLI binary: `$AIDEMEMO_ROOT/target/debug/aidememo`
 - Adapter mode: `AIDEMEMO_ADAPTER_MODE=bm25`
 - Fixture: 3 markdown pages, 30 repeated queries for
   `high availability cache failover`
@@ -168,8 +169,8 @@ Environment:
 - `garrytan/gbrain-evals` commit: `89445dd`
 - `gbrain` dependency: `garrytan/gbrain#1580c6d`
 - Bun: `1.3.11`
-- aidememo binary: `/Users/mixlink/dev/aidememo/target/debug/aidememo`
-- aidememo-napi module: `/Users/mixlink/dev/aidememo/crates/aidememo-napi`
+- aidememo binary: `$AIDEMEMO_ROOT/target/debug/aidememo`
+- aidememo-napi module: `$AIDEMEMO_ROOT/crates/aidememo-napi`
 - Adapter mode: `AIDEMEMO_ADAPTER_MODE=bm25`
 - Adapter limit: `AIDEMEMO_ADAPTER_LIMIT=10`
 - Runs: `BRAINBENCH_N=1`
@@ -180,7 +181,7 @@ Setup:
 git clone --depth 1 https://github.com/garrytan/gbrain-evals "$TMP/gbrain-evals"
 cd "$TMP/gbrain-evals"
 bun install
-cp /Users/mixlink/dev/aidememo/benchmarks/gbrain-evals-adapter/aidememo-adapter.ts \
+cp "$AIDEMEMO_ROOT/benchmarks/gbrain-evals-adapter/aidememo-adapter.ts" \
   eval/runner/adapters/aidememo.ts
 # Register AideMemoAdapter in eval/runner/multi-adapter.ts.
 ```
@@ -190,9 +191,9 @@ Native backend scorecard:
 ```bash
 /usr/bin/time -p env \
   BRAINBENCH_N=1 \
-  AIDEMEMO_BIN=/Users/mixlink/dev/aidememo/target/debug/aidememo \
+  AIDEMEMO_BIN="$AIDEMEMO_ROOT/target/debug/aidememo" \
   AIDEMEMO_ADAPTER_BACKEND=napi \
-  AIDEMEMO_NAPI_MODULE=/Users/mixlink/dev/aidememo/crates/aidememo-napi \
+  AIDEMEMO_NAPI_MODULE="$AIDEMEMO_ROOT/crates/aidememo-napi" \
   AIDEMEMO_ADAPTER_MODE=bm25 \
   AIDEMEMO_ADAPTER_LIMIT=10 \
   bun eval/runner/multi-adapter.ts --adapter=aidememo
@@ -203,7 +204,7 @@ Daemon baseline on the same checkout:
 ```bash
 /usr/bin/time -p env \
   BRAINBENCH_N=1 \
-  AIDEMEMO_BIN=/Users/mixlink/dev/aidememo/target/debug/aidememo \
+  AIDEMEMO_BIN="$AIDEMEMO_ROOT/target/debug/aidememo" \
   AIDEMEMO_ADAPTER_BACKEND=cli \
   AIDEMEMO_ADAPTER_DAEMON=1 \
   AIDEMEMO_ADAPTER_MODE=bm25 \

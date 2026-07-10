@@ -28,14 +28,17 @@ import multiprocessing as mp
 import os
 import subprocess
 import sys
+import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
 STORE = os.environ.get(
-    "AIDEMEMO_E2E_STORE", "/Users/mixlink/.aidememo-e2e/wiki.redb-concurrent"
+    "AIDEMEMO_E2E_STORE",
+    str(Path(tempfile.gettempdir()) / "aidememo-e2e-d" / "wiki.redb-concurrent"),
 )
-WG = os.environ.get("AIDEMEMO_BIN", "/Users/mixlink/.local/bin/aidememo")
+ROOT = Path(__file__).resolve().parents[2]
+WG = os.environ.get("AIDEMEMO_BIN", str(ROOT / "target" / "release" / "aidememo"))
 E2E_HOME = os.environ.get("AIDEMEMO_E2E_HOME", str(Path(STORE).parent / "home-redb"))
 M_PROCESSES = int(os.environ.get("AIDEMEMO_E2E_PROCESSES", "4"))
 N_PER_PROC = int(os.environ.get("AIDEMEMO_E2E_N_PER_PROC", "25"))

@@ -80,4 +80,4 @@ printf '%s\n' \
 |---|---|
 | Codex가 AideMemo를 못 봄 | `~/.codex/config.toml` 경로 + TOML 키 이름 (`mcp_servers`) 확인 |
 | 매번 승인 프롬프트가 뜸 | `default_tools_approval_mode = "approve"` 설정 |
-| `command not found: aidememo` | 절대경로 사용: `command = "/Users/me/dev/aidememo/target/release/aidememo"` |
+| `command not found: aidememo` | 절대경로 사용: `command = "/path/to/aidememo/target/release/aidememo"` |

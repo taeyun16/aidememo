@@ -34,6 +34,7 @@ the situation calls for it (very rare).
 | pre-push | `cargo doc --workspace --no-deps --features semantic` | fix rustdoc warnings |
 | pre-push | `cargo test -p aidememo-core --features semantic` | fix the test |
 | pre-push | `cargo test -p aidememo-cli --bin aidememo` | fix the test |
+| CI / release | `python3 scripts/public-portability-check.py` | replace developer-specific home paths with repository-relative, `$HOME`, or environment-driven paths |
 | CI | all of the above + `cargo doc -D warnings` + macOS test matrix | — |
 
 Workspace lints (`Cargo.toml`) already deny `unwrap_used`, `panic`,

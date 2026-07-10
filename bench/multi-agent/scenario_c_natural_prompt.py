@@ -28,11 +28,15 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-STORE = os.environ.get("AIDEMEMO_E2E_STORE", "/Users/mixlink/.aidememo-e2e/wiki.sqlite")
-WG = os.environ.get("AIDEMEMO_BIN", "/Users/mixlink/.local/bin/aidememo")
-CLAUDE_BIN = os.environ.get("CLAUDE_BIN", "/Users/mixlink/.local/bin/claude")
-CODEX_BIN = os.environ.get("CODEX_BIN", "/opt/homebrew/bin/codex")
-HERMES_BIN = os.environ.get("HERMES_BIN", "/Users/mixlink/.local/bin/hermes")
+ROOT = Path(__file__).resolve().parents[2]
+STORE = os.environ.get(
+    "AIDEMEMO_E2E_STORE",
+    str(Path(tempfile.gettempdir()) / "aidememo-e2e-c" / "wiki.sqlite"),
+)
+WG = os.environ.get("AIDEMEMO_BIN", str(ROOT / "target" / "release" / "aidememo"))
+CLAUDE_BIN = os.environ.get("CLAUDE_BIN", "claude")
+CODEX_BIN = os.environ.get("CODEX_BIN", "codex")
+HERMES_BIN = os.environ.get("HERMES_BIN", "hermes")
 
 # Seed facts — short and unambiguous so we can tell whether the agent
 # actually used aidememo vs hallucinated.

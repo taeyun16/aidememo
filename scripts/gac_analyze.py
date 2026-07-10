@@ -35,11 +35,14 @@ from pathlib import Path
 
 import numpy as np
 
+ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_AIDEMEMO_BIN = str(ROOT / "target" / "debug" / "aidememo")
 
-def fetch_facts(store_path: str, limit: int = 5000) -> list[dict]:
+
+def fetch_facts(aidememo_bin: str, store_path: str, limit: int = 5000) -> list[dict]:
     """`aidememo fact list --json --limit N` → list of {id, content, ...}."""
     cmd = [
-        "/Users/mixlink/dev/aidememo/target/debug/aidememo",
+        aidememo_bin,
         "--store", store_path,
         "fact", "list", "--limit", str(limit), "--json",
     ]
@@ -192,6 +195,11 @@ def report_for_theta(
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--store", required=True, help="Path to an AideMemo store")
+    ap.add_argument(
+        "--aidememo-bin",
+        default=DEFAULT_AIDEMEMO_BIN,
+        help="Path to aidememo (default: this checkout's target/debug/aidememo)",
+    )
     ap.add_argument("--thetas", type=float, nargs="+", default=[0.85, 0.90, 0.95])
     ap.add_argument("--model", default="minishlab/potion-multilingual-128M",
                     help="model2vec model name (must match aidememo's embed config)")
@@ -202,7 +210,7 @@ def main():
     args = ap.parse_args()
 
     print(f"GAC analysis on {args.store}", file=sys.stderr)
-    facts = fetch_facts(args.store, args.limit)
+    facts = fetch_facts(args.aidememo_bin, args.store, args.limit)
     print(f"  pulled {len(facts)} facts", file=sys.stderr)
     if not facts:
         print("error: store is empty", file=sys.stderr)

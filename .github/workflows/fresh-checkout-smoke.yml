@@ -1,0 +1,44 @@
+name: fresh checkout smoke
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "crates/aidememo-core/**"
+      - "crates/aidememo-cli/**"
+      - "scripts/install.sh"
+      - "scripts/fresh-checkout-smoke.sh"
+      - ".github/workflows/fresh-checkout-smoke.yml"
+
+concurrency:
+  group: fresh-checkout-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: fresh checkout smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.96.0
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: fresh-checkout-smoke-v1
+
+      - name: fresh checkout smoke
+        run: scripts/fresh-checkout-smoke.sh

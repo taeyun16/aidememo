@@ -6,6 +6,10 @@
 
 ### Added
 
+- **Public release safeguards** — runner-backed release preflight and
+  fresh-checkout onboarding workflows, public registry post-release install
+  smoke, canonical `v0.1.0` source-tag contract, and an offline portability
+  gate that rejects developer-specific home paths from first-party files.
 - **TEI integration** — first-class support for HuggingFace
   text-embeddings-inference, both as embedding source and as a
   cross-encoder reranker:

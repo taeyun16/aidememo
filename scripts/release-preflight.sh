@@ -165,6 +165,7 @@ else
     record_skip "changelog release gate" "AIDEMEMO_RELEASE_PREFLIGHT_CHANGELOG=0"
 fi
 run "registry readiness gate" python3 "$ROOT_DIR/scripts/registry-readiness-check.py"
+run "public portability gate" python3 "$ROOT_DIR/scripts/public-portability-check.py"
 
 if [[ "$RUN_ACTIONLINT" == "1" ]]; then
     if have "$ACTIONLINT_BIN"; then

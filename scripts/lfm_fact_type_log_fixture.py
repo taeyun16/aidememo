@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -346,8 +347,21 @@ def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--agentstep-root", type=Path, default=Path("/Users/mixlink/AgentStep"))
-    parser.add_argument("--hermes-sessions-dir", type=Path, default=Path("/Users/mixlink/.hermes/sessions"))
+    parser.add_argument(
+        "--agentstep-root",
+        type=Path,
+        default=Path(os.environ.get("AGENTSTEP_ROOT", Path.home() / "AgentStep")),
+    )
+    parser.add_argument(
+        "--hermes-sessions-dir",
+        type=Path,
+        default=Path(
+            os.environ.get(
+                "HERMES_SESSIONS_DIR",
+                Path.home() / ".hermes" / "sessions",
+            )
+        ),
+    )
     parser.add_argument("--out-dir", type=Path, required=True)
     parser.add_argument("--max-rows", type=int, default=72)
     parser.add_argument("--max-per-label", type=int, default=12)

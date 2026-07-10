@@ -23,11 +23,20 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-STORE = "/Users/mixlink/.aidememo-e2e/wiki.sqlite"
+ROOT = Path(__file__).resolve().parents[2]
+STORE = os.environ.get(
+    "AIDEMEMO_E2E_STORE",
+    str(Path(tempfile.gettempdir()) / "aidememo-e2e-a" / "wiki.sqlite"),
+)
+AIDEMEMO_BIN = os.environ.get(
+    "AIDEMEMO_BIN",
+    str(ROOT / "target" / "debug" / "aidememo"),
+)
 
 
 @dataclass
@@ -52,10 +61,9 @@ def claude_code_config() -> ClientConfig:
 
 def codex_config() -> ClientConfig:
     # Codex reads ~/.codex/config.toml.
-    # We've registered aidememo there as command="/Users/mixlink/.local/bin/aidememo",
-    # args=["mcp", STORE]. Hard-code that mirror — running codex itself
-    # to introspect would couple this smoke to Codex's CLI surface.
-    cmd = ["/Users/mixlink/.local/bin/aidememo", "mcp", STORE]
+    # Mirror command="aidememo", args=["mcp", STORE] without coupling this
+    # smoke to Codex's CLI configuration parser.
+    cmd = [AIDEMEMO_BIN, "mcp", STORE]
     return ClientConfig(
         name="codex",
         command=cmd,
@@ -67,7 +75,7 @@ def hermes_config() -> ClientConfig:
     # The hermes-aidememo plugin shells out to `aidememo` (PATH lookup) by default.
     # Mirror its CLI form so the smoke fails the same way Hermes would
     # if PATH didn't have aidememo.
-    cmd = ["/Users/mixlink/.local/bin/aidememo", "mcp", STORE]
+    cmd = [AIDEMEMO_BIN, "mcp", STORE]
     return ClientConfig(
         name="hermes",
         command=cmd,

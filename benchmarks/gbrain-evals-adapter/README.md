@@ -77,13 +77,14 @@ The adapter keeps the CLI path as the portable baseline, but can now remove
 per-query process spawn when a built `aidememo-napi` package is available:
 
 ```bash
-cd crates/aidememo-napi
+export AIDEMEMO_ROOT=/path/to/aidememo
+cd "$AIDEMEMO_ROOT/crates/aidememo-napi"
 npm install
 npm run build
 
 cd /tmp/gbrain-evals
 AIDEMEMO_ADAPTER_BACKEND=napi \
-AIDEMEMO_NAPI_MODULE=/Users/mixlink/dev/aidememo/crates/aidememo-napi \
+AIDEMEMO_NAPI_MODULE="$AIDEMEMO_ROOT/crates/aidememo-napi" \
 bun eval/runner/multi-adapter.ts --adapter=aidememo
 ```
 

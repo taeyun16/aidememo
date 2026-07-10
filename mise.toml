@@ -44,6 +44,14 @@ run = "./scripts/cargo-package-readiness.sh"
 description = "Plan post-release public registry install checks"
 run = "./scripts/public-registry-smoke.sh"
 
+[tasks.public-portability-check]
+description = "Reject developer-specific home paths from public tracked files"
+run = "python3 scripts/public-portability-check.py"
+
+[tasks.fresh-checkout-smoke]
+description = "Build and exercise onboarding from an artifact-free checkout copy"
+run = "./scripts/fresh-checkout-smoke.sh"
+
 [tasks.python-pack-smoke]
 description = "Build and install-smoke the aidememo-python wheel via uvx+maturin"
 run = "./scripts/aidememo-python-pack-smoke.sh"

@@ -313,6 +313,8 @@ parallel.
 | `aidememo-agent-sdk` pack smoke | wheel install + `Memory` / `AideMemoClient` / `AideMemoMemorySDK` artifact-method checks passed in `3.38s` |
 | `hermes-aidememo` pack smoke | wheel install + SDK re-export / bundled skill / opt-in capture adapter checks passed in `4.43s` |
 | Release preflight workflow | manual GitHub workflow runs the same release gate with local/full profile and explicit heavy-step toggles |
+| Public portability gate | CI and release preflight reject developer-specific home paths from first-party tracked files |
+| Fresh-checkout workflow | Ubuntu workflow rebuilds without local artifacts and exercises deterministic onboarding |
 | Rust publish readiness | `aidememo-core` `cargo publish --dry-run` verified; dependent Rust crates are a documented publish-order skip until core is live on crates.io |
 | Public registry smoke | `plan` mode records post-release `cargo`, `pip`, and `npm` install checks; `verify` mode installs from public registries after publish, locally or through the manual GitHub workflow |
 | `aidememo-agent-sdk` publish workflow | PyPI payload dry-run + trusted-publisher workflow defaults to dry-run |

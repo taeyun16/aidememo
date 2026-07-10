@@ -440,6 +440,68 @@ def validate_release_preflight_workflow(failures: list[str], rows: list[str], re
         ok(rows, label)
 
 
+def validate_public_onboarding_gates(
+    failures: list[str], rows: list[str], release_doc: str
+) -> None:
+    start_failures = len(failures)
+    label = "public onboarding gates"
+    workflow = ROOT / ".github" / "workflows" / "fresh-checkout-smoke.yml"
+    portability = ROOT / "scripts" / "public-portability-check.py"
+    ci_text = read(ROOT / ".github" / "workflows" / "ci.yml")
+    preflight = read(ROOT / "scripts" / "release-preflight.sh")
+    scripts_readme = read(ROOT / "scripts" / "README.md")
+    measurements = read(ROOT / "docs" / "MEASUREMENTS.md")
+    installation = read(ROOT / "docs" / "INSTALLATION.md")
+
+    if not workflow.exists():
+        fail(failures, label, ".github/workflows/fresh-checkout-smoke.yml is missing")
+    else:
+        text = read(workflow)
+        require_contains(failures, text, "name: fresh checkout smoke", f"{label} workflow name")
+        require_contains(failures, text, "workflow_dispatch:", f"{label} manual trigger")
+        require_contains(failures, text, "pull_request:", f"{label} PR trigger")
+        require_contains(
+            failures,
+            text,
+            "scripts/fresh-checkout-smoke.sh",
+            f"{label} workflow script",
+        )
+        require_contains(failures, text, "toolchain: 1.96.0", f"{label} Rust toolchain")
+        require_contains(failures, text, 'python-version: "3.13"', f"{label} Python toolchain")
+
+    if not portability.exists():
+        fail(failures, label, "scripts/public-portability-check.py is missing")
+    else:
+        text = read(portability)
+        require_contains(failures, text, "git", f"{label} tracked-file scan")
+        require_contains(failures, text, "macOS user home", f"{label} macOS path rule")
+        require_contains(failures, text, "Windows user home", f"{label} Windows path rule")
+
+    require_contains(
+        failures,
+        ci_text,
+        "python3 scripts/public-portability-check.py",
+        f"{label} CI portability gate",
+    )
+    require_contains(
+        failures,
+        preflight,
+        'run "public portability gate" python3 "$ROOT_DIR/scripts/public-portability-check.py"',
+        f"{label} release portability gate",
+    )
+    for text, token, detail in (
+        (release_doc, ".github/workflows/fresh-checkout-smoke.yml", "release workflow docs"),
+        (release_doc, "scripts/public-portability-check.py", "release portability docs"),
+        (scripts_readme, "public-portability-check.py", "script inventory"),
+        (measurements, ".github/workflows/fresh-checkout-smoke.yml", "measurement workflow docs"),
+        (measurements, "scripts/public-portability-check.py", "measurement portability docs"),
+        (installation, ".github/workflows/fresh-checkout-smoke.yml", "installation workflow docs"),
+    ):
+        require_contains(failures, text, token, f"{label} {detail}")
+    if len(failures) == start_failures:
+        ok(rows, label)
+
+
 def main() -> int:
     failures: list[str] = []
     rows: list[str] = []
@@ -487,6 +549,7 @@ def main() -> int:
     validate_cargo_package_ci(failures, rows, release_doc)
     validate_public_registry_smoke(failures, rows, release_doc)
     validate_release_preflight_workflow(failures, rows, release_doc)
+    validate_public_onboarding_gates(failures, rows, release_doc)
 
     print("registry readiness check")
     for row in rows:
@@ -499,7 +562,8 @@ def main() -> int:
     print(
         "OK: registry readiness check passed "
         f"(version={workspace_version}, pypi=3, npm=6, cargo-package-ci, "
-        "public-registry-smoke, release-preflight-workflow, docs/workflows aligned)"
+        "public-registry-smoke, release-preflight-workflow, public-onboarding-gates, "
+        "docs/workflows aligned)"
     )
     return 0
 

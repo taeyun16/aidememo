@@ -29,7 +29,7 @@ import time
 import urllib.request
 from pathlib import Path
 
-WG = os.environ.get("AIDEMEMO_BIN", "/Users/mixlink/.local/bin/aidememo")
+WG = os.environ.get("AIDEMEMO_BIN", "aidememo")
 AIDEMEMO_STORE = "/tmp/aidememo-vs-beads/aidememo/wiki.sqlite"
 DATA = Path("bench/beads-vs-aidememo/data")
 RESULTS = Path("bench/beads-vs-aidememo/results")

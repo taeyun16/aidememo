@@ -105,6 +105,7 @@ mkdir -p "$BASE"
 trap print_summary EXIT
 
 lint() {
+    run python3 "$ROOT_DIR/scripts/public-portability-check.py"
     run "${cargo_cmd[@]}" fmt --all -- --check
     run "${cargo_cmd[@]}" clippy --workspace --all-targets --features semantic -- -D warnings
     run env RUSTDOCFLAGS=-D\ warnings "${cargo_cmd[@]}" doc --workspace --no-deps --features semantic

@@ -26,8 +26,8 @@ import sys
 import time
 from pathlib import Path
 
-WG = os.environ.get("AIDEMEMO_BIN", "/Users/mixlink/.local/bin/aidememo")
-BD = os.environ.get("BD_BIN", "/opt/homebrew/bin/bd")
+WG = os.environ.get("AIDEMEMO_BIN", "aidememo")
+BD = os.environ.get("BD_BIN", "bd")
 AIDEMEMO_STORE = "/tmp/aidememo-vs-beads/aidememo/wiki.sqlite"
 BD_DIR = "/tmp/aidememo-vs-beads/beads"
 DATA = Path("bench/beads-vs-aidememo/data")

@@ -34,7 +34,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-AIDEMEMO_BIN = os.environ.get("AIDEMEMO_BIN", "/Users/mixlink/dev/aidememo/target/debug/aidememo")
+ROOT = Path(__file__).resolve().parents[1]
+AIDEMEMO_BIN = os.environ.get("AIDEMEMO_BIN", str(ROOT / "target" / "debug" / "aidememo"))
 STORE = Path(os.environ.get("AIDEMEMO_OVERVIEW_EVAL_STORE", str(Path(tempfile.gettempdir()) / "aidememo_overview_eval.sqlite")))
 MODEL = os.environ.get("AIDEMEMO_OVERVIEW_EVAL_MODEL", "gpt-4o")
 JUDGE_MODEL = os.environ.get("AIDEMEMO_OVERVIEW_EVAL_JUDGE", "gpt-4o")

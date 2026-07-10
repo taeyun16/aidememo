@@ -50,6 +50,8 @@ jobs:
         run: |
           actionlint_bin="$(go env GOPATH)/bin/actionlint"
           "$actionlint_bin"
+      - name: public portability
+        run: python3 scripts/public-portability-check.py
 
   docs-site:
     name: Docusaurus docs

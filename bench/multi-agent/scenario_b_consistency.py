@@ -5,7 +5,7 @@ We spawn three independent `aidememo mcp` processes pointed at the SAME
 store, each one shaped like a real agent's invocation:
 
   - claude-code-shape: ./target/debug/aidememo mcp <STORE>
-  - codex-shape:       ~/.local/bin/aidememo mcp <STORE>      (release)
+  - codex-shape:       ./target/release/aidememo mcp <STORE>
   - hermes-shape:      Python AideMemoClient(store_path)      (CLI subprocess)
 
 Test
@@ -33,13 +33,24 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-STORE = "/Users/mixlink/.aidememo-e2e/wiki.sqlite"
-AIDEMEMO_DEBUG = "/Users/mixlink/dev/aidememo/target/debug/aidememo"
-AIDEMEMO_RELEASE = "/Users/mixlink/.local/bin/aidememo"
+ROOT = Path(__file__).resolve().parents[2]
+STORE = os.environ.get(
+    "AIDEMEMO_E2E_STORE",
+    str(Path(tempfile.gettempdir()) / "aidememo-e2e-b" / "wiki.sqlite"),
+)
+AIDEMEMO_DEBUG = os.environ.get(
+    "AIDEMEMO_DEBUG_BIN",
+    str(ROOT / "target" / "debug" / "aidememo"),
+)
+AIDEMEMO_RELEASE = os.environ.get(
+    "AIDEMEMO_RELEASE_BIN",
+    str(ROOT / "target" / "release" / "aidememo"),
+)
 
 
 def reset_store() -> None:

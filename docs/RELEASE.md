@@ -72,9 +72,10 @@ release-candidate pass. Use `profile=full` only when you also want the Rust
 package dry-run or Python/npm publish dry-runs, and turn those on explicitly
 with the workflow inputs.
 
-This includes the version pins, changelog release gate, workflow syntax lint,
-docs feature coverage gate, registry readiness gate, docs-site build, binding
-smoke, agent SDK/Hermes wheel smoke, workflow smoke, and SDK promotion check.
+This includes the version pins, changelog release gate, registry readiness,
+public portability, workflow syntax lint, docs feature coverage, docs-site
+build, binding smoke, agent SDK/Hermes wheel smoke, workflow smoke, and SDK
+promotion check.
 
 The changelog release gate is offline and should pass after cutting the current
 release notes out of `Unreleased`:
@@ -100,6 +101,18 @@ It verifies that PyPI trusted-publisher project names, workflow names,
 GitHub environments, npm root/platform package names, and this release document
 stay aligned. It also rejects first-party publish workflows that drift back to
 long-lived publish-token assumptions.
+
+The public onboarding gates should also pass before pushing the release tag:
+
+```bash
+python3 scripts/public-portability-check.py
+scripts/fresh-checkout-smoke.sh
+```
+
+The portability gate rejects developer-specific home paths in first-party
+tracked files. The fresh-checkout smoke is also available as
+`.github/workflows/fresh-checkout-smoke.yml`; it rebuilds from a copy without
+`.git`, `target`, or Node build output and runs the deterministic quickstart.
 
 `maturin` is intentionally run through `uvx` using the pinned spec from
 `mise.toml`, not from whichever `maturin` happens to be on `PATH`.
@@ -130,7 +143,23 @@ enforces `aidememo-core` `cargo publish --dry-run` while keeping dependent Rust
 crates as the documented publish-order skip until `aidememo-core` exists on
 crates.io.
 
-## 3. Rust crates
+## 3. Release tag contract
+
+The canonical source release tag is `v<version>`, so the first public release
+uses `v0.1.0`. Create it only after remote CI and the full release preflight pass
+on the exact commit that will be published:
+
+```bash
+git tag -a v0.1.0 -m "AideMemo 0.1.0"
+git push origin v0.1.0
+```
+
+Package-specific tags such as `aidememo-python-v0.1.0` and
+`aidememo-napi-v0.1.0` are optional artifact or dry-run triggers. They do not
+replace the canonical `v0.1.0` source tag. Real PyPI and npm publishes remain
+manual workflow dispatches with an exact version input and approval environment.
+
+## 4. Rust crates
 
 Publish in dependency order:
 
@@ -151,7 +180,7 @@ at the matching version, run the full dependent check:
 AIDEMEMO_CARGO_PACKAGE_CHECK_DEPENDENTS=1 scripts/cargo-package-readiness.sh
 ```
 
-## 4. Python packages
+## 5. Python packages
 
 Publish native bindings before composition packages:
 
@@ -183,7 +212,7 @@ python -m pip install "aidememo-agent-sdk[binding]"
 python -m pip install hermes-aidememo
 ```
 
-## 5. Node package
+## 6. Node package
 
 Publish the platform packages before the root wrapper:
 
@@ -197,7 +226,7 @@ workflow mode is dry-run:
 2. `.github/workflows/aidememo-agent-sdk-publish.yml`
 3. `.github/workflows/hermes-aidememo-publish.yml`
 
-## 6. Post-release checks
+## 7. Post-release checks
 
 Before the registries are live, the post-release smoke can run in plan mode and
 print the exact install checks it will perform:

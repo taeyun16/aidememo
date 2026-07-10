@@ -46,7 +46,8 @@ mise run changelog-release-check
 mise run release-preflight
 mise run cargo-package-readiness
 mise run public-registry-smoke
-scripts/fresh-checkout-smoke.sh
+mise run public-portability-check
+mise run fresh-checkout-smoke
 mise run docs-build
 mise run ci-lint
 mise run ci-test
@@ -54,6 +55,9 @@ mise run ci-test
 
 The same release preflight is available in GitHub Actions as
 `.github/workflows/release-preflight.yml` for a runner-backed pre-publish pass.
+The clean-checkout onboarding path is also available as
+`.github/workflows/fresh-checkout-smoke.yml`; it runs manually and on pull
+requests that change the installer, CLI, core, or the smoke itself.
 
 `changelog-release-check` is the fast release-note gate. It verifies that
 `CHANGELOG.md` has been cut for the current workspace version before the broader
@@ -64,6 +68,9 @@ after that core crate is published at the matching version.
 `scripts/fresh-checkout-smoke.sh` copies the checkout to a temporary directory
 without `target` or `node_modules`, builds the CLI, and verifies the deterministic
 quickstart path.
+`scripts/public-portability-check.py` rejects developer-specific macOS, Linux,
+and Windows home paths from first-party tracked files so public examples and
+workflows do not silently depend on one machine.
 `public-registry-smoke` is a post-release plan by default; after a real
 registry publish, run it with `AIDEMEMO_PUBLIC_REGISTRY_SMOKE_MODE=verify` to
 install the public packages in temporary environments.
