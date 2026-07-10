@@ -18,6 +18,7 @@ ARCHITECTURE_DOC = ROOT / "docs" / "ARCHITECTURE.md"
 AGENT_WORKFLOWS_DOC = ROOT / "docs" / "AGENT_WORKFLOWS.md"
 INSTALLATION_DOC = ROOT / "docs" / "INSTALLATION.md"
 QUICKSTART_DOC = ROOT / "docs" / "QUICKSTART.md"
+EVIDENCE_DOC = ROOT / "docs" / "EVIDENCE.md"
 MEASUREMENTS_DOC = ROOT / "docs" / "MEASUREMENTS.md"
 RELEASE_DOC = ROOT / "docs" / "RELEASE.md"
 SCRIPTS_README = ROOT / "scripts" / "README.md"
@@ -46,6 +47,7 @@ REQUIRED_SIDEBAR_DOCS = [
     "FEATURES",
     "OPERATIONS",
     "BRANCHES",
+    "EVIDENCE",
     "MEASUREMENTS",
     "RELEASE",
 ]
@@ -56,10 +58,21 @@ REQUIRED_HOMEPAGE_DOCS = [
     "ARCHITECTURE",
     "MCP",
     "AGENT_WORKFLOWS",
-    "MEASUREMENTS",
+    "EVIDENCE",
 ]
 
 DOC_CONTENT_REQUIREMENTS = [
+    (
+        EVIDENCE_DOC,
+        [
+            "does not require an external LLM call",
+            "search.auto_hybrid=true",
+            "LFM is not the global default embedding replacement",
+            "39/155 hints",
+            "Measurement Ledger",
+            "Release Checklist",
+        ],
+    ),
     (
         ARCHITECTURE_DOC,
         [
@@ -659,6 +672,12 @@ def check_docusaurus_contract() -> list[str]:
         errors.append("website/docusaurus.config.js must include @docusaurus/theme-mermaid")
     if '"@docusaurus/theme-mermaid"' not in package:
         errors.append("website/package.json must depend on @docusaurus/theme-mermaid")
+    if "onBrokenLinks: 'throw'" not in config and 'onBrokenLinks: "throw"' not in config:
+        errors.append("website/docusaurus.config.js must fail on broken links")
+    if "onBrokenMarkdownLinks: 'throw'" not in config and 'onBrokenMarkdownLinks: "throw"' not in config:
+        errors.append("website/docusaurus.config.js must fail on broken Markdown links")
+    if "does not require an external LLM call" not in homepage:
+        errors.append("website/src/pages/index.tsx must state the default local no-external-LLM boundary")
 
     for path, tokens in DOC_CONTENT_REQUIREMENTS:
         if not path.exists():

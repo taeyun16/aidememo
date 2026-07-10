@@ -10,11 +10,11 @@ const config = {
   organizationName: 'taeyun16',
   projectName: 'aidememo',
   trailingSlash: false,
-  onBrokenLinks: 'warn',
+  onBrokenLinks: 'throw',
   markdown: {
     mermaid: true,
     hooks: {
-      onBrokenMarkdownLinks: 'warn',
+      onBrokenMarkdownLinks: 'throw',
     },
   },
 
@@ -51,7 +51,7 @@ const config = {
         {
           name: 'description',
           content:
-            'AideMemo documentation for local-first agent memory, SDKs, MCP tools, and measurement-backed workflows.',
+            'AideMemo documentation for local-first agent memory, the agent SDK, MCP tools, and measurement-backed workflows.',
         },
       ],
       navbar: {

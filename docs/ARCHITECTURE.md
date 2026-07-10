@@ -1,6 +1,6 @@
 ---
 title: Architecture
-description: Visual system map for AideMemo's CLI, MCP, SDKs, bindings, core, stores, and retrieval flows.
+description: Visual system map for AideMemo's CLI, MCP, agent SDK, bindings, core, stores, and retrieval flows.
 ---
 
 # Architecture

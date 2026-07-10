@@ -19,6 +19,7 @@ const sidebars = {
         'FEATURES',
         'OPERATIONS',
         'BRANCHES',
+        'EVIDENCE',
         'MEASUREMENTS',
         'RELEASE',
       ],

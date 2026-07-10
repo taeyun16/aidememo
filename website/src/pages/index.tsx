@@ -25,7 +25,7 @@ const docLinks: DocLink[] = [
   },
   {
     title: 'Architecture',
-    description: 'See how CLI, MCP, SDKs, bindings, core, stores, and indexes fit together.',
+    description: 'See how CLI, MCP, the agent SDK, bindings, core, stores, and indexes fit together.',
     to: '/docs/ARCHITECTURE',
   },
   {
@@ -39,9 +39,9 @@ const docLinks: DocLink[] = [
     to: '/docs/AGENT_WORKFLOWS',
   },
   {
-    title: 'Measurements',
-    description: 'Review the validation ledger behind workflow, SDK, retrieval, and sharing claims.',
-    to: '/docs/MEASUREMENTS',
+    title: 'Evidence',
+    description: 'Review validated outcomes, model placement, and the boundaries of public claims.',
+    to: '/docs/EVIDENCE',
   },
 ];
 
@@ -58,7 +58,8 @@ function HomepageHeader() {
         </Heading>
         <p className={styles.subtitle}>
           Learn how to install AideMemo, add useful memory, connect it to agents
-          through MCP, and use the SDK from scripts.
+          through MCP, and use the agent SDK from scripts. The default local
+          memory loop does not require an external LLM call.
         </p>
         <div className={styles.actions}>
           <Link className="button button--primary" to="/docs/INTRODUCTION">

@@ -27,3 +27,15 @@
 .button {
   border-radius: 8px;
 }
+
+@media (max-width: 576px) {
+  .docusaurus-mermaid-container {
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+  }
+
+  .docusaurus-mermaid-container svg {
+    min-width: 760px;
+    height: auto;
+  }
+}

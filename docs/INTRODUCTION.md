@@ -7,13 +7,18 @@ description: A user-facing overview of AideMemo and when to use it.
 
 AideMemo is a local memory layer for coding agents and developer tools. It stores
 facts, decisions, lessons, and errors in a single local database, then exposes
-that memory through a CLI, MCP tools, and SDKs.
+that memory through a CLI, MCP tools, the agent SDK, and native bindings.
+
+The default memory path covers capture, typed writes, BM25-first search, and MCP
+or agent SDK reads. It runs locally without an external LLM call. Remote
+extraction, embedding, and reranking remain opt-in.
 
 Use it when your agent needs project memory that survives across sessions,
 editors, and model providers.
 
-For the system map, read [`Architecture`](ARCHITECTURE.md). For the per-turn
-tool choice guide, read [`Agent Workflows`](AGENT_WORKFLOWS.md).
+For the system map, read [`Architecture`](ARCHITECTURE.md). For the validated
+scorecard, read [`Evidence`](EVIDENCE.md). For the per-turn tool choice guide,
+read [`Agent Workflows`](AGENT_WORKFLOWS.md).
 
 ## What it gives you
 

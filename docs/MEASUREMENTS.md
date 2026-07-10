@@ -1,8 +1,16 @@
-# Measurements
+---
+title: Measurement Ledger
+description: Full commands, fixtures, results, and caveats behind AideMemo's public evidence.
+sidebar_label: Measurement Ledger
+---
+
+# Measurement Ledger
 
 This file is the public measurement ledger for `aidememo`. Historical scratch-note
 files were removed; durable numbers should live here, in
 `benchmarks/*/RESULTS.md`, or in JSON under `bench/**/results`.
+
+For a concise product-facing scorecard, start with [Evidence](EVIDENCE.md).
 
 ## Re-run Commands
 

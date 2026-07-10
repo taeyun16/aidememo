@@ -1,7 +1,7 @@
 .hero {
   padding: 72px 0 44px;
-  background: #f8fafc;
-  border-bottom: 1px solid #e2e8f0;
+  background: var(--ifm-background-surface-color);
+  border-bottom: 1px solid var(--ifm-color-emphasis-200);
 }
 
 .logoMark {
@@ -13,7 +13,7 @@
 
 .eyebrow {
   margin: 0 0 12px;
-  color: #0f766e;
+  color: var(--ifm-color-primary);
   font-size: 0.875rem;
   font-weight: 700;
   text-transform: uppercase;
@@ -22,7 +22,7 @@
 .title {
   max-width: 820px;
   margin: 0;
-  color: #0f172a;
+  color: var(--ifm-heading-color);
   font-size: 3rem;
   line-height: 1.05;
 }
@@ -30,7 +30,7 @@
 .subtitle {
   max-width: 700px;
   margin: 20px 0 0;
-  color: #475569;
+  color: var(--ifm-color-emphasis-700);
   font-size: 1.15rem;
   line-height: 1.65;
 }
@@ -58,7 +58,7 @@
   flex-direction: column;
   gap: 14px;
   padding: 22px;
-  border: 1px solid #dbe3ea;
+  border: 1px solid var(--ifm-color-emphasis-300);
   border-radius: 8px;
   color: inherit;
   text-decoration: none;
@@ -69,21 +69,21 @@
 }
 
 .card:hover {
-  border-color: #0f766e;
-  box-shadow: 0 10px 28px rgb(15 23 42 / 0.1);
+  border-color: var(--ifm-color-primary);
+  box-shadow: 0 10px 28px rgb(0 0 0 / 0.14);
   color: inherit;
   text-decoration: none;
   transform: translateY(-2px);
 }
 
 .cardTitle {
-  color: #0f172a;
+  color: var(--ifm-heading-color);
   font-size: 1.1rem;
   font-weight: 700;
 }
 
 .cardDescription {
-  color: #475569;
+  color: var(--ifm-color-emphasis-700);
   line-height: 1.55;
 }
 

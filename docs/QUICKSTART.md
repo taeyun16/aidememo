@@ -8,6 +8,13 @@ description: Add memory, search it, and start a workflow in a few commands.
 This guide creates a small local store, writes memory, searches it, and starts a
 workflow from a sparse ticket.
 
+Install AideMemo first using the [Installation guide](INSTALLATION.md), then
+confirm that the CLI is available:
+
+```bash
+aidememo --help
+```
+
 ## 1. Create a demo store
 
 ```bash
