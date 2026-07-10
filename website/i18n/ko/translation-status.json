@@ -1,0 +1,22 @@
+{
+  "locale": "ko",
+  "source_locale": "en",
+  "translated_docs": {
+    "AGENT_WORKFLOWS": "73f362f122a353dc2087bae6e6a6da389efae3529b100f120cfad5637187d7e0",
+    "ARCHITECTURE": "d446b41e440516877f32458b113b116055975b6fe8a2d184ddf2f0632b739f1c",
+    "EVIDENCE": "98f87d7f91114dcd9c7b8d9aef018bba6a66ad5265d589329efb1e7a3b6b6984",
+    "INSTALLATION": "c472ff1c28b9d8a5ce313f142ab1e0db811f6950ca875215f32d87153df95fc8",
+    "INTRODUCTION": "0e975a45dae56e6462c297e51e772d2991c223bdee49a28441c9ffcde738fe53",
+    "MCP": "72458d091fa1a188e827cbb3d9385452de113ab56c9bc07cf586b6ab63e8dd58",
+    "QUICKSTART": "6e4e89e1b9a092c36962b92e0fadfe131247ad02ecbe9d34ae6fd8bd59249c13"
+  },
+  "fallback_docs": [
+    "BRANCHES",
+    "CLI",
+    "FEATURES",
+    "MEASUREMENTS",
+    "OPERATIONS",
+    "RELEASE",
+    "SDK"
+  ]
+}

@@ -20,7 +20,17 @@ const config = {
 
   i18n: {
     defaultLocale: 'en',
-    locales: ['en'],
+    locales: ['en', 'ko'],
+    localeConfigs: {
+      en: {
+        label: 'English',
+        htmlLang: 'en-US',
+      },
+      ko: {
+        label: '한국어',
+        htmlLang: 'ko-KR',
+      },
+    },
   },
 
   presets: [
@@ -70,6 +80,10 @@ const config = {
           {
             href: 'https://github.com/taeyun16/aidememo',
             label: 'GitHub',
+            position: 'right',
+          },
+          {
+            type: 'localeDropdown',
             position: 'right',
           },
         ],

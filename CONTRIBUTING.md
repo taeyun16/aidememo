@@ -80,6 +80,29 @@ cc crates/aidememo-ffi/example/smoke.c \
 `-framework CoreFoundation -framework Security -framework SystemConfiguration`.
 On Linux: `-lpthread -ldl -lm`.
 
+## Documentation and localization
+
+English documentation under `docs/` is the source locale. Korean Markdown
+translations live under
+`website/i18n/ko/docusaurus-plugin-content-docs/current/`. The translated and
+intentional English-fallback sets are recorded in
+`website/i18n/ko/translation-status.json`.
+
+When changing a translated English document:
+
+1. Update the matching Korean Markdown file in the same change.
+2. Run `mise run docs-i18n-update` after reviewing the translation. This
+   records the new source SHA-256; it is not a substitute for translation
+   review.
+3. Run `python3 scripts/docs-feature-gate.py` and
+   `python3 scripts/docs-site-e2e.py` to validate both locales.
+
+When changing homepage, navbar, footer, or sidebar text, run
+`npm --prefix website run write-translations:ko` and review the resulting JSON
+diff before restoring the Korean messages. Preview one locale at a time with
+`mise run docs-start` or `mise run docs-start-ko`; a production
+`mise run docs-build` includes both locales.
+
 ## House rules
 
 A few preferences captured from the codebase:

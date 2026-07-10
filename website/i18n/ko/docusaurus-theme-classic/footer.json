@@ -1,0 +1,42 @@
+{
+  "link.title.Docs": {
+    "message": "문서",
+    "description": "The title of the footer links column with title=Docs in the footer"
+  },
+  "link.title.Project": {
+    "message": "프로젝트",
+    "description": "The title of the footer links column with title=Project in the footer"
+  },
+  "link.item.label.Overview": {
+    "message": "개요",
+    "description": "The label of footer link with label=Overview linking to /docs/INTRODUCTION"
+  },
+  "link.item.label.Architecture": {
+    "message": "아키텍처",
+    "description": "The label of footer link with label=Architecture linking to /docs/ARCHITECTURE"
+  },
+  "link.item.label.Quickstart": {
+    "message": "빠른 시작",
+    "description": "The label of footer link with label=Quickstart linking to /docs/QUICKSTART"
+  },
+  "link.item.label.Agent Workflows": {
+    "message": "에이전트 워크플로",
+    "description": "The label of footer link with label=Agent Workflows linking to /docs/AGENT_WORKFLOWS"
+  },
+  "link.item.label.MCP Setup": {
+    "message": "MCP 설정",
+    "description": "The label of footer link with label=MCP Setup linking to /docs/MCP"
+  },
+  "link.item.label.GitHub": {
+    "message": "GitHub",
+    "description": "The label of footer link with label=GitHub linking to https://github.com/taeyun16/aidememo"
+  },
+  "link.item.label.Compare": {
+    "message": "비교",
+    "description": "The label of footer link with label=Compare linking to https://github.com/taeyun16/aidememo/blob/main/COMPARE.md"
+  },
+  "copyright": {
+    "message": "Copyright © 2026 AideMemo 기여자.",
+    "description": "The footer copyright"
+  }
+}

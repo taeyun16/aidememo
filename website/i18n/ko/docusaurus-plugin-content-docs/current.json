@@ -1,0 +1,14 @@
+{
+  "version.label": {
+    "message": "현재",
+    "description": "The label for version current"
+  },
+  "sidebar.docs.category.Get Started": {
+    "message": "시작하기",
+    "description": "The label for category 'Get Started' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Use AideMemo": {
+    "message": "AideMemo 사용하기",
+    "description": "The label for category 'Use AideMemo' in sidebar 'docs'"
+  }
+}

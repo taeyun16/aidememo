@@ -158,7 +158,7 @@ semantic conflicts between competing decisions remain application policy.
 | Storage dispatch | `crates/aidememo-core/src/backend.rs`, `sqlite_store.rs`, `store.rs` | [`Operations`](OPERATIONS.md), [`Feature Inventory`](FEATURES.md) |
 | Python agent SDK | `packages/aidememo-agent-sdk/src/aidememo_agent/sdk.py` | [`Python SDK`](SDK.md), [`Agent Workflows`](AGENT_WORKFLOWS.md) |
 | Native bindings | `crates/aidememo-python`, `crates/aidememo-napi`, `crates/aidememo-nif`, `crates/aidememo-ffi` | [`Python SDK`](SDK.md), package READMEs |
-| Validation and release gates | `scripts/changelog-release-check.py`, `scripts/registry-readiness-check.py`, `scripts/cargo-package-readiness.sh`, `scripts/docs-feature-gate.py`, `scripts/docs-site-e2e.py`, `scripts/*smoke*.sh`, `scripts/ci-local.sh` | [`Measurements`](MEASUREMENTS.md), [`Release Checklist`](RELEASE.md) |
+| Validation and release gates | `scripts/changelog-release-check.py`, `scripts/registry-readiness-check.py`, `scripts/cargo-package-readiness.sh`, `scripts/docs-feature-gate.py`, `scripts/docs-i18n-status.py`, `scripts/docs-site-e2e.py`, `scripts/*smoke*.sh`, `scripts/ci-local.sh` | [`Measurements`](MEASUREMENTS.md), [`Release Checklist`](RELEASE.md) |
 
 ## Documentation contract
 
@@ -177,13 +177,16 @@ currently checks:
 - core explanatory docs such as this page, [`Agent Workflows`](AGENT_WORKFLOWS.md),
   and [`Measurements`](MEASUREMENTS.md) are exposed through Docusaurus;
 - Mermaid is enabled so system diagrams render as diagrams, not inert code;
+- Korean translation coverage and source fingerprints match the public English
+  docs, with intentional English fallbacks recorded explicitly;
 - public wording keeps SQLite as the default backend and redb as the optional
   Cargo-feature backend.
 
 `scripts/docs-site-e2e.py` is the rendered-site gate. It builds Docusaurus and
-checks that the sitemap, sidebar, homepage cards, page H1s, baseUrl-scoped
-links, static assets, anchors, and architecture-doc implementation paths still
-match the current repo.
+checks that the English and Korean sitemaps, sidebar, homepage cards,
+locale-specific page H1s, `html lang` / `hreflang`, baseUrl-scoped links,
+static assets, anchors, and architecture-doc implementation paths still match
+the current repo.
 
 Run it before publishing docs:
 

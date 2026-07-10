@@ -9,9 +9,11 @@
   },
   "scripts": {
     "start": "docusaurus start",
+    "start:ko": "docusaurus start --locale ko",
     "build": "docusaurus build",
     "serve": "docusaurus serve",
-    "clear": "docusaurus clear"
+    "clear": "docusaurus clear",
+    "write-translations:ko": "docusaurus write-translations --locale ko"
   },
   "dependencies": {
     "@docusaurus/core": "3.10.1",

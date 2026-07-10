@@ -1,0 +1,121 @@
+---
+title: 설치
+description: AideMemo를 설치하고 CLI 동작을 확인합니다.
+---
+
+# 설치
+
+기본 바이너리는 `aidememo`이며 CLI와 MCP 서버를 모두 포함합니다.
+
+## Git에서 설치
+
+```bash
+cargo install --git https://github.com/taeyun16/aidememo aidememo-cli
+```
+
+crates.io 배포 경로는 준비 중입니다. 첫 레지스트리 배포 전에는 Git 또는
+체크아웃 설치 경로를 사용하세요.
+
+바이너리를 확인합니다.
+
+```bash
+aidememo --help
+aidememo stats
+```
+
+셸에서 명령을 찾지 못하면 Cargo 바이너리 디렉터리를 PATH에 추가합니다.
+
+```bash
+export PATH="$HOME/.cargo/bin:$PATH"
+```
+
+## 체크아웃에서 설치
+
+```bash
+git clone https://github.com/taeyun16/aidememo.git
+cd aidememo
+mise install
+cargo build -p aidememo-cli --release
+export PATH="$PWD/target/release:$PATH"
+```
+
+로컬 개발 도구 버전은 `mise.toml`에 고정되어 있습니다.
+
+```bash
+mise run changelog-release-check
+mise run release-preflight
+mise run cargo-package-readiness
+mise run public-registry-smoke
+mise run public-portability-check
+mise run fresh-checkout-smoke
+mise run docs-build
+mise run ci-lint
+mise run ci-test
+```
+
+동일한 릴리스 프리플라이트는 GitHub Actions의
+`.github/workflows/release-preflight.yml`에서도 실행할 수 있습니다. 깨끗한
+체크아웃 온보딩 경로는 `.github/workflows/fresh-checkout-smoke.yml`에서
+제공되며, 수동 실행과 설치기·CLI·코어·스모크 변경 PR에서 실행됩니다.
+
+`changelog-release-check`는 빠른 릴리스 노트 게이트입니다. 더 넓은
+프리플라이트가 문서, 레지스트리, 워크플로를 검사하기 전에 `CHANGELOG.md`가
+현재 워크스페이스 버전으로 정리됐는지 확인합니다. 전체 릴리스 프리플라이트와
+`cargo-package-readiness`는 Rust 배포 드라이런을 검사합니다. 먼저
+`aidememo-core`를 검증하고, 같은 버전의 코어 크레이트가 배포된 뒤에 의존
+크레이트를 검사합니다.
+
+`scripts/fresh-checkout-smoke.sh`는 `target`과 `node_modules` 없이 체크아웃을
+임시 디렉터리로 복사하고 CLI를 빌드한 뒤 결정적인 빠른 시작 경로를
+검증합니다. `scripts/public-portability-check.py`는 공개 예제와 워크플로가
+특정 개발자 환경에 의존하지 않도록 추적 파일의 macOS, Linux, Windows 홈
+경로를 거부합니다. `public-registry-smoke`는 기본적으로 배포 후 계획만
+출력합니다. 실제 레지스트리 배포 뒤에는
+`AIDEMEMO_PUBLIC_REGISTRY_SMOKE_MODE=verify`로 실행해 임시 환경에서 공개
+패키지를 설치하세요.
+
+네이티브 Python 바인딩 릴리스 경로는 고정된 `maturin` 빌드 도구를 `uvx`로
+실행하므로 `mise install`만으로 로컬 wheel과 배포 드라이런을 재현할 수
+있습니다.
+
+```bash
+mise run python-pack-smoke
+mise run python-publish-dry-run
+```
+
+순수 Python 에이전트 패키지의 배포 드라이런은 로컬 Python 빌드 백엔드를
+사용합니다.
+
+```bash
+mise run agent-sdk-publish-dry-run
+mise run hermes-publish-dry-run
+```
+
+## 저장소 위치
+
+기본적으로 AideMemo는 설정된 로컬 저장소를 사용합니다. 예제와 스크립트에는
+명시적인 저장소 경로를 전달할 수 있습니다.
+
+```bash
+aidememo --store ./memory.sqlite stats
+aidememo --store ./memory.sqlite fact add "A first note" --entities Project
+```
+
+`--store`는 데모, 테스트, 프로젝트별 메모리 파일에 유용합니다.
+
+## 권장 첫 확인
+
+임시 디렉터리에서 다음 명령을 실행합니다.
+
+```bash
+STORE="$(mktemp -d)/wiki.sqlite"
+
+aidememo --store "$STORE" fact add \
+  "Decision: AideMemo stores typed project memory locally." \
+  --type decision \
+  --entities AideMemo
+
+aidememo --store "$STORE" search "typed project memory"
+```
+
+방금 추가한 팩트가 출력되어야 합니다.

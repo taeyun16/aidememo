@@ -86,12 +86,20 @@ npm publishes complete, prefer the Git or checkout install paths above.
 ## Documentation Site
 
 The static documentation site lives in [`website/`](website/) and renders the
-durable Markdown under [`docs/`](docs/) with Docusaurus.
+durable English Markdown under [`docs/`](docs/) with Docusaurus. English stays
+at `/aidememo/`; Korean is available at `/aidememo/ko/`, with translated
+onboarding/workflow pages and explicit English fallback for long reference
+docs.
 
 ```bash
 mise run docs-install
 mise run docs-start
 mise run docs-build
+
+# Korean local preview, translation drift check, and message refresh
+mise run docs-start-ko
+mise run docs-i18n-check
+npm --prefix website run write-translations:ko
 ```
 
 ## 60-Second Quickstart

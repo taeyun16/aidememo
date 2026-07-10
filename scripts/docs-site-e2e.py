@@ -22,9 +22,18 @@ SIDEBAR_JS = WEBSITE / "sidebars.js"
 HOMEPAGE_TSX = WEBSITE / "src" / "pages" / "index.tsx"
 DOCUSAURUS_CONFIG = WEBSITE / "docusaurus.config.js"
 ARCHITECTURE_DOC = DOCS / "ARCHITECTURE.md"
+I18N = WEBSITE / "i18n"
 
 SITE_ORIGIN = "https://taeyun16.github.io"
 BASE_PATH = "/aidememo/"
+LOCALES = {
+    "en": {"base_path": BASE_PATH, "html_lang": "en-US"},
+    "ko": {"base_path": f"{BASE_PATH}ko/", "html_lang": "ko-KR"},
+}
+HOMEPAGE_H1 = {
+    "en": "Agent-friendly SDK memory for coding agents.",
+    "ko": "코딩 에이전트에 친화적인 SDK 메모리.",
+}
 
 SOURCE_PATH_PREFIXES = (
     "aidememo-skill/",
@@ -48,12 +57,16 @@ class PageParser(HTMLParser):
         self.ids: set[str] = set()
         self.hrefs: list[str] = []
         self.srcs: list[str] = []
+        self.html_lang = ""
+        self.alternates: set[tuple[str, str]] = set()
         self._in_title = False
         self._h1_depth = 0
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attr_map = {name: value or "" for name, value in attrs}
-        if tag == "title":
+        if tag == "html":
+            self.html_lang = attr_map.get("lang", "")
+        elif tag == "title":
             self._in_title = True
         elif tag == "h1":
             self._h1_depth += 1
@@ -63,6 +76,8 @@ class PageParser(HTMLParser):
             self.ids.add(attr_map["name"])
         if "href" in attr_map:
             self.hrefs.append(attr_map["href"])
+            if tag == "link" and attr_map.get("rel") == "alternate" and attr_map.get("hreflang"):
+                self.alternates.add((attr_map["hreflang"], attr_map["href"]))
         if "src" in attr_map:
             self.srcs.append(attr_map["src"])
 
@@ -109,8 +124,8 @@ def homepage_doc_routes() -> list[str]:
     return sorted(dict.fromkeys(re.findall(r"to:\s*['\"](/docs/[A-Z0-9_]+)['\"]", text)))
 
 
-def sitemap_routes() -> list[str]:
-    sitemap = BUILD / "sitemap.xml"
+def sitemap_routes(locale: str) -> list[str]:
+    sitemap = BUILD / ("sitemap.xml" if locale == "en" else f"{locale}/sitemap.xml")
     root = ET.fromstring(sitemap.read_text(encoding="utf-8"))
     routes: list[str] = []
     ns = {"sm": "http://www.sitemaps.org/schemas/sitemap/0.9"}
@@ -134,8 +149,28 @@ def route_to_file(route: str) -> Path:
     return BUILD / f"{rel}.html"
 
 
-def page_route_for_doc(doc_id: str) -> str:
-    return f"{BASE_PATH}docs/{doc_id}"
+def page_route_for_doc(doc_id: str, locale: str) -> str:
+    return f"{LOCALES[locale]['base_path']}docs/{doc_id}"
+
+
+def locale_for_route(route: str) -> str:
+    for locale, config in reversed(list(LOCALES.items())):
+        if route.startswith(config["base_path"]):
+            return locale
+    raise ValueError(f"route {route!r} does not match a configured locale")
+
+
+def doc_source_for_route(route: str, doc_id: str) -> Path:
+    locale = locale_for_route(route)
+    if locale != "en":
+        translated = I18N / locale / "docusaurus-plugin-content-docs" / "current" / f"{doc_id}.md"
+        if translated.exists():
+            return translated
+    return DOCS / f"{doc_id}.md"
+
+
+def route_content_path(route: str, locale: str) -> str:
+    return route.removeprefix(str(LOCALES[locale]["base_path"]))
 
 
 def first_markdown_h1(path: Path) -> str:
@@ -180,20 +215,31 @@ def target_path_for_url_path(path: str) -> Path:
 
 def check_routes(errors: list[str]) -> tuple[dict[str, PageParser], list[str]]:
     doc_ids = sidebar_doc_ids()
-    expected_routes = sorted([BASE_PATH, *(page_route_for_doc(doc_id) for doc_id in doc_ids)])
-    routes = sitemap_routes()
+    expected_routes: list[str] = []
+    for locale, config in LOCALES.items():
+        locale_expected = sorted(
+            [str(config["base_path"]), *(page_route_for_doc(doc_id, locale) for doc_id in doc_ids)]
+        )
+        expected_routes.extend(locale_expected)
+        routes = sitemap_routes(locale)
+        missing_routes = sorted(set(locale_expected) - set(routes))
+        extra_sidebar_missing = sorted(set(routes) - set(locale_expected))
+        for route in missing_routes:
+            fail(errors, f"{locale} sitemap is missing public route {route}")
+        for route in extra_sidebar_missing:
+            fail(
+                errors,
+                f"{locale} sitemap contains {route}, but it is not represented by homepage/sidebar contract",
+            )
 
-    missing_routes = sorted(set(expected_routes) - set(routes))
-    extra_sidebar_missing = sorted(set(routes) - set(expected_routes))
-    for route in missing_routes:
-        fail(errors, f"sitemap is missing public route {route}")
-    for route in extra_sidebar_missing:
-        fail(errors, f"sitemap contains {route}, but it is not represented by homepage/sidebar contract")
+        homepage_routes = [
+            f"{config['base_path']}{route.removeprefix('/')}" for route in homepage_doc_routes()
+        ]
+        for route in homepage_routes:
+            if route not in locale_expected:
+                fail(errors, f"{locale} homepage links to {route}, but sidebars.js does not expose that doc")
 
-    homepage_routes = [f"{BASE_PATH}{route.removeprefix('/')}" for route in homepage_doc_routes()]
-    for route in homepage_routes:
-        if route not in expected_routes:
-            fail(errors, f"homepage links to {route}, but sidebars.js does not expose that doc")
+    expected_routes = sorted(expected_routes)
 
     pages: dict[str, PageParser] = {}
     for route in expected_routes:
@@ -207,11 +253,37 @@ def check_routes(errors: list[str]) -> tuple[dict[str, PageParser], list[str]]:
             fail(errors, f"route {route} rendered a Docusaurus 404 page")
         if not parser.h1:
             fail(errors, f"route {route} rendered without an h1")
-        if route != BASE_PATH:
+        locale = locale_for_route(route)
+        expected_lang = str(LOCALES[locale]["html_lang"])
+        if parser.html_lang != expected_lang:
+            fail(errors, f"route {route} html lang {parser.html_lang!r} does not match {expected_lang!r}")
+
+        content_path = route_content_path(route, locale)
+        for alternate_locale, alternate_config in LOCALES.items():
+            alternate_lang = str(alternate_config["html_lang"])
+            alternate_path = f"{alternate_config['base_path']}{content_path}"
+            alternate_url = f"{SITE_ORIGIN}{alternate_path}"
+            if (alternate_lang, alternate_url) not in parser.alternates:
+                fail(errors, f"route {route} is missing alternate {alternate_lang} -> {alternate_url}")
+            if alternate_path not in parser.hrefs:
+                fail(errors, f"route {route} locale dropdown is missing {alternate_locale} link {alternate_path}")
+        default_url = f"{SITE_ORIGIN}{LOCALES['en']['base_path']}{content_path}"
+        if ("x-default", default_url) not in parser.alternates:
+            fail(errors, f"route {route} is missing x-default alternate -> {default_url}")
+
+        if route == LOCALES[locale]["base_path"]:
+            expected_h1 = HOMEPAGE_H1[locale]
+            if parser.h1 != expected_h1:
+                fail(errors, f"route {route} h1 {parser.h1!r} does not match {expected_h1!r}")
+        else:
             doc_id = route.rsplit("/", 1)[-1]
-            expected_h1 = first_markdown_h1(DOCS / f"{doc_id}.md")
+            source = doc_source_for_route(route, doc_id)
+            expected_h1 = first_markdown_h1(source)
             if expected_h1 and parser.h1 != expected_h1:
-                fail(errors, f"route {route} h1 {parser.h1!r} does not match docs/{doc_id}.md h1 {expected_h1!r}")
+                fail(
+                    errors,
+                    f"route {route} h1 {parser.h1!r} does not match {source.relative_to(ROOT)} h1 {expected_h1!r}",
+                )
     return pages, expected_routes
 
 
@@ -303,8 +375,13 @@ def main() -> int:
 
     errors: list[str] = []
     check_config(errors)
-    if not (BUILD / "sitemap.xml").exists():
-        fail(errors, "website/build/sitemap.xml is missing; run this script without --no-build or run npm build first")
+    for locale in LOCALES:
+        sitemap = BUILD / ("sitemap.xml" if locale == "en" else f"{locale}/sitemap.xml")
+        if not sitemap.exists():
+            fail(
+                errors,
+                f"{sitemap.relative_to(ROOT)} is missing; run this script without --no-build or run npm build first",
+            )
     pages, routes = ({}, [])
     if not errors:
         pages, routes = check_routes(errors)

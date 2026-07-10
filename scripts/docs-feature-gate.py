@@ -34,6 +34,10 @@ SIDEBAR_JS = ROOT / "website" / "sidebars.js"
 DOCUSAURUS_CONFIG = ROOT / "website" / "docusaurus.config.js"
 WEBSITE_PACKAGE = ROOT / "website" / "package.json"
 HOMEPAGE_TSX = ROOT / "website" / "src" / "pages" / "index.tsx"
+DOCS_I18N_STATUS = ROOT / "scripts" / "docs-i18n-status.py"
+KO_CODE_JSON = ROOT / "website" / "i18n" / "ko" / "code.json"
+KO_DOCS_JSON = ROOT / "website" / "i18n" / "ko" / "docusaurus-plugin-content-docs" / "current.json"
+KO_NAVBAR_JSON = ROOT / "website" / "i18n" / "ko" / "docusaurus-theme-classic" / "navbar.json"
 
 REQUIRED_SIDEBAR_DOCS = [
     "INTRODUCTION",
@@ -92,6 +96,7 @@ DOC_CONTENT_REQUIREMENTS = [
             "aidememo-nif",
             "aidememo-ffi",
             "scripts/docs-feature-gate.py",
+            "scripts/docs-i18n-status.py",
             "scripts/docs-site-e2e.py",
         ],
     ),
@@ -657,6 +662,7 @@ def check_docusaurus_contract() -> list[str]:
     config = DOCUSAURUS_CONFIG.read_text(encoding="utf-8")
     package = WEBSITE_PACKAGE.read_text(encoding="utf-8")
     homepage = HOMEPAGE_TSX.read_text(encoding="utf-8")
+    normalized_homepage = re.sub(r"\s+", " ", homepage)
 
     for doc_id in REQUIRED_SIDEBAR_DOCS:
         if not contains_doc_id(sidebar, doc_id):
@@ -672,12 +678,56 @@ def check_docusaurus_contract() -> list[str]:
         errors.append("website/docusaurus.config.js must include @docusaurus/theme-mermaid")
     if '"@docusaurus/theme-mermaid"' not in package:
         errors.append("website/package.json must depend on @docusaurus/theme-mermaid")
+    if not re.search(r"locales:\s*\[\s*['\"]en['\"]\s*,\s*['\"]ko['\"]\s*\]", config):
+        errors.append("website/docusaurus.config.js must build the en and ko locales")
+    for token in ("htmlLang: 'en-US'", "htmlLang: 'ko-KR'", "type: 'localeDropdown'"):
+        if token not in config:
+            errors.append(f"website/docusaurus.config.js is missing i18n contract token {token!r}")
+    for token in ('"start:ko"', '"write-translations:ko"'):
+        if token not in package:
+            errors.append(f"website/package.json is missing i18n script {token}")
     if "onBrokenLinks: 'throw'" not in config and 'onBrokenLinks: "throw"' not in config:
         errors.append("website/docusaurus.config.js must fail on broken links")
     if "onBrokenMarkdownLinks: 'throw'" not in config and 'onBrokenMarkdownLinks: "throw"' not in config:
         errors.append("website/docusaurus.config.js must fail on broken Markdown links")
-    if "does not require an external LLM call" not in homepage:
+    if "does not require an external LLM call" not in normalized_homepage:
         errors.append("website/src/pages/index.tsx must state the default local no-external-LLM boundary")
+    for token in ("homepage.hero.title", "homepage.hero.subtitle", "homepage.card.evidence.title"):
+        if token not in homepage:
+            errors.append(f"website/src/pages/index.tsx is missing translation id {token!r}")
+
+    i18n_requirements = [
+        (
+            KO_CODE_JSON,
+            [
+                '"homepage.hero.title"',
+                "코딩 에이전트에 친화적인 SDK 메모리.",
+                "기본 로컬 메모리 루프는 외부 LLM 호출이 필요하지 않습니다.",
+            ],
+            "Korean homepage",
+        ),
+        (KO_DOCS_JSON, ["시작하기", "AideMemo 사용하기"], "Korean docs navigation"),
+        (KO_NAVBAR_JSON, ['"message": "문서"'], "Korean navbar"),
+    ]
+    for path, tokens, label in i18n_requirements:
+        if not path.exists():
+            errors.append(f"{path.relative_to(ROOT)} is missing")
+            continue
+        errors.extend(require_tokens(path, tokens, label))
+
+    if not DOCS_I18N_STATUS.exists():
+        errors.append("scripts/docs-i18n-status.py is missing")
+    else:
+        result = subprocess.run(
+            [sys.executable, str(DOCS_I18N_STATUS), "check"],
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout).strip()
+            errors.append(f"Korean translation status failed: {detail}")
 
     for path, tokens in DOC_CONTENT_REQUIREMENTS:
         if not path.exists():

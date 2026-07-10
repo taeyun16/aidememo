@@ -154,15 +154,19 @@ both the `aidememo-python` fast path and the CLI fallback.
    `query --bm25-only` quickstart aligned with the CLI.
 7. Community files must keep contributor, security, issue, and PR templates
    present and consistent with the implemented CLI surface.
+8. The Korean locale must keep its homepage messages, translated-doc coverage,
+   source fingerprints, and explicit English fallbacks synchronized with the
+   public sidebar.
 
 The gate also runs an internal count-claim self-test by default. Use
 `python3 scripts/docs-feature-gate.py --self-test` when you only need to verify
 that the drift detector still rejects stale numeric claims.
 
 `scripts/docs-site-e2e.py` then builds the rendered Docusaurus site and verifies
-that the public route graph still matches the sidebar/homepage contract, all
-baseUrl-scoped links/assets/anchors resolve, page H1s match the Markdown source,
-and architecture-doc implementation paths still exist in the repo.
+that the English and Korean route graphs still match the sidebar/homepage
+contract, all baseUrl-scoped links/assets/anchors resolve, locale-specific page
+H1s and `html lang` / `hreflang` metadata are correct, and architecture-doc
+implementation paths still exist in the repo.
 
 The gates cannot prove that prose is semantically perfect. They do make feature
 and structure drift noisy: adding or renaming a CLI command or MCP tool without
