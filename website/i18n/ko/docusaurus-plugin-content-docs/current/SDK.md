@@ -1,0 +1,166 @@
+---
+title: Python SDK
+description: aidememo-agent-sdk로 코드에서 AideMemo 메모리를 사용합니다.
+---
+
+# Python SDK
+
+에이전트나 스크립트가 한 번에 하나씩 도구를 호출하는 대신 프로그래밍 가능한
+working set으로 메모리를 사용해야 할 때 `aidememo-agent-sdk`를 사용합니다.
+
+## 설치
+
+```bash
+# PyPI 배포 전에는 체크아웃에서 설치합니다.
+python -m pip install -e packages/aidememo-agent-sdk
+```
+
+PyPI 배포 후:
+
+```bash
+python -m pip install aidememo-agent-sdk
+```
+
+네이티브 바인딩이 없으면 SDK는 `PATH`의 `aidememo` CLI로 폴백합니다.
+`aidememo-python` 배포 후에는 선택형 fast path를 설치할 수 있습니다.
+
+```bash
+python -m pip install "aidememo-agent-sdk[binding]"
+```
+
+## 네이티브 바인딩
+
+이 페이지는 Python composition SDK를 다룹니다. 런타임별 네이티브 바인딩은
+각 패키지 README에서 설명합니다.
+
+| 런타임 | 패키지 | 릴리스 경로 | 문서 |
+|---|---|---|---|
+| Python 네이티브 | `aidememo-python` | PyPI trusted-publisher 워크플로 준비 완료 | [README](https://github.com/taeyun16/aidememo/tree/main/crates/aidememo-python) |
+| Node.js | `aidememo-napi` | npm trusted-publisher 워크플로 준비 완료; platform 패키지를 root wrapper보다 먼저 배포 | [README](https://github.com/taeyun16/aidememo/tree/main/crates/aidememo-napi) |
+| Elixir | `aidememo_nif` | 로컬/경로 바인딩 문서 준비 완료; Hex 배포 워크플로는 아직 없음 | [README](https://github.com/taeyun16/aidememo/tree/main/crates/aidememo-nif) |
+| C ABI | `aidememo-ffi` | Rust 크레이트와 C 헤더/링크 문서 | [README](https://github.com/taeyun16/aidememo/tree/main/crates/aidememo-ffi) |
+
+모든 네이티브 바인딩은 CLI와 같은 백엔드 선택자를 사용합니다. 백엔드를
+생략하거나 빈 문자열을 전달하면 컴파일된 기본값을 사용합니다. 기본 빌드는
+SQLite를 포함하며 열 때 선택할 수 있습니다(`backend="sqlite"` 또는
+`backend="libsqlite"` / `{ backend: "sqlite" }` 또는
+`{ backend: "libsqlite" }` / `backend: "sqlite"` 또는
+`backend: "libsqlite"` / `aidememo_open_with_backend(..., "sqlite")` 또는
+`aidememo_open_with_backend(..., "libsqlite")`). redb 저장소를 열어야 할 때는
+Cargo `redb` 기능으로 빌드합니다.
+
+브랜치 로그 helper는 현재 Python composition SDK, `aidememo-python`,
+`aidememo-napi`, `aidememo_nif`에서 이미 열린 handle을 통한 로컬 브랜치
+아티팩트에 제공됩니다. C ABI 호출자는 저수준 ABI에 해당 표면이 필요해질
+때까지 CLI의 `aidememo branch ...` 명령을 사용해야 합니다.
+
+## 메모리 열기
+
+```python
+from aidememo_agent import Memory
+
+mem = Memory.open(source_id="team-a", storage_backend="libsqlite")
+```
+
+공유 저장소 안에서 한 팀, 에이전트, tenant, 프로젝트를 분리하려면
+`source_id`를 사용합니다.
+
+`storage_backend`는 선택 사항이며 CLI와 네이티브 바인딩 선택자와 같은 값을
+사용합니다. 컴파일된 기본값은 생략하거나 빈 문자열을 전달하고, 기본 로컬
+SQLite 백엔드는 `"sqlite"` 또는 `"libsqlite"`, 설치된 바인딩이나 CLI가
+Cargo `redb`로 빌드된 경우에는 `"redb"`를 사용합니다. SDK는 선택자를
+`aidememo-python`과 subprocess 폴백(`aidememo --backend ...`) 모두에
+전달합니다.
+
+## 여러 주제 검색
+
+```python
+rows = mem.search_rows([
+    "Redis timeout decisions",
+    {"query": "billing webhook duplicates", "topic": "Billing"},
+])
+
+for row in rows:
+    print(row["fact_type"], row["content"])
+```
+
+## Coverage 확인
+
+```python
+coverage = mem.coverage_by(rows, ["fact_type"])
+print(coverage)
+```
+
+계획 전에 decision, lesson, error를 찾았는지 에이전트가 확인해야 할 때
+유용합니다.
+
+## 메모리 집계
+
+```python
+timeline = mem.aggregate_many([
+    {"query": "release preflight", "op": "timeline"},
+    {"query": "Redis timeout", "op": "count", "fact_type": "error"},
+])
+
+print(timeline)
+```
+
+다음과 같은 질문에는 집계를 사용합니다.
+
+- "이 일이 몇 번 발생했나?"
+- "타임라인은 어떻게 되나?"
+- "기록한 총비용은 얼마인가?"
+
+## 새 팩트 기억
+
+```python
+mem.remember([
+    {
+        "content": "Decision: Redis timeout fixes must start with DNS metrics.",
+        "fact_type": "decision",
+        "entities": ["Redis", "Worker"],
+    },
+    {
+        "content": "Lesson: pool-size changes hid the real DNS failure mode.",
+        "fact_type": "lesson",
+        "entities": ["Redis", "Worker"],
+    },
+])
+```
+
+배치 쓰기는 더 빠르고 에이전트에 하나의 명확한 side effect를 제공합니다.
+
+## 추측성 실행 브랜치
+
+스크립트나 에이전트가 하나의 백업에서 여러 candidate 저장소를 만들고 최선의
+결과만 병합하려면 브랜치 로그를 사용합니다.
+
+```python
+from aidememo_agent import Memory
+
+candidate = Memory.open(store_path="./candidate-b.sqlite", storage_backend="libsqlite")
+
+push = candidate.branch_push(
+    "candidate-b",
+    "./shared",
+    base="./shared/backup-01...",
+)
+print(push["records_exported"])
+
+main = Memory.open(store_path="./main.sqlite", storage_backend="libsqlite")
+merge = main.branch_merge("./shared", branch="candidate-b")
+print(merge["facts_inserted"])
+```
+
+로컬 브랜치 경로는 사용할 수 있을 때 `aidememo-python` fast path를
+사용합니다. S3 브랜치 URI는 설치된 `aidememo --features s3` 바이너리가 AWS
+credential과 압축 동작을 소유하도록 CLI로 폴백합니다.
+
+## SDK와 MCP 선택
+
+| SDK 사용 | MCP 사용 |
+|---|---|
+| 에이전트가 Python을 작성하거나 스크립트를 실행 | 모델이 도구를 직접 호출해야 함 |
+| fanout 검색과 중복 제거가 필요 | 하나의 집중된 search/query가 필요 |
+| 코드에서 coverage 확인이나 집계가 필요 | 모델에 보이는 도구 결과가 필요 |
+| 쓰기를 배치하려 함 | 대화형 에이전트 워크플로가 필요 |

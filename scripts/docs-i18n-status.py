@@ -31,6 +31,11 @@ def load_status() -> dict[str, object]:
     return json.loads(STATUS.read_text(encoding="utf-8"))
 
 
+def inline_code_tokens(text: str) -> set[str]:
+    without_link_labels = re.sub(r"\[`[^`\n]+`\]\([^)]+\)", "", text)
+    return set(re.findall(r"(?<!`)`([^`\n]+)`(?!`)", without_link_labels))
+
+
 def validate(status: dict[str, object], *, check_hashes: bool) -> list[str]:
     errors: list[str] = []
     if status.get("locale") != "ko" or status.get("source_locale") != "en":
@@ -38,12 +43,15 @@ def validate(status: dict[str, object], *, check_hashes: bool) -> list[str]:
 
     translated = status.get("translated_docs")
     fallback = status.get("fallback_docs")
+    token_parity = status.get("token_parity_docs")
     if not isinstance(translated, dict) or not all(
         isinstance(key, str) and isinstance(value, str) for key, value in translated.items()
     ):
         return [*errors, "translated_docs must be a doc-id to SHA-256 object"]
     if not isinstance(fallback, list) or not all(isinstance(item, str) for item in fallback):
         return [*errors, "fallback_docs must be a list of doc ids"]
+    if not isinstance(token_parity, list) or not all(isinstance(item, str) for item in token_parity):
+        return [*errors, "token_parity_docs must be a list of translated doc ids"]
 
     translated_ids = set(translated)
     fallback_ids = set(fallback)
@@ -57,6 +65,13 @@ def validate(status: dict[str, object], *, check_hashes: bool) -> list[str]:
         errors.append(
             "translation coverage does not match the public sidebar: "
             f"missing={sorted(expected_ids - covered_ids)} extra={sorted(covered_ids - expected_ids)}"
+        )
+
+    token_parity_ids = set(token_parity)
+    if not token_parity_ids <= translated_ids:
+        errors.append(
+            "token_parity_docs must be translated: "
+            f"{sorted(token_parity_ids - translated_ids)}"
         )
 
     for doc_id, expected_digest in sorted(translated.items()):
@@ -78,6 +93,15 @@ def validate(status: dict[str, object], *, check_hashes: bool) -> list[str]:
                     f"{doc_id} translation is stale: expected source SHA-256 {expected_digest}, "
                     f"current {actual_digest}; refresh the translation, then run "
                     "python3 scripts/docs-i18n-status.py update"
+                )
+        if doc_id in token_parity_ids:
+            source_tokens = inline_code_tokens(source.read_text(encoding="utf-8"))
+            target_tokens = inline_code_tokens(target_text)
+            if source_tokens != target_tokens:
+                errors.append(
+                    f"{doc_id} inline code tokens drifted: "
+                    f"missing={sorted(source_tokens - target_tokens)} "
+                    f"extra={sorted(target_tokens - source_tokens)}"
                 )
 
     for doc_id in sorted(fallback_ids):
@@ -111,6 +135,8 @@ def self_test(status: dict[str, object]) -> list[str]:
     fallback.pop()
     if not any("coverage does not match" in error for error in validate(incomplete, check_hashes=False)):
         errors.append("self-test did not reject incomplete sidebar coverage")
+    if inline_code_tokens("Use `aidememo search` and [`Guide`](GUIDE.md).") != {"aidememo search"}:
+        errors.append("self-test did not exclude translated Markdown link labels from token parity")
     return errors
 
 
