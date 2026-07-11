@@ -1,78 +1,106 @@
 {
   "homepage.card.start.title": {
     "message": "시작하기",
-    "description": "Homepage card title linking to the AideMemo introduction."
+    "description": "Homepage link title for the AideMemo introduction."
   },
   "homepage.card.start.description": {
-    "message": "AideMemo가 무엇인지, 언제 사용하고 에이전트 워크플로에 어떻게 연결되는지 알아봅니다.",
-    "description": "Homepage card description for the AideMemo introduction."
+    "message": "제품의 경계와 기본 메모리 모델을 이해합니다.",
+    "description": "Homepage link description for the AideMemo introduction."
   },
   "homepage.card.quickstart.title": {
     "message": "빠른 시작",
-    "description": "Homepage card title linking to the quickstart."
+    "description": "Homepage link title for the quickstart."
   },
   "homepage.card.quickstart.description": {
-    "message": "팩트를 추가하고 메모리를 검색한 뒤 간단한 티켓에서 워크플로를 시작합니다.",
-    "description": "Homepage card description for the quickstart."
+    "message": "저장소를 만들고 typed fact를 추가한 뒤 티켓에서 다시 찾아냅니다.",
+    "description": "Homepage link description for the quickstart."
   },
   "homepage.card.architecture.title": {
     "message": "아키텍처",
-    "description": "Homepage card title linking to the architecture guide."
+    "description": "Homepage link title for the architecture guide."
   },
   "homepage.card.architecture.description": {
-    "message": "CLI, MCP, 에이전트 SDK, 바인딩, 코어, 저장소, 인덱스가 어떻게 연결되는지 확인합니다.",
-    "description": "Homepage card description for the architecture guide."
+    "message": "인터페이스, Rust 코어, 저장소, 인덱스가 어떻게 연결되는지 확인합니다.",
+    "description": "Homepage link description for the architecture guide."
   },
   "homepage.card.mcp.title": {
     "message": "MCP 설정",
-    "description": "Homepage card title linking to MCP setup."
+    "description": "Homepage link title for MCP setup."
+  },
+  "homepage.card.codingAgents.title": {
+    "message": "코딩 에이전트 설치",
+    "description": "Homepage link title for coding agent setup."
+  },
+  "homepage.card.codingAgents.description": {
+    "message": "Claude Code, Codex, Hermes, pi와 다른 에이전트에 AideMemo를 설치합니다.",
+    "description": "Homepage link description for coding agent setup."
   },
   "homepage.card.mcp.description": {
-    "message": "로컬 에이전트에 AideMemo를 등록하고 핵심 메모리 도구를 사용합니다.",
-    "description": "Homepage card description for MCP setup."
+    "message": "로컬 에이전트에 AideMemo를 등록하고 핵심 도구를 사용합니다.",
+    "description": "Homepage link description for MCP setup."
   },
   "homepage.card.workflows.title": {
     "message": "에이전트 워크플로",
-    "description": "Homepage card title linking to agent workflows."
+    "description": "Homepage link title for agent workflows."
   },
   "homepage.card.workflows.description": {
-    "message": "작업 형태에 따라 workflow, context, query, aggregate, canvas, profile 호출을 선택합니다.",
-    "description": "Homepage card description for agent workflows."
+    "message": "작업 형태에 따라 context, query, workflow, aggregate 호출을 선택합니다.",
+    "description": "Homepage link description for agent workflows."
   },
   "homepage.card.evidence.title": {
     "message": "검증 근거",
-    "description": "Homepage card title linking to the evidence scorecard."
+    "description": "Homepage link title for the evidence scorecard."
   },
   "homepage.card.evidence.description": {
-    "message": "검증된 결과, 모델 배치, 공개 성능 주장의 경계를 확인합니다.",
-    "description": "Homepage card description for the evidence scorecard."
+    "message": "측정 결과와 주의사항, 공개 성능 주장의 경계를 확인합니다.",
+    "description": "Homepage link description for the evidence scorecard."
+  },
+  "homepage.card.codexProfiles.title": {
+    "message": "여러 Codex 계정",
+    "description": "Homepage link title for the Codex multi-profile use case."
+  },
+  "homepage.card.codexProfiles.description": {
+    "message": "로그인 상태와 작성자 provenance는 분리하면서 하나의 프로젝트 메모리를 공유합니다.",
+    "description": "Homepage link description for the Codex multi-profile use case."
+  },
+  "homepage.profiles.kicker": {
+    "message": "대표 사용 사례"
+  },
+  "homepage.profiles.title": {
+    "message": "계정은 바꿔도 컨텍스트는 이어집니다."
+  },
+  "homepage.profiles.body": {
+    "message": "격리된 Codex 프로필이 자격 증명, 쿠키, 채팅 기록을 공유하지 않으면서 프로젝트의 결정과 교훈, 오류를 함께 사용합니다."
+  },
+  "homepage.profiles.action": {
+    "message": "다중 프로필 설정 보기"
   },
   "homepage.logo.alt": {
     "message": "AideMemo 로고",
     "description": "Alternative text for the AideMemo logo on the homepage."
   },
   "homepage.eyebrow": {
-    "message": "AideMemo 문서"
+    "message": "코딩 에이전트를 위한 로컬 메모리"
   },
   "homepage.hero.title": {
     "message": "코딩 에이전트에 친화적인 SDK 메모리."
   },
   "homepage.hero.subtitle": {
-    "message": "AideMemo를 설치하고 유용한 메모리를 추가하며, MCP로 에이전트와 연결하고 스크립트에서 에이전트 SDK를 사용하는 방법을 알아봅니다. 기본 로컬 메모리 루프는 외부 LLM 호출이 필요하지 않습니다."
+    "message": "세션과 편집기, 모델 제공자가 바뀌어도 이어지는 프로젝트 메모리입니다. 하나의 Rust 바이너리와 embedded store로 동작하며, 기본 로컬 메모리 루프는 외부 LLM 호출이 필요하지 않습니다."
   },
   "homepage.action.start": {
-    "message": "문서 시작"
+    "message": "Git에서 설치"
   },
   "homepage.action.github": {
     "message": "GitHub 보기"
   },
   "homepage.meta.title": {
-    "message": "AideMemo 문서",
-    "description": "Browser title for the AideMemo documentation homepage."
+    "message": "코딩 에이전트를 위한 로컬 메모리",
+    "description": "Browser title for the AideMemo product homepage."
   },
   "homepage.meta.description": {
-    "message": "AideMemo 에이전트 메모리를 위한 정적 문서입니다.",
-    "description": "Meta description for the AideMemo documentation homepage."
+    "message": "AideMemo는 에이전트 SDK, MCP, CLI, 네이티브 바인딩으로 사용할 수 있는 코딩 에이전트용 로컬 메모리 레이어입니다.",
+    "description": "Meta description for the AideMemo product homepage."
   },
   "theme.ErrorPageContent.title": {
     "message": "페이지에 오류가 발생하였습니다.",
@@ -400,5 +428,126 @@
   "theme.docs.DocCard.categoryDescription.plurals": {
     "message": "{count} 항목",
     "description": "The default description for a category card in the generated index about how many items this category includes"
+  },
+  "homepage.workflow.capture.label": {
+    "message": "기록"
+  },
+  "homepage.workflow.capture.title": {
+    "message": "이번 세션보다 오래 남아야 할 사실을 기록합니다."
+  },
+  "homepage.workflow.capture.description": {
+    "message": "결정, 교훈, 오류, 선호, 관계를 대화 기록 속에 묻어두지 않고 명시적으로 보존합니다."
+  },
+  "homepage.workflow.retrieve.label": {
+    "message": "검색"
+  },
+  "homepage.workflow.retrieve.title": {
+    "message": "다음 계획을 세우기 전에 필요한 맥락을 불러옵니다."
+  },
+  "homepage.workflow.retrieve.description": {
+    "message": "BM25-first 검색은 빠르고 결정적으로 동작하고, lexical evidence가 약할 때 semantic retrieval이 보완합니다."
+  },
+  "homepage.workflow.apply.label": {
+    "message": "적용"
+  },
+  "homepage.workflow.apply.title": {
+    "message": "현재 작업 중인 도구로 메모리를 가져옵니다."
+  },
+  "homepage.workflow.apply.description": {
+    "message": "호스팅 런타임을 도입하지 않고도 MCP, 에이전트 SDK, CLI, 네이티브 바인딩에서 같은 로컬 저장소를 사용합니다."
+  },
+  "homepage.interface.mcp": {
+    "message": "stdio 또는 HTTP로 제공되는 모델용 도구"
+  },
+  "homepage.interface.sdk": {
+    "message": "Python에서 조합하는 code-first 메모리"
+  },
+  "homepage.interface.cli": {
+    "message": "사람과 자동화를 위한 간결한 명령"
+  },
+  "homepage.interface.native": {
+    "message": "Python, Node, Elixir, C 바인딩"
+  },
+  "homepage.install.copied": {
+    "message": "복사됨"
+  },
+  "homepage.install.copy": {
+    "message": "복사"
+  },
+  "homepage.graph.alt": {
+    "message": "AideMemo가 에이전트와 typed fact, 하나의 embedded store를 연결합니다."
+  },
+  "homepage.action.docs": {
+    "message": "문서 읽기"
+  },
+  "homepage.install.label": {
+    "message": "소스에서 설치"
+  },
+  "homepage.proof.kicker": {
+    "message": "경계가 명확한 측정"
+  },
+  "homepage.proof.title": {
+    "message": "수식어보다 먼저 근거를 제시합니다."
+  },
+  "homepage.proof.body": {
+    "message": "공개 성능 주장은 항상 데이터셋, 검색 스택, 실행 조건과 함께 제시합니다."
+  },
+  "homepage.proof.action": {
+    "message": "검증표 읽기"
+  },
+  "homepage.metric.recall": {
+    "message": "LongMemEval-S 500문항, opt-in BGE와 2단계 rerank"
+  },
+  "homepage.metric.faster": {
+    "message": "더 빠름"
+  },
+  "homepage.metric.daemon": {
+    "message": "동일한 BrainBench 점수에서 daemon BM25와 fresh CLI 비교"
+  },
+  "homepage.metric.mcp": {
+    "message": "공유 HTTP MCP, 클라이언트 2개와 성공한 쓰기 20회"
+  },
+  "homepage.workflow.kicker": {
+    "message": "로컬 메모리 루프"
+  },
+  "homepage.workflow.title": {
+    "message": "작업 가까이에 머무는 메모리."
+  },
+  "homepage.workflow.body": {
+    "message": "명시적으로 기록하고 의도적으로 검색하여 다음 작업에 필요한 맥락만 노출합니다."
+  },
+  "homepage.interfaces.kicker": {
+    "message": "하나의 코어, 여러 진입점"
+  },
+  "homepage.interfaces.title": {
+    "message": "에이전트가 실행되는 곳에서 바로 연결합니다."
+  },
+  "homepage.docs.kicker": {
+    "message": "문서"
+  },
+  "homepage.docs.title": {
+    "message": "첫 fact부터 전체 통합까지 이어갑니다."
+  },
+  "homepage.docs.body": {
+    "message": "영문과 한국어 가이드는 검증된 동일 경로와 예제, 릴리스 게이트를 공유합니다."
+  },
+  "homepage.final.title": {
+    "message": "다음 세션에 더 나은 출발점을 남겨주세요."
+  },
+  "homepage.final.quickstart": {
+    "message": "빠른 시작 실행"
+  },
+  "search.placeholder": {
+    "message": "문서 검색",
+    "description": "Placeholder for the documentation search input."
+  },
+  "search.loading": {
+    "message": "검색 중…"
+  },
+  "search.empty": {
+    "message": "검색 결과가 없습니다."
+  },
+  "search.error": {
+    "message": "검색을 사용할 수 없습니다."
   }
 }

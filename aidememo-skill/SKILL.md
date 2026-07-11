@@ -3,7 +3,7 @@ name: aidememo
 description: Local knowledge-graph wiki tool. Use to search, traverse, and append facts to a private markdown wiki indexed with BM25 + semantic vectors. Ideal when the user asks "what do we know about X", wants to record decisions/conventions, or needs context from prior project notes.
 license: MIT OR Apache-2.0
 compatibility: Requires the `aidememo` CLI binary on PATH (cargo install aidememo-cli, or build from https://github.com/taeyun16/aidememo). Optionally registers as an MCP server (`aidememo mcp` for stdio, `aidememo mcp-serve` for HTTP).
-allowed-tools: Bash(aidememo:*)
+allowed-tools: Bash(aidememo *)
 metadata:
   homepage: https://github.com/taeyun16/aidememo
   version: "1.0"
@@ -116,9 +116,9 @@ passes an explicit `source_id`.
 | `aidememo_recent` | Last N days of facts |
 | `aidememo_entity_list` / `aidememo_entity_get` | Browse entities / fetch one by name or alias |
 | `aidememo_fact_list` / `aidememo_fact_get` | List facts (filterable; `fact_type:"lesson"` etc) / fetch one by ULID |
-| `aidememo_traverse` / `aidememo_backlinks` | Forward / reverse graph walk |
+| `aidememo_traverse` | Forward / reverse graph walk (`direction:"reverse"` for backlinks) |
 | `aidememo_path` | Shortest path between two entities |
-| `aidememo_doctor` / `aidememo_lint` | Health snapshot / raw issues |
+| `aidememo_doctor` | Health snapshot with issue codes and action hints |
 | `aidememo_entity_describe` | Set or clear an entity's prose summary |
 | `aidememo_fact_add` | Append a single fact (now accepts `preference` / `lesson` / `error`) |
 | `aidememo_fact_add_many` | Batched insert (one fsync) — prefer for ≥3 facts |
@@ -233,7 +233,7 @@ aidememo skill install --target claude     # → ~/.claude/skills/aidememo/
 aidememo skill install --target hermes     # → ~/.hermes/skills/aidememo/
 aidememo skill install --target openclaw   # → ~/.openclaw/skills/aidememo/
 aidememo skill install --target opencode   # → ~/.config/opencode/AGENTS.md (appended)
-aidememo skill install --target pi         # → ~/.config/pi/AGENTS.md (pi has no MCP — skill only)
+aidememo skill install --target pi         # → ~/.pi/agent/skills/aidememo/ (or $PI_CODING_AGENT_DIR)
 
 aidememo mcp-install --target claude --source-id my-project
 aidememo mcp-install --target codex --source-id my-project
@@ -243,5 +243,9 @@ aidememo mcp-install --target opencode     # writes mcp.aidememo in ~/.config/op
 
 `aidememo mcp-install --list-targets` and `aidememo skill install --list-targets` show
 every supported agent and the path each would write. Hand-rolled setup steps
-are in `setup-claude-code.md`, `setup-codex.md`, and `setup-hermes.md`. The
+are in the repository's `aidememo-skill/` directory. Claude Code, Codex,
+Hermes, and pi guides are available in English (`setup-claude-code.md`,
+`setup-codex.md`, `setup-hermes.md`, `setup-pi.md`) and Korean
+(`setup-claude-code.ko.md`, `setup-codex.ko.md`, `setup-hermes.ko.md`,
+`setup-pi.ko.md`). The
 full API + internals reference is in `REFERENCE.md`.

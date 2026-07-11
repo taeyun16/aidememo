@@ -30,7 +30,11 @@ optional in-process binding fast path.
 ```python
 from aidememo_agent import Memory
 
-mem = Memory.open(source_id="codex-aidememo", storage_backend="libsqlite")
+mem = Memory.open(
+    source_id="project:aidememo",
+    actor_id="codex:account-a",
+    storage_backend="libsqlite",
+)
 
 rows = mem.search_rows([
     "release preflight decisions",
@@ -52,7 +56,8 @@ mem.remember([
 pack = mem.client.workflow_start(
     "Fix Redis timeout in worker",
     source="github:org/app#123",
-    source_id="codex-aidememo",
+    source_id="project:aidememo",
+    actor_id="codex:account-a",
 )
 canvas = mem.session_canvas(pack["session_id"], limit=20)
 profile = mem.project_profile(limit=80)
@@ -65,7 +70,8 @@ mem.remember(
             "entities": ["Redis"],
         }
     ],
-    source_id="codex-aidememo",
+    source_id="project:aidememo",
+    actor_id="codex:account-a",
     session_id=pack["session_id"],
 )
 
@@ -89,6 +95,9 @@ prompt injection before resuming long work.
 
 `source_id` can be passed to `Memory.open(...)` or inherited from
 `AIDEMEMO_SOURCE_ID`, matching the MCP `aidememo mcp-install --source-id <namespace>` path.
+Use it for the project/upstream namespace. `actor_id`, inherited from
+`AIDEMEMO_ACTOR_ID`, records which account or agent wrote each fact without
+splitting shared project retrieval.
 
 `storage_backend` is optional and matches the CLI/native binding selector:
 omit it or pass an empty string for the compiled default, pass `"sqlite"` or

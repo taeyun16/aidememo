@@ -4,9 +4,10 @@ const darkCodeTheme = require('prism-react-renderer').themes.dracula;
 /** @type {import('@docusaurus/types').Config} */
 const config = {
   title: 'AideMemo',
-  tagline: 'Agent-friendly SDK memory for coding agents.',
-  url: 'https://taeyun16.github.io',
-  baseUrl: '/aidememo/',
+  tagline: 'Local memory for coding agents.',
+  url: 'https://aidememo.taeyun.me',
+  baseUrl: '/',
+  favicon: 'img/aidememo-logo.png',
   organizationName: 'taeyun16',
   projectName: 'aidememo',
   trailingSlash: false,
@@ -53,15 +54,37 @@ const config = {
     ],
   ],
   themes: ['@docusaurus/theme-mermaid'],
+  plugins: [
+    [
+      'docusaurus-pagefind-search',
+      {
+        rootSelector: 'main',
+      },
+    ],
+  ],
 
   themeConfig:
     /** @type {import('@docusaurus/preset-classic').ThemeConfig} */
     ({
+      image: 'img/aidememo-social-card.png',
       metadata: [
         {
           name: 'description',
           content:
-            'AideMemo documentation for local-first agent memory, the agent SDK, MCP tools, and measurement-backed workflows.',
+            'AideMemo gives coding agents local, typed project memory through one Rust binary, MCP, CLI, and a Python agent SDK.',
+        },
+        {
+          name: 'keywords',
+          content:
+            'coding agent memory, MCP memory, local-first AI, agent SDK, Rust, SQLite, knowledge graph',
+        },
+        {
+          name: 'theme-color',
+          content: '#071718',
+        },
+        {
+          name: 'twitter:card',
+          content: 'summary_large_image',
         },
       ],
       navbar: {
@@ -113,6 +136,10 @@ const config = {
               {
                 label: 'MCP Setup',
                 to: '/docs/MCP',
+              },
+              {
+                label: 'Coding Agent Setup',
+                to: '/docs/CODING_AGENTS',
               },
             ],
           },

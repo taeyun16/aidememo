@@ -208,6 +208,7 @@ fn build_store(
                 tags: doc.source.as_ref().map(|s| vec![format!("source:{s}")]),
                 source: doc.source.clone(),
                 source_id: None,
+                actor_id: None,
                 source_confidence: None,
                 observed_at,
             });

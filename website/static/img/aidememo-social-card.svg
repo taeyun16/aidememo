@@ -1,0 +1,71 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <defs>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#36d8c2" stop-opacity="0.2"/>
+      <stop offset="1" stop-color="#36d8c2" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="grid" width="56" height="56" patternUnits="userSpaceOnUse">
+      <path d="M56 0H0V56" fill="none" stroke="#ffffff" stroke-opacity="0.035"/>
+    </pattern>
+    <filter id="logo-shadow" x="-50%" y="-50%" width="200%" height="200%">
+      <feDropShadow dx="0" dy="18" stdDeviation="24" flood-color="#000000" flood-opacity="0.4"/>
+    </filter>
+  </defs>
+
+  <rect width="1200" height="630" fill="#071718"/>
+  <rect width="1200" height="630" fill="url(#grid)"/>
+  <circle cx="932" cy="316" r="330" fill="url(#glow)"/>
+
+  <g fill="none" stroke="#36d8c2" stroke-opacity="0.42" stroke-width="2">
+    <path d="M920 315L764 172" stroke-dasharray="8 12"/>
+    <path d="M920 315L1056 150" stroke-dasharray="8 12"/>
+    <path d="M920 315L1080 412" stroke-dasharray="8 12"/>
+    <path d="M920 315L846 516" stroke-dasharray="8 12"/>
+  </g>
+
+  <g fill="#36d8c2">
+    <circle cx="764" cy="172" r="8"/>
+    <circle cx="1056" cy="150" r="8"/>
+    <circle cx="1080" cy="412" r="8"/>
+    <circle cx="846" cy="516" r="8"/>
+  </g>
+  <g fill="none" stroke="#36d8c2" stroke-opacity="0.2">
+    <circle cx="920" cy="315" r="236" stroke-dasharray="4 14"/>
+    <circle cx="920" cy="315" r="142"/>
+    <circle cx="764" cy="172" r="30"/>
+    <circle cx="1056" cy="150" r="30"/>
+    <circle cx="1080" cy="412" r="30"/>
+    <circle cx="846" cy="516" r="30"/>
+  </g>
+
+  <circle cx="920" cy="315" r="98" fill="#0b2021" stroke="#74ead8" stroke-opacity="0.48"/>
+  <g fill="none" stroke="#e9fbf7" stroke-linecap="round" stroke-linejoin="round" filter="url(#logo-shadow)">
+    <path d="M874 369L920 258L966 369" stroke-width="13"/>
+    <path d="M892 329H948" stroke-width="10"/>
+    <path d="M893 341L920 295L947 341Z" stroke="#36d8c2" stroke-width="3"/>
+    <circle cx="920" cy="295" r="6" fill="#36d8c2" stroke="none"/>
+    <circle cx="893" cy="341" r="6" fill="#36d8c2" stroke="none"/>
+    <circle cx="947" cy="341" r="6" fill="#36d8c2" stroke="none"/>
+  </g>
+
+  <g font-family="Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif">
+    <text x="76" y="94" fill="#36d8c2" font-size="18" font-weight="700" letter-spacing="3">
+      LOCAL MEMORY FOR CODING AGENTS
+    </text>
+    <text x="68" y="257" fill="#ffffff" font-size="112" font-weight="760" letter-spacing="-7">
+      AideMemo
+    </text>
+    <text x="76" y="337" fill="#e8f4f1" font-size="36" font-weight="550" letter-spacing="-1.2">
+      Memory that stays with the work.
+    </text>
+    <text x="76" y="405" fill="#afc7c1" font-size="22">
+      One Rust binary. One embedded store.
+    </text>
+    <text x="76" y="442" fill="#afc7c1" font-size="22">
+      SDK · MCP · CLI · Native bindings
+    </text>
+    <text x="76" y="548" fill="#6d9690" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="16" letter-spacing="1">
+      github.com/taeyun16/aidememo
+    </text>
+  </g>
+</svg>

@@ -7,7 +7,10 @@ description: Decide which AideMemo CLI, MCP, or SDK entry point to use for commo
 
 AideMemo works best when agents start with one focused memory read, then branch
 only when the task shape requires it. This page is the operating guide for that
-choice.
+choice. Configure your agent first with
+[`Coding Agent Setup`](CODING_AGENTS.md): Claude Code, Codex, Hermes, and MCP
+clients can call tools directly, while pi follows the same flow through its
+installed skill and local CLI commands.
 
 ```mermaid
 flowchart TD
@@ -142,7 +145,8 @@ phrases. Explicit `note` is preserved, but write responses may include
 
 When a store is shared, always pass `source_id` or install MCP with
 `AIDEMEMO_SOURCE_ID` through `aidememo --backend libsqlite mcp-install
---target codex --source-id <namespace>`.
+--target <agent> --source-id <namespace>`. For pi, include `--source-id` in the
+CLI calls selected by the skill because pi has no MCP registration step.
 
 ## Code-first pattern
 

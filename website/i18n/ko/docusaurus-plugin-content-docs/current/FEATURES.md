@@ -50,7 +50,7 @@ python3 scripts/docs-site-e2e.py
 | `aidememo watch` | Markdown 파일 변경 감시와 재-ingest |
 | `aidememo mcp-serve` | 공유 웜 접근을 위한 HTTP와 SSE MCP 제공 |
 | `aidememo mcp` | 로컬 에이전트를 위한 stdio MCP 제공 |
-| `aidememo mcp-install` | 지원하는 에이전트에 AideMemo MCP 등록 |
+| `aidememo mcp-install` | 고정 저장소, source namespace, writer provenance, 반복 가능한 Codex profile home으로 AideMemo MCP 등록 |
 | `aidememo completions` | 셸 completion 스크립트 출력 |
 | `aidememo pending` | dry-run으로 추출된 팩트 검토, 승인, 거절 |
 | `aidememo vector-rebuild` | 모델 또는 인덱스 변경 뒤 HNSW vector sidecar 재구축 |
@@ -107,12 +107,12 @@ python3 scripts/docs-site-e2e.py
 | `aidememo_overview` | 익숙하지 않은 wiki의 orientation snapshot 반환 |
 | `aidememo_recent` | 최근 팩트 반환 |
 | `aidememo_context` | 넓은 턴 시작 컨텍스트 envelope 반환 |
-| `aidememo_workflow_start` | 추적되는 이슈, PR, 티켓, 자동화 워크플로 시작 |
+| `aidememo_workflow_start` | 선택적으로 parent session에 연결되는 추적 이슈, PR, 티켓, 자동화 워크플로 시작 |
 | `aidememo_session_canvas` | 긴 워크플로 재개를 위한 범위 제한 Markdown + Mermaid canvas 반환 |
 | `aidememo_profile_export` | 현재 타입 지정 팩트에서 읽기 전용 프로젝트 프로필 텍스트 아티팩트 반환 |
 | `aidememo_query` | 집중된 주제 컨텍스트 팩 반환 |
 | `aidememo_entity_describe` | 엔티티 요약 설정 또는 삭제 |
-| `aidememo_fact_add` | 자체 분류 타입과 선택형 session/source 범위로 팩트 하나 추가 |
+| `aidememo_fact_add` | 자체 분류 타입, 선택형 session/source 범위, writer provenance로 팩트 하나 추가 |
 | `aidememo_fact_add_many` | 한 transaction에 여러 팩트 추가 |
 | `aidememo_fact_supersede` | 이전 팩트를 replacement 팩트로 교체하고 retire |
 | `aidememo_fact_archive` | 팩트를 cold-tier archive로 이동 |
@@ -128,6 +128,11 @@ python3 scripts/docs-site-e2e.py
 | `aidememo-nif` | Elixir/Erlang NIF 바인딩 |
 | `aidememo-ffi` | C ABI 바인딩 |
 | `hermes-aidememo` | Hermes Agent plugin, slash command, lifecycle hook, SDK re-export, 선택형 pending-first 캡처 adapter |
+| Claude Code 플러그인 | `plugins/claude` 아래의 자체 완결형 MCP 정의, 기능별 스킬 세 개, 읽기 전용 컨텍스트 훅 세 개 |
+| Agent skill 설치기 | Claude(`CLAUDE_CONFIG_DIR`), Hermes(`HERMES_HOME`), pi(`PI_CODING_AGENT_DIR`) 프로필을 인식합니다. pi는 의도적으로 MCP 대신 CLI를 사용합니다. |
+
+지원 에이전트 표와 검증된 설치 경로는
+[`코딩 에이전트 설치`](CODING_AGENTS.md)를 참고하세요.
 
 네이티브 Python, Node, Elixir, C 바인딩은 CLI와 같은 백엔드 선택자를
 사용합니다. 기본 빌드는 로컬 SQLite 백엔드를 포함하며 redb 저장소를 열어야
@@ -170,5 +175,5 @@ link/asset/anchor가 해석되는지, locale별 페이지 H1과 `html lang` /
 
 게이트가 문장의 의미적 완벽성을 증명할 수는 없습니다. 대신 기능과 구조
 드리프트를 눈에 띄게 만듭니다. 문서를 갱신하지 않은 CLI/MCP 기능 변경,
-배포된 `/aidememo/` route graph 손상, 저장소 기본값 설명의 회귀는 CI를
+배포된 root route graph 손상, 저장소 기본값 설명의 회귀는 CI를
 실패시킵니다.

@@ -130,6 +130,7 @@ pub fn run_init(
             target,
             agent_force,
             config.store.backend.as_str(),
+            store_path,
         ));
     }
 
@@ -198,7 +199,12 @@ struct InitReport {
     elapsed_ms: u64,
 }
 
-fn run_agent_setup(target: &str, force: bool, storage_backend: &str) -> Vec<InitStep> {
+fn run_agent_setup(
+    target: &str,
+    force: bool,
+    storage_backend: &str,
+    store_path: &Path,
+) -> Vec<InitStep> {
     let mut steps = Vec::new();
 
     let skill_supported = crate::cmd::skill::target_skills_dir(target).is_some()
@@ -241,9 +247,12 @@ fn run_agent_setup(target: &str, force: bool, storage_backend: &str) -> Vec<Init
                 list_targets: false,
                 no_verify: true,
                 source_id: None,
+                actor_ids: Vec::new(),
+                codex_homes: Vec::new(),
             },
             false,
             storage_backend,
+            store_path,
         );
         steps.push(step_from_result("agent_mcp_install", result, t0));
     }

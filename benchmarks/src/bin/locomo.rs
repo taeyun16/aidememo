@@ -250,6 +250,7 @@ fn build_store_for_conv(conv: &Conversation, hybrid: bool) -> Result<Conversatio
                 ]),
                 source: Some("raw-chat".into()),
                 source_id: None,
+                actor_id: None,
                 source_confidence: None,
                 observed_at,
             });

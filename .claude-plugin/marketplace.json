@@ -1,0 +1,14 @@
+{
+  "name": "aidememo",
+  "description": "Official local marketplace for the AideMemo Claude Code integration.",
+  "owner": {
+    "name": "Taeyun Jang"
+  },
+  "plugins": [
+    {
+      "name": "aidememo",
+      "source": "./plugins/claude",
+      "description": "Persistent local project memory for Claude Code through MCP, focused skills, and safe context hooks."
+    }
+  ]
+}

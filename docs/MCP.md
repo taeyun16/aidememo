@@ -24,14 +24,27 @@ Example Codex config:
 ```toml
 [mcp_servers.aidememo]
 command = "aidememo"
-args = ["--backend", "libsqlite", "mcp"]
+args = ["--backend", "libsqlite", "--store", "/absolute/project/_meta/wiki.sqlite", "mcp"]
+
+[mcp_servers.aidememo.env]
+AIDEMEMO_SOURCE_ID = "project:my-app"
+AIDEMEMO_ACTOR_ID = "codex:account-a"
 ```
 
-Example Claude Code command:
+Claude Code standalone registration:
 
 ```bash
-claude mcp add aidememo -- aidememo mcp
+aidememo --store /absolute/project/_meta/wiki.sqlite mcp-install \
+  --target claude \
+  --source-id project:my-app \
+  --actor-id claude:local
 ```
+
+This uses Claude Code's current CLI argument order and pins the resolved store.
+The bundled Claude plugin is an alternative that also includes focused skills
+and read-only hooks. Hermes, Cursor, OpenClaw, and OpenCode also have installer
+targets. pi is intentionally skill-only because it does not accept MCP. See
+[`Coding Agent Setup`](CODING_AGENTS.md) for the complete matrix.
 
 ## HTTP MCP server
 
@@ -110,18 +123,29 @@ Use `source_id` when a shared store contains multiple teams, projects, users, or
 agents.
 
 ```bash
-aidememo --backend libsqlite mcp-install --target codex --source-id team-a
+aidememo --backend libsqlite mcp-install --target <agent> --source-id team-a
 ```
 
 MCP tools then default to that source namespace when the client does not pass an
 explicit `source_id`. The installed command also pins the selected storage
-backend so an agent process does not drift back to a different config default.
+backend and resolved store path so an agent process does not drift back to a
+different config default or working directory. Use `--actor-id` independently
+when multiple agent profiles share that namespace and writes need provenance.
+
+For isolated Codex accounts, repeat `--codex-home` and `--actor-id` while
+pointing every profile at the same explicit store. See
+[`Share Memory Across Codex Profiles`](CODEX_MULTI_PROFILE.md).
 
 ## Troubleshooting
 
 | Symptom | Fix |
 |---|---|
 | Agent cannot see tools | Confirm MCP config path and restart the agent |
+| Claude isolated profile cannot see its skill | Set `CLAUDE_CONFIG_DIR` before `skill install --target claude` |
+| One Codex profile cannot see AideMemo | Install into its active `CODEX_HOME`, or pass `--codex-home` explicitly |
+| Hermes isolated profile cannot see AideMemo | Set `HERMES_HOME` before installing both the skill and MCP entry |
+| pi suggests an MCP step | Update AideMemo and use `skill install --target pi` only |
 | `command not found: aidememo` | Use an absolute path in MCP config |
+| Agent opens the wrong store | Reinstall with global `--store`; `aidememo doctor` reports Codex store mismatches |
 | Store lock errors | Use one `aidememo mcp-serve` process for shared writes |
 | Wrong project context appears | Add or verify `source_id` scoping |

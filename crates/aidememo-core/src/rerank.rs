@@ -443,6 +443,7 @@ mod tests {
             entity_names: vec![],
             source: None,
             source_id: None,
+            actor_id: None,
             score,
             rank,
             created_at: 0,

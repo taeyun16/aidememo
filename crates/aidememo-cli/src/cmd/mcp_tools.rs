@@ -484,6 +484,7 @@ fn tool_search(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, String> 
                 "rank": r.rank,
                 "source": r.source,
                 "source_id": r.source_id,
+                "actor_id": r.actor_id,
             })
         })
         .collect();
@@ -764,6 +765,21 @@ fn mcp_source_id(args: &Value) -> Option<String> {
     mcp_source_id_with_env(args, default_mcp_source_id)
 }
 
+fn default_mcp_actor_id() -> Option<String> {
+    normalise_source_id(std::env::var("AIDEMEMO_ACTOR_ID").ok())
+}
+
+fn mcp_actor_id_with_env(
+    args: &Value,
+    env_actor_id: impl FnOnce() -> Option<String>,
+) -> Option<String> {
+    source_id_from_value(args.get("actor_id")).or_else(|| normalise_source_id(env_actor_id()))
+}
+
+fn mcp_actor_id(args: &Value) -> Option<String> {
+    mcp_actor_id_with_env(args, default_mcp_actor_id)
+}
+
 fn resolve_session_entity(
     wiki: &AideMemo,
     session_id: Option<&str>,
@@ -894,6 +910,7 @@ fn tool_extract(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, String>
             tags: None,
             source: None,
             source_id: None,
+            actor_id: mcp_actor_id(args),
             source_confidence: Some(cand.confidence),
             observed_at: None,
         };
@@ -1056,6 +1073,9 @@ fn slim_fact_record(f: &aidememo_core::FactRecord, wiki: &AideMemo) -> Value {
     }
     if let Some(source_id) = &f.source_id {
         obj.insert("source_id".into(), Value::String(source_id.clone()));
+    }
+    if let Some(actor_id) = &f.actor_id {
+        obj.insert("actor_id".into(), Value::String(actor_id.clone()));
     }
     if let Some(by) = &f.superseded_by {
         obj.insert("superseded_by".into(), Value::String(by.to_string()));
@@ -2454,6 +2474,12 @@ fn tool_workflow_start(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, 
         .and_then(|v| v.as_str())
         .filter(|s| !s.is_empty());
     let source_id = mcp_source_id(args);
+    let actor_id = mcp_actor_id(args);
+    let parent_session_id = args
+        .get("parent_session_id")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
     let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(8) as usize;
     let depth = args.get("depth").and_then(|v| v.as_u64()).unwrap_or(2) as u32;
     let recent_limit = args
@@ -2472,6 +2498,8 @@ fn tool_workflow_start(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, 
                 body: body.map(str::to_string),
                 source: source.map(str::to_string),
                 source_id,
+                actor_id,
+                parent_session_id: parent_session_id.map(str::to_string),
                 limit,
                 depth,
                 recent_limit,
@@ -2837,6 +2865,7 @@ fn tool_fact_add(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, String
     let fact_type = parse_fact_type_arg(fact_type_arg)?;
     let fact_type_meta = resolve_write_fact_type(content, fact_type, fact_type_provided);
     let source_id = mcp_source_id(args);
+    let actor_id = mcp_actor_id(args);
 
     // Pre-add similarity check (non-blocking). BM25-only so we don't
     // pay the embedding-model load on every add — the goal is just to
@@ -2885,6 +2914,7 @@ fn tool_fact_add(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, String
         tags: if tags.is_empty() { None } else { Some(tags) },
         source: None,
         source_id: source_id.clone(),
+        actor_id: actor_id.clone(),
         source_confidence: None,
         observed_at: None,
     };
@@ -2924,6 +2954,7 @@ fn tool_fact_add(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, String
         "entity_names": entity_names_resolved,
         "created_at": record.created_at,
         "source_id": record_source_id,
+        "actor_id": record.actor_id,
         "auto_created_entities": auto_created,
         "entity_name_alternatives": alternatives_payload(&alternatives),
         "existing_similar": existing_similar,
@@ -2960,6 +2991,7 @@ fn tool_fact_add_many(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, S
     let default_session_id = args.get("session_id").and_then(|v| v.as_str());
     let default_session_entity_id = resolve_session_entity(wiki, default_session_id)?;
     let default_source_id = mcp_source_id(args);
+    let default_actor_id = mcp_actor_id(args);
     for (i, item) in items.iter().enumerate() {
         let obj = item
             .as_object()
@@ -3032,6 +3064,8 @@ fn tool_fact_add_many(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, S
         let fact_type_meta = resolve_write_fact_type(&content, fact_type, fact_type_provided);
         let source_id =
             source_id_from_value(obj.get("source_id")).or_else(|| default_source_id.clone());
+        let actor_id =
+            source_id_from_value(obj.get("actor_id")).or_else(|| default_actor_id.clone());
         per_item_fact_type_meta.push(fact_type_meta);
         inputs.push(aidememo_core::types::FactInput {
             content,
@@ -3040,6 +3074,7 @@ fn tool_fact_add_many(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, S
             tags,
             source: None,
             source_id,
+            actor_id,
             source_confidence: None,
             observed_at: None,
         });
@@ -3566,6 +3601,8 @@ pub fn list_tools() -> Vec<Tool> {
                     "body": {"type": "string", "description": "Optional issue / PR / ticket body."},
                     "source": {"type": "string", "description": "Optional upstream source id, e.g. github:org/repo#123 or linear:ENG-42."},
                     "source_id": {"type": "string", "description": "Optional source namespace / tenant / agent id for shared-store scoping. If omitted, MCP falls back to AIDEMEMO_SOURCE_ID when set."},
+                    "actor_id": {"type": "string", "description": "Optional writer identity for provenance, independent of source_id. If omitted, MCP falls back to AIDEMEMO_ACTOR_ID when set."},
+                    "parent_session_id": {"type": "string", "description": "Optional prior tracked session. Creates a continued_from edge so compressed or resumed workflows retain lineage."},
                     "limit": {"type": "number", "default": 8, "description": "Max context search hits."},
                     "depth": {"type": "number", "default": 2, "description": "Graph traversal depth for the topic query."},
                     "recent_limit": {"type": "number", "default": 5, "description": "Recent facts attached to the resolved entity."},
@@ -3678,6 +3715,7 @@ pub fn list_tools() -> Vec<Tool> {
                     "entities": {"type": "array", "items": {"type": "string"}, "description": "Entity names or aliases. Unknown names are auto-created."},
                     "tags": {"type": "array", "items": {"type": "string"}},
                     "source_id": {"type": "string", "description": "Optional source namespace / tenant / upstream id. Use with aidememo_search/aidememo_query source_id filters to isolate shared-store reads. If omitted, MCP falls back to AIDEMEMO_SOURCE_ID when set."},
+                    "actor_id": {"type": "string", "description": "Optional writer identity for provenance, independent of source_id. If omitted, MCP falls back to AIDEMEMO_ACTOR_ID when set."},
                     "session_id": {"type": "string", "description": "Optional workflow session id returned by aidememo_workflow_start. When set, the fact is attached to that session entity so later level:\"session\" queries can reconstruct the task thread."},
                     "fact_type": {
                         "type": "string",
@@ -3709,6 +3747,7 @@ pub fn list_tools() -> Vec<Tool> {
                                 "entities": {"type": "array", "items": {"type": "string"}},
                                 "tags": {"type": "array", "items": {"type": "string"}},
                                 "source_id": {"type": "string", "description": "Optional source namespace / tenant / upstream id. Overrides top-level source_id / AIDEMEMO_SOURCE_ID for this item."},
+                                "actor_id": {"type": "string", "description": "Optional writer identity. Overrides top-level actor_id / AIDEMEMO_ACTOR_ID for this item."},
                                 "session_id": {"type": "string", "description": "Optional workflow session id returned by aidememo_workflow_start. Overrides top-level session_id for this item."},
                                 "fact_type": {
                                     "type": "string",
@@ -3719,7 +3758,8 @@ pub fn list_tools() -> Vec<Tool> {
                         }
                     },
                     "session_id": {"type": "string", "description": "Optional workflow session id returned by aidememo_workflow_start. Applies to every item unless item.session_id is set."},
-                    "source_id": {"type": "string", "description": "Optional source namespace / tenant / upstream id. Applies to every item unless item.source_id is set. If omitted, MCP falls back to AIDEMEMO_SOURCE_ID when set."}
+                    "source_id": {"type": "string", "description": "Optional source namespace / tenant / upstream id. Applies to every item unless item.source_id is set. If omitted, MCP falls back to AIDEMEMO_SOURCE_ID when set."},
+                    "actor_id": {"type": "string", "description": "Optional writer identity. Applies to every item unless item.actor_id is set. If omitted, MCP falls back to AIDEMEMO_ACTOR_ID when set."}
                 },
                 "required": ["items"]
             }),
@@ -4169,6 +4209,39 @@ mod tests {
     }
 
     #[test]
+    fn mcp_actor_id_uses_env_default_and_explicit_override() {
+        let from_env = mcp_actor_id_with_env(&json!({}), || Some(" codex:account-a ".to_string()));
+        assert_eq!(from_env.as_deref(), Some("codex:account-a"));
+        let explicit = mcp_actor_id_with_env(&json!({"actor_id": "codex:account-b"}), || {
+            Some("codex:account-a".to_string())
+        });
+        assert_eq!(explicit.as_deref(), Some("codex:account-b"));
+    }
+
+    #[test]
+    fn fact_add_roundtrips_actor_provenance() {
+        let (_dir, wiki) = open_temp_wiki();
+        let response = tool_fact_add(
+            &json!({
+                "content": "Account A chose SQLite WAL for shared memory",
+                "actor_id": "codex:account-a",
+                "source_id": "project:aidememo",
+                "dedup_check": false
+            }),
+            &wiki,
+        )
+        .unwrap();
+        let text = response.content[0].text.as_deref().unwrap();
+        let payload: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(payload["actor_id"].as_str(), Some("codex:account-a"));
+        let id = parse_fact_id(payload["id"].as_str().unwrap()).unwrap();
+        assert_eq!(
+            wiki.fact_get(&id).unwrap().actor_id.as_deref(),
+            Some("codex:account-a")
+        );
+    }
+
+    #[test]
     fn context_respects_source_id_scope() {
         let (_dir, wiki) = open_temp_wiki();
 
@@ -4347,6 +4420,56 @@ mod tests {
         assert!(serialized.contains("job wrapper"));
         assert!(serialized.contains("DNS"));
         assert!(!serialized.contains("TLS handshake"));
+    }
+
+    #[test]
+    fn workflow_start_links_parent_session_and_preserves_actor() {
+        let (_dir, wiki) = open_temp_wiki();
+        let parent = tool_workflow_start(
+            &json!({
+                "title": "Account A starts the investigation",
+                "source_id": "project:aidememo",
+                "actor_id": "codex:account-a",
+                "bm25_only": true
+            }),
+            &wiki,
+        )
+        .unwrap();
+        let parent_payload: Value =
+            serde_json::from_str(parent.content[0].text.as_deref().unwrap()).unwrap();
+        let parent_session = parent_payload["session_id"].as_str().unwrap();
+
+        let child = tool_workflow_start(
+            &json!({
+                "title": "Account B resumes the investigation",
+                "source_id": "project:aidememo",
+                "actor_id": "codex:account-b",
+                "parent_session_id": parent_session,
+                "bm25_only": true
+            }),
+            &wiki,
+        )
+        .unwrap();
+        let child_payload: Value =
+            serde_json::from_str(child.content[0].text.as_deref().unwrap()).unwrap();
+        assert_eq!(
+            child_payload["parent_session_id"].as_str(),
+            Some(parent_session)
+        );
+        assert_eq!(child_payload["actor_id"].as_str(), Some("codex:account-b"));
+        let child_session = child_payload["session_id"].as_str().unwrap();
+        let parent_entity = wiki.entity_get(parent_session).unwrap();
+        let relations = wiki
+            .relations_get(child_session, aidememo_core::TraverseDirection::Forward)
+            .unwrap();
+        assert!(relations.iter().any(|relation| {
+            relation.target_id == parent_entity.id && relation.relation_type.0 == "continued_from"
+        }));
+        let ticket_id = parse_fact_id(child_payload["ticket_fact_id"].as_str().unwrap()).unwrap();
+        assert_eq!(
+            wiki.fact_get(&ticket_id).unwrap().actor_id.as_deref(),
+            Some("codex:account-b")
+        );
     }
 
     #[test]

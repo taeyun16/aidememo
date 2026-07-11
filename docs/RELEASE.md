@@ -22,9 +22,19 @@ GitHub environments:
 |---|---|---|
 | `pypi-publish` | `.github/workflows/aidememo-python-publish.yml`, `.github/workflows/aidememo-agent-sdk-publish.yml`, `.github/workflows/hermes-aidememo-publish.yml` | Approval gate for PyPI trusted publishing |
 | `npm-publish` | `.github/workflows/aidememo-napi-publish.yml` | Approval gate for npm trusted publishing |
+| `github-pages` | `.github/workflows/pages.yml` | OIDC-backed deployment of the validated Docusaurus build |
 
-Recommended protection: require a reviewer for both environments and restrict
-deployment branches/tags to the release branches or tags that the project uses.
+Recommended protection: require a reviewer for the registry environments and
+restrict deployment branches/tags to the release branches or tags that the
+project uses.
+
+Before the first documentation deployment, open **Settings → Pages**, set the
+publishing source to **GitHub Actions**, and restrict the generated
+`github-pages` environment to `main`. The Pages workflow keeps repository
+contents read-only during the build and grants `pages: write` plus
+`id-token: write` only to the deployment job. GitHub Pages content is publicly
+reachable even when a supported paid plan deploys from a private repository;
+do not enable it until the site is ready for public access.
 
 PyPI trusted publishers:
 

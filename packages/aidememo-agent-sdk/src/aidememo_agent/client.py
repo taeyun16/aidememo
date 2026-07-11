@@ -56,12 +56,14 @@ class AideMemoClient:
         store_path: str | os.PathLike | None = None,
         lock_retry_ms: int | None = None,
         source_id: str | None = None,
+        actor_id: str | None = None,
         storage_backend: str | None = None,
     ) -> None:
         self.store_path = str(store_path) if store_path else None
         self.storage_backend = _normalise_storage_backend(storage_backend)
         self.lock_retry_ms = 5000 if lock_retry_ms is None else max(0, int(lock_retry_ms))
         self.default_source_id = _normalise_source_id(source_id or os.environ.get("AIDEMEMO_SOURCE_ID"))
+        self.default_actor_id = _normalise_source_id(actor_id or os.environ.get("AIDEMEMO_ACTOR_ID"))
         self._py = self._try_load_pyo3()
         if self._py is None and not self._has_cli():
             raise AideMemoUnavailable(
@@ -324,6 +326,8 @@ class AideMemoClient:
         body: str | None = None,
         source: str | None = None,
         source_id: str | None = None,
+        actor_id: str | None = None,
+        parent_session_id: str | None = None,
         limit: int = 8,
         depth: int = 2,
         recent_limit: int = 5,
@@ -337,12 +341,15 @@ class AideMemoClient:
         the binding is not installed.
         """
         source_id = self._source_id(source_id)
+        actor_id = self._actor_id(actor_id)
         if self._py is not None:
             return self._workflow_start_pyo3(
                 title,
                 body=body,
                 source=source,
                 source_id=source_id,
+                actor_id=actor_id,
+                parent_session_id=parent_session_id,
                 limit=limit,
                 depth=depth,
                 recent_limit=recent_limit,
@@ -365,6 +372,10 @@ class AideMemoClient:
             args += ["--source", source]
         if source_id:
             args += ["--source-id", source_id]
+        if actor_id:
+            args += ["--actor-id", actor_id]
+        if parent_session_id:
+            args += ["--parent-session-id", parent_session_id]
         if bm25_only:
             args.append("--bm25-only")
         return self._cli_json(args)
@@ -375,6 +386,8 @@ class AideMemoClient:
         body: str | None = None,
         source: str | None = None,
         source_id: str | None = None,
+        actor_id: str | None = None,
+        parent_session_id: str | None = None,
         limit: int = 8,
         depth: int = 2,
         recent_limit: int = 5,
@@ -389,6 +402,8 @@ class AideMemoClient:
             entity_type="session",
             source_page=source or title,
         )
+        if parent_session_id:
+            self._py.relation_add(session_id, parent_session_id, "continued_from")
 
         trimmed_body = body.strip() if isinstance(body, str) and body.strip() else None
         ticket_content = f"Workflow ticket: {title}"
@@ -405,6 +420,8 @@ class AideMemoClient:
             fact_kwargs["source"] = source
         if source_id is not None:
             fact_kwargs["source_id"] = source_id
+        if actor_id is not None:
+            fact_kwargs["actor_id"] = actor_id
         try:
             ticket_fact_id = self._py.fact_add(ticket_content, **fact_kwargs)
         except TypeError as exc:
@@ -443,6 +460,8 @@ class AideMemoClient:
             "title": title,
             "source": source,
             "source_id": source_id,
+            "actor_id": actor_id,
+            "parent_session_id": parent_session_id,
             "ticket_fact_id": ticket_fact_id,
             "context": context,
             "prior_lessons": prior_lessons,
@@ -505,9 +524,11 @@ class AideMemoClient:
         tags: list[str] | None = None,
         confidence: float | None = None,
         source_id: str | None = None,
+        actor_id: str | None = None,
         session_id: str | None = None,
     ) -> str:
         source_id = self._source_id(source_id)
+        actor_id = self._actor_id(actor_id)
         if self._py is not None:
             entity_ids = [self._py.resolve_entity(e) for e in (entities or [])]
             kwargs: dict = {
@@ -520,6 +541,8 @@ class AideMemoClient:
                 kwargs["confidence"] = confidence
             if source_id is not None:
                 kwargs["source_id"] = source_id
+            if actor_id is not None:
+                kwargs["actor_id"] = actor_id
             if session_id is not None:
                 kwargs["session_id"] = session_id
             return self._py.fact_add(content, **kwargs)
@@ -538,6 +561,8 @@ class AideMemoClient:
                 mcp_args["confidence"] = confidence
             if source_id:
                 mcp_args["source_id"] = source_id
+            if actor_id:
+                mcp_args["actor_id"] = actor_id
             payload = self._mcp_tool("aidememo_fact_add", mcp_args)
             if isinstance(payload, dict) and isinstance(payload.get("id"), str):
                 return payload["id"]
@@ -557,6 +582,8 @@ class AideMemoClient:
             args += ["--confidence", f"{confidence:.3f}"]
         if source_id:
             args += ["--source-id", source_id]
+        if actor_id:
+            args += ["--actor-id", actor_id]
         # Prefer the structured `--json` output (`{"id": "<ULID>",
         # "auto_created_entities": [...]}`) over scraping the human
         # message; falls back to ULID-grep on older aidememo binaries that
@@ -584,10 +611,13 @@ class AideMemoClient:
         agent tool calls instead of degrading to sequential CLI inserts.
         """
         default_source_id = self._source_id(None)
+        default_actor_id = self._actor_id(None)
         if self._py is None:
             args: dict[str, Any] = {"items": items}
             if default_source_id:
                 args["source_id"] = default_source_id
+            if default_actor_id:
+                args["actor_id"] = default_actor_id
             payload = self._mcp_tool("aidememo_fact_add_many", args)
             facts = payload.get("facts") if isinstance(payload, dict) else None
             if isinstance(facts, list):
@@ -600,6 +630,7 @@ class AideMemoClient:
                 names = item.get("entities") or []
                 entity_ids = [self._py.resolve_entity(n) for n in names]
                 source_id = _normalise_source_id(item.get("source_id")) or default_source_id
+                actor_id = _normalise_source_id(item.get("actor_id")) or default_actor_id
                 py_items.append({
                     "content": item["content"],
                     "entity_ids": entity_ids,
@@ -607,6 +638,7 @@ class AideMemoClient:
                     "tags": item.get("tags") or [],
                     "confidence": item.get("confidence"),
                     "source_id": source_id,
+                    "actor_id": actor_id,
                     "session_id": item.get("session_id"),
                 })
             return list(self._py.fact_add_many(py_items))
@@ -675,6 +707,9 @@ class AideMemoClient:
 
     def _source_id(self, source_id: str | None) -> str | None:
         return _normalise_source_id(source_id) or self.default_source_id
+
+    def _actor_id(self, actor_id: str | None) -> str | None:
+        return _normalise_source_id(actor_id) or getattr(self, "default_actor_id", None)
 
     def _fact_add_legacy(self, args: list[str]) -> str:
         """Legacy fallback for `aidememo` binaries that pre-date the

@@ -4,9 +4,8 @@ Hermes calls :func:`register` once per plugin enable. We:
 
 1. Build a :class:`AideMemoClient` (aidememo-python in-process if available, CLI
    subprocess fallback otherwise).
-2. Register 8 tools (the same surface the AideMemo MCP server exposes).
-3. Register 5 slash commands (``/aidememo``, ``/aidememo-start``, ``/aidememo-add``,
-   ``/aidememo-recent``, ``/aidememo-pending``).
+2. Register 12 native tools for context, retrieval, aggregation, writes, and health.
+3. Register 8 slash commands for the same operator workflows.
 4. Register 2 lifecycle hooks (``pre_llm_call`` auto-context,
    ``post_llm_call`` opt-in capture adapter).
 5. Register the ``hermes aidememo`` CLI subtree.
@@ -82,6 +81,7 @@ def register(ctx: Any) -> None:
 
     store_path = config.get("store_path") or os.environ.get("AIDEMEMO_STORE")
     source_id = config.get("source_id") or os.environ.get("AIDEMEMO_SOURCE_ID")
+    actor_id = config.get("actor_id") or os.environ.get("AIDEMEMO_ACTOR_ID")
     try:
         lock_retry_ms = int(config.get("lock_retry_ms", 5000))
     except (TypeError, ValueError):
@@ -92,16 +92,18 @@ def register(ctx: Any) -> None:
             store_path=store_path,
             lock_retry_ms=lock_retry_ms,
             source_id=source_id,
+            actor_id=actor_id,
         )
     except AideMemoUnavailable as exc:
         log.error("aidememo plugin disabled: %s", exc)
         return
 
     log.info(
-        "hermes_aidememo: backend=%s store=%s source_id=%s",
+        "hermes_aidememo: backend=%s store=%s source_id=%s actor_id=%s",
         client.backend,
         store_path or "<default>",
         source_id or "<none>",
+        actor_id or "<none>",
     )
 
     tools.register_all(ctx, client)

@@ -534,19 +534,46 @@ fn collect_files(path: &Path) -> std::io::Result<Vec<PathBuf>> {
 pub(crate) fn target_skills_dir(target: &str) -> Option<PathBuf> {
     let home = dirs::home_dir()?;
     match target {
-        // Claude Code reads `~/.claude/skills/<name>/SKILL.md`.
-        "claude" | "claude-code" => Some(home.join(".claude/skills/aidememo")),
-        // Hermes Agent (Nous Research) reads `~/.hermes/skills/`.
+        // Claude Code reads `$CLAUDE_CONFIG_DIR/skills/<name>/SKILL.md`, with
+        // `~/.claude` as the default configuration directory. Honour isolated
+        // profiles so the skill and MCP registration can target the same user.
+        "claude" | "claude-code" => Some(
+            std::env::var_os("CLAUDE_CONFIG_DIR")
+                .filter(|value| !value.is_empty())
+                .map(PathBuf::from)
+                .unwrap_or_else(|| home.join(".claude"))
+                .join("skills/aidememo"),
+        ),
+        // Hermes Agent reads `$HERMES_HOME/skills/` (default
+        // `~/.hermes/skills/`). Honour isolated profiles instead of silently
+        // installing into the stock home.
         // The agent also accepts the cross-tool `~/.agents/skills/`
         // path; we pick the namespaced one to avoid stomping on
         // OpenClaw if a user has both.
-        "hermes" => Some(home.join(".hermes/skills/aidememo")),
+        "hermes" => Some(
+            std::env::var_os("HERMES_HOME")
+                .filter(|value| !value.is_empty())
+                .map(PathBuf::from)
+                .unwrap_or_else(|| home.join(".hermes"))
+                .join("skills/aidememo"),
+        ),
         // OpenClaw discovers from `~/.openclaw/skills/`,
         // `~/.agents/skills/`, and workspace-level locations.
         "openclaw" => Some(home.join(".openclaw/skills/aidememo")),
         // Cross-tool shared location — both Hermes and OpenClaw
         // accept this. Useful when a user runs both.
         "agents" | "shared" => Some(home.join(".agents/skills/aidememo")),
+        // pi's native Agent Skills loader reads
+        // `$PI_CODING_AGENT_DIR/skills/` (default `~/.pi/agent/skills/`).
+        // Installing a real SKILL.md keeps the instructions on-demand and
+        // avoids injecting the full guide into every pi turn.
+        "pi" => Some(
+            std::env::var_os("PI_CODING_AGENT_DIR")
+                .filter(|value| !value.is_empty())
+                .map(PathBuf::from)
+                .unwrap_or_else(|| home.join(".pi/agent"))
+                .join("skills/aidememo"),
+        ),
         _ => None,
     }
 }
@@ -556,17 +583,14 @@ pub(crate) fn supported_targets() -> &'static [&'static str] {
 }
 
 /// Path to the AGENTS.md-style file an agent reads for global rules.
-/// Used by agents that follow the agents.md spec rather than the
-/// `~/.<agent>/skills/<name>/SKILL.md` directory pattern. `opencode`
-/// (sst/opencode) is the canonical example; `pi` (Mario Zechner's
-/// pi-coding-agent) rejects MCP and uses a CLI-tool + README model,
-/// but it also reads agents.md, so writing the same content there
-/// gives pi visibility without MCP.
+/// Used by agents that follow the agents.md spec rather than a native
+/// `skills/<name>/SKILL.md` directory pattern. `opencode` is the canonical
+/// example. pi has a native Agent Skills loader and is handled by
+/// `target_skills_dir` above.
 pub(crate) fn target_agents_md_path(target: &str) -> Option<PathBuf> {
     let home = dirs::home_dir()?;
     match target {
         "opencode" => Some(home.join(".config/opencode/AGENTS.md")),
-        "pi" => Some(home.join(".config/pi/AGENTS.md")),
         _ => None,
     }
 }
@@ -653,16 +677,9 @@ fn install_into_agents_md(
         "{verb} aidememo skill section in {} (agents.md format)\n",
         path.display()
     );
-    if target == "pi" {
-        out.push_str(
-            "Note: pi has no MCP support upstream — this writes only a \
-             skill section, no MCP registration.\n",
-        );
-    } else {
-        out.push_str(&format!(
-            "Next: register the MCP server with `aidememo --backend libsqlite mcp-install --target {target}`; add `--source-id <namespace>` when sharing one store (replace libsqlite if you selected another backend).\n"
-        ));
-    }
+    out.push_str(&format!(
+        "Next: register the MCP server with `aidememo --backend libsqlite mcp-install --target {target}`; add `--source-id <namespace>` when sharing one store (replace libsqlite if you selected another backend).\n"
+    ));
     Ok(out)
 }
 
@@ -713,7 +730,7 @@ fn run_install(
         return Ok(out);
     }
 
-    // Agents.md-style targets (opencode, pi) drop the skill into a
+    // AGENTS.md-style targets (currently opencode) drop the skill into a
     // single AGENTS.md file rather than a `~/.x/skills/<name>/`
     // directory. Hand off to that path before falling through to
     // the directory-based install below. `--dest` still wins so an
@@ -779,13 +796,21 @@ fn run_install(
         resolved_dest.display()
     );
     out.push_str("  SKILL.md\n  REFERENCE.md\n\n");
-    out.push_str(
-        "Next: register the MCP server with `aidememo --backend libsqlite mcp-install --target ",
-    );
-    out.push_str(&target);
-    out.push_str(
-        "`; add `--source-id <namespace>` when sharing one store, and replace libsqlite if you selected another backend (or run `aidememo --backend libsqlite mcp` directly from your agent's tool config).\n",
-    );
+    if target == "pi" {
+        out.push_str(
+            "Ready for pi: restart pi or start a new session, then invoke `/skill:aidememo` \
+             or ask pi to search the project memory. pi uses the AideMemo CLI through its \
+             bash tool; no MCP registration is required.\n",
+        );
+    } else {
+        out.push_str(
+            "Next: register the MCP server with `aidememo --backend libsqlite mcp-install --target ",
+        );
+        out.push_str(&target);
+        out.push_str(
+            "`; add `--source-id <namespace>` when sharing one store, and replace libsqlite if you selected another backend (or run `aidememo --backend libsqlite mcp` directly from your agent's tool config).\n",
+        );
+    }
     Ok(out)
 }
 
@@ -1025,7 +1050,7 @@ mod tests {
     #[test]
     fn install_into_agents_md_force_replaces_marker_block_only() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join(".config/pi/AGENTS.md");
+        let path = dir.path().join(".config/opencode/AGENTS.md");
 
         // Pre-populate with user content above and below the AideMemo block,
         // plus an old AideMemo block.
@@ -1039,11 +1064,11 @@ mod tests {
         .unwrap();
 
         // Re-running without --force should fail with a useful message.
-        let err = install_into_agents_md("pi", path.clone(), false, false).unwrap_err();
+        let err = install_into_agents_md("opencode", path.clone(), false, false).unwrap_err();
         assert!(format!("{err}").contains("--force"));
 
         // With --force, our block is replaced; user content stays.
-        install_into_agents_md("pi", path.clone(), true, false).unwrap();
+        install_into_agents_md("opencode", path.clone(), true, false).unwrap();
         let body = std::fs::read_to_string(&path).unwrap();
         assert!(body.contains("User content above"));
         assert!(body.contains("User content below"));
@@ -1052,13 +1077,5 @@ mod tests {
         // Exactly one aidememo block in the merged file.
         assert_eq!(body.matches(AIDEMEMO_AGENTS_BEGIN).count(), 1);
         assert_eq!(body.matches(AIDEMEMO_AGENTS_END).count(), 1);
-    }
-
-    #[test]
-    fn install_into_agents_md_pi_message_calls_out_no_mcp() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join(".config/pi/AGENTS.md");
-        let out = install_into_agents_md("pi", path, false, false).unwrap();
-        assert!(out.contains("pi has no MCP support"));
     }
 }

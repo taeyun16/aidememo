@@ -103,6 +103,40 @@ aidememo --store ./memory.sqlite fact add "A first note" --entities Project
 
 `--store`는 데모, 테스트, 프로젝트별 메모리 파일에 유용합니다.
 
+에이전트 설치는 확인된 저장소 경로를 생성한 MCP 명령에 고정합니다. 격리된 Codex
+계정에는 같은 저장소를 각 프로필에 설치하면서 작성자 provenance를 분리합니다.
+
+```bash
+aidememo --store ./_meta/wiki.sqlite mcp-install --target codex \
+  --codex-home "$HOME/.codex-account-a" --actor-id codex:account-a \
+  --codex-home "$HOME/.codex-account-b" --actor-id codex:account-b \
+  --source-id project:my-app
+```
+
+전체 인계 및 동시성 패턴은 [`여러 Codex 프로필에서 메모리 공유`](CODEX_MULTI_PROFILE.md)를
+참고하십시오.
+
+## 코딩 에이전트에 설치
+
+CLI와 store가 동작하면 에이전트의 네이티브 방식으로 연결합니다.
+
+| 에이전트 | 설치 경로 |
+|---|---|
+| Claude Code | 내장 플러그인 또는 `mcp-install --target claude` + `skill install --target claude` |
+| Codex | 선택적으로 `--codex-home` 프로필을 반복하는 `mcp-install --target codex` |
+| Hermes Agent | `skill install --target hermes` + `mcp-install --target hermes`, 또는 `hermes-aidememo` 플러그인 |
+| pi coding agent | `skill install --target pi`. MCP 단계 없음 |
+| Cursor / OpenClaw / OpenCode | 각 `mcp-install` 대상과 지원되는 스킬 |
+
+정확한 명령, 프로필 변수, 플러그인 선택, 검증 단계는
+[`코딩 에이전트 설치`](CODING_AGENTS.md)를 참고하세요. CLI에서 현재 지원
+대상을 바로 출력할 수도 있습니다.
+
+```bash
+aidememo mcp-install --list-targets
+aidememo skill install --list-targets
+```
+
 ## 권장 첫 확인
 
 임시 디렉터리에서 다음 명령을 실행합니다.

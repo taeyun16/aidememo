@@ -9,7 +9,7 @@
 
 use aidememo_core::{AideMemo, AideMemoError, Config, FactListOpts, FactRecord, FactType};
 use bpaf::*;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::cmd::Command;
 use crate::cmd::daemon::{self, RegistryState};
@@ -62,9 +62,9 @@ pub fn run_doctor(
     let superseded = wiki.fact_count_superseded()? as u64;
     let memory = memory.with_counts(stats.fact_count, superseded);
     let adaptation = collect_adaptation(&wiki, &config);
-    let agents = collect_agent_integration();
+    let agents = collect_agent_integration(store_path);
     let workflow = collect_workflow_status(&wiki, &agents)?;
-    let mut fixes = collect_fix_suggestions(&agents, &config.store.backend);
+    let mut fixes = collect_fix_suggestions(&agents, &config.store.backend, store_path);
     fixes.extend(memory.advisories());
     fixes.extend(adaptation.advisories());
     fixes.extend(sharing.advisories());
@@ -183,26 +183,59 @@ pub(crate) struct AgentStatus {
     /// `Some(true)` when aidememo is registered, `Some(false)` when not,
     /// `None` when the check couldn't run (binary not on PATH, etc).
     mcp_registered: Option<bool>,
+    /// Store path pinned in the installed MCP command, when inspectable.
+    mcp_store_path: Option<String>,
+    /// Whether the installed MCP store matches the store checked by doctor.
+    mcp_store_matches: Option<bool>,
 }
 
 const AGENTS: &[&str] = &[
     "claude", "hermes", "openclaw", "codex", "cursor", "opencode", "pi",
 ];
 
-fn collect_agent_integration() -> Vec<AgentStatus> {
+fn collect_agent_integration(expected_store: &Path) -> Vec<AgentStatus> {
+    let expected_store = absolute_path(expected_store);
     AGENTS
         .iter()
         .map(|target| {
             let (skill_path, skill_installed) = skill_status_for(target);
+            let (mcp_registered, mcp_store_path) = if *target == "codex" {
+                inspect_codex_config()
+            } else {
+                (check_mcp(target), None)
+            };
+            let mcp_store_matches = if matches!(mcp_registered, Some(true)) && *target == "codex" {
+                Some(
+                    mcp_store_path
+                        .as_deref()
+                        .map(Path::new)
+                        .map(absolute_path)
+                        .is_some_and(|path| path == expected_store),
+                )
+            } else {
+                None
+            };
             AgentStatus {
                 target,
                 skill_path,
                 skill_installed,
                 mcp_detail: mcp_detail_for(target),
-                mcp_registered: check_mcp(target),
+                mcp_registered,
+                mcp_store_path: mcp_store_path.map(|path| path.display().to_string()),
+                mcp_store_matches,
             }
         })
         .collect()
+}
+
+fn absolute_path(path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map(|cwd| cwd.join(path))
+            .unwrap_or_else(|_| path.to_path_buf())
+    }
 }
 
 /// Resolve the skill destination for an agent and probe whether
@@ -279,20 +312,45 @@ fn check_opencode_config() -> Option<bool> {
 }
 
 fn check_codex_config() -> Option<bool> {
-    let path = codex_config_path().ok()?;
+    inspect_codex_config().0
+}
+
+fn inspect_codex_config() -> (Option<bool>, Option<PathBuf>) {
+    let Ok(path) = codex_config_path() else {
+        return (None, None);
+    };
     if !path.exists() {
-        return Some(false);
+        return (Some(false), None);
     }
-    let body = std::fs::read_to_string(&path).ok()?;
-    let parsed: toml::Value = body.parse().ok()?;
-    Some(
-        parsed
-            .as_table()
-            .and_then(|t| t.get("mcp_servers"))
-            .and_then(|s| s.as_table())
-            .map(|s| s.contains_key("aidememo"))
-            .unwrap_or(false),
-    )
+    let Some(body) = std::fs::read_to_string(&path).ok() else {
+        return (None, None);
+    };
+    let Some(parsed) = body.parse::<toml::Value>().ok() else {
+        return (None, None);
+    };
+    let entry = parsed
+        .as_table()
+        .and_then(|t| t.get("mcp_servers"))
+        .and_then(|s| s.as_table())
+        .and_then(|s| s.get("aidememo"));
+    let Some(entry) = entry else {
+        return (Some(false), None);
+    };
+    let args = entry
+        .get("args")
+        .and_then(toml::Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(toml::Value::as_str)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let store_path = args
+        .windows(2)
+        .find(|pair| pair[0] == "--store")
+        .map(|pair| PathBuf::from(pair[1]));
+    (Some(true), store_path)
 }
 
 fn check_cursor_config() -> Option<bool> {
@@ -327,7 +385,11 @@ pub(crate) struct FixSuggestion {
     reason: String,
 }
 
-fn collect_fix_suggestions(agents: &[AgentStatus], storage_backend: &str) -> Vec<FixSuggestion> {
+fn collect_fix_suggestions(
+    agents: &[AgentStatus],
+    storage_backend: &str,
+    store_path: &Path,
+) -> Vec<FixSuggestion> {
     let mut out = Vec::new();
     for a in agents {
         // Skill gap: target supports skills (skill_path is Some) but
@@ -357,6 +419,21 @@ fn collect_fix_suggestions(agents: &[AgentStatus], storage_backend: &str) -> Vec
                     a.target
                 ),
                 reason: format!("aidememo not registered ({})", a.mcp_detail),
+            });
+        } else if a.target == "codex" && matches!(a.mcp_store_matches, Some(false)) {
+            out.push(FixSuggestion {
+                target: a.target,
+                kind: "mcp",
+                command: format!(
+                    "aidememo --backend {} --store {} mcp-install --target codex --force",
+                    shell_arg(storage_backend),
+                    shell_arg(&absolute_path(store_path).display().to_string())
+                ),
+                reason: format!(
+                    "Codex MCP store is {}, expected {}",
+                    a.mcp_store_path.as_deref().unwrap_or("not pinned"),
+                    absolute_path(store_path).display()
+                ),
             });
         }
     }
@@ -1121,6 +1198,12 @@ fn format_agent_integration(agents: &[AgentStatus]) -> String {
             "  {:<9}  skill {} {:<40}  mcp {} {}\n",
             a.target, skill_marker, skill_label, mcp_marker, a.mcp_detail
         ));
+        if matches!(a.mcp_store_matches, Some(false)) {
+            out.push_str(&format!(
+                "             store mismatch: configured {}, current store differs\n",
+                a.mcp_store_path.as_deref().unwrap_or("<not pinned>")
+            ));
+        }
     }
     out.push_str(
         "    legend:  ✓ installed   — not installed   ? cli unavailable / could not check\n\n",
@@ -1272,6 +1355,7 @@ mod tests {
             tags: Some(vec!["workflow-start".into(), "ticket".into()]),
             source: Some("github:org/repo#123".to_string()),
             source_id: Some("alpha".to_string()),
+            actor_id: None,
             source_confidence: Some(1.0),
             observed_at: None,
         })
@@ -1283,6 +1367,7 @@ mod tests {
             tags: Some(vec!["question".into()]),
             source: None,
             source_id: None,
+            actor_id: None,
             source_confidence: Some(1.0),
             observed_at: None,
         })
@@ -1294,6 +1379,8 @@ mod tests {
             skill_installed: Some(true),
             mcp_detail: "test".to_string(),
             mcp_registered: Some(true),
+            mcp_store_path: Some("/tmp/test.sqlite".to_string()),
+            mcp_store_matches: Some(true),
         }];
         let report = collect_workflow_status(&wiki, &agents).unwrap();
 
@@ -1337,6 +1424,7 @@ mod tests {
             tags: Some(vec!["workflow-start".into(), "ticket".into()]),
             source: Some("github:org/repo#124".to_string()),
             source_id: Some("team-alpha".to_string()),
+            actor_id: None,
             source_confidence: Some(1.0),
             observed_at: None,
         })
@@ -1348,6 +1436,8 @@ mod tests {
             skill_installed: Some(true),
             mcp_detail: "test".to_string(),
             mcp_registered: Some(false),
+            mcp_store_path: None,
+            mcp_store_matches: None,
         }];
 
         let report = collect_workflow_status(&wiki, &agents).unwrap();
@@ -1392,6 +1482,8 @@ mod tests {
             skill_installed: Some(false),
             mcp_detail: "test".to_string(),
             mcp_registered: Some(false),
+            mcp_store_path: None,
+            mcp_store_matches: None,
         }];
 
         let report = collect_workflow_status(&wiki, &agents).unwrap();

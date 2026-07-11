@@ -1,83 +1,83 @@
 ---
 kind: doc
-title: Codex CLI 설정 가이드
+title: AideMemo setup for Codex
 ---
 
-# Codex CLI 에서 AideMemo 사용하기
+# Use AideMemo with Codex
 
-OpenAI Codex CLI는 `~/.codex/config.toml`에서 stdio MCP 서버를 그대로 받습니다.
-설정 한 줄로 끝납니다.
+[한국어](setup-codex.ko.md)
 
-## 1. 빌드
+Codex reads stdio MCP servers from the active `CODEX_HOME/config.toml`. When
+`CODEX_HOME` is unset, the default profile is `~/.codex`.
+
+## Install the CLI
 
 ```bash
-cd ~/dev/aidememo
-cargo build -p aidememo-cli --release
-export PATH="$HOME/dev/aidememo/target/release:$PATH"
+cargo install --git https://github.com/taeyun16/aidememo aidememo-cli
+aidememo --help
 ```
 
-## 2. MCP 서버 등록
+## Register MCP
 
-`~/.codex/config.toml`에 추가:
+Use the installer so the storage backend and absolute store path do not change
+with Codex's working directory:
+
+```bash
+aidememo --store "$(pwd)/_meta/wiki.sqlite" mcp-install \
+  --target codex \
+  --source-id project:my-app \
+  --actor-id codex:local
+```
+
+For several isolated Codex profiles sharing one store, repeat `--codex-home`
+and `--actor-id` in matching order:
+
+```bash
+aidememo --store "$(pwd)/_meta/wiki.sqlite" mcp-install --target codex \
+  --codex-home "$HOME/.codex-account-a" --actor-id codex:account-a \
+  --codex-home "$HOME/.codex-account-b" --actor-id codex:account-b \
+  --source-id project:my-app
+```
+
+The generated configuration is equivalent to:
 
 ```toml
 [mcp_servers.aidememo]
 command = "aidememo"
-args = ["mcp"]
-# 선택:
-# tool_timeout_sec = 30
-# enabled_tools = ["aidememo_search", "aidememo_entity_list", "aidememo_traverse"]
-# default_tools_approval_mode = "approve"   # 매번 승인 안 받고 싶을 때
+args = ["--backend", "libsqlite", "--store", "/absolute/project/_meta/wiki.sqlite", "mcp"]
+
+[mcp_servers.aidememo.env]
+AIDEMEMO_SOURCE_ID = "project:my-app"
+AIDEMEMO_ACTOR_ID = "codex:local"
 ```
 
-도구 5종이 Codex 세션에 자동으로 노출됩니다.
+## Give Codex project guidance
 
-> ⚠️ **`codex exec` non-interactive 사용 시 주의**: Codex의 default 및
-> `--full-auto` sandbox/approval 정책은 MCP tool 호출을 자동 cancel하고
-> 로컬 CLI fallback으로 빠집니다 (잘못된 store를 보게 될 수 있음).
-> 자동화 스크립트나 CI에서는 `codex exec
-> --dangerously-bypass-approvals-and-sandbox …`로 호출하거나
-> `~/.codex/config.toml`에 `approval_policy = "never"` +
-> `sandbox_mode = "danger-full-access"`를 명시해야 합니다. 인터랙티브
-> 사용에서는 영향 없습니다.
-
-## 3. AGENTS.md 작성 (프로젝트별 지침)
-
-Codex는 프로젝트 루트의 `AGENTS.md`를 자동으로 읽습니다. aidememo 사용 패턴을
-넣어두면 모델이 적절히 호출합니다:
+Codex automatically reads project `AGENTS.md` files. Keep the guidance compact
+and task-oriented:
 
 ```markdown
-## Knowledge base
+## Project memory
 
-This project uses `aidememo` (AideMemo) for persistent context. Before answering
-non-trivial questions, call `aidememo_search` for prior context. Record key
-decisions via `aidememo_fact_add`.
+Use `aidememo_context` once when a task depends on prior project knowledge.
+Start issue or PR work with `aidememo_workflow_start`. Record only durable
+decisions, conventions, preferences, lessons, and recurring errors.
 ```
 
-`aidememo` 자체 repo의 `AGENTS.md`가 좋은 예시입니다.
-
-## 4. 위키 초기화
+## Verify
 
 ```bash
-aidememo init ./docs
-aidememo ingest ./docs
+aidememo doctor
+codex mcp list
 ```
 
-## 검증
+Start a new Codex task and confirm the AideMemo tools are available. For the
+multi-account handoff and concurrency pattern, see
+`docs/CODEX_MULTI_PROFILE.md` in the repository.
 
-```bash
-# stdio JSON-RPC 직접 호출
-printf '%s\n' \
-  '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
-  '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' | aidememo mcp
-
-# Codex 세션 안에서: 도구 목록에 aidememo_* 가 보이는지 확인
-```
-
-## 문제 해결
-
-| 증상 | 해결 |
+| Symptom | Fix |
 |---|---|
-| Codex가 AideMemo를 못 봄 | `~/.codex/config.toml` 경로 + TOML 키 이름 (`mcp_servers`) 확인 |
-| 매번 승인 프롬프트가 뜸 | `default_tools_approval_mode = "approve"` 설정 |
-| `command not found: aidememo` | 절대경로 사용: `command = "/path/to/aidememo/target/release/aidememo"` |
+| AideMemo is absent in one profile | Install into its active `CODEX_HOME`, or pass `--codex-home`. |
+| Codex opens another store | Reinstall with global `--store` and an absolute path. |
+| `aidememo` is not found | Add Cargo's bin directory to the Codex process `PATH`, then restart Codex. |
+| Shared profiles lose writer provenance | Give each `--codex-home` a matching unique `--actor-id`. |

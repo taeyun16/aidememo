@@ -1,61 +1,91 @@
 ---
 kind: doc
-title: Hermes Agent 설정 가이드
+title: Hermes Agent setup guide
 ---
 
-# Setup Guide: Hermes Agent에서 AideMemo 사용하기
+# Using AideMemo with Hermes Agent
 
-## 개요
+Hermes supports two integration paths: lightweight **skill + MCP**, or the
+**native plugin** with automatic context injection and slash commands.
 
-Hermes Agent는 `~/.hermes/skills/` 또는 프로젝트 내 `.hermes/skills/` 디렉터리에서 SKILL.md를 로드합니다.
+Korean: [`setup-hermes.ko.md`](setup-hermes.ko.md)
 
-## 설치 단계
-
-### 1. aidememo 빌드
+## Shared prerequisites
 
 ```bash
 cd ~/dev/aidememo
 cargo build -p aidememo-cli --release
+export PATH="$PWD/target/release:$PATH"
 ```
 
-### 2. Hermes skills 디렉터리에 복사
+## Path A: skill + MCP
 
 ```bash
-mkdir -p ~/.hermes/skills/aidememo/
-cp ~/dev/aidememo/aidememo-skill/SKILL.md ~/.hermes/skills/aidememo/SKILL.md
+aidememo skill install --target hermes
+aidememo --store "$(pwd)/_meta/wiki.sqlite" mcp-install \
+  --target hermes \
+  --source-id project:my-project \
+  --actor-id hermes:local
 ```
 
-### 3. PATH 추가
+`mcp-install` enables every AideMemo tool discovered by Hermes and verifies
+registration with `hermes mcp list`. If you use an isolated profile through
+`HERMES_HOME=/path/to/profile`, both the skill and MCP configuration are
+installed into that profile.
+
+Verify the installation:
 
 ```bash
-# ~/.zshrc에:
-export PATH="$HOME/dev/aidememo/target/release:$PATH"
+hermes mcp list
+hermes mcp test aidememo
+hermes skills list
 ```
 
-## 사용
+## Path B: native plugin
 
-Hermes Agent가 자동으로 AideMemo를 호출합니다. `.claude.md`, `.codex.md`도 함께 배치하면 더 많은 에이전트에서 동작합니다:
+The plugin adds session-start context injection, eight slash commands, and
+optional pending-first capture on top of the AideMemo tools. Install it into
+Hermes's own Python environment, not an unrelated system Python.
 
 ```bash
-cp ~/dev/aidememo/.claude.md ~/projects/your-project/.claude.md
-cp ~/dev/aidememo/.codex.md ~/projects/your-project/.codex.md
+HERMES_PY="${HERMES_PY:-$HOME/.hermes/hermes-agent/venv/bin/python3}"
+"$HERMES_PY" -m pip install -e packages/aidememo-agent-sdk -e plugins/hermes
+hermes plugins enable aidememo
 ```
 
-## 설정 파일
+Configure `~/.hermes/config.yaml`, or `$HERMES_HOME/config.yaml` for an
+isolated profile:
 
-`~/.aidememo/config.toml` (자동 생성 또는手動作成):
-```toml
-[store]
-path = "~/.aidememo/wiki.sqlite"
-
-[search]
-default_limit = 20
-bm25_weight = 0.7
-semantic_weight = 0.3
+```yaml
+plugins:
+  enabled:
+    - aidememo
+  aidememo:
+    store_path: ~/.aidememo/wiki.sqlite
+    source_id: project:my-project
+    actor_id: hermes:local
+    auto_capture:
+      enabled: false
+      mode: pending
 ```
 
-## 업데이트
+Use the repository's isolated development profile when testing from a
+checkout:
 
 ```bash
-cd ~/dev/aidememo && cargo build -p aidememo-cli --release
+./scripts/setup-hermes-test-env.sh setup
+eval "$(./scripts/setup-hermes-test-env.sh env)"
+./scripts/setup-hermes-test-env.sh seed
+./scripts/test-hermes-e2e.sh
 ```
+
+## First use
+
+```text
+/aidememo-context Redis
+/aidememo-start "Fix Redis timeout" --source github:org/repo#123
+/aidememo-add "Redis timeout is 30 seconds" --type decision --entities Redis
+```
+
+Without the native plugin, Hermes can still use the installed skill to select
+MCP tools such as `aidememo_query` and `aidememo_context`.

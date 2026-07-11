@@ -18,9 +18,13 @@ available without extra setup.
 
 ### Skills, slash commands, hooks
 
-- `aidememo-skill/SKILL.md` is distributable — users `cp -r aidememo-skill ~/.claude/skills/aidememo/`.
-- Project-local slash commands live in `.claude/commands/` (see
-  `aidememo-search.md`, `aidememo-add-fact.md`, `aidememo-context.md`).
+- `plugins/claude/` is the recommended self-contained plugin: MCP, focused
+  skills, and hooks. Validate it with `claude plugin validate ./plugins/claude`.
+- `aidememo-skill/SKILL.md` is the standalone cross-agent skill. Install it
+  with `aidememo skill install --target claude`; isolated profiles honor
+  `CLAUDE_CONFIG_DIR`.
+- Project-local files in `.claude/commands/` are retained for legacy command
+  compatibility; new workflows should use skills.
 - **Hooks ship in `aidememo-skill/hooks/`** (3 scripts: `aidememo-session-start.py`,
   `aidememo-post-tool.py`, `aidememo-extract-facts.py`). See
   `aidememo-skill/hooks/README.md` for the install snippet — soft-fail

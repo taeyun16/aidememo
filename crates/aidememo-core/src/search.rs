@@ -227,6 +227,7 @@ fn build_search_result(
         entity_names,
         source: fact.source,
         source_id: fact.source_id,
+        actor_id: fact.actor_id,
         score,
         rank,
         created_at: fact.created_at,
@@ -257,6 +258,7 @@ fn build_search_result(
         entity_names,
         source: fact.source,
         source_id: fact.source_id,
+        actor_id: fact.actor_id,
         score,
         rank,
         created_at: fact.created_at,
@@ -1090,6 +1092,7 @@ mod tests {
                 tags: Some(vec!["ha".to_string()]),
                 source: Some("entities/redis.md".to_string()),
                 source_id: None,
+                actor_id: None,
                 source_confidence: Some(0.8),
                 observed_at: None,
             })
@@ -1103,6 +1106,7 @@ mod tests {
                 tags: Some(vec!["scaling".to_string()]),
                 source: Some("entities/redis.md".to_string()),
                 source_id: None,
+                actor_id: None,
                 source_confidence: Some(0.7),
                 observed_at: None,
             })

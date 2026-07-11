@@ -830,6 +830,7 @@ impl AideMemo {
                 tags: None,
                 source: None,
                 source_id: None,
+                actor_id: None,
                 observed_at: None,
                 superseded_at: Some(now),
                 superseded_by: Some(*new_id),
@@ -1097,6 +1098,7 @@ impl AideMemo {
                                 tags: None,
                                 source: None,
                                 source_id: None,
+                                actor_id: None,
                                 observed_at: None,
                                 superseded_at: Some(now_ms),
                                 superseded_by: None,
@@ -1854,6 +1856,24 @@ impl AideMemo {
             .as_deref()
             .map(str::trim)
             .filter(|s| !s.is_empty());
+        let actor_id = opts
+            .actor_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        let parent_session_id = opts
+            .parent_session_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+
+        if let Some(parent_session_id) = parent_session_id {
+            self.entity_get(parent_session_id).map_err(|_| {
+                AideMemoError::InvalidInput(format!(
+                    "parent session `{parent_session_id}` does not exist"
+                ))
+            })?;
+        }
 
         let session_name = format!("session-{}", ulid::Ulid::new());
         let session_entity_id = self.entity_add(EntityInput {
@@ -1862,6 +1882,15 @@ impl AideMemo {
             source_page: Some(source.unwrap_or(title).to_string()),
             ..Default::default()
         })?;
+        if let Some(parent_session_id) = parent_session_id {
+            self.relation_add(RelationInput {
+                source: session_name.clone(),
+                target: parent_session_id.to_string(),
+                relation_type: types::RelationType::new("continued_from"),
+                weight: Some(1.0),
+                evidence: source.map(|value| vec![value.to_string()]),
+            })?;
+        }
 
         let mut ticket_content = format!("Workflow ticket: {title}");
         if let Some(body) = body {
@@ -1876,6 +1905,7 @@ impl AideMemo {
             tags: Some(vec!["workflow-start".into(), "ticket".into()]),
             source: source.map(str::to_string),
             source_id: source_id.map(str::to_string),
+            actor_id: actor_id.map(str::to_string),
             source_confidence: Some(1.0),
             observed_at: None,
         })?;
@@ -1936,6 +1966,8 @@ impl AideMemo {
             title: title.to_string(),
             source: source.map(str::to_string),
             source_id: source_id.map(str::to_string),
+            actor_id: actor_id.map(str::to_string),
+            parent_session_id: parent_session_id.map(str::to_string),
             ticket_fact_id: ticket_fact_id.to_string(),
             context,
             prior_lessons,
@@ -2225,6 +2257,7 @@ mod adaptive_search_tests {
             entity_names: Vec::new(),
             source: None,
             source_id: None,
+            actor_id: None,
             score,
             rank: 1,
             created_at: 0,
@@ -3251,6 +3284,7 @@ mod query_tests {
             tags: None,
             source: None,
             source_id: None,
+            actor_id: None,
             source_confidence: None,
             observed_at: None,
         })

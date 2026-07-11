@@ -50,8 +50,12 @@ aidememo fact add \
   "Decision: Billing webhook retries must use idempotency keys." \
   --type decision \
   --entities Billing,Webhook \
-  --source-id team-a
+  --source-id team-a \
+  --actor-id codex:account-a
 ```
+
+`--source-id`는 공유 프로젝트 또는 tenant namespace로 유지합니다. 팩트를 작성한
+profile이나 agent는 `--actor-id`로 기록합니다.
 
 팩트 타입을 의도적으로 선택합니다.
 
@@ -73,6 +77,10 @@ aidememo workflow start "Stop duplicate billing webhook processing" \
   --source "linear:ENG-456" \
   --source-id team-a
 ```
+
+이전 tracked workflow를 lineage와 함께 이어가려면 `--parent-session <session-id>`를
+전달합니다. AideMemo는 전체 chat transcript를 복사하는 대신 `continued_from`
+relation을 기록합니다.
 
 결정적 데모, hook, CI 검사에서는 semantic 모델 로드를 건너뜁니다.
 

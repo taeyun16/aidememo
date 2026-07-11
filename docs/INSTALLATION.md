@@ -104,6 +104,41 @@ aidememo --store ./memory.sqlite fact add "A first note" --entities Project
 
 Using `--store` is useful for demos, tests, and per-project memory files.
 
+Agent installation pins the resolved store path into the generated MCP command.
+For isolated Codex accounts, install the same store into each profile while keeping
+writer provenance separate:
+
+```bash
+aidememo --store ./_meta/wiki.sqlite mcp-install --target codex \
+  --codex-home "$HOME/.codex-account-a" --actor-id codex:account-a \
+  --codex-home "$HOME/.codex-account-b" --actor-id codex:account-b \
+  --source-id project:my-app
+```
+
+See [`Share Memory Across Codex Profiles`](CODEX_MULTI_PROFILE.md) for the complete
+handoff and concurrency pattern.
+
+## Install into a coding agent
+
+After the CLI and store work, connect the agent using its native surface:
+
+| Agent | Install path |
+|---|---|
+| Claude Code | bundled plugin, or `mcp-install --target claude` plus `skill install --target claude` |
+| Codex | `mcp-install --target codex` with optional repeated `--codex-home` profiles |
+| Hermes Agent | `skill install --target hermes` plus `mcp-install --target hermes`, or the `hermes-aidememo` plugin |
+| pi coding agent | `skill install --target pi`; there is no MCP step |
+| Cursor / OpenClaw / OpenCode | their corresponding `mcp-install` target, with skills where supported |
+
+See [`Coding Agent Setup`](CODING_AGENTS.md) for exact commands, profile
+variables, plugin choices, and verification steps. The CLI can print its live
+support matrix at any time:
+
+```bash
+aidememo mcp-install --list-targets
+aidememo skill install --list-targets
+```
+
 ## Recommended first check
 
 Run this in a temporary directory:

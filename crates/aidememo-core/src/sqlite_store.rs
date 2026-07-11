@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
-use rusqlite::{Connection, ErrorCode, OptionalExtension, params};
+use rusqlite::{Connection, ErrorCode, OptionalExtension, TransactionBehavior, params};
 use ulid::Ulid;
 
 use crate::backend::StoreBackend;
@@ -45,7 +45,11 @@ impl SqliteStore {
             path: path.to_path_buf(),
             source: Box::new(source),
         })?;
-        conn.busy_timeout(Duration::from_millis(config.store.lock_retry_ms))
+        // Keep SQLite's internal wait short, then let the outer retry loop add
+        // jitter up to the configured total budget. This avoids synchronized
+        // writer convoys when several agent profiles share one store.
+        let sqlite_timeout_ms = config.store.lock_retry_ms.min(1_000);
+        conn.busy_timeout(Duration::from_millis(sqlite_timeout_ms))
             .map_err(|source| sqlite_write("pragma", "busy_timeout", source))?;
         let store = Self {
             conn: Mutex::new(conn),
@@ -560,7 +564,7 @@ impl StoreBackend for SqliteStore {
             }
             let mut conn = self.conn.lock();
             let tx = conn
-                .transaction()
+                .transaction_with_behavior(TransactionBehavior::Immediate)
                 .map_err(|source| sqlite_write("entities", "begin", source))?;
             Self::insert_entity_record(&tx, &record)?;
             tx.commit()
@@ -606,7 +610,7 @@ impl StoreBackend for SqliteStore {
             record.update(input.clone());
             let mut conn = self.conn.lock();
             let tx = conn
-                .transaction()
+                .transaction_with_behavior(TransactionBehavior::Immediate)
                 .map_err(|source| sqlite_write("entities", "begin", source))?;
             Self::update_entity_record(&tx, &record)?;
             tx.commit()
@@ -678,7 +682,7 @@ impl StoreBackend for SqliteStore {
             let id = record.id.to_string();
             let mut conn = self.conn.lock();
             let tx = conn
-                .transaction()
+                .transaction_with_behavior(TransactionBehavior::Immediate)
                 .map_err(|source| sqlite_write("entities", "begin", source))?;
             tx.execute("DELETE FROM entity_names WHERE entity_id = ?1", params![id])
                 .map_err(|source| sqlite_write("entity_names", &id, source))?;
@@ -717,7 +721,7 @@ impl StoreBackend for SqliteStore {
             let exists = self.entity_get_by_id(record.id).is_ok();
             let mut conn = self.conn.lock();
             let tx = conn
-                .transaction()
+                .transaction_with_behavior(TransactionBehavior::Immediate)
                 .map_err(|source| sqlite_write("entities", "begin", source))?;
             if exists {
                 Self::update_entity_record(&tx, &record)?;
@@ -863,7 +867,7 @@ impl StoreBackend for SqliteStore {
         sqlite_lock_retry(lock_retry_ms, || {
             let mut conn = self.conn.lock();
             let tx = conn
-                .transaction()
+                .transaction_with_behavior(TransactionBehavior::Immediate)
                 .map_err(|source| sqlite_write("facts", "begin", source))?;
             let mut record = Self::get_fact_record(&tx, &id)?;
             record.update(input.clone());
@@ -881,7 +885,7 @@ impl StoreBackend for SqliteStore {
             let raw_id = id.to_string();
             let mut conn = self.conn.lock();
             let tx = conn
-                .transaction()
+                .transaction_with_behavior(TransactionBehavior::Immediate)
                 .map_err(|source| sqlite_write("facts", "begin", source))?;
             tx.execute("DELETE FROM facts_fts WHERE fact_id = ?1", params![raw_id])
                 .map_err(|source| sqlite_write("facts_fts", &raw_id, source))?;
@@ -909,7 +913,7 @@ impl StoreBackend for SqliteStore {
             let content_hash = sha256_hex(&record.content);
             let mut conn = self.conn.lock();
             let tx = conn
-                .transaction()
+                .transaction_with_behavior(TransactionBehavior::Immediate)
                 .map_err(|source| sqlite_write("facts", "begin", source))?;
 
             if let Ok(local) = Self::get_fact_record(&tx, &record.id)
@@ -953,7 +957,7 @@ impl StoreBackend for SqliteStore {
         sqlite_lock_retry(lock_retry_ms, || {
             let mut conn = self.conn.lock();
             let tx = conn
-                .transaction()
+                .transaction_with_behavior(TransactionBehavior::Immediate)
                 .map_err(|source| sqlite_write("facts", "begin", source))?;
             let mut record = Self::get_fact_record(&tx, &id)?;
             if helpful {
@@ -1084,7 +1088,7 @@ impl StoreBackend for SqliteStore {
             let record = record.clone();
             let mut conn = self.conn.lock();
             let tx = conn
-                .transaction()
+                .transaction_with_behavior(TransactionBehavior::Immediate)
                 .map_err(|source| sqlite_write("relations", "begin", source))?;
             let exists: Option<Vec<u8>> = tx
                 .query_row(
@@ -1300,7 +1304,7 @@ fn sqlite_fact_add_many_once(
 
     let mut conn = store.conn.lock();
     let tx = conn
-        .transaction()
+        .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|source| sqlite_write("facts", "begin", source))?;
     let mut ids = Vec::with_capacity(inputs.len());
 
@@ -1328,6 +1332,9 @@ fn sqlite_fact_add_many_once(
         if let Some(source_id) = input.source_id {
             record.source_id = Some(source_id);
         }
+        if let Some(actor_id) = input.actor_id {
+            record.actor_id = Some(actor_id);
+        }
         if let Some(confidence) = input.source_confidence {
             record.source_confidence = confidence;
         }
@@ -1349,16 +1356,20 @@ fn sqlite_lock_retry<T>(lock_retry_ms: u64, mut op: impl FnMut() -> Result<T>) -
     }
     let budget = Duration::from_millis(lock_retry_ms);
     let started = Instant::now();
+    let mut attempt = 0_u64;
     loop {
         match op() {
             Ok(value) => return Ok(value),
             Err(err) if is_sqlite_lock_contention(&err) && started.elapsed() < budget => {
+                attempt = attempt.saturating_add(1);
                 let remaining = budget.saturating_sub(started.elapsed());
-                let sleep_for = if remaining < Duration::from_millis(100) {
-                    remaining
-                } else {
-                    Duration::from_millis(100)
-                };
+                // 20-150ms jitter mirrors the shared-session pattern used by
+                // Hermes Agent. Distinct wake-up intervals prevent multiple
+                // Codex/Hermes profiles from retrying in lockstep.
+                let jitter_ms = 20
+                    + crate::time::current_epoch_ms().wrapping_add(attempt.saturating_mul(73))
+                        % 131;
+                let sleep_for = remaining.min(Duration::from_millis(jitter_ms));
                 if !sleep_for.is_zero() {
                     std::thread::sleep(sleep_for);
                 }
@@ -1415,7 +1426,7 @@ mod tests {
         let busy_timeout: i64 = conn
             .query_row("PRAGMA busy_timeout", [], |row| row.get(0))
             .expect("busy timeout");
-        assert_eq!(busy_timeout, 2500);
+        assert_eq!(busy_timeout, 1000);
     }
 
     #[test]

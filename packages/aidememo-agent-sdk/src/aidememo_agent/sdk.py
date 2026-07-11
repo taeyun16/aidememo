@@ -28,6 +28,7 @@ class AideMemoMemorySDK:
         *,
         store_path: str | None = None,
         source_id: str | None = None,
+        actor_id: str | None = None,
         lock_retry_ms: int | None = None,
         storage_backend: str | None = None,
     ) -> "AideMemoMemorySDK":
@@ -37,6 +38,7 @@ class AideMemoMemorySDK:
             AideMemoClient(
                 store_path=store_path,
                 source_id=source_id,
+                actor_id=actor_id,
                 lock_retry_ms=lock_retry_ms,
                 storage_backend=storage_backend,
             )
@@ -239,6 +241,7 @@ class AideMemoMemorySDK:
         default_fact_type: str | None = None,
         default_entities: list[str] | None = None,
         source_id: str | None = None,
+        actor_id: str | None = None,
         session_id: str | None = None,
         tags: list[str] | None = None,
     ) -> list[dict[str, Any]]:
@@ -259,6 +262,8 @@ class AideMemoMemorySDK:
                 item["confidence"] = obs["confidence"]
             if obs.get("source_id") or source_id:
                 item["source_id"] = obs.get("source_id") or source_id
+            if obs.get("actor_id") or actor_id:
+                item["actor_id"] = obs.get("actor_id") or actor_id
             if obs.get("session_id") or session_id:
                 item["session_id"] = obs.get("session_id") or session_id
             items.append(item)
@@ -274,6 +279,7 @@ class AideMemoMemorySDK:
         default_fact_type: str | None = None,
         default_entities: list[str] | None = None,
         source_id: str | None = None,
+        actor_id: str | None = None,
         session_id: str | None = None,
         tags: list[str] | None = None,
     ) -> list[str]:
@@ -285,6 +291,7 @@ class AideMemoMemorySDK:
                 default_fact_type=default_fact_type,
                 default_entities=default_entities,
                 source_id=source_id,
+                actor_id=actor_id,
                 session_id=session_id,
                 tags=tags,
             )

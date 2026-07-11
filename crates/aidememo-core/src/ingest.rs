@@ -257,6 +257,7 @@ fn ingest_wiki_inner<B: StoreBackend>(
                         tags: None,
                         source,
                         source_id: None,
+                        actor_id: None,
                         source_confidence: Some(0.5), // auto-extracted
                         observed_at: parsed.observed_at,
                     };

@@ -67,6 +67,7 @@ fn main() {
                 Some(row.source)
             },
             source_id: None,
+            actor_id: None,
             source_confidence: row.source_confidence,
             observed_at: None,
         });

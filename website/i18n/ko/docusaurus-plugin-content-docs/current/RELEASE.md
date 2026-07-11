@@ -20,9 +20,18 @@ GitHub environment:
 |---|---|---|
 | `pypi-publish` | `.github/workflows/aidememo-python-publish.yml`, `.github/workflows/aidememo-agent-sdk-publish.yml`, `.github/workflows/hermes-aidememo-publish.yml` | PyPI trusted publishing 승인 게이트 |
 | `npm-publish` | `.github/workflows/aidememo-napi-publish.yml` | npm trusted publishing 승인 게이트 |
+| `github-pages` | `.github/workflows/pages.yml` | 검증된 Docusaurus 빌드의 OIDC 기반 배포 |
 
-두 environment 모두 reviewer를 요구하고 배포 branch/tag를 프로젝트가 사용하는
-릴리스 branch 또는 tag로 제한하는 것을 권장합니다.
+레지스트리 environment에는 reviewer를 요구하고 배포 branch/tag를 프로젝트가
+사용하는 릴리스 branch 또는 tag로 제한하는 것을 권장합니다.
+
+첫 문서 배포 전에 **Settings → Pages**에서 publishing source를 **GitHub
+Actions**로 설정하고, 생성된 `github-pages` environment를 `main`으로
+제한합니다. Pages 워크플로는 빌드 중 repository contents를 read-only로
+유지하고 배포 job에만 `pages: write`와 `id-token: write`를 허용합니다. 지원되는
+유료 플랜에서 private repository로 배포하더라도 GitHub Pages 콘텐츠는 공개
+인터넷에서 접근할 수 있으므로 사이트가 공개 준비를 마치기 전에는 활성화하지
+않습니다.
 
 PyPI trusted publisher:
 

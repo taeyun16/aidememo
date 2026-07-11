@@ -62,6 +62,7 @@ def test_open_builds_default_client(monkeypatch) -> None:
     assert created == {
         "store_path": "/tmp/wiki.redb",
         "source_id": "team-a",
+        "actor_id": None,
         "lock_retry_ms": 250,
         "storage_backend": None,
     }

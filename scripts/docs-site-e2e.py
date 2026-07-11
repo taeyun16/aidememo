@@ -8,6 +8,7 @@ from html.parser import HTMLParser
 import html
 from pathlib import Path
 import re
+import struct
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
@@ -24,15 +25,15 @@ DOCUSAURUS_CONFIG = WEBSITE / "docusaurus.config.js"
 ARCHITECTURE_DOC = DOCS / "ARCHITECTURE.md"
 I18N = WEBSITE / "i18n"
 
-SITE_ORIGIN = "https://taeyun16.github.io"
-BASE_PATH = "/aidememo/"
+SITE_ORIGIN = "https://aidememo.taeyun.me"
+BASE_PATH = "/"
 LOCALES = {
     "en": {"base_path": BASE_PATH, "html_lang": "en-US"},
     "ko": {"base_path": f"{BASE_PATH}ko/", "html_lang": "ko-KR"},
 }
 HOMEPAGE_H1 = {
-    "en": "Agent-friendly SDK memory for coding agents.",
-    "ko": "코딩 에이전트에 친화적인 SDK 메모리.",
+    "en": "AideMemo",
+    "ko": "AideMemo",
 }
 
 SOURCE_PATH_PREFIXES = (
@@ -59,6 +60,8 @@ class PageParser(HTMLParser):
         self.srcs: list[str] = []
         self.html_lang = ""
         self.alternates: set[tuple[str, str]] = set()
+        self.metadata: dict[str, str] = {}
+        self.links: set[tuple[str, str]] = set()
         self._in_title = False
         self._h1_depth = 0
 
@@ -70,12 +73,18 @@ class PageParser(HTMLParser):
             self._in_title = True
         elif tag == "h1":
             self._h1_depth += 1
+        elif tag == "meta":
+            key = attr_map.get("property") or attr_map.get("name")
+            if key and attr_map.get("content"):
+                self.metadata[key] = attr_map["content"]
         if "id" in attr_map:
             self.ids.add(attr_map["id"])
         if "name" in attr_map:
             self.ids.add(attr_map["name"])
         if "href" in attr_map:
             self.hrefs.append(attr_map["href"])
+            if tag == "link" and attr_map.get("rel"):
+                self.links.add((attr_map["rel"], attr_map["href"]))
             if tag == "link" and attr_map.get("rel") == "alternate" and attr_map.get("hreflang"):
                 self.alternates.add((attr_map["hreflang"], attr_map["href"]))
         if "src" in attr_map:
@@ -189,7 +198,7 @@ def parse_page(path: Path) -> PageParser:
 def localize_url(current_route: str, raw: str) -> tuple[str, str] | None:
     if raw.startswith(("mailto:", "tel:", "javascript:", "data:")):
         return None
-    if raw.startswith(("/docs/", "/img/", "/assets/")):
+    if BASE_PATH != "/" and raw.startswith(("/docs/", "/img/", "/assets/")):
         return ("missing-base-url", raw)
 
     absolute = urljoin(f"{SITE_ORIGIN}{current_route}", raw)
@@ -359,6 +368,75 @@ def check_config(errors: list[str]) -> None:
     config = DOCUSAURUS_CONFIG.read_text(encoding="utf-8")
     if f"baseUrl: '{BASE_PATH}'" not in config and f'baseUrl: "{BASE_PATH}"' not in config:
         fail(errors, f"website/docusaurus.config.js must keep baseUrl at {BASE_PATH!r}")
+    for token in (
+        "favicon: 'img/aidememo-logo.png'",
+        "image: 'img/aidememo-social-card.png'",
+        "'docusaurus-pagefind-search'",
+    ):
+        if token not in config:
+            fail(errors, f"website/docusaurus.config.js is missing discovery token {token!r}")
+
+
+def check_discovery_assets(errors: list[str], pages: dict[str, PageParser]) -> int:
+    for locale, locale_config in LOCALES.items():
+        route = str(locale_config["base_path"])
+        social_url = f"{SITE_ORIGIN}{route}img/aidememo-social-card.png"
+        favicon_url = f"{route}img/aidememo-logo.png"
+        page = pages.get(route)
+        if page is None:
+            fail(errors, f"cannot validate discovery metadata because {route} did not render")
+            continue
+        for key in ("og:image", "twitter:image"):
+            if page.metadata.get(key) != social_url:
+                fail(errors, f"{route} {key} does not point to {social_url}")
+        if page.metadata.get("twitter:card") != "summary_large_image":
+            fail(errors, f"{route} must render twitter:card=summary_large_image")
+        if ("icon", favicon_url) not in page.links:
+            fail(errors, f"{route} is missing favicon link {favicon_url}")
+        if locale == "ko" and not re.search(r"[가-힣]", page.metadata.get("description", "")):
+            fail(errors, f"{route} metadata description is not localized to Korean")
+
+    social_image = BUILD / "img" / "aidememo-social-card.png"
+    if not social_image.exists():
+        fail(errors, "build is missing img/aidememo-social-card.png")
+    else:
+        header = social_image.read_bytes()[:24]
+        if len(header) < 24 or header[:8] != b"\x89PNG\r\n\x1a\n":
+            fail(errors, "img/aidememo-social-card.png is not a valid PNG")
+        else:
+            width, height = struct.unpack(">II", header[16:24])
+            if (width, height) != (1200, 630):
+                fail(errors, f"social card is {width}x{height}; expected 1200x630")
+
+    robots = BUILD / "robots.txt"
+    if not robots.exists():
+        fail(errors, "build is missing robots.txt")
+    else:
+        expected_sitemap = f"Sitemap: {SITE_ORIGIN}{BASE_PATH}sitemap.xml"
+        if expected_sitemap not in robots.read_text(encoding="utf-8"):
+            fail(errors, f"robots.txt is missing {expected_sitemap!r}")
+
+    index_count = 0
+    for locale in LOCALES:
+        locale_build = BUILD if locale == "en" else BUILD / locale
+        pagefind = locale_build / "pagefind"
+        language = "en-us" if locale == "en" else "ko-kr"
+        if not (locale_build / "pagefind-loader.js").exists():
+            fail(errors, f"{locale} build is missing pagefind-loader.js")
+        for artifact in ("pagefind.js", "pagefind-worker.js", "pagefind-entry.json"):
+            if not (pagefind / artifact).exists():
+                fail(errors, f"{locale} Pagefind build is missing {artifact}")
+        indexes = sorted((pagefind / "index").glob(f"{language}_*.pf_index"))
+        fragments = sorted((pagefind / "fragment").glob(f"{language}_*.pf_fragment"))
+        metadata = sorted(pagefind.glob(f"pagefind.{language}_*.pf_meta"))
+        if not indexes:
+            fail(errors, f"{locale} build produced no Pagefind index for {language}")
+        if not fragments:
+            fail(errors, f"{locale} build produced no Pagefind fragments for {language}")
+        if not metadata:
+            fail(errors, f"{locale} build produced no Pagefind metadata for {language}")
+        index_count += len(indexes)
+    return index_count
 
 
 def main() -> int:
@@ -387,8 +465,9 @@ def main() -> int:
         pages, routes = check_routes(errors)
         link_count, asset_count, anchor_count = check_links_and_assets(errors, pages)
         source_path_count = check_architecture_source_paths(errors)
+        search_index_count = check_discovery_assets(errors, pages)
     else:
-        link_count = asset_count = anchor_count = source_path_count = 0
+        link_count = asset_count = anchor_count = source_path_count = search_index_count = 0
 
     if errors:
         print("docs site e2e failed:", file=sys.stderr)
@@ -399,7 +478,8 @@ def main() -> int:
     print(
         "docs site e2e passed: "
         f"{len(routes)} pages, {link_count} internal links, {asset_count} assets, "
-        f"{anchor_count} anchors, {source_path_count} architecture source refs"
+        f"{anchor_count} anchors, {search_index_count} search indexes, "
+        f"{source_path_count} architecture source refs"
     )
     return 0
 

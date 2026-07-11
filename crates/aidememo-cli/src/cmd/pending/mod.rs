@@ -289,6 +289,7 @@ fn commit_entry(wiki: &AideMemo, entry: &PendingEntry) -> Result<(), AideMemoErr
         ]),
         source: None,
         source_id: None,
+        actor_id: None,
         source_confidence: Some(entry.confidence),
         observed_at: Some(entry.ts_ms),
     })?;

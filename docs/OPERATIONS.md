@@ -174,15 +174,18 @@ aidememo query "release train" --source-id team-a
 For MCP installs:
 
 ```bash
-aidememo --backend libsqlite mcp-install --target codex --source-id team-a
+aidememo --backend libsqlite --store ~/.aidememo/team.sqlite \
+  mcp-install --target codex --source-id team-a
 ```
 
 ## Avoid local store write contention
 
-SQLite is the default backend and uses `store.lock_retry_ms` as its busy
-timeout for short write collisions. The optional redb backend uses the same
-setting to retry opening the store when another process holds redb's exclusive
-file lock.
+SQLite is the default backend. It uses WAL mode, starts writes with
+`BEGIN IMMEDIATE`, keeps each SQLite busy wait at most one second, and
+retries collisions with 20–150 ms jitter until the total
+`store.lock_retry_ms` budget is exhausted. The optional redb backend uses the
+same total budget to retry opening the store when another process holds redb's
+exclusive file lock.
 
 For shared writes, run one daemon:
 

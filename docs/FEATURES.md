@@ -50,7 +50,7 @@ python3 scripts/docs-site-e2e.py
 | `aidememo watch` | Watch markdown files and re-ingest on changes. |
 | `aidememo mcp-serve` | Serve MCP over HTTP plus SSE for shared warm access. |
 | `aidememo mcp` | Serve MCP over stdio for local agents. |
-| `aidememo mcp-install` | Register AideMemo MCP with supported agents. |
+| `aidememo mcp-install` | Register AideMemo MCP with a pinned store, source namespace, writer provenance, and repeatable Codex profile homes. |
 | `aidememo completions` | Emit shell completion scripts. |
 | `aidememo pending` | Review, approve, or reject dry-run extracted facts. |
 | `aidememo vector-rebuild` | Rebuild the HNSW vector sidecar after model or index changes. |
@@ -107,12 +107,12 @@ python3 scripts/docs-site-e2e.py
 | `aidememo_overview` | Return an orientation snapshot for an unfamiliar wiki. |
 | `aidememo_recent` | Return recent facts. |
 | `aidememo_context` | Return the broad opening-turn context envelope. |
-| `aidememo_workflow_start` | Start a tracked issue, PR, ticket, or automation workflow. |
+| `aidememo_workflow_start` | Start a tracked issue, PR, ticket, or automation workflow, optionally linked to a parent session. |
 | `aidememo_session_canvas` | Return a bounded Markdown + Mermaid canvas for long workflow resumption. |
 | `aidememo_profile_export` | Return a read-only project profile text artifact from current typed facts. |
 | `aidememo_query` | Return a focused topic context pack. |
 | `aidememo_entity_describe` | Set or clear an entity summary. |
-| `aidememo_fact_add` | Add one fact with self-classified type and optional session/source scoping. |
+| `aidememo_fact_add` | Add one fact with self-classified type, optional session/source scoping, and writer provenance. |
 | `aidememo_fact_add_many` | Add many facts in one transaction. |
 | `aidememo_fact_supersede` | Retire an old fact in favor of a replacement fact. |
 | `aidememo_fact_archive` | Move facts to the cold-tier archive. |
@@ -128,6 +128,11 @@ python3 scripts/docs-site-e2e.py
 | `aidememo-nif` | Elixir/Erlang NIF bindings. |
 | `aidememo-ffi` | C ABI bindings. |
 | `hermes-aidememo` | Hermes Agent plugin, slash commands, lifecycle hooks, SDK re-exports, and opt-in pending-first capture adapter. |
+| Claude Code plugin | Self-contained MCP definition, three focused skills, and three read-only context hooks under `plugins/claude`. |
+| Agent skill installers | Profile-aware installs for Claude (`CLAUDE_CONFIG_DIR`), Hermes (`HERMES_HOME`), and pi (`PI_CODING_AGENT_DIR`); pi intentionally uses CLI rather than MCP. |
+
+See [`Coding Agent Setup`](CODING_AGENTS.md) for the supported agent matrix and
+verified installation paths.
 
 The native Python, Node, Elixir, and C bindings use the same backend selector
 as the CLI. Default builds include the local SQLite backend; build with Cargo
@@ -173,5 +178,5 @@ implementation paths still exist in the repo.
 
 The gates cannot prove that prose is semantically perfect. They do make feature
 and structure drift noisy: adding or renaming a CLI command or MCP tool without
-updating this inventory, breaking the deployed `/aidememo/` route graph, or
+updating this inventory, breaking the deployed root route graph, or
 reverting the storage positioning fails CI.

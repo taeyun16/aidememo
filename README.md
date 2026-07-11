@@ -27,8 +27,8 @@
 
 ---
 
-**AideMemo** (`aidememo`) is an agent-friendly SDK memory system for Claude Code, Codex, Cursor,
-Hermes, and other coding agents. It stores project knowledge as typed facts
+**AideMemo** (`aidememo`) is an agent-friendly SDK memory system for Claude Code,
+Codex, Hermes, pi, Cursor, OpenClaw, OpenCode, and other coding agents. It stores project knowledge as typed facts
 connected to entities and relations, keeps temporal history with validity
 windows, and exposes the same store through a Python agent SDK, MCP tools, CLI,
 and in-process bindings.
@@ -43,7 +43,7 @@ services are explicit opt-ins.
 ```mermaid
 flowchart TB
     subgraph access["Agent and SDK entry points"]
-        agent["Claude / Codex / Cursor / Hermes"]
+        agent["Claude / Codex / Cursor / Hermes / pi"]
         human["CLI user"]
         sdk["aidememo-agent-sdk"]
         mcp["MCP<br/>stdio / HTTP"]
@@ -121,9 +121,12 @@ placement boundaries.
 | More than vector recall | Typed facts, entities, relations, graph traversal, temporal validity, aggregation. |
 | Agent-native access | SDK for code-first composition, MCP over stdio/HTTP for model-visible tools, plus a compact CLI for humans. |
 | Shared team/project memory | Optional `source_id` scoping, multi-project stores, and a daemon path for shared writes. |
+| Multiple Codex accounts | Pin one store into several `CODEX_HOME` profiles, keep `actor_id` provenance, and link resumed workflow sessions without sharing login state. |
 | Tool-builder embedding | Python, Node, Elixir, and C bindings call the same Rust core in process. |
 
 ## Install
+
+Featured use case: [share one project memory across isolated Codex profiles](docs/CODEX_MULTI_PROFILE.md).
 
 ```bash
 # One-line installer
@@ -146,22 +149,30 @@ npm publishes complete, prefer the Git or checkout install paths above.
 
 ## Documentation Site
 
-The static documentation site lives in [`website/`](website/) and renders the
-durable English Markdown under [`docs/`](docs/) with Docusaurus. English stays
-at `/aidememo/`; Korean is available at `/aidememo/ko/`, with translated
-onboarding/workflow pages and explicit English fallback for long reference
-docs.
+The static product and documentation site lives in [`website/`](website/) and
+renders the durable English Markdown under [`docs/`](docs/) with Docusaurus.
+The product landing page is served at `https://aidememo.taeyun.me/`,
+documentation stays under `/docs/`, and Korean is available at `/ko/`. Translated
+onboarding/workflow pages use explicit English fallback for long reference
+docs. Production builds include an in-browser local search index; no search
+service or API key is required.
 
 ```bash
 mise run docs-install
 mise run docs-start
 mise run docs-build
+npm --prefix website run serve   # test the production-only search index
 
 # Korean local preview, translation drift check, and message refresh
 mise run docs-start-ko
 mise run docs-i18n-check
 npm --prefix website run write-translations:ko
 ```
+
+`.github/workflows/pages.yml` validates and uploads the same production build
+to GitHub Pages on `main`. Before the first deployment, select **GitHub
+Actions** under **Settings → Pages → Build and deployment** and restrict the
+generated `github-pages` environment to `main`.
 
 ## 60-Second Quickstart
 
@@ -195,13 +206,36 @@ aidememo init --agent codex ./my-wiki
 aidememo --backend libsqlite mcp-install --target codex --source-id my-project
 
 # Claude Code
-claude mcp add aidememo -- aidememo --backend libsqlite mcp
+aidememo --backend libsqlite mcp-install --target claude --source-id my-project
 
 # Codex CLI: ~/.codex/config.toml
 [mcp_servers.aidememo]
 command = "aidememo"
 args = ["--backend", "libsqlite", "mcp"]
 ```
+
+For the bundled Claude plugin (MCP + focused skills + hooks), see the
+[English setup guide](aidememo-skill/setup-claude-code.md) or
+[Korean setup guide](aidememo-skill/setup-claude-code.ko.md).
+
+### Coding agent setup
+
+| Agent | Recommended install |
+|---|---|
+| Claude Code | bundled plugin, or `mcp-install --target claude` + `skill install --target claude` |
+| Codex | `mcp-install --target codex`; supports repeated isolated `--codex-home` profiles |
+| Hermes Agent | `skill install --target hermes` + `mcp-install --target hermes`, or `hermes-aidememo` plugin |
+| pi coding agent | `skill install --target pi`; pi intentionally has no MCP step |
+| Cursor / OpenClaw / OpenCode | the corresponding installer target, with skills where supported |
+
+See the Docusaurus [`Coding Agent Setup`](docs/CODING_AGENTS.md) page for exact
+commands, profile variables, verification, and troubleshooting. Detailed
+standalone guides are available in English and Korean:
+
+- [Claude Code](aidememo-skill/setup-claude-code.md) / [한국어](aidememo-skill/setup-claude-code.ko.md)
+- [Codex](aidememo-skill/setup-codex.md) / [한국어](aidememo-skill/setup-codex.ko.md)
+- [Hermes Agent](aidememo-skill/setup-hermes.md) / [한국어](aidememo-skill/setup-hermes.ko.md)
+- [pi coding agent](aidememo-skill/setup-pi.md) / [한국어](aidememo-skill/setup-pi.ko.md)
 
 ## Agent Entry Points
 
