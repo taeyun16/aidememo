@@ -23,7 +23,11 @@ Codex 설정 예시:
 ```toml
 [mcp_servers.aidememo]
 command = "aidememo"
-args = ["--backend", "libsqlite", "mcp"]
+args = ["--backend", "libsqlite", "--store", "/absolute/project/_meta/wiki.sqlite", "mcp"]
+
+[mcp_servers.aidememo.env]
+AIDEMEMO_SOURCE_ID = "project:my-app"
+AIDEMEMO_ACTOR_ID = "codex:account-a"
 ```
 
 Claude Code 명령 예시:
@@ -112,14 +116,22 @@ aidememo --backend libsqlite mcp-install --target codex --source-id team-a
 ```
 
 클라이언트가 명시적인 `source_id`를 전달하지 않으면 MCP 도구는 이 소스
-네임스페이스를 기본값으로 사용합니다. 설치 명령은 선택한 저장소 백엔드도
-고정하므로 에이전트 프로세스가 다른 설정 기본값으로 돌아가지 않습니다.
+네임스페이스를 기본값으로 사용합니다. 설치 명령은 선택한 저장소 백엔드와 확인된
+저장소 경로도 고정하므로 에이전트 프로세스가 다른 설정 기본값이나 작업 디렉터리로
+이동하지 않습니다. 여러 에이전트 프로필이 같은 네임스페이스를 공유하면서 작성자
+provenance가 필요하면 별도로 `--actor-id`를 사용합니다.
+
+격리된 Codex 계정에는 같은 명시적 저장소를 가리키면서 `--codex-home`과
+`--actor-id`를 반복합니다. [`여러 Codex 프로필에서 메모리 공유`](CODEX_MULTI_PROFILE.md)를
+참고하십시오.
 
 ## 문제 해결
 
 | 증상 | 해결 방법 |
 |---|---|
 | 에이전트에서 도구가 보이지 않음 | MCP 설정 경로를 확인하고 에이전트를 다시 시작합니다. |
+| 한 Codex 프로필에서만 AideMemo가 보이지 않음 | 활성 `CODEX_HOME`에 설치하거나 `--codex-home`을 명시적으로 전달합니다. |
 | `command not found: aidememo` | MCP 설정에 절대 경로를 사용합니다. |
+| 에이전트가 잘못된 저장소를 엶 | 전역 `--store`로 다시 설치합니다. `aidememo doctor`가 Codex 저장소 불일치를 보고합니다. |
 | 저장소 잠금 오류 | 공유 쓰기는 하나의 `aidememo mcp-serve` 프로세스를 사용합니다. |
 | 다른 프로젝트 컨텍스트가 나타남 | `source_id` 범위를 추가하거나 확인합니다. |

@@ -21,6 +21,7 @@
     "@docusaurus/theme-mermaid": "^3.10.1",
     "@mdx-js/react": "^3.1.1",
     "clsx": "^2.1.1",
+    "docusaurus-pagefind-search": "0.2.2",
     "prism-react-renderer": "^2.4.1",
     "react": "^19.2.3",
     "react-dom": "^19.2.3"

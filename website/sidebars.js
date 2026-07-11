@@ -14,6 +14,7 @@ const sidebars = {
       items: [
         'CLI',
         'MCP',
+        'CODEX_MULTI_PROFILE',
         'AGENT_WORKFLOWS',
         'SDK',
         'FEATURES',

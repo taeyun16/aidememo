@@ -430,6 +430,11 @@ pub struct FactRecord {
     /// scope retrieval when several apps or users share one store.
     #[serde(default)]
     pub source_id: Option<String>,
+    /// Optional writer identity, kept separate from `source_id` so several
+    /// agent profiles can share one project namespace without losing
+    /// provenance (for example `codex:account-a`).
+    #[serde(default)]
+    pub actor_id: Option<String>,
     /// Source confidence (0-1): manual=1.0, auto-extract=0.5, LLM=0.3.
     pub source_confidence: f32,
     /// Relevance score (0-1): updated via feedback.
@@ -479,6 +484,7 @@ impl FactRecord {
             tags: Vec::new(),
             source: None,
             source_id: None,
+            actor_id: None,
             source_confidence: 0.5,
             relevance_score: 0.5,
             created_at: now,
@@ -509,6 +515,9 @@ impl FactRecord {
         }
         if let Some(source_id) = input.source_id {
             self.source_id = Some(source_id);
+        }
+        if let Some(actor_id) = input.actor_id {
+            self.actor_id = Some(actor_id);
         }
         if let Some(observed_at) = input.observed_at {
             self.observed_at = Some(observed_at);
@@ -548,6 +557,8 @@ pub struct FactInput {
     #[serde(default)]
     pub source_id: Option<String>,
     #[serde(default)]
+    pub actor_id: Option<String>,
+    #[serde(default)]
     pub source_confidence: Option<f32>,
     /// When the fact was actually observed/decided (epoch ms).
     /// Distinct from creation time. Optional.
@@ -564,6 +575,8 @@ pub struct FactUpdate {
     pub source: Option<String>,
     #[serde(default)]
     pub source_id: Option<String>,
+    #[serde(default)]
+    pub actor_id: Option<String>,
     #[serde(default)]
     pub observed_at: Option<u64>,
     /// If set, marks the fact as superseded at this epoch ms. Use `Some(0)` to
@@ -848,6 +861,8 @@ pub struct SearchResult {
     pub source: Option<String>,
     #[serde(default)]
     pub source_id: Option<String>,
+    #[serde(default)]
+    pub actor_id: Option<String>,
     pub score: f32,
     pub rank: usize,
     /// When the fact was inserted into the store (epoch ms).
@@ -1046,6 +1061,11 @@ pub struct WorkflowStartOpts {
     pub source: Option<String>,
     /// Optional namespace / tenant / agent scope.
     pub source_id: Option<String>,
+    /// Optional writer identity for the ticket fact.
+    pub actor_id: Option<String>,
+    /// Optional prior tracked session. A `continued_from` graph edge is
+    /// created from the new session to this parent.
+    pub parent_session_id: Option<String>,
     /// Max search hits in the returned context pack.
     pub limit: usize,
     /// Graph traversal depth in the returned context pack.
@@ -1062,6 +1082,8 @@ impl Default for WorkflowStartOpts {
             body: None,
             source: None,
             source_id: None,
+            actor_id: None,
+            parent_session_id: None,
             limit: 8,
             depth: 2,
             recent_limit: 5,
@@ -1078,6 +1100,8 @@ pub struct WorkflowStartPack {
     pub title: String,
     pub source: Option<String>,
     pub source_id: Option<String>,
+    pub actor_id: Option<String>,
+    pub parent_session_id: Option<String>,
     pub ticket_fact_id: String,
     pub context: QueryResult,
     pub prior_lessons: Vec<SearchResult>,

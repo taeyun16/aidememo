@@ -142,7 +142,7 @@ fn main() {
             cmd::mcp_stdio::run_mcp(path, config)
         }
         cmd::Command::McpInstall(sub) => {
-            cmd::mcp_install::run_mcp_install(sub, json, &config.store.backend)
+            cmd::mcp_install::run_mcp_install(sub, json, &config.store.backend, &store_path)
         }
         cmd::Command::Completions(sub) => cmd::completions::run_completions(sub),
         cmd::Command::Pending(sub) => cmd::pending::run_pending(sub, &store_path, config, json),
@@ -677,6 +677,7 @@ fn handle_fact(
             tags,
             source,
             source_id,
+            actor_id,
             confidence,
             observed_at,
         } => {
@@ -692,12 +693,15 @@ fn handle_fact(
                 tracing::debug!(via = %via, "auto-discovered daemon for fact add");
                 return run_fact_add_via_daemon(
                     &via,
-                    &content,
-                    fact_type.as_deref(),
-                    entities.as_ref(),
-                    tags.as_ref(),
-                    source_id.as_deref(),
-                    json,
+                    DaemonFactAdd {
+                        content: &content,
+                        fact_type: fact_type.as_deref(),
+                        entities: entities.as_ref(),
+                        tags: tags.as_ref(),
+                        source_id: source_id.as_deref(),
+                        actor_id: actor_id.as_deref(),
+                        json,
+                    },
                 );
             }
             with_wiki_mut(path, config, |wiki| {
@@ -809,6 +813,7 @@ fn handle_fact(
                     tags: parse_tags(tags),
                     source,
                     source_id,
+                    actor_id: actor_id.or_else(default_actor_id),
                     source_confidence: confidence,
                     observed_at: observed_at_ms,
                 })?;
@@ -838,6 +843,7 @@ fn handle_fact(
                         "fact_type_hint": fact_type_hint,
                         "entity_names": entity_names_resolved,
                         "created_at": record.created_at,
+                        "actor_id": record.actor_id,
                         "auto_created_entities": auto_created,
                         "entity_name_alternatives": alternatives_field,
                         "existing_similar": existing_similar,
@@ -1115,6 +1121,13 @@ fn handle_fact(
     }
 }
 
+fn default_actor_id() -> Option<String> {
+    std::env::var("AIDEMEMO_ACTOR_ID")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
 fn parse_fact_id_str(s: &str) -> Result<aidememo_core::FactId, AideMemoError> {
     aidememo_core::ulid::Ulid::from_string(s)
         .map(aidememo_core::FactId)
@@ -1229,6 +1242,7 @@ fn handle_extract(
                 tags: None,
                 source: None,
                 source_id: None,
+                actor_id: default_actor_id(),
                 source_confidence: Some(cand.confidence),
                 observed_at: None,
             })?;
@@ -1521,6 +1535,8 @@ fn handle_workflow(
             from_stdin,
             source,
             source_id,
+            actor_id,
+            parent_session_id,
             limit,
             depth,
             recent_limit,
@@ -1537,6 +1553,8 @@ fn handle_workflow(
                         body,
                         source,
                         source_id,
+                        actor_id: actor_id.or_else(default_actor_id),
+                        parent_session_id,
                         limit: limit.unwrap_or(8),
                         depth: depth.unwrap_or(2),
                         recent_limit: recent_limit.unwrap_or(5),
@@ -2167,15 +2185,29 @@ fn run_query_via_daemon(base_url: &str, sub: &cmd::QuerySub) -> Result<String, A
 /// The local CLI surface returns either JSON or a "Added fact with ID …"
 /// line; we normalise here so users see the same output whether the
 /// daemon is on or off.
+struct DaemonFactAdd<'a> {
+    content: &'a str,
+    fact_type: Option<&'a str>,
+    entities: Option<&'a Vec<String>>,
+    tags: Option<&'a Vec<String>>,
+    source_id: Option<&'a str>,
+    actor_id: Option<&'a str>,
+    json: bool,
+}
+
 fn run_fact_add_via_daemon(
     base_url: &str,
-    content: &str,
-    fact_type: Option<&str>,
-    entities: Option<&Vec<String>>,
-    tags: Option<&Vec<String>>,
-    source_id: Option<&str>,
-    json: bool,
+    input: DaemonFactAdd<'_>,
 ) -> Result<String, AideMemoError> {
+    let DaemonFactAdd {
+        content,
+        fact_type,
+        entities,
+        tags,
+        source_id,
+        actor_id,
+        json,
+    } = input;
     let url = format!("{}/mcp", base_url.trim_end_matches('/'));
     // Mirror the CLI's "comma-separated names in a single flag" shape.
     let entity_names: Vec<String> = entities
@@ -2206,6 +2238,10 @@ fn run_fact_add_via_daemon(
     }
     if let Some(source_id) = source_id {
         args["source_id"] = serde_json::json!(source_id);
+    }
+    let actor_id = actor_id.map(str::to_string).or_else(default_actor_id);
+    if let Some(actor_id) = actor_id {
+        args["actor_id"] = serde_json::json!(actor_id);
     }
     let body = serde_json::json!({
         "jsonrpc": "2.0", "id": 1,

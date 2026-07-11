@@ -57,6 +57,8 @@ def _make_handlers(client: AideMemoClient) -> list[tuple[str, dict, Callable[...
                 depth=int(args.get("depth") or 2),
                 recent_limit=int(args.get("recent_limit") or 5),
                 source_id=args.get("source_id"),
+                actor_id=args.get("actor_id"),
+                parent_session_id=args.get("parent_session_id"),
             )
         )
 
@@ -153,6 +155,7 @@ def _make_handlers(client: AideMemoClient) -> list[tuple[str, dict, Callable[...
                     fact_type=args.get("fact_type"),
                     tags=tags,
                     source_id=args.get("source_id"),
+                    actor_id=args.get("actor_id"),
                 )
             }
         )
@@ -162,6 +165,7 @@ def _make_handlers(client: AideMemoClient) -> list[tuple[str, dict, Callable[...
         if not isinstance(items, list):
             items = []
         source_id = args.get("source_id")
+        actor_id = args.get("actor_id")
         session_id = args.get("session_id")
         normalised = []
         for item in items:
@@ -170,6 +174,8 @@ def _make_handlers(client: AideMemoClient) -> list[tuple[str, dict, Callable[...
             row = dict(item)
             if source_id is not None and not row.get("source_id"):
                 row["source_id"] = source_id
+            if actor_id is not None and not row.get("actor_id"):
+                row["actor_id"] = actor_id
             if session_id is not None and not row.get("session_id"):
                 row["session_id"] = session_id
             normalised.append(row)
@@ -197,7 +203,9 @@ def _make_handlers(client: AideMemoClient) -> list[tuple[str, dict, Callable[...
                         "title": {"type": "string", "description": "Issue / PR / ticket title or short workflow trigger text."},
                         "body": {"type": "string", "description": "Optional issue / PR / ticket body."},
                         "source": {"type": "string", "description": "Optional upstream source id, e.g. github:org/repo#123 or linear:ENG-42."},
-                        "source_id": {"type": "string", "description": "Optional source namespace / tenant / agent id for shared-store scoping. If omitted, Hermes falls back to plugins.aidememo.source_id or AIDEMEMO_SOURCE_ID when set."},
+                        "source_id": {"type": "string", "description": "Optional project or upstream namespace for shared-store scoping. If omitted, Hermes falls back to plugins.aidememo.source_id or AIDEMEMO_SOURCE_ID when set."},
+                        "actor_id": {"type": "string", "description": "Optional writer identity, such as hermes:account-a. Falls back to plugins.aidememo.actor_id or AIDEMEMO_ACTOR_ID."},
+                        "parent_session_id": {"type": "string", "description": "Optional prior workflow session to link with continued_from."},
                         "limit": {"type": "integer", "description": "Max context search hits (default 8)."},
                         "depth": {"type": "integer", "description": "Graph traversal depth (default 2)."},
                         "recent_limit": {"type": "integer", "description": "Max recent facts attached to a resolved entity (default 5)."},
@@ -362,6 +370,7 @@ def _make_handlers(client: AideMemoClient) -> list[tuple[str, dict, Callable[...
                         "fact_type": {"type": "string", "description": "decision | pattern | convention | claim | note | question | preference | lesson | error. Omit to let strong cues infer the type; explicit note is preserved."},
                         "tags": {"type": "array", "items": {"type": "string"}},
                         "source_id": {"type": "string", "description": "Optional source namespace / tenant / upstream id. If omitted, Hermes falls back to plugins.aidememo.source_id or AIDEMEMO_SOURCE_ID when set."},
+                        "actor_id": {"type": "string", "description": "Optional writer identity. Falls back to plugins.aidememo.actor_id or AIDEMEMO_ACTOR_ID."},
                     },
                     "required": ["content"],
                 },
@@ -389,12 +398,14 @@ def _make_handlers(client: AideMemoClient) -> list[tuple[str, dict, Callable[...
                                     "tags": {"type": "array", "items": {"type": "string"}},
                                     "confidence": {"type": "number"},
                                     "source_id": {"type": "string"},
+                                    "actor_id": {"type": "string"},
                                     "session_id": {"type": "string"},
                                 },
                                 "required": ["content"],
                             },
                         },
                         "source_id": {"type": "string", "description": "Default source namespace for items that omit source_id."},
+                        "actor_id": {"type": "string", "description": "Default writer identity for items that omit actor_id."},
                         "session_id": {"type": "string", "description": "Workflow session id returned by aidememo_workflow_start; applies to items that omit session_id."},
                     },
                     "required": ["items"],

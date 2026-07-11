@@ -137,6 +137,8 @@ pub struct WorkflowStartArgs {
     pub body: Option<String>,
     pub source: Option<String>,
     pub source_id: Option<String>,
+    pub actor_id: Option<String>,
+    pub parent_session_id: Option<String>,
     pub limit: Option<u32>,
     pub depth: Option<u32>,
     pub recent_limit: Option<u32>,
@@ -171,6 +173,7 @@ pub struct FactAddArgs {
     pub tags: Option<Vec<String>>,
     pub source: Option<String>,
     pub source_id: Option<String>,
+    pub actor_id: Option<String>,
     pub session_id: Option<String>,
     pub confidence: Option<f64>,
 }
@@ -184,6 +187,7 @@ pub struct FactAddManyItem {
     pub tags: Option<Vec<String>>,
     pub source: Option<String>,
     pub source_id: Option<String>,
+    pub actor_id: Option<String>,
     pub session_id: Option<String>,
     pub confidence: Option<f64>,
 }
@@ -318,6 +322,8 @@ impl AideMemoStore {
             body: None,
             source: None,
             source_id: None,
+            actor_id: None,
+            parent_session_id: None,
             limit: None,
             depth: None,
             recent_limit: None,
@@ -331,6 +337,8 @@ impl AideMemoStore {
                     body: args.body,
                     source: args.source,
                     source_id: args.source_id,
+                    actor_id: args.actor_id,
+                    parent_session_id: args.parent_session_id,
                     limit: args.limit.unwrap_or(8) as usize,
                     depth: args.depth.unwrap_or(2),
                     recent_limit: args.recent_limit.unwrap_or(5) as usize,
@@ -436,6 +444,7 @@ impl AideMemoStore {
             tags: None,
             source: None,
             source_id: None,
+            actor_id: None,
             session_id: None,
             confidence: None,
         });
@@ -455,6 +464,7 @@ impl AideMemoStore {
             tags: args.tags,
             source: args.source,
             source_id: args.source_id,
+            actor_id: args.actor_id,
             source_confidence: args.confidence.map(|v| v as f32),
             observed_at: None,
         };
@@ -485,6 +495,7 @@ impl AideMemoStore {
                 tags: item.tags,
                 source: item.source,
                 source_id: item.source_id,
+                actor_id: item.actor_id,
                 source_confidence: item.confidence.map(|v| v as f32),
                 observed_at: None,
             });

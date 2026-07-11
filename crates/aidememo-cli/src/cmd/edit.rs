@@ -172,6 +172,7 @@ pub fn run_edit(
                     tags: None,
                     source: None,
                     source_id: None,
+                    actor_id: None,
                     observed_at: None,
                     superseded_at: None,
                     superseded_by: None,

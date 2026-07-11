@@ -37,6 +37,7 @@ plugins:
   aidememo:
     store_path: ~/.aidememo/wiki.sqlite   # optional; uses aidememo config default otherwise
     source_id: team-a               # optional default namespace for reads/writes
+    actor_id: hermes:account-a      # optional writer provenance for new facts
     recent_window: 7d               # session_start auto-context window
     recent_limit: 10
     auto_capture:
@@ -83,7 +84,7 @@ not when every turn uses the same generic retrieval call.
 | `coding` | PRs, issues, sparse automation triggers | `aidememo_workflow_start`, `/aidememo-start`, `pre_llm_call` workflow auto-start | Creates a tracked session, stores the trigger, and injects prior decisions / lessons / errors before planning. |
 | `long-session` | Multi-hour implementation or debugging sessions | `aidememo_context`, `/aidememo-context`, optional `post_llm_call` capture | Loads recent + personalisation + topic context up front, then optionally queues decisions before the session drifts. |
 | `research` | Experiments, ablations, metric interpretation | `aidememo_fact_add_many`, `aidememo_aggregate`, `/aidememo-aggregate` | Stores classified experiment observations in batches and answers exact count / timeline / total questions without in-head arithmetic. |
-| `team` | Multiple local Hermes agents sharing one store | `source_id`, `lock_retry_ms`, `/aidememo-doctor` | Keeps each agent/source isolated; use retry for small same-host teams and daemon/MCP for heavier write concurrency. |
+| `team` | Multiple local Hermes agents sharing one store | `source_id`, `actor_id`, `lock_retry_ms`, `/aidememo-doctor` | Shares project retrieval while preserving writer provenance; use retry for small same-host teams and daemon/MCP for heavier write concurrency. |
 | `safe-capture` | First rollout on a noisy chat/workflow | `auto_capture.enabled: true`, `auto_capture.mode: pending`, `/aidememo-pending` | Audits auto-detected facts before committing them to the graph. |
 
 ### Memory-as-Code SDK
@@ -95,7 +96,7 @@ tokens. For non-Hermes agents, import the same API from `aidememo_agent`.
 ```python
 from aidememo_agent import Memory
 
-sdk = Memory.open(source_id="research-alpha")
+sdk = Memory.open(source_id="research-alpha", actor_id="hermes:researcher-a")
 
 rows = sdk.search_rows([
     {"query": "Hermes top1_mass support gate", "tool": "search_query"},
@@ -121,6 +122,7 @@ floor, modest 7-day window, auto-capture off).
 |---|---|---|
 | `store_path` | AideMemo config resolution | Override the local store location. SQLite is the default; redb requires an explicit redb build/config. |
 | `source_id` | unset | Default namespace for scoped tool reads/writes. Explicit tool `source_id` values override it; `AIDEMEMO_SOURCE_ID` is also honored when config is unset. |
+| `actor_id` | unset | Default writer identity stored with new facts. Explicit write `actor_id` values override it; `AIDEMEMO_ACTOR_ID` is also honored when config is unset. |
 | `recent_window` | `7d` | How far back the session-start preamble looks. |
 | `recent_limit` | `10` | Max facts in the preamble. |
 | `auto_capture.enabled` | `false` | Opt into the capture adapter. Without this, the hook does not write facts or pending entries. Legacy explicit `auto_record: true` is still honored. |

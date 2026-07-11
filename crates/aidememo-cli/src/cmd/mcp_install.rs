@@ -19,7 +19,7 @@
 //! `--force` to overwrite an existing `aidememo` entry.
 
 use bpaf::*;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
 
 use crate::cmd::Command;
@@ -33,6 +33,10 @@ pub struct McpInstallSub {
     pub list_targets: bool,
     pub no_verify: bool,
     pub source_id: Option<String>,
+    pub actor_ids: Vec<String>,
+    /// Optional Codex profile homes. Repeat to install into several isolated
+    /// Codex profiles while keeping one shared AideMemo store.
+    pub codex_homes: Vec<PathBuf>,
 }
 
 pub fn mcp_install_command() -> impl Parser<Command> {
@@ -68,6 +72,20 @@ pub fn mcp_install_command() -> impl Parser<Command> {
         )
         .argument::<String>("SOURCE_ID")
         .optional();
+    let actor_ids = long("actor-id")
+        .help(
+            "Set AIDEMEMO_ACTOR_ID in the installed MCP server environment so \
+             facts retain writer provenance independently of source_id scoping.",
+        )
+        .argument::<String>("ACTOR_ID")
+        .many();
+    let codex_homes = long("codex-home")
+        .help(
+            "Codex profile directory to update (the directory containing config.toml). \
+             Repeat for multiple isolated Codex accounts. Defaults to CODEX_HOME, then ~/.codex.",
+        )
+        .argument::<PathBuf>("PATH")
+        .many();
 
     construct!(McpInstallSub {
         target,
@@ -76,6 +94,8 @@ pub fn mcp_install_command() -> impl Parser<Command> {
         list_targets,
         no_verify,
         source_id,
+        actor_ids,
+        codex_homes,
     })
     .map(Command::McpInstall)
     .to_options()
@@ -98,7 +118,10 @@ struct InstallReport {
     overwrote: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     source_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    actor_id: Option<String>,
     storage_backend: String,
+    store_path: String,
     /// Result of the post-install best-effort check that the agent
     /// actually picked up the new server. `None` when verification
     /// wasn't attempted (file-edit targets, `--print` mode, missing
@@ -159,6 +182,7 @@ pub fn run_mcp_install(
     sub: McpInstallSub,
     json: bool,
     storage_backend: &str,
+    store_path: &Path,
 ) -> Result<String, AideMemoError> {
     if sub.list_targets || sub.target == "list" {
         let entries: Vec<TargetEntry> = SUPPORTED
@@ -182,41 +206,85 @@ pub fn run_mcp_install(
         return Ok(out);
     }
 
-    let source_id = normalise_source_id_arg(sub.source_id.as_deref())?;
+    let source_id = normalise_identity_arg("--source-id", sub.source_id.as_deref())?;
+    let actor_ids = sub
+        .actor_ids
+        .iter()
+        .map(|value| normalise_identity_arg("--actor-id", Some(value)))
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+    if sub.target != "codex" && actor_ids.len() > 1 {
+        return Err(AideMemoError::InvalidInput(
+            "repeat --actor-id only with repeatable --codex-home profiles".to_string(),
+        ));
+    }
+    let actor_id = actor_ids.first().map(String::as_str);
+    let store_path = stable_store_path(store_path)?;
     let storage_backend = storage_backend.trim();
     let report = match sub.target.as_str() {
         "claude" | "claude-code" => install_via_cli(
             "claude",
-            claude_install_args(source_id.as_deref(), storage_backend),
-            sub.force,
-            sub.print,
-            sub.no_verify,
-            source_id.as_deref(),
-            storage_backend,
+            claude_install_args(source_id.as_deref(), actor_id, storage_backend, &store_path),
+            ShellInstallOptions {
+                print: sub.print,
+                no_verify: sub.no_verify,
+                source_id: source_id.as_deref(),
+                actor_id,
+                storage_backend,
+                store_path: &store_path,
+            },
         )?,
         "hermes" => install_via_cli(
             "hermes",
-            hermes_install_args(source_id.as_deref(), storage_backend),
-            sub.force,
-            sub.print,
-            sub.no_verify,
-            source_id.as_deref(),
-            storage_backend,
+            hermes_install_args(source_id.as_deref(), actor_id, storage_backend, &store_path),
+            ShellInstallOptions {
+                print: sub.print,
+                no_verify: sub.no_verify,
+                source_id: source_id.as_deref(),
+                actor_id,
+                storage_backend,
+                store_path: &store_path,
+            },
         )?,
         "openclaw" => install_via_cli(
             "openclaw",
-            openclaw_install_args(source_id.as_deref(), storage_backend),
+            openclaw_install_args(source_id.as_deref(), actor_id, storage_backend, &store_path),
+            ShellInstallOptions {
+                print: sub.print,
+                no_verify: sub.no_verify,
+                source_id: source_id.as_deref(),
+                actor_id,
+                storage_backend,
+                store_path: &store_path,
+            },
+        )?,
+        "codex" => install_codex(
             sub.force,
             sub.print,
-            sub.no_verify,
             source_id.as_deref(),
+            &actor_ids,
             storage_backend,
+            &store_path,
+            &sub.codex_homes,
         )?,
-        "codex" => install_codex(sub.force, sub.print, source_id.as_deref(), storage_backend)?,
-        "cursor" => install_cursor(sub.force, sub.print, source_id.as_deref(), storage_backend)?,
-        "opencode" => {
-            install_opencode(sub.force, sub.print, source_id.as_deref(), storage_backend)?
-        }
+        "cursor" => install_cursor(
+            sub.force,
+            sub.print,
+            source_id.as_deref(),
+            actor_id,
+            storage_backend,
+            &store_path,
+        )?,
+        "opencode" => install_opencode(
+            sub.force,
+            sub.print,
+            source_id.as_deref(),
+            actor_id,
+            storage_backend,
+            &store_path,
+        )?,
         "pi" => {
             return Err(AideMemoError::InvalidInput(
                 "pi has no MCP support by upstream design — pi rejects MCP \
@@ -272,15 +340,28 @@ pub fn run_mcp_install(
 // Shell-out targets (claude / hermes / openclaw)
 // ---------------------------------------------------------------------------
 
+struct ShellInstallOptions<'a> {
+    print: bool,
+    no_verify: bool,
+    source_id: Option<&'a str>,
+    actor_id: Option<&'a str>,
+    storage_backend: &'a str,
+    store_path: &'a Path,
+}
+
 fn install_via_cli(
     bin: &str,
     args: Vec<String>,
-    _force: bool,
-    print: bool,
-    no_verify: bool,
-    source_id: Option<&str>,
-    storage_backend: &str,
+    options: ShellInstallOptions<'_>,
 ) -> Result<InstallReport, AideMemoError> {
+    let ShellInstallOptions {
+        print,
+        no_verify,
+        source_id,
+        actor_id,
+        storage_backend,
+        store_path,
+    } = options;
     let cmdline = format!("{} {}", bin, args.join(" "));
     let target = bin.to_string();
 
@@ -291,7 +372,9 @@ fn install_via_cli(
             detail: cmdline,
             overwrote: false,
             source_id: source_id.map(str::to_string),
+            actor_id: actor_id.map(str::to_string),
             storage_backend: storage_backend.to_string(),
+            store_path: store_path.display().to_string(),
             verified: None,
         });
     }
@@ -333,71 +416,109 @@ fn install_via_cli(
         detail: cmdline,
         overwrote: false,
         source_id: source_id.map(str::to_string),
+        actor_id: actor_id.map(str::to_string),
         storage_backend: storage_backend.to_string(),
+        store_path: store_path.display().to_string(),
         verified,
     })
 }
 
-fn normalise_source_id_arg(source_id: Option<&str>) -> Result<Option<String>, AideMemoError> {
-    let Some(source_id) = source_id.map(str::trim) else {
+fn normalise_identity_arg(
+    flag: &str,
+    value: Option<&str>,
+) -> Result<Option<String>, AideMemoError> {
+    let Some(value) = value.map(str::trim) else {
         return Ok(None);
     };
-    if source_id.is_empty() {
-        return Err(AideMemoError::InvalidInput(
-            "--source-id must not be empty".to_string(),
-        ));
+    if value.is_empty() {
+        return Err(AideMemoError::InvalidInput(format!(
+            "{flag} must not be empty"
+        )));
     }
-    Ok(Some(source_id.to_string()))
+    Ok(Some(value.to_string()))
 }
 
-fn env_pair(source_id: &str) -> String {
-    format!("AIDEMEMO_SOURCE_ID={source_id}")
+fn stable_store_path(path: &Path) -> Result<PathBuf, AideMemoError> {
+    if path.is_absolute() {
+        return Ok(path.to_path_buf());
+    }
+    std::env::current_dir()
+        .map(|cwd| cwd.join(path))
+        .map_err(|e| AideMemoError::Internal(format!("resolve store path: {e}")))
 }
 
-fn aidememo_mcp_args(storage_backend: &str) -> Vec<String> {
+fn agent_env(source_id: Option<&str>, actor_id: Option<&str>) -> Vec<(String, String)> {
+    let mut env = Vec::new();
+    if let Some(source_id) = source_id {
+        env.push(("AIDEMEMO_SOURCE_ID".to_string(), source_id.to_string()));
+    }
+    if let Some(actor_id) = actor_id {
+        env.push(("AIDEMEMO_ACTOR_ID".to_string(), actor_id.to_string()));
+    }
+    env
+}
+
+fn aidememo_mcp_args(storage_backend: &str, store_path: &Path) -> Vec<String> {
     vec![
         "--backend".to_string(),
         storage_backend.to_string(),
+        "--store".to_string(),
+        store_path.display().to_string(),
         "mcp".to_string(),
     ]
 }
 
-fn claude_install_args(source_id: Option<&str>, storage_backend: &str) -> Vec<String> {
+fn claude_install_args(
+    source_id: Option<&str>,
+    actor_id: Option<&str>,
+    storage_backend: &str,
+    store_path: &Path,
+) -> Vec<String> {
     let mut args = vec!["mcp".to_string(), "add".to_string()];
-    if let Some(source_id) = source_id {
+    for (key, value) in agent_env(source_id, actor_id) {
         args.push("-e".to_string());
-        args.push(env_pair(source_id));
+        args.push(format!("{key}={value}"));
     }
     args.extend(["aidememo", "--", "aidememo"].into_iter().map(String::from));
-    args.extend(aidememo_mcp_args(storage_backend));
+    args.extend(aidememo_mcp_args(storage_backend, store_path));
     args
 }
 
-fn hermes_install_args(source_id: Option<&str>, storage_backend: &str) -> Vec<String> {
+fn hermes_install_args(
+    source_id: Option<&str>,
+    actor_id: Option<&str>,
+    storage_backend: &str,
+    store_path: &Path,
+) -> Vec<String> {
     let mut args: Vec<String> = ["mcp", "add", "aidememo", "--command", "aidememo"]
         .into_iter()
         .map(String::from)
         .collect();
-    for arg in aidememo_mcp_args(storage_backend) {
+    for arg in aidememo_mcp_args(storage_backend, store_path) {
         args.push(format!("--args={arg}"));
     }
-    if let Some(source_id) = source_id {
+    for (key, value) in agent_env(source_id, actor_id) {
         args.push("--env".to_string());
-        args.push(env_pair(source_id));
+        args.push(format!("{key}={value}"));
     }
     args
 }
 
-fn openclaw_install_args(source_id: Option<&str>, storage_backend: &str) -> Vec<String> {
-    let aidememo_args = aidememo_mcp_args(storage_backend);
-    let payload = match source_id {
-        Some(source_id) => serde_json::json!({
-            "command": "aidememo",
-            "args": aidememo_args,
-            "env": {"AIDEMEMO_SOURCE_ID": source_id},
-        }),
-        None => serde_json::json!({"command": "aidememo", "args": aidememo_args}),
-    };
+fn openclaw_install_args(
+    source_id: Option<&str>,
+    actor_id: Option<&str>,
+    storage_backend: &str,
+    store_path: &Path,
+) -> Vec<String> {
+    let aidememo_args = aidememo_mcp_args(storage_backend, store_path);
+    let env: serde_json::Map<String, serde_json::Value> = agent_env(source_id, actor_id)
+        .into_iter()
+        .map(|(key, value)| (key, serde_json::Value::String(value)))
+        .collect();
+    let mut payload = serde_json::json!({"command": "aidememo", "args": aidememo_args});
+    if !env.is_empty() {
+        payload["env"] = serde_json::Value::Object(env);
+    }
     vec![
         "mcp".to_string(),
         "set".to_string(),
@@ -433,29 +554,77 @@ fn stdout_contains_token(stdout: &str, token: &str) -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// Codex — edit ~/.codex/config.toml
+// Codex — edit the active CODEX_HOME/config.toml (or explicit profiles)
 // ---------------------------------------------------------------------------
 
 pub(crate) fn codex_config_path() -> Result<PathBuf, AideMemoError> {
-    let home = dirs::home_dir()
-        .ok_or_else(|| AideMemoError::Internal("could not resolve $HOME".to_string()))?;
-    Ok(home.join(".codex/config.toml"))
+    codex_config_path_for(None)
+}
+
+fn codex_config_path_for(codex_home: Option<&Path>) -> Result<PathBuf, AideMemoError> {
+    let root = if let Some(path) = codex_home {
+        path.to_path_buf()
+    } else if let Some(path) = std::env::var_os("CODEX_HOME").filter(|v| !v.is_empty()) {
+        PathBuf::from(path)
+    } else {
+        dirs::home_dir()
+            .ok_or_else(|| AideMemoError::Internal("could not resolve $HOME".to_string()))?
+            .join(".codex")
+    };
+    Ok(root.join("config.toml"))
 }
 
 fn install_codex(
     force: bool,
     print: bool,
     source_id: Option<&str>,
+    actor_ids: &[String],
     storage_backend: &str,
+    store_path: &Path,
+    codex_homes: &[PathBuf],
 ) -> Result<InstallReport, AideMemoError> {
-    let path = codex_config_path()?;
+    let paths = if codex_homes.is_empty() {
+        vec![codex_config_path()?]
+    } else {
+        codex_homes
+            .iter()
+            .map(|home| codex_config_path_for(Some(home)))
+            .collect::<Result<Vec<_>, _>>()?
+    };
+    if actor_ids.len() > 1 && actor_ids.len() != paths.len() {
+        return Err(AideMemoError::InvalidInput(format!(
+            "received {} --actor-id values for {} Codex profiles; pass one shared actor id or one per --codex-home",
+            actor_ids.len(),
+            paths.len()
+        )));
+    }
+    let actor_for = |index: usize| {
+        if actor_ids.len() == 1 {
+            actor_ids.first().map(String::as_str)
+        } else {
+            actor_ids.get(index).map(String::as_str)
+        }
+    };
+    let report_actor_id = if actor_ids.is_empty() {
+        None
+    } else {
+        Some(actor_ids.join(","))
+    };
+    let joined_paths = paths
+        .iter()
+        .map(|path| path.display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
     let mut detail = format!(
-        "{} ([mcp_servers.aidememo] command=aidememo args=[\"--backend\",\"{}\",\"mcp\"])",
-        path.display(),
-        storage_backend
+        "{} ([mcp_servers.aidememo] store={})",
+        joined_paths,
+        store_path.display()
     );
     if let Some(source_id) = source_id {
         detail.push_str(&format!(" env.AIDEMEMO_SOURCE_ID={source_id}"));
+    }
+    if let Some(actor_ids) = &report_actor_id {
+        detail.push_str(&format!(" actor_ids={actor_ids}"));
     }
 
     if print {
@@ -465,70 +634,76 @@ fn install_codex(
             detail,
             overwrote: false,
             source_id: source_id.map(str::to_string),
+            actor_id: report_actor_id,
             storage_backend: storage_backend.to_string(),
+            store_path: store_path.display().to_string(),
             verified: None,
         });
     }
 
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| AideMemoError::Internal(format!("create {}: {e}", parent.display())))?;
-    }
+    let mut overwrote = false;
+    for (index, path) in paths.iter().enumerate() {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| {
+                AideMemoError::Internal(format!("create {}: {e}", parent.display()))
+            })?;
+        }
 
-    let existing = std::fs::read_to_string(&path).unwrap_or_default();
-    let mut doc: toml::Value = if existing.trim().is_empty() {
-        toml::Value::Table(toml::value::Table::new())
-    } else {
-        existing
-            .parse::<toml::Value>()
-            .map_err(|e| AideMemoError::Internal(format!("parse {}: {e}", path.display())))?
-    };
+        let existing = std::fs::read_to_string(path).unwrap_or_default();
+        let mut doc: toml::Value = if existing.trim().is_empty() {
+            toml::Value::Table(toml::value::Table::new())
+        } else {
+            existing
+                .parse::<toml::Value>()
+                .map_err(|e| AideMemoError::Internal(format!("parse {}: {e}", path.display())))?
+        };
 
-    let table = doc.as_table_mut().ok_or_else(|| {
-        AideMemoError::Internal(format!("{} is not a TOML table", path.display()))
-    })?;
-    let servers = table
-        .entry("mcp_servers".to_string())
-        .or_insert_with(|| toml::Value::Table(toml::value::Table::new()));
-    let servers_table = servers
-        .as_table_mut()
-        .ok_or_else(|| AideMemoError::Internal("mcp_servers must be a TOML table".to_string()))?;
+        let table = doc.as_table_mut().ok_or_else(|| {
+            AideMemoError::Internal(format!("{} is not a TOML table", path.display()))
+        })?;
+        let servers = table
+            .entry("mcp_servers".to_string())
+            .or_insert_with(|| toml::Value::Table(toml::value::Table::new()));
+        let servers_table = servers.as_table_mut().ok_or_else(|| {
+            AideMemoError::Internal("mcp_servers must be a TOML table".to_string())
+        })?;
 
-    let already = servers_table.contains_key("aidememo");
-    if already && !force {
-        return Err(AideMemoError::InvalidInput(format!(
-            "[mcp_servers.aidememo] already exists in {} — pass --force to overwrite",
-            path.display()
-        )));
-    }
+        let already = servers_table.contains_key("aidememo");
+        if already && !force {
+            return Err(AideMemoError::InvalidInput(format!(
+                "[mcp_servers.aidememo] already exists in {} — pass --force to overwrite",
+                path.display()
+            )));
+        }
+        overwrote |= already;
 
-    let mut aidememo_entry = toml::value::Table::new();
-    aidememo_entry.insert(
-        "command".to_string(),
-        toml::Value::String("aidememo".to_string()),
-    );
-    aidememo_entry.insert(
-        "args".to_string(),
-        toml::Value::Array(
-            aidememo_mcp_args(storage_backend)
-                .into_iter()
-                .map(toml::Value::String)
-                .collect(),
-        ),
-    );
-    if let Some(source_id) = source_id {
-        let mut env = toml::value::Table::new();
-        env.insert(
-            "AIDEMEMO_SOURCE_ID".to_string(),
-            toml::Value::String(source_id.to_string()),
+        let mut aidememo_entry = toml::value::Table::new();
+        aidememo_entry.insert(
+            "command".to_string(),
+            toml::Value::String("aidememo".to_string()),
         );
-        aidememo_entry.insert("env".to_string(), toml::Value::Table(env));
-    }
-    servers_table.insert("aidememo".to_string(), toml::Value::Table(aidememo_entry));
+        aidememo_entry.insert(
+            "args".to_string(),
+            toml::Value::Array(
+                aidememo_mcp_args(storage_backend, store_path)
+                    .into_iter()
+                    .map(toml::Value::String)
+                    .collect(),
+            ),
+        );
+        let mut env = toml::value::Table::new();
+        for (key, value) in agent_env(source_id, actor_for(index)) {
+            env.insert(key, toml::Value::String(value));
+        }
+        if !env.is_empty() {
+            aidememo_entry.insert("env".to_string(), toml::Value::Table(env));
+        }
+        servers_table.insert("aidememo".to_string(), toml::Value::Table(aidememo_entry));
 
-    let serialized = toml::to_string_pretty(&doc)
-        .map_err(|e| AideMemoError::Internal(format!("serialize codex config: {e}")))?;
-    write_atomically(&path, &serialized)?;
+        let serialized = toml::to_string_pretty(&doc)
+            .map_err(|e| AideMemoError::Internal(format!("serialize codex config: {e}")))?;
+        write_atomically(path, &serialized)?;
+    }
 
     // File-edit is its own verification: we just parsed the file we
     // wrote, so we know the entry is there. Mark verified true so
@@ -537,9 +712,11 @@ fn install_codex(
         target: "codex".to_string(),
         method: "file-edit".to_string(),
         detail,
-        overwrote: already,
+        overwrote,
         source_id: source_id.map(str::to_string),
+        actor_id: report_actor_id,
         storage_backend: storage_backend.to_string(),
+        store_path: store_path.display().to_string(),
         verified: Some(true),
     })
 }
@@ -560,12 +737,17 @@ fn install_opencode(
     force: bool,
     print: bool,
     source_id: Option<&str>,
+    actor_id: Option<&str>,
     storage_backend: &str,
+    store_path: &Path,
 ) -> Result<InstallReport, AideMemoError> {
     let path = opencode_config_path()?;
     let mut detail = format!("{} (mcp.aidememo)", path.display());
     if let Some(source_id) = source_id {
         detail.push_str(&format!(" env.AIDEMEMO_SOURCE_ID={source_id}"));
+    }
+    if let Some(actor_id) = actor_id {
+        detail.push_str(&format!(" env.AIDEMEMO_ACTOR_ID={actor_id}"));
     }
 
     if print {
@@ -575,7 +757,9 @@ fn install_opencode(
             detail,
             overwrote: false,
             source_id: source_id.map(str::to_string),
+            actor_id: actor_id.map(str::to_string),
             storage_backend: storage_backend.to_string(),
+            store_path: store_path.display().to_string(),
             verified: None,
         });
     }
@@ -616,14 +800,18 @@ fn install_opencode(
         )));
     }
     let mut command = vec!["aidememo".to_string()];
-    command.extend(aidememo_mcp_args(storage_backend));
+    command.extend(aidememo_mcp_args(storage_backend, store_path));
     let mut aidememo_entry = serde_json::json!({
             "type": "local",
             "command": command,
             "enabled": true,
     });
-    if let Some(source_id) = source_id {
-        aidememo_entry["env"] = serde_json::json!({"AIDEMEMO_SOURCE_ID": source_id});
+    let env: serde_json::Map<String, serde_json::Value> = agent_env(source_id, actor_id)
+        .into_iter()
+        .map(|(key, value)| (key, serde_json::Value::String(value)))
+        .collect();
+    if !env.is_empty() {
+        aidememo_entry["env"] = serde_json::Value::Object(env);
     }
     servers_obj.insert("aidememo".to_string(), aidememo_entry);
 
@@ -637,7 +825,9 @@ fn install_opencode(
         detail,
         overwrote: already,
         source_id: source_id.map(str::to_string),
+        actor_id: actor_id.map(str::to_string),
         storage_backend: storage_backend.to_string(),
+        store_path: store_path.display().to_string(),
         verified: Some(true),
     })
 }
@@ -652,12 +842,17 @@ fn install_cursor(
     force: bool,
     print: bool,
     source_id: Option<&str>,
+    actor_id: Option<&str>,
     storage_backend: &str,
+    store_path: &Path,
 ) -> Result<InstallReport, AideMemoError> {
     let path = cursor_config_path()?;
     let mut detail = format!("{} (mcpServers.aidememo)", path.display());
     if let Some(source_id) = source_id {
         detail.push_str(&format!(" env.AIDEMEMO_SOURCE_ID={source_id}"));
+    }
+    if let Some(actor_id) = actor_id {
+        detail.push_str(&format!(" env.AIDEMEMO_ACTOR_ID={actor_id}"));
     }
 
     if print {
@@ -667,7 +862,9 @@ fn install_cursor(
             detail,
             overwrote: false,
             source_id: source_id.map(str::to_string),
+            actor_id: actor_id.map(str::to_string),
             storage_backend: storage_backend.to_string(),
+            store_path: store_path.display().to_string(),
             verified: None,
         });
     }
@@ -702,10 +899,16 @@ fn install_cursor(
             path.display()
         )));
     }
-    let mut aidememo_entry =
-        serde_json::json!({"command": "aidememo", "args": aidememo_mcp_args(storage_backend)});
-    if let Some(source_id) = source_id {
-        aidememo_entry["env"] = serde_json::json!({"AIDEMEMO_SOURCE_ID": source_id});
+    let mut aidememo_entry = serde_json::json!({
+        "command": "aidememo",
+        "args": aidememo_mcp_args(storage_backend, store_path)
+    });
+    let env: serde_json::Map<String, serde_json::Value> = agent_env(source_id, actor_id)
+        .into_iter()
+        .map(|(key, value)| (key, serde_json::Value::String(value)))
+        .collect();
+    if !env.is_empty() {
+        aidememo_entry["env"] = serde_json::Value::Object(env);
     }
     servers_obj.insert("aidememo".to_string(), aidememo_entry);
 
@@ -719,7 +922,9 @@ fn install_cursor(
         detail,
         overwrote: already,
         source_id: source_id.map(str::to_string),
+        actor_id: actor_id.map(str::to_string),
         storage_backend: storage_backend.to_string(),
+        store_path: store_path.display().to_string(),
         verified: Some(true),
     })
 }
@@ -747,19 +952,23 @@ mod tests {
 
     #[test]
     fn print_mode_for_claude_returns_command() {
+        let store = Path::new("/tmp/aidememo-test.sqlite");
         let report = install_via_cli(
             "claude",
-            claude_install_args(None, "libsqlite"),
-            false,
-            true,
-            false,
-            None,
-            "libsqlite",
+            claude_install_args(None, None, "libsqlite", store),
+            ShellInstallOptions {
+                print: true,
+                no_verify: false,
+                source_id: None,
+                actor_id: None,
+                storage_backend: "libsqlite",
+                store_path: store,
+            },
         )
         .unwrap();
         assert_eq!(report.target, "claude");
         assert!(report.detail.contains("mcp add aidememo"));
-        assert!(report.detail.contains("--backend libsqlite mcp"));
+        assert!(report.detail.contains("--backend libsqlite --store"));
         assert_eq!(report.storage_backend, "libsqlite");
         assert!(!report.overwrote);
     }
@@ -773,8 +982,16 @@ mod tests {
             list_targets: false,
             no_verify: false,
             source_id: None,
+            actor_ids: Vec::new(),
+            codex_homes: Vec::new(),
         };
-        let err = run_mcp_install(sub, false, "libsqlite").unwrap_err();
+        let err = run_mcp_install(
+            sub,
+            false,
+            "libsqlite",
+            Path::new("/tmp/aidememo-test.sqlite"),
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("unknown target"));
     }
 
@@ -788,8 +1005,19 @@ mod tests {
         // through to `true mcp list` which would also be `None` but
         // for a different reason. The contract we care about is:
         // `no_verify=true` short-circuits the call.
-        let report =
-            install_via_cli("true", Vec::new(), false, false, true, None, "libsqlite").unwrap();
+        let report = install_via_cli(
+            "true",
+            Vec::new(),
+            ShellInstallOptions {
+                print: false,
+                no_verify: true,
+                source_id: None,
+                actor_id: None,
+                storage_backend: "libsqlite",
+                store_path: Path::new("/tmp/aidememo-test.sqlite"),
+            },
+        )
+        .unwrap();
         assert_eq!(report.verified, None);
     }
 
@@ -845,6 +1073,55 @@ mod tests {
             parsed["mcp_servers"]["aidememo"]["env"]["AIDEMEMO_SOURCE_ID"].as_str(),
             Some("project-alpha")
         );
+    }
+
+    #[test]
+    fn codex_installs_same_store_into_multiple_profile_homes() {
+        let dir = tempfile::tempdir().unwrap();
+        let profile_a = dir.path().join("codex-a");
+        let profile_b = dir.path().join("codex-b");
+        let store = dir.path().join("shared.sqlite");
+        let report = install_codex(
+            false,
+            false,
+            Some("project:aidememo"),
+            &["codex:account-a".to_string(), "codex:account-b".to_string()],
+            "libsqlite",
+            &store,
+            &[profile_a.clone(), profile_b.clone()],
+        )
+        .unwrap();
+        assert!(report.detail.contains("codex-a/config.toml"));
+        assert!(report.detail.contains("codex-b/config.toml"));
+        for (profile, actor_id) in [
+            (profile_a, "codex:account-a"),
+            (profile_b, "codex:account-b"),
+        ] {
+            let body = std::fs::read_to_string(profile.join("config.toml")).unwrap();
+            let parsed: toml::Value = body.parse().unwrap();
+            let entry = &parsed["mcp_servers"]["aidememo"];
+            let args = entry["args"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(toml::Value::as_str)
+                .collect::<Vec<_>>();
+            assert_eq!(
+                args,
+                vec![
+                    "--backend",
+                    "libsqlite",
+                    "--store",
+                    store.to_str().unwrap(),
+                    "mcp"
+                ]
+            );
+            assert_eq!(
+                entry["env"]["AIDEMEMO_SOURCE_ID"].as_str(),
+                Some("project:aidememo")
+            );
+            assert_eq!(entry["env"]["AIDEMEMO_ACTOR_ID"].as_str(), Some(actor_id));
+        }
     }
 
     #[test]
@@ -924,7 +1201,9 @@ mod tests {
             false,
             /*print*/ true,
             Some("project-alpha"),
+            Some("codex:account-a"),
             "libsqlite",
+            Path::new("/tmp/aidememo-test.sqlite"),
         )
         .unwrap();
         assert_eq!(report.target, "opencode");
@@ -937,30 +1216,41 @@ mod tests {
 
     #[test]
     fn shell_install_args_include_source_id_env() {
+        let store = Path::new("/tmp/aidememo-test.sqlite");
         assert_eq!(
-            claude_install_args(Some("project-alpha"), "libsqlite"),
+            claude_install_args(
+                Some("project-alpha"),
+                Some("codex:account-a"),
+                "libsqlite",
+                store,
+            ),
             vec![
                 "mcp",
                 "add",
                 "-e",
                 "AIDEMEMO_SOURCE_ID=project-alpha",
+                "-e",
+                "AIDEMEMO_ACTOR_ID=codex:account-a",
                 "aidememo",
                 "--",
                 "aidememo",
                 "--backend",
                 "libsqlite",
+                "--store",
+                "/tmp/aidememo-test.sqlite",
                 "mcp"
             ]
         );
         assert!(
-            hermes_install_args(Some("project-alpha"), "libsqlite")
+            hermes_install_args(Some("project-alpha"), None, "libsqlite", store)
                 .contains(&"AIDEMEMO_SOURCE_ID=project-alpha".to_string())
         );
         assert!(
-            hermes_install_args(Some("project-alpha"), "libsqlite")
+            hermes_install_args(Some("project-alpha"), None, "libsqlite", store)
                 .contains(&"--args=--backend".to_string())
         );
-        let openclaw_payload = &openclaw_install_args(Some("project-alpha"), "libsqlite")[3];
+        let openclaw_payload =
+            &openclaw_install_args(Some("project-alpha"), None, "libsqlite", store)[3];
         assert!(openclaw_payload.contains("AIDEMEMO_SOURCE_ID"));
         assert!(openclaw_payload.contains("--backend"));
         assert!(openclaw_payload.contains("libsqlite"));

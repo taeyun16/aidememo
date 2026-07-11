@@ -51,8 +51,12 @@ aidememo fact add \
   "Decision: Billing webhook retries must use idempotency keys." \
   --type decision \
   --entities Billing,Webhook \
-  --source-id team-a
+  --source-id team-a \
+  --actor-id codex:account-a
 ```
+
+Keep `--source-id` as the shared project or tenant namespace. Use `--actor-id`
+for the profile or agent that authored the fact.
 
 Choose fact types intentionally:
 
@@ -74,6 +78,10 @@ aidememo workflow start "Stop duplicate billing webhook processing" \
   --source "linear:ENG-456" \
   --source-id team-a
 ```
+
+To continue a prior tracked workflow while preserving lineage, pass
+`--parent-session <session-id>`. AideMemo records a `continued_from` relation
+instead of copying the full chat transcript.
 
 For deterministic demos, hooks, and CI checks, skip semantic model loading:
 

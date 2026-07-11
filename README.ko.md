@@ -64,9 +64,12 @@ flowchart LR
 | 벡터 재현 이상의 기능 | 타입 있는 팩트, 엔티티, 관계, 그래프 탐색, 시간 유효성, 집계. |
 | 에이전트 네이티브 접근 | 코드 우선 조합용 SDK, 모델이 볼 수 있는 stdio/HTTP MCP, 사람을 위한 간결한 CLI. |
 | 팀/프로젝트 공유 메모리 | 선택형 `source_id` 범위, 멀티 프로젝트 저장소, 공유 쓰기를 위한 데몬 경로. |
+| 여러 Codex 계정 | 하나의 저장소를 여러 `CODEX_HOME` 프로필에 고정하고, `actor_id` provenance와 재개한 workflow session lineage를 유지하면서 로그인 상태는 공유하지 않습니다. |
 | 도구 빌더용 임베딩 | Python, Node, Elixir, C 바인딩이 동일한 Rust 코어를 인프로세스로 호출합니다. |
 
 ## 설치
+
+대표 사용 사례: [격리된 Codex 프로필이 하나의 프로젝트 메모리 공유](docs/CODEX_MULTI_PROFILE.md).
 
 ```bash
 # 한 줄 설치 프로그램

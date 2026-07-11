@@ -168,14 +168,17 @@ aidememo query "release train" --source-id team-a
 MCP 설치:
 
 ```bash
-aidememo --backend libsqlite mcp-install --target codex --source-id team-a
+aidememo --backend libsqlite --store ~/.aidememo/team.sqlite \
+  mcp-install --target codex --source-id team-a
 ```
 
 ## 로컬 저장소 쓰기 경합 방지
 
-기본 SQLite 백엔드는 짧은 쓰기 충돌의 busy timeout으로
-`store.lock_retry_ms`를 사용합니다. 선택형 redb 백엔드도 다른 프로세스가
-redb의 독점 파일 lock을 가진 경우 같은 설정으로 저장소 열기를 재시도합니다.
+기본 SQLite 백엔드는 WAL mode를 사용하고 `BEGIN IMMEDIATE`로 쓰기를 시작합니다.
+각 SQLite busy wait은 최대 1초로 제한하며, 전체 `store.lock_retry_ms` budget이
+소진될 때까지 20–150 ms jitter를 두고 충돌을 재시도합니다. 선택형 redb
+백엔드도 다른 프로세스가 redb의 독점 파일 lock을 가진 경우 같은 전체
+budget으로 저장소 열기를 재시도합니다.
 
 공유 쓰기에는 하나의 daemon을 실행합니다.
 

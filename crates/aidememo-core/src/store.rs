@@ -1108,6 +1108,9 @@ impl Store {
             if let Some(source_id) = input.source_id {
                 record.source_id = Some(source_id);
             }
+            if let Some(actor_id) = input.actor_id {
+                record.actor_id = Some(actor_id);
+            }
             if let Some(confidence) = input.source_confidence {
                 record.source_confidence = confidence;
             }
@@ -2540,6 +2543,7 @@ mod tests {
                 tags: Some(vec!["ha".to_string()]),
                 source: Some("entities/redis.md#ha".to_string()),
                 source_id: None,
+                actor_id: None,
                 source_confidence: Some(0.8),
                 observed_at: None,
             })
@@ -2564,6 +2568,7 @@ mod tests {
                     tags: None,
                     source: None,
                     source_id: None,
+                    actor_id: None,
                     observed_at: None,
                     superseded_at: None,
                     superseded_by: None,
@@ -3053,6 +3058,7 @@ mod tests {
             tags: None,
             source: None,
             source_id: None,
+            actor_id: None,
             source_confidence: Some(0.5),
             observed_at,
         };

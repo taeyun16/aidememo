@@ -28,6 +28,7 @@ fn run(args: &[&str]) -> std::process::Output {
 fn run_with_home(home: &Path, args: &[&str]) -> std::process::Output {
     Command::new(aidememo_bin())
         .env_remove("AIDEMEMO_STORE")
+        .env_remove("CODEX_HOME")
         .env("HOME", home)
         .args(args)
         .output()
@@ -182,10 +183,67 @@ fn mcp_install_codex_writes_fresh_config() {
     let aidememo = &parsed["mcp_servers"]["aidememo"];
     assert_eq!(aidememo["command"].as_str(), Some("aidememo"));
     let args = aidememo["args"].as_array().unwrap();
-    assert_eq!(args.len(), 3);
+    assert_eq!(args.len(), 5);
     assert_eq!(args[0].as_str(), Some("--backend"));
     assert_eq!(args[1].as_str(), Some("sqlite"));
-    assert_eq!(args[2].as_str(), Some("mcp"));
+    assert_eq!(args[2].as_str(), Some("--store"));
+    assert!(
+        args[3]
+            .as_str()
+            .is_some_and(|path| path.ends_with("/_meta/wiki.sqlite"))
+    );
+    assert_eq!(args[4].as_str(), Some("mcp"));
+}
+
+#[test]
+fn mcp_install_codex_multi_profile_pins_shared_store_and_distinct_actors() {
+    let home = tempfile::tempdir().unwrap();
+    let profile_a = home.path().join("codex-a");
+    let profile_b = home.path().join("codex-b");
+    let store = home.path().join("shared.sqlite");
+    let out = run_with_home(
+        home.path(),
+        &[
+            "--store",
+            store.to_str().unwrap(),
+            "mcp-install",
+            "--target",
+            "codex",
+            "--codex-home",
+            profile_a.to_str().unwrap(),
+            "--actor-id",
+            "codex:account-a",
+            "--codex-home",
+            profile_b.to_str().unwrap(),
+            "--actor-id",
+            "codex:account-b",
+            "--source-id",
+            "project:aidememo",
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    for (profile, actor_id) in [
+        (profile_a, "codex:account-a"),
+        (profile_b, "codex:account-b"),
+    ] {
+        let parsed: toml::Value = std::fs::read_to_string(profile.join("config.toml"))
+            .unwrap()
+            .parse()
+            .unwrap();
+        let entry = &parsed["mcp_servers"]["aidememo"];
+        let args = entry["args"].as_array().unwrap();
+        assert_eq!(args[3].as_str(), store.to_str());
+        assert_eq!(
+            entry["env"]["AIDEMEMO_SOURCE_ID"].as_str(),
+            Some("project:aidememo")
+        );
+        assert_eq!(entry["env"]["AIDEMEMO_ACTOR_ID"].as_str(), Some(actor_id));
+    }
 }
 
 #[test]
@@ -373,10 +431,17 @@ fn mcp_install_cursor_writes_fresh_config() {
     let body = std::fs::read_to_string(&cfg_path).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
     assert_eq!(parsed["mcpServers"]["aidememo"]["command"], "aidememo");
-    assert_eq!(
-        parsed["mcpServers"]["aidememo"]["args"],
-        serde_json::json!(["--backend", "sqlite", "mcp"])
+    let args = parsed["mcpServers"]["aidememo"]["args"].as_array().unwrap();
+    assert_eq!(args.len(), 5);
+    assert_eq!(args[0], "--backend");
+    assert_eq!(args[1], "sqlite");
+    assert_eq!(args[2], "--store");
+    assert!(
+        args[3]
+            .as_str()
+            .is_some_and(|path| path.ends_with("/_meta/wiki.sqlite"))
     );
+    assert_eq!(args[4], "mcp");
 }
 
 #[test]
@@ -490,6 +555,7 @@ fn mcp_install_print_mode_does_not_show_verified() {
 fn doctor_json(home: &Path, store_path: &Path) -> serde_json::Value {
     let out = Command::new(aidememo_bin())
         .env_remove("AIDEMEMO_STORE")
+        .env_remove("CODEX_HOME")
         .env("HOME", home)
         .env("PATH", "/nonexistent")
         .args(["--json", "--store", store_path.to_str().unwrap(), "doctor"])
@@ -580,6 +646,7 @@ fn doctor_detects_skill_installation() {
     // Use --dest so the test isn't sensitive to where dirs::home_dir
     // resolves on the CI runner.
     let installed = Command::new(aidememo_bin())
+        .env_remove("CODEX_HOME")
         .env("HOME", home.path())
         .args([
             "skill",
@@ -620,6 +687,7 @@ fn doctor_fix_lists_install_commands_for_gaps() {
 
     let out = Command::new(aidememo_bin())
         .env_remove("AIDEMEMO_STORE")
+        .env_remove("CODEX_HOME")
         .env("HOME", home.path())
         .env("PATH", "/nonexistent")
         .args(["--store", store.to_str().unwrap(), "doctor", "--fix"])
@@ -653,6 +721,7 @@ fn doctor_without_fix_emits_tip_when_gaps_present() {
     let store = home.path().join("wiki.sqlite");
     let out = Command::new(aidememo_bin())
         .env_remove("AIDEMEMO_STORE")
+        .env_remove("CODEX_HOME")
         .env("HOME", home.path())
         .env("PATH", "/nonexistent")
         .args(["--store", store.to_str().unwrap(), "doctor"])
@@ -775,6 +844,7 @@ fn doctor_fix_shell_emits_only_commands_one_per_line() {
 
     let out = Command::new(aidememo_bin())
         .env_remove("AIDEMEMO_STORE")
+        .env_remove("CODEX_HOME")
         .env("HOME", home.path())
         .env("PATH", "/nonexistent")
         .args([
@@ -813,6 +883,7 @@ fn doctor_fix_shell_emits_only_commands_one_per_line() {
     // would suggest, just stripped of decoration.
     let plain = Command::new(aidememo_bin())
         .env_remove("AIDEMEMO_STORE")
+        .env_remove("CODEX_HOME")
         .env("HOME", home.path())
         .env("PATH", "/nonexistent")
         .args(["--store", store.to_str().unwrap(), "doctor", "--fix"])
@@ -834,6 +905,7 @@ fn doctor_human_output_includes_agent_section() {
     let store = home.path().join("wiki.sqlite");
     let out = Command::new(aidememo_bin())
         .env_remove("AIDEMEMO_STORE")
+        .env_remove("CODEX_HOME")
         .env("HOME", home.path())
         .env("PATH", "/nonexistent")
         .args(["--store", store.to_str().unwrap(), "doctor"])

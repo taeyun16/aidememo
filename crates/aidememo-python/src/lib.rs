@@ -202,6 +202,7 @@ fn fact_input_from_dict(
         tags: dict_opt::<Vec<String>>(item, "tags")?,
         source: dict_opt::<String>(item, "source")?,
         source_id: dict_opt::<String>(item, "source_id")?,
+        actor_id: dict_opt::<String>(item, "actor_id")?,
         source_confidence: dict_opt::<f32>(item, "confidence")?,
         observed_at: None,
     })
@@ -327,7 +328,7 @@ impl PyAideMemo {
     }
 
     /// Start a workflow from a sparse issue/ticket and return the context pack.
-    #[pyo3(signature = (title, body=None, source=None, source_id=None, limit=8, depth=2, recent_limit=5, bm25_only=false))]
+    #[pyo3(signature = (title, body=None, source=None, source_id=None, actor_id=None, parent_session_id=None, limit=8, depth=2, recent_limit=5, bm25_only=false))]
     #[allow(clippy::too_many_arguments)]
     fn workflow_start(
         &self,
@@ -336,6 +337,8 @@ impl PyAideMemo {
         body: Option<String>,
         source: Option<String>,
         source_id: Option<String>,
+        actor_id: Option<String>,
+        parent_session_id: Option<String>,
         limit: usize,
         depth: u32,
         recent_limit: usize,
@@ -349,6 +352,8 @@ impl PyAideMemo {
                     body,
                     source,
                     source_id,
+                    actor_id,
+                    parent_session_id,
                     limit,
                     depth,
                     recent_limit,
@@ -454,7 +459,7 @@ impl PyAideMemo {
 
     /// Add a fact. `entity_ids` are ULIDs (use `resolve_entity` to convert names).
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (content, entity_ids=None, fact_type=None, tags=None, source=None, confidence=None, source_id=None, session_id=None))]
+    #[pyo3(signature = (content, entity_ids=None, fact_type=None, tags=None, source=None, confidence=None, source_id=None, actor_id=None, session_id=None))]
     fn fact_add(
         &self,
         content: String,
@@ -464,6 +469,7 @@ impl PyAideMemo {
         source: Option<String>,
         confidence: Option<f32>,
         source_id: Option<String>,
+        actor_id: Option<String>,
         session_id: Option<String>,
     ) -> PyResult<String> {
         let mut ids = match entity_ids {
@@ -482,6 +488,7 @@ impl PyAideMemo {
             tags,
             source,
             source_id,
+            actor_id,
             source_confidence: confidence,
             observed_at: None,
         };

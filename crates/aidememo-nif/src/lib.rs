@@ -337,6 +337,7 @@ fn fact_add(
         tags: opt_vec(tags),
         source: opt_str(source),
         source_id: None,
+        actor_id: None,
         source_confidence: if confidence > 0.0 {
             Some(confidence)
         } else {
@@ -389,6 +390,7 @@ fn fact_add_many(
             tags: opt_vec(item.tags),
             source: opt_str(item.source),
             source_id: None,
+            actor_id: None,
             source_confidence: if item.confidence > 0.0 {
                 Some(item.confidence)
             } else {

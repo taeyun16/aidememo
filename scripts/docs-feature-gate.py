@@ -18,6 +18,7 @@ COMPARE = ROOT / "COMPARE.md"
 FEATURES_DOC = ROOT / "docs" / "FEATURES.md"
 ARCHITECTURE_DOC = ROOT / "docs" / "ARCHITECTURE.md"
 AGENT_WORKFLOWS_DOC = ROOT / "docs" / "AGENT_WORKFLOWS.md"
+CODEX_MULTI_PROFILE_DOC = ROOT / "docs" / "CODEX_MULTI_PROFILE.md"
 INSTALLATION_DOC = ROOT / "docs" / "INSTALLATION.md"
 QUICKSTART_DOC = ROOT / "docs" / "QUICKSTART.md"
 EVIDENCE_DOC = ROOT / "docs" / "EVIDENCE.md"
@@ -37,10 +38,15 @@ SIDEBAR_JS = ROOT / "website" / "sidebars.js"
 DOCUSAURUS_CONFIG = ROOT / "website" / "docusaurus.config.js"
 WEBSITE_PACKAGE = ROOT / "website" / "package.json"
 HOMEPAGE_TSX = ROOT / "website" / "src" / "pages" / "index.tsx"
+SEARCH_BAR_TSX = ROOT / "website" / "src" / "theme" / "SearchBar" / "index.tsx"
+PAGEFIND_LOADER = ROOT / "website" / "static" / "pagefind-loader.js"
 DOCS_I18N_STATUS = ROOT / "scripts" / "docs-i18n-status.py"
 KO_CODE_JSON = ROOT / "website" / "i18n" / "ko" / "code.json"
 KO_DOCS_JSON = ROOT / "website" / "i18n" / "ko" / "docusaurus-plugin-content-docs" / "current.json"
 KO_NAVBAR_JSON = ROOT / "website" / "i18n" / "ko" / "docusaurus-theme-classic" / "navbar.json"
+PAGES_WORKFLOW = ROOT / ".github" / "workflows" / "pages.yml"
+ROBOTS_TXT = ROOT / "website" / "static" / "robots.txt"
+SOCIAL_CARD = ROOT / "website" / "static" / "img" / "aidememo-social-card.png"
 
 REQUIRED_SIDEBAR_DOCS = [
     "INTRODUCTION",
@@ -49,6 +55,7 @@ REQUIRED_SIDEBAR_DOCS = [
     "QUICKSTART",
     "CLI",
     "MCP",
+    "CODEX_MULTI_PROFILE",
     "AGENT_WORKFLOWS",
     "SDK",
     "FEATURES",
@@ -65,6 +72,7 @@ REQUIRED_HOMEPAGE_DOCS = [
     "QUICKSTART",
     "ARCHITECTURE",
     "MCP",
+    "CODEX_MULTI_PROFILE",
     "AGENT_WORKFLOWS",
     "EVIDENCE",
 ]
@@ -102,6 +110,20 @@ DOC_CONTENT_REQUIREMENTS = [
             "scripts/docs-feature-gate.py",
             "scripts/docs-i18n-status.py",
             "scripts/docs-site-e2e.py",
+        ],
+    ),
+    (
+        CODEX_MULTI_PROFILE_DOC,
+        [
+            "Two Codex accounts. One project memory.",
+            "--codex-home",
+            "--actor-id",
+            "AIDEMEMO_ACTOR_ID",
+            "parent_session_id",
+            "continued_from",
+            "BEGIN IMMEDIATE",
+            "Hermes Agent session storage",
+            "does not copy",
         ],
     ),
     (
@@ -737,6 +759,8 @@ def check_docusaurus_contract() -> list[str]:
         errors.append("website/docusaurus.config.js must include @docusaurus/theme-mermaid")
     if '"@docusaurus/theme-mermaid"' not in package:
         errors.append("website/package.json must depend on @docusaurus/theme-mermaid")
+    if '"docusaurus-pagefind-search": "0.2.2"' not in package:
+        errors.append("website/package.json must pin the Pagefind documentation search plugin")
     if not re.search(r"locales:\s*\[\s*['\"]en['\"]\s*,\s*['\"]ko['\"]\s*\]", config):
         errors.append("website/docusaurus.config.js must build the en and ko locales")
     for token in ("htmlLang: 'en-US'", "htmlLang: 'ko-KR'", "type: 'localeDropdown'"):
@@ -749,6 +773,14 @@ def check_docusaurus_contract() -> list[str]:
         errors.append("website/docusaurus.config.js must fail on broken links")
     if "onBrokenMarkdownLinks: 'throw'" not in config and 'onBrokenMarkdownLinks: "throw"' not in config:
         errors.append("website/docusaurus.config.js must fail on broken Markdown links")
+    for token in (
+        "favicon: 'img/aidememo-logo.png'",
+        "image: 'img/aidememo-social-card.png'",
+        "'docusaurus-pagefind-search'",
+        "summary_large_image",
+    ):
+        if token not in config:
+            errors.append(f"website/docusaurus.config.js is missing discovery token {token!r}")
     if "does not require an external LLM call" not in normalized_homepage:
         errors.append("website/src/pages/index.tsx must state the default local no-external-LLM boundary")
     for token in ("homepage.hero.title", "homepage.hero.subtitle", "homepage.card.evidence.title"):
@@ -762,6 +794,8 @@ def check_docusaurus_contract() -> list[str]:
                 '"homepage.hero.title"',
                 "코딩 에이전트에 친화적인 SDK 메모리.",
                 "기본 로컬 메모리 루프는 외부 LLM 호출이 필요하지 않습니다.",
+                '"search.placeholder"',
+                "문서 검색",
             ],
             "Korean homepage",
         ),
@@ -773,6 +807,44 @@ def check_docusaurus_contract() -> list[str]:
             errors.append(f"{path.relative_to(ROOT)} is missing")
             continue
         errors.extend(require_tokens(path, tokens, label))
+
+    if not SOCIAL_CARD.exists() or SOCIAL_CARD.read_bytes()[:8] != b"\x89PNG\r\n\x1a\n":
+        errors.append("website/static/img/aidememo-social-card.png must be a PNG social card")
+    if not SEARCH_BAR_TSX.exists():
+        errors.append("website/src/theme/SearchBar/index.tsx is missing")
+    else:
+        search_bar = SEARCH_BAR_TSX.read_text(encoding="utf-8")
+        for token in (
+            "pagefind-loader.js",
+            "pagefind/pagefind.js",
+            "search.placeholder",
+            'role="combobox"',
+        ):
+            if token not in search_bar:
+                errors.append(f"website/src/theme/SearchBar/index.tsx is missing search token {token!r}")
+    if not PAGEFIND_LOADER.exists() or "aidememoLoadPagefind" not in PAGEFIND_LOADER.read_text(
+        encoding="utf-8"
+    ):
+        errors.append("website/static/pagefind-loader.js must expose the browser-only Pagefind loader")
+    if not ROBOTS_TXT.exists() or "https://taeyun16.github.io/aidememo/sitemap.xml" not in ROBOTS_TXT.read_text(
+        encoding="utf-8"
+    ):
+        errors.append("website/static/robots.txt must advertise the deployed sitemap")
+    if not PAGES_WORKFLOW.exists():
+        errors.append(".github/workflows/pages.yml is missing")
+    else:
+        pages_workflow = PAGES_WORKFLOW.read_text(encoding="utf-8")
+        for token in (
+            "actions/configure-pages@",
+            "actions/upload-pages-artifact@",
+            "actions/deploy-pages@",
+            "pages: write",
+            "id-token: write",
+            "name: github-pages",
+            "path: website/build",
+        ):
+            if token not in pages_workflow:
+                errors.append(f".github/workflows/pages.yml is missing deployment token {token!r}")
 
     if not DOCS_I18N_STATUS.exists():
         errors.append("scripts/docs-i18n-status.py is missing")

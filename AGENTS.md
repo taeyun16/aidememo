@@ -82,6 +82,8 @@ rather not configure tracing.
 aidememo init <wiki-root> [--no-ingest]                  create store + ingest markdown
 aidememo init --agent codex <wiki-root>                  init + register aidememo MCP for an agent
 aidememo init --agent claude --agent-force <wiki-root>   overwrite existing agent MCP config
+aidememo --store <PATH> mcp-install --target codex       pin the resolved store in Codex MCP config
+         [--codex-home PATH --actor-id ID]...            install isolated Codex profiles with writer provenance
 ```
 
 ### Read / search
@@ -116,7 +118,7 @@ aidememo stats                                           counts + size
 
 ### Write
 ```
-aidememo fact add <content> --entities A,B [--type T] [--source-id ID]
+aidememo fact add <content> --entities A,B [--type T] [--source-id ID] [--actor-id ID]
                                                    auto-creates missing entities; optional
                                                    source_id scopes shared-store retrieval.
 aidememo fact supersede <OLD_ID> <NEW_ID>                 validity-window invalidate
@@ -200,6 +202,7 @@ aidememo session new <topic>                      tracked session entity + shell
                                             subsequent fact_add while the env var is set.
 aidememo session current / list                   current/recent tracked sessions.
 aidememo workflow start <TITLE> [--body-file issue.md] [--source github:org/repo#123]
+                                            [--actor-id ID] [--parent-session SESSION]
                                             sparse issue/ticket entry point: create session,
                                             store trigger, return project context pack.
                                             Use --bm25-only for deterministic demos/hooks

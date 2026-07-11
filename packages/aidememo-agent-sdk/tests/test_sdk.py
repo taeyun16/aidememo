@@ -92,6 +92,7 @@ def test_open_builds_default_client(monkeypatch) -> None:
     sdk = AideMemoMemorySDK.open(
         store_path="/tmp/wiki.sqlite",
         source_id="team-a",
+        actor_id="codex:account-a",
         lock_retry_ms=250,
         storage_backend="libsqlite",
     )
@@ -100,6 +101,7 @@ def test_open_builds_default_client(monkeypatch) -> None:
     assert created == {
         "store_path": "/tmp/wiki.sqlite",
         "source_id": "team-a",
+        "actor_id": "codex:account-a",
         "lock_retry_ms": 250,
         "storage_backend": "libsqlite",
     }
@@ -213,6 +215,7 @@ def test_to_fact_batch_and_commit() -> None:
         default_fact_type="lesson",
         default_entities=["Experiment"],
         source_id="research-alpha",
+        actor_id="codex:account-a",
         session_id="session-1",
         tags=["scenario-n"],
     )
@@ -223,6 +226,7 @@ def test_to_fact_batch_and_commit() -> None:
     assert items[1]["fact_type"] == "lesson"
     assert items[1]["entities"] == ["Experiment"]
     assert all(item["source_id"] == "research-alpha" for item in items)
+    assert all(item["actor_id"] == "codex:account-a" for item in items)
     assert all(item["session_id"] == "session-1" for item in items)
     assert client.fact_batches == [items]
 
@@ -251,6 +255,7 @@ def test_remember_converts_and_commits_batch() -> None:
         [{"content": "Decision: keep SDK first-use path short", "entities": ["Hermes"]}],
         default_fact_type="decision",
         source_id="team-a",
+        actor_id="codex:account-a",
         tags=["ux"],
     )
 
@@ -262,6 +267,7 @@ def test_remember_converts_and_commits_batch() -> None:
             "entities": ["Hermes"],
             "tags": ["ux"],
             "source_id": "team-a",
+            "actor_id": "codex:account-a",
         }
     ]
 

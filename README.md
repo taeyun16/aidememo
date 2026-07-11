@@ -64,9 +64,12 @@ flowchart LR
 | More than vector recall | Typed facts, entities, relations, graph traversal, temporal validity, aggregation. |
 | Agent-native access | SDK for code-first composition, MCP over stdio/HTTP for model-visible tools, plus a compact CLI for humans. |
 | Shared team/project memory | Optional `source_id` scoping, multi-project stores, and a daemon path for shared writes. |
+| Multiple Codex accounts | Pin one store into several `CODEX_HOME` profiles, keep `actor_id` provenance, and link resumed workflow sessions without sharing login state. |
 | Tool-builder embedding | Python, Node, Elixir, and C bindings call the same Rust core in process. |
 
 ## Install
+
+Featured use case: [share one project memory across isolated Codex profiles](docs/CODEX_MULTI_PROFILE.md).
 
 ```bash
 # One-line installer
@@ -89,22 +92,30 @@ npm publishes complete, prefer the Git or checkout install paths above.
 
 ## Documentation Site
 
-The static documentation site lives in [`website/`](website/) and renders the
-durable English Markdown under [`docs/`](docs/) with Docusaurus. English stays
-at `/aidememo/`; Korean is available at `/aidememo/ko/`, with translated
-onboarding/workflow pages and explicit English fallback for long reference
-docs.
+The static product and documentation site lives in [`website/`](website/) and
+renders the durable English Markdown under [`docs/`](docs/) with Docusaurus.
+The product landing page is served at `/aidememo/`, documentation stays under
+`/aidememo/docs/`, and Korean is available at `/aidememo/ko/`. Translated
+onboarding/workflow pages use explicit English fallback for long reference
+docs. Production builds include an in-browser local search index; no search
+service or API key is required.
 
 ```bash
 mise run docs-install
 mise run docs-start
 mise run docs-build
+npm --prefix website run serve   # test the production-only search index
 
 # Korean local preview, translation drift check, and message refresh
 mise run docs-start-ko
 mise run docs-i18n-check
 npm --prefix website run write-translations:ko
 ```
+
+`.github/workflows/pages.yml` validates and uploads the same production build
+to GitHub Pages on `main`. Before the first deployment, select **GitHub
+Actions** under **Settings → Pages → Build and deployment** and restrict the
+generated `github-pages` environment to `main`.
 
 ## 60-Second Quickstart
 

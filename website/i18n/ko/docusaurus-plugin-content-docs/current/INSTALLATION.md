@@ -103,6 +103,19 @@ aidememo --store ./memory.sqlite fact add "A first note" --entities Project
 
 `--store`는 데모, 테스트, 프로젝트별 메모리 파일에 유용합니다.
 
+에이전트 설치는 확인된 저장소 경로를 생성한 MCP 명령에 고정합니다. 격리된 Codex
+계정에는 같은 저장소를 각 프로필에 설치하면서 작성자 provenance를 분리합니다.
+
+```bash
+aidememo --store ./_meta/wiki.sqlite mcp-install --target codex \
+  --codex-home "$HOME/.codex-account-a" --actor-id codex:account-a \
+  --codex-home "$HOME/.codex-account-b" --actor-id codex:account-b \
+  --source-id project:my-app
+```
+
+전체 인계 및 동시성 패턴은 [`여러 Codex 프로필에서 메모리 공유`](CODEX_MULTI_PROFILE.md)를
+참고하십시오.
+
 ## 권장 첫 확인
 
 임시 디렉터리에서 다음 명령을 실행합니다.

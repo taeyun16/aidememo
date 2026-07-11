@@ -117,7 +117,7 @@ def test_registers_core_hermes_tools(fake_ctx: FakeCtx) -> None:
     }
 
 
-def test_source_id_is_exposed_on_relevant_tool_schemas(fake_ctx: FakeCtx) -> None:
+def test_source_and_actor_ids_are_exposed_on_relevant_tool_schemas(fake_ctx: FakeCtx) -> None:
     schemas = {t["name"]: t["schema"]["parameters"]["properties"] for t in fake_ctx.tools}
     assert "source_id" in schemas["aidememo_workflow_start"]
     assert "source_id" in schemas["aidememo_query"]
@@ -126,6 +126,10 @@ def test_source_id_is_exposed_on_relevant_tool_schemas(fake_ctx: FakeCtx) -> Non
     assert "source_id" in schemas["aidememo_aggregate"]
     assert "source_id" in schemas["aidememo_fact_add"]
     assert "AIDEMEMO_SOURCE_ID" in schemas["aidememo_workflow_start"]["source_id"]["description"]
+    assert "actor_id" in schemas["aidememo_workflow_start"]
+    assert "parent_session_id" in schemas["aidememo_workflow_start"]
+    assert "actor_id" in schemas["aidememo_fact_add"]
+    assert "AIDEMEMO_ACTOR_ID" in schemas["aidememo_fact_add"]["actor_id"]["description"]
 
 
 def test_register_passes_configured_source_id(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -158,6 +162,7 @@ def test_register_passes_configured_source_id(monkeypatch: pytest.MonkeyPatch) -
             "aidememo": {
                 "store_path": "/tmp/wiki.redb",
                 "source_id": "team-alpha",
+                "actor_id": "hermes:account-a",
                 "lock_retry_ms": 123,
             }
         }
@@ -166,6 +171,7 @@ def test_register_passes_configured_source_id(monkeypatch: pytest.MonkeyPatch) -
 
     assert captured["store_path"] == "/tmp/wiki.redb"
     assert captured["source_id"] == "team-alpha"
+    assert captured["actor_id"] == "hermes:account-a"
     assert captured["lock_retry_ms"] == 123
 
 

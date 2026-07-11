@@ -175,6 +175,7 @@ fn build_store_for_question(
                 ]),
                 source: Some(title.clone()),
                 source_id: None,
+                actor_id: None,
                 source_confidence: None,
                 observed_at: None,
             });

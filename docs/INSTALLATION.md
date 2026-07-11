@@ -104,6 +104,20 @@ aidememo --store ./memory.sqlite fact add "A first note" --entities Project
 
 Using `--store` is useful for demos, tests, and per-project memory files.
 
+Agent installation pins the resolved store path into the generated MCP command.
+For isolated Codex accounts, install the same store into each profile while keeping
+writer provenance separate:
+
+```bash
+aidememo --store ./_meta/wiki.sqlite mcp-install --target codex \
+  --codex-home "$HOME/.codex-account-a" --actor-id codex:account-a \
+  --codex-home "$HOME/.codex-account-b" --actor-id codex:account-b \
+  --source-id project:my-app
+```
+
+See [`Share Memory Across Codex Profiles`](CODEX_MULTI_PROFILE.md) for the complete
+handoff and concurrency pattern.
+
 ## Recommended first check
 
 Run this in a temporary directory:

@@ -5,7 +5,8 @@ title: Codex CLI 설정 가이드
 
 # Codex CLI 에서 AideMemo 사용하기
 
-OpenAI Codex CLI는 `~/.codex/config.toml`에서 stdio MCP 서버를 그대로 받습니다.
+OpenAI Codex CLI는 활성 `CODEX_HOME/config.toml`에서 stdio MCP 서버를 받습니다.
+`CODEX_HOME`이 없으면 기본 경로는 `~/.codex/config.toml`입니다.
 설정 한 줄로 끝납니다.
 
 ## 1. 빌드
@@ -28,6 +29,23 @@ args = ["mcp"]
 # tool_timeout_sec = 30
 # enabled_tools = ["aidememo_search", "aidememo_entity_list", "aidememo_traverse"]
 # default_tools_approval_mode = "approve"   # 매번 승인 안 받고 싶을 때
+```
+
+프로젝트 저장소가 실행 디렉터리에 따라 바뀌지 않게 하려면 installer가 생성하는
+명시적 `--store` 구성을 사용하십시오.
+
+```bash
+aidememo --store "$(pwd)/_meta/wiki.sqlite" mcp-install --target codex
+```
+
+여러 Codex 계정/프로필이 같은 프로젝트 메모리를 공유할 때는 `--codex-home`과
+`--actor-id`를 같은 순서로 반복하고 공통 `--source-id`를 사용합니다.
+
+```bash
+aidememo --store "$(pwd)/_meta/wiki.sqlite" mcp-install --target codex \
+  --codex-home "$HOME/.codex-account-a" --actor-id codex:account-a \
+  --codex-home "$HOME/.codex-account-b" --actor-id codex:account-b \
+  --source-id project:my-app
 ```
 
 도구 5종이 Codex 세션에 자동으로 노출됩니다.
@@ -78,6 +96,8 @@ printf '%s\n' \
 
 | 증상 | 해결 |
 |---|---|
-| Codex가 AideMemo를 못 봄 | `~/.codex/config.toml` 경로 + TOML 키 이름 (`mcp_servers`) 확인 |
+| Codex가 AideMemo를 못 봄 | 활성 `CODEX_HOME/config.toml` 경로 + TOML 키 이름 (`mcp_servers`) 확인 |
+| 한 계정에서만 보임 | 해당 프로필을 `--codex-home`으로 추가 설치 |
+| 다른 저장소가 열림 | 전역 `--store`로 다시 설치하고 `aidememo doctor` 실행 |
 | 매번 승인 프롬프트가 뜸 | `default_tools_approval_mode = "approve"` 설정 |
 | `command not found: aidememo` | 절대경로 사용: `command = "/path/to/aidememo/target/release/aidememo"` |

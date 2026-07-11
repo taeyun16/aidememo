@@ -158,6 +158,8 @@ pub enum WorkflowSub {
         from_stdin: bool,
         source: Option<String>,
         source_id: Option<String>,
+        actor_id: Option<String>,
+        parent_session_id: Option<String>,
         limit: Option<usize>,
         depth: Option<u32>,
         recent_limit: Option<usize>,
@@ -262,6 +264,7 @@ pub enum FactSub {
         tags: Option<Vec<String>>,
         source: Option<String>,
         source_id: Option<String>,
+        actor_id: Option<String>,
         confidence: Option<f32>,
         observed_at: Option<String>,
         content: String,
@@ -838,6 +841,14 @@ fn workflow_command() -> impl Parser<Command> {
         .help("Optional source namespace / tenant / agent id for shared-store scoping")
         .argument::<String>("SOURCE_ID")
         .optional();
+    let actor_id = long("actor-id")
+        .help("Optional writer identity for workflow ticket provenance")
+        .argument::<String>("ACTOR_ID")
+        .optional();
+    let parent_session_id = long("parent-session")
+        .help("Prior tracked session to link with a continued_from edge")
+        .argument::<String>("SESSION_ID")
+        .optional();
     let limit = long("limit")
         .short('l')
         .help("Max topic search hits in the context pack")
@@ -866,6 +877,8 @@ fn workflow_command() -> impl Parser<Command> {
         from_stdin,
         source,
         source_id,
+        actor_id,
+        parent_session_id,
         limit,
         depth,
         recent_limit,
@@ -1045,6 +1058,10 @@ fn fact_command() -> impl Parser<Command> {
         .help("Optional source namespace / tenant / upstream id")
         .argument::<String>("SOURCE_ID")
         .optional();
+    let actor_id = long("actor-id")
+        .help("Optional writer identity, separate from source scoping")
+        .argument::<String>("ACTOR_ID")
+        .optional();
     let confidence = long("confidence")
         .short('c')
         .help("Source confidence (0.0-1.0)")
@@ -1060,6 +1077,7 @@ fn fact_command() -> impl Parser<Command> {
         tags,
         source,
         source_id,
+        actor_id,
         confidence,
         observed_at,
         content,

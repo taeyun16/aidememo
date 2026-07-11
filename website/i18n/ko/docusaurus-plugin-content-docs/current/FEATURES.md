@@ -50,7 +50,7 @@ python3 scripts/docs-site-e2e.py
 | `aidememo watch` | Markdown 파일 변경 감시와 재-ingest |
 | `aidememo mcp-serve` | 공유 웜 접근을 위한 HTTP와 SSE MCP 제공 |
 | `aidememo mcp` | 로컬 에이전트를 위한 stdio MCP 제공 |
-| `aidememo mcp-install` | 지원하는 에이전트에 AideMemo MCP 등록 |
+| `aidememo mcp-install` | 고정 저장소, source namespace, writer provenance, 반복 가능한 Codex profile home으로 AideMemo MCP 등록 |
 | `aidememo completions` | 셸 completion 스크립트 출력 |
 | `aidememo pending` | dry-run으로 추출된 팩트 검토, 승인, 거절 |
 | `aidememo vector-rebuild` | 모델 또는 인덱스 변경 뒤 HNSW vector sidecar 재구축 |
@@ -107,12 +107,12 @@ python3 scripts/docs-site-e2e.py
 | `aidememo_overview` | 익숙하지 않은 wiki의 orientation snapshot 반환 |
 | `aidememo_recent` | 최근 팩트 반환 |
 | `aidememo_context` | 넓은 턴 시작 컨텍스트 envelope 반환 |
-| `aidememo_workflow_start` | 추적되는 이슈, PR, 티켓, 자동화 워크플로 시작 |
+| `aidememo_workflow_start` | 선택적으로 parent session에 연결되는 추적 이슈, PR, 티켓, 자동화 워크플로 시작 |
 | `aidememo_session_canvas` | 긴 워크플로 재개를 위한 범위 제한 Markdown + Mermaid canvas 반환 |
 | `aidememo_profile_export` | 현재 타입 지정 팩트에서 읽기 전용 프로젝트 프로필 텍스트 아티팩트 반환 |
 | `aidememo_query` | 집중된 주제 컨텍스트 팩 반환 |
 | `aidememo_entity_describe` | 엔티티 요약 설정 또는 삭제 |
-| `aidememo_fact_add` | 자체 분류 타입과 선택형 session/source 범위로 팩트 하나 추가 |
+| `aidememo_fact_add` | 자체 분류 타입, 선택형 session/source 범위, writer provenance로 팩트 하나 추가 |
 | `aidememo_fact_add_many` | 한 transaction에 여러 팩트 추가 |
 | `aidememo_fact_supersede` | 이전 팩트를 replacement 팩트로 교체하고 retire |
 | `aidememo_fact_archive` | 팩트를 cold-tier archive로 이동 |

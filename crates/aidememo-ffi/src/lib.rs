@@ -520,6 +520,7 @@ pub extern "C" fn aidememo_fact_add(
             tags,
             source,
             source_id: None,
+            actor_id: None,
             source_confidence: if confidence > 0.0 {
                 Some(confidence)
             } else {
@@ -617,6 +618,10 @@ pub extern "C" fn aidememo_fact_add_many(
                 tags,
                 source,
                 source_id: None,
+                actor_id: obj
+                    .get("actor_id")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
                 source_confidence: confidence,
                 observed_at: None,
             });
