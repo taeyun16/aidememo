@@ -41,17 +41,73 @@ memory loop calls no external LLM API; remote extraction, embedding, and rerank
 services are explicit opt-ins.
 
 ```mermaid
-flowchart LR
-    Agent["Claude / Codex / Hermes"] --> SDK["aidememo-agent-sdk"]
-    Agent --> MCP["aidememo mcp / aidememo mcp-serve"]
-    Human["CLI user"] --> CLI["aidememo query / search / fact add"]
-    Plugin["Python / Node / Elixir / C"] --> API["AideMemo API"]
-    SDK --> Core["aidememo-core"]
-    MCP --> Core["aidememo-core"]
-    CLI --> Core
-    API --> Core
-    Core --> Store[("SQLite default / redb optional + BM25 + HNSW")]
+flowchart TB
+    subgraph access["Agent and SDK entry points"]
+        agent["Claude / Codex / Cursor / Hermes"]
+        human["CLI user"]
+        sdk["aidememo-agent-sdk"]
+        mcp["MCP<br/>stdio / HTTP"]
+        cli["CLI<br/>query / search / fact add"]
+        bindings["Python / Node / Elixir / C"]
+        agent --> sdk
+        agent --> mcp
+        human --> cli
+    end
+
+    subgraph default_path["Default local path - no external LLM API"]
+        core["aidememo-core"]
+        write_path["Typed writes<br/>graph + lifecycle"]
+        store[("SQLite default / redb optional")]
+        bm25["BM25 lexical probe"]
+        auto_gate{"Lexical evidence strong?"}
+        semantic["Semantic HNSW<br/>model2vec by default"]
+        ranked["Ranked facts / context"]
+        core --> write_path --> store
+        core --> bm25 --> auto_gate
+        auto_gate -->|yes| ranked
+        auto_gate -->|weak or CJK| semantic --> ranked
+    end
+
+    subgraph optional_models["Opt-in local SLM sidecars - downloaded separately"]
+        lfm_embed["LFM2.5 Embedding 350M<br/>MLX / TEI-compatible"]
+        lfm_rerank["LFM2.5 ColBERT 350M<br/>candidate rerank"]
+        lfm_type["LFM2.5 1.2B + LoRA<br/>fact_type_hint only"]
+        type_review["Pending review<br/>no automatic write"]
+        privacy_model["OpenAI Privacy Filter<br/>redact / block on write"]
+        lfm_type -. "confidence-gated" .-> type_review
+    end
+
+    sdk --> core
+    mcp --> core
+    cli --> core
+    bindings --> core
+    lfm_embed -. "optional embedding provider" .-> semantic
+    lfm_rerank -. "optional rerank" .-> ranked
+    write_path -. "reviewed shadow data" .-> lfm_type
+    privacy_model -. "pre-persistence policy" .-> write_path
 ```
+
+Solid arrows are the shipped default path. Dotted arrows are local, opt-in
+model integrations: they are not bundled into the Rust binary and do not
+require an external LLM API.
+
+## Local SLM Extensions (Opt In)
+
+AideMemo treats small local models as bounded specialists around a deterministic
+memory core, not as the memory engine itself. The default remains explicit
+typed writes plus BM25-first auto-hybrid retrieval; each model below must be
+downloaded and configured separately.
+
+| Role | Local model | Placement and safety boundary |
+|---|---|---|
+| First-stage semantic fallback | `mlx-community/LFM2.5-Embedding-350M-4bit` | Set `model.provider=lfm-sidecar`; weak or CJK BM25 probes can promote through the existing HNSW path. Keep a daemon warm so model load is paid once. This is not a global embedding replacement. |
+| Candidate rerank | `mlx-community/LFM2.5-ColBERT-350M-4bit` | Reorder a high-recall candidate set through a compatible local sidecar. It is off by default because candidate recall and latency must be measured first. |
+| Fact-type assistance | `LiquidAI/LFM2.5-1.2B-Instruct-MLX-4bit` + LoRA | Produce confidence-gated `fact_type_hint` values from reviewed shadow logs. Hints never overwrite an explicit caller-provided type and are not automatic writes. |
+| Write-time privacy | OpenAI Privacy Filter MLX `mxfp4` | Report, redact, or block sensitive spans before persistence. It is a separate opt-in policy because its latency and failure policy differ from retrieval. |
+
+See [LFM Experiments](docs/LFM_EXPERIMENTS.md#placement-and-boundaries) for setup and
+[Measurements](docs/MEASUREMENTS.md#lfm-model-placement-strategy) for the measured
+placement boundaries.
 
 ## Why AideMemo
 
@@ -60,6 +116,7 @@ flowchart LR
 | Agent-friendly SDK memory | `aidememo-agent-sdk` gives code-executing agents `Memory.open`, `search_rows`, `coverage_by`, `aggregate_many`, and `remember`. |
 | Local agent memory | Single binary + single embedded store. No Postgres, Qdrant, Neo4j, or hosted vendor. |
 | Zero-token default path | Default capture, typed writes, BM25-first search, and MCP/SDK reads run locally without external LLM API calls. |
+| Opt-in local SLMs | MLX LFM sidecars can assist weak-query retrieval, candidate reranking, and shadow fact typing without turning model inference into the source of truth. |
 | Opt-in privacy guard | Local OpenAI Privacy Filter sidecars can report, redact, or block sensitive spans before facts are persisted. |
 | More than vector recall | Typed facts, entities, relations, graph traversal, temporal validity, aggregation. |
 | Agent-native access | SDK for code-first composition, MCP over stdio/HTTP for model-visible tools, plus a compact CLI for humans. |

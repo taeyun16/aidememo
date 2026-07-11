@@ -41,17 +41,71 @@ AideMemo는 의도적으로 호스팅 메모리 SaaS, 완전한 에이전트 런
 원격 추출·임베딩·리랭크 서비스는 명시적으로 선택해야 합니다.
 
 ```mermaid
-flowchart LR
-    Agent["Claude / Codex / Hermes"] --> SDK["aidememo-agent-sdk"]
-    Agent --> MCP["aidememo mcp / aidememo mcp-serve"]
-    Human["CLI 사용자"] --> CLI["aidememo query / search / fact add"]
-    Plugin["Python / Node / Elixir / C"] --> API["AideMemo API"]
-    SDK --> Core["aidememo-core"]
-    MCP --> Core["aidememo-core"]
-    CLI --> Core
-    API --> Core
-    Core --> Store[("SQLite 기본 / redb 선택 + BM25 + HNSW")]
+flowchart TB
+    subgraph access["에이전트와 SDK 진입점"]
+        agent["Claude / Codex / Cursor / Hermes"]
+        human["CLI 사용자"]
+        sdk["aidememo-agent-sdk"]
+        mcp["MCP<br/>stdio / HTTP"]
+        cli["CLI<br/>query / search / fact add"]
+        bindings["Python / Node / Elixir / C"]
+        agent --> sdk
+        agent --> mcp
+        human --> cli
+    end
+
+    subgraph default_path["기본 로컬 경로 - 외부 LLM API 없음"]
+        core["aidememo-core"]
+        write_path["타입 있는 쓰기<br/>그래프 + 생명주기"]
+        store[("SQLite 기본 / redb 선택")]
+        bm25["BM25 lexical probe"]
+        auto_gate{"어휘 증거가 강한가?"}
+        semantic["Semantic HNSW<br/>model2vec 기본"]
+        ranked["순위 팩트 / 컨텍스트"]
+        core --> write_path --> store
+        core --> bm25 --> auto_gate
+        auto_gate -->|예| ranked
+        auto_gate -->|약함 또는 CJK| semantic --> ranked
+    end
+
+    subgraph optional_models["선택형 로컬 SLM 사이드카 - 별도 다운로드"]
+        lfm_embed["LFM2.5 Embedding 350M<br/>MLX / TEI 호환"]
+        lfm_rerank["LFM2.5 ColBERT 350M<br/>후보 재랭킹"]
+        lfm_type["LFM2.5 1.2B + LoRA<br/>fact_type_hint 전용"]
+        type_review["검토 대기<br/>자동 쓰기 없음"]
+        privacy_model["OpenAI Privacy Filter<br/>저장 전 교정 / 차단"]
+        lfm_type -. "confidence 기준" .-> type_review
+    end
+
+    sdk --> core
+    mcp --> core
+    cli --> core
+    bindings --> core
+    lfm_embed -. "선택형 embedding provider" .-> semantic
+    lfm_rerank -. "선택형 rerank" .-> ranked
+    write_path -. "리뷰된 shadow 데이터" .-> lfm_type
+    privacy_model -. "저장 전 정책" .-> write_path
 ```
+
+실선은 기본 제공 경로입니다. 점선은 로컬 선택형 모델 통합이며 Rust 바이너리에
+번들되지 않고 외부 LLM API도 요구하지 않습니다.
+
+## 로컬 SLM 확장(선택형)
+
+AideMemo는 작은 로컬 모델을 메모리 엔진 자체가 아니라 결정적 메모리 코어
+주변의 제한된 전문가로 사용합니다. 기본값은 명시적인 타입 쓰기와 BM25 우선
+auto-hybrid 검색이며, 아래 모델은 각각 별도로 다운로드하고 설정해야 합니다.
+
+| 역할 | 로컬 모델 | 배치 및 안전 경계 |
+|---|---|---|
+| 1단계 semantic fallback | `mlx-community/LFM2.5-Embedding-350M-4bit` | `model.provider=lfm-sidecar`로 설정합니다. 약한 BM25 또는 CJK probe만 기존 HNSW 경로로 승격하며 전역 embedding 대체가 아닙니다. 반복 호출에는 warm daemon을 사용합니다. |
+| 후보 재랭킹 | `mlx-community/LFM2.5-ColBERT-350M-4bit` | recall이 높은 후보 집합을 호환 로컬 사이드카로 재정렬합니다. 후보 recall과 latency를 먼저 측정해야 하므로 기본값은 꺼짐입니다. |
+| 팩트 타입 보조 | `LiquidAI/LFM2.5-1.2B-Instruct-MLX-4bit` + LoRA | 리뷰된 shadow log에서 confidence 기준 `fact_type_hint`를 만듭니다. 명시적 타입을 덮어쓰지 않으며 자동 쓰기가 아닙니다. |
+| 쓰기 시점 privacy | OpenAI Privacy Filter MLX `mxfp4` | 저장 전에 민감 구간을 보고·교정·차단합니다. 검색과 latency 및 실패 정책이 달라 별도 선택형 정책으로 둡니다. |
+
+설정은 [LFM 실험](docs/LFM_EXPERIMENTS.md#placement-and-boundaries), 측정된
+배치 경계는 [측정 원장](docs/MEASUREMENTS.md#lfm-model-placement-strategy)을
+참고하세요.
 
 ## 왜 AideMemo인가
 
@@ -60,6 +114,7 @@ flowchart LR
 | 에이전트 친화적 SDK 메모리 | `aidememo-agent-sdk`는 코드를 실행하는 에이전트에 `Memory.open`, `search_rows`, `coverage_by`, `aggregate_many`, `remember`를 제공합니다. |
 | 로컬 에이전트 메모리 | 하나의 바이너리와 하나의 임베디드 저장소. Postgres, Qdrant, Neo4j, 호스팅 벤더가 필요 없습니다. |
 | 제로 토큰 기본 경로 | 기본 캡처, 타입 있는 쓰기, BM25 우선 검색, MCP/SDK 읽기는 외부 LLM API 호출 없이 로컬에서 실행됩니다. |
+| 선택형 로컬 SLM | MLX LFM 사이드카가 모델 추론을 진실의 원천으로 만들지 않으면서 약한 쿼리 검색, 후보 재랭킹, shadow 팩트 분류를 보조합니다. |
 | 선택형 프라이버시 가드 | 로컬 OpenAI Privacy Filter 사이드카가 팩트 저장 전에 민감한 구간을 보고·마스킹·차단할 수 있습니다. |
 | 벡터 재현 이상의 기능 | 타입 있는 팩트, 엔티티, 관계, 그래프 탐색, 시간 유효성, 집계. |
 | 에이전트 네이티브 접근 | 코드 우선 조합용 SDK, 모델이 볼 수 있는 stdio/HTTP MCP, 사람을 위한 간결한 CLI. |
