@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "aidememo": {
+      "type": "stdio",
+      "command": "aidememo",
+      "args": ["mcp"]
+    }
+  }
+}

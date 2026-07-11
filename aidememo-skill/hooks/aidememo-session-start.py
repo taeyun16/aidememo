@@ -42,6 +42,17 @@ def run_aidememo(*args: str, timeout: int = 5) -> str | None:
         return None
 
 
+def context_output(body: str) -> dict[str, object]:
+    """Return Claude Code's current SessionStart hook output envelope."""
+    return {
+        "continue": True,
+        "hookSpecificOutput": {
+            "hookEventName": "SessionStart",
+            "additionalContext": body,
+        },
+    }
+
+
 def main() -> int:
     # Drain stdin (SessionStart input — cwd / session_id / etc. — we
     # don't currently use it, but the hook contract expects us to read).
@@ -72,7 +83,7 @@ def main() -> int:
         + "\n\n".join(sections)
         + "\n\nUse `aidememo_query <topic>` / `aidememo_search <q>` for follow-up retrieval."
     )
-    print(json.dumps({"additionalContext": body, "continue": True}))
+    print(json.dumps(context_output(body)))
     return 0
 
 

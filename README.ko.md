@@ -140,13 +140,17 @@ aidememo init --agent codex ./my-wiki
 aidememo --backend libsqlite mcp-install --target codex --source-id my-project
 
 # Claude Code
-claude mcp add aidememo -- aidememo --backend libsqlite mcp
+aidememo --backend libsqlite mcp-install --target claude --source-id my-project
 
 # Codex CLI: ~/.codex/config.toml
 [mcp_servers.aidememo]
 command = "aidememo"
 args = ["--backend", "libsqlite", "mcp"]
 ```
+
+MCP, 기능별 스킬, 훅을 묶은 Claude 플러그인 설치 방법은
+[한국어 안내](aidememo-skill/setup-claude-code.ko.md) 또는
+[영문 안내](aidememo-skill/setup-claude-code.md)를 참고하세요.
 
 ## 에이전트 진입점
 

@@ -20,13 +20,17 @@ lifecycle hooks.
 
 ```bash
 # From a checkout, until the PyPI releases land:
-python -m pip install -e packages/aidememo-agent-sdk
-python -m pip install -e plugins/hermes
+HERMES_PY="${HERMES_PY:-$HOME/.hermes/hermes-agent/venv/bin/python3}"
+"$HERMES_PY" -m pip install -e packages/aidememo-agent-sdk -e plugins/hermes
 
 # After the PyPI releases:
-python -m pip install hermes-aidememo
-python -m pip install "hermes-aidememo[binding]"  # optional aidememo-python fast path
+"$HERMES_PY" -m pip install hermes-aidememo
+"$HERMES_PY" -m pip install "hermes-aidememo[binding]"  # optional aidememo-python fast path
 ```
+
+Use Hermes's own Python interpreter. Installing with an unrelated system
+`python` leaves the package outside Hermes's plugin host and the plugin will
+not be discovered.
 
 Then enable it in `~/.hermes/config.yaml`:
 

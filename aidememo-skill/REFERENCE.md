@@ -309,9 +309,9 @@ cargo check -p aidememo-core -p aidememo-cli
 | `aidememo_recent` | 최근 N일 fact |
 | `aidememo_entity_list` / `aidememo_entity_get` | 엔티티 브라우즈 / 단건 조회 |
 | `aidememo_fact_list` / `aidememo_fact_get` | fact 필터 목록 / ULID 단건 조회 |
-| `aidememo_traverse` / `aidememo_backlinks` | 정방향 / 역방향 그래프 워크 |
+| `aidememo_traverse` | 정방향 / 역방향 그래프 워크(`direction:"reverse"`는 backlink) |
 | `aidememo_path` | 두 엔티티 간 최단 경로 |
-| `aidememo_doctor` / `aidememo_lint` | 건전성 스냅샷 / 원시 이슈 |
+| `aidememo_doctor` | 이슈 코드와 조치 안내를 포함한 건전성 스냅샷 |
 | `aidememo_entity_describe` | 엔티티의 prose 요약 설정 / 삭제 |
 | `aidememo_fact_add` | 단일 fact 추가 |
 | `aidememo_fact_add_many` | 배치 (단일 fsync, 3개 이상이면 권장) |

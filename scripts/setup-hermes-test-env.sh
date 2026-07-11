@@ -37,6 +37,7 @@ set -euo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 TEST_HOME="${AIDEMEMO_HERMES_TEST_HOME:-/tmp/aidememo-hermes-test}"
 PLUGIN_SRC="$REPO/plugins/hermes/src/hermes_aidememo"
+SDK_SRC="$REPO/packages/aidememo-agent-sdk/src"
 AIDEMEMO_BIN="$REPO/target/debug/aidememo"
 AIDEMEMO_BIN_DIR="$REPO/target/debug"
 HERMES_BIN="${HERMES_BIN:-$(command -v hermes || true)}"
@@ -89,6 +90,10 @@ cmd_setup() {
     fi
     if [[ ! -d "$PLUGIN_SRC" ]]; then
         err "Plugin source missing at $PLUGIN_SRC — wrong checkout?"
+        exit 1
+    fi
+    if [[ ! -d "$SDK_SRC/aidememo_agent" ]]; then
+        err "aidememo-agent-sdk source missing at $SDK_SRC — wrong checkout?"
         exit 1
     fi
 
@@ -190,6 +195,7 @@ cmd_env() {
 export HERMES_HOME="$TEST_HOME"
 export AIDEMEMO_STORE="$TEST_HOME/wiki.sqlite"
 export PATH="$AIDEMEMO_BIN_DIR:\$PATH"
+export PYTHONPATH="$SDK_SRC\${PYTHONPATH:+:\$PYTHONPATH}"
 EOF
 }
 

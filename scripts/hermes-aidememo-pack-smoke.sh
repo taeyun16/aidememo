@@ -112,10 +112,30 @@ trap cleanup EXIT
 version="$(
     python3 - "$PLUGIN_DIR/pyproject.toml" <<'PY'
 import sys
-import tomllib
+try:
+    import tomllib
+except ModuleNotFoundError:
+    tomllib = None
 
-with open(sys.argv[1], "rb") as f:
-    print(tomllib.load(f)["project"]["version"])
+path = sys.argv[1]
+if tomllib is not None:
+    with open(path, "rb") as f:
+        print(tomllib.load(f)["project"]["version"])
+else:
+    # hermes-aidememo supports Python 3.9+, while tomllib joined the
+    # standard library in 3.11. Keep the smoke dependency-free on 3.9.
+    in_project = False
+    with open(path, encoding="utf-8") as f:
+        for raw in f:
+            line = raw.strip()
+            if line.startswith("["):
+                in_project = line == "[project]"
+                continue
+            if in_project and line.startswith("version"):
+                print(line.split("=", 1)[1].strip().strip('"'))
+                break
+        else:
+            raise SystemExit("missing [project].version in pyproject.toml")
 PY
 )"
 

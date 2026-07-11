@@ -149,13 +149,17 @@ aidememo init --agent codex ./my-wiki
 aidememo --backend libsqlite mcp-install --target codex --source-id my-project
 
 # Claude Code
-claude mcp add aidememo -- aidememo --backend libsqlite mcp
+aidememo --backend libsqlite mcp-install --target claude --source-id my-project
 
 # Codex CLI: ~/.codex/config.toml
 [mcp_servers.aidememo]
 command = "aidememo"
 args = ["--backend", "libsqlite", "mcp"]
 ```
+
+For the bundled Claude plugin (MCP + focused skills + hooks), see the
+[English setup guide](aidememo-skill/setup-claude-code.md) or
+[Korean setup guide](aidememo-skill/setup-claude-code.ko.md).
 
 ## Agent Entry Points
 

@@ -29,6 +29,7 @@ HERMES_BIN="${HERMES_BIN:-$(command -v hermes || true)}"
 HERMES_VENV_PY="${HERMES_VENV_PY:-$HOME/.hermes/hermes-agent/venv/bin/python3}"
 HERMES_AGENT_ROOT="${HERMES_AGENT_ROOT:-$HOME/.hermes/hermes-agent}"
 PLUGIN_SRC="$REPO/plugins/hermes/src/hermes_aidememo"
+SDK_SRC="$REPO/packages/aidememo-agent-sdk/src"
 AIDEMEMO_BIN_DIR="$REPO/target/debug"
 AIDEMEMO_BIN="$AIDEMEMO_BIN_DIR/aidememo"
 
@@ -58,6 +59,10 @@ if [[ ! -d "$PLUGIN_SRC" ]]; then
     err "Plugin source missing at $PLUGIN_SRC — running from a wrong checkout?"
     exit 1
 fi
+if [[ ! -d "$SDK_SRC/aidememo_agent" ]]; then
+    err "aidememo-agent-sdk source missing at $SDK_SRC — running from a wrong checkout?"
+    exit 1
+fi
 
 if [[ ! -x "$AIDEMEMO_BIN" ]]; then
     log "aidememo binary not found, building (cargo build -p aidememo-cli)…"
@@ -78,6 +83,7 @@ log "isolated HERMES_HOME=$TEST_HOME"
 # the test sees only the binary we just built.
 export PATH="$AIDEMEMO_BIN_DIR:$PATH"
 export HERMES_HOME="$TEST_HOME"
+export PYTHONPATH="$SDK_SRC${PYTHONPATH:+:$PYTHONPATH}"
 # Force the plugin's AideMemoClient to use the test wiki (not whatever the
 # operator's aidememo config defaults to).
 export AIDEMEMO_STORE="$TEST_HOME/wiki.sqlite"
@@ -114,7 +120,7 @@ ok "enabled"
 
 # ----------------------------------------------------------------------
 # 3. PluginManager actually loads the module + register() registers
-#    every advertised surface (8 tools, 2 hooks, 5 commands).
+#    every advertised surface (12 tools, 2 hooks, 8 commands).
 # ----------------------------------------------------------------------
 
 log "loading plugin via Hermes's PluginManager"
@@ -143,14 +149,14 @@ if not aidememo["enabled"]:
     raise SystemExit("FAIL: plugin reports enabled=False")
 if aidememo["error"]:
     raise SystemExit(f"FAIL: plugin reported load error: {aidememo['error']}")
-if aidememo["tools"] != 8:
-    raise SystemExit(f"FAIL: expected 8 tools, got {aidememo['tools']}")
+if aidememo["tools"] != 12:
+    raise SystemExit(f"FAIL: expected 12 tools, got {aidememo['tools']}")
 if aidememo["hooks"] != 2:
     raise SystemExit(f"FAIL: expected 2 hooks, got {aidememo['hooks']}")
-if aidememo["commands"] != 5:
-    raise SystemExit(f"FAIL: expected 5 commands, got {aidememo['commands']}")
+if aidememo["commands"] != 8:
+    raise SystemExit(f"FAIL: expected 8 commands, got {aidememo['commands']}")
 PY
-ok "register(ctx) ran cleanly — 8 tools / 2 hooks / 5 commands"
+ok "register(ctx) ran cleanly — 12 tools / 2 hooks / 8 commands"
 
 # ----------------------------------------------------------------------
 # 4. End-to-end through the TUI slash worker — proves slash commands

@@ -19,8 +19,9 @@
 //! `--force` to overwrite an existing `aidememo` entry.
 
 use bpaf::*;
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Command as ProcessCommand;
+use std::process::{Command as ProcessCommand, Stdio};
 
 use crate::cmd::Command;
 use aidememo_core::AideMemoError;
@@ -145,12 +146,12 @@ const SUPPORTED: &[(&str, &str, &str)] = &[
     (
         "claude",
         "shell-out",
-        "claude mcp add aidememo -- aidememo --backend <resolved> mcp",
+        "claude mcp add aidememo [-e KEY=VALUE ...] -- aidememo --backend <resolved> --store <path> mcp",
     ),
     (
         "hermes",
         "shell-out",
-        "hermes mcp add aidememo --command aidememo --args=--backend --args=<resolved> --args=mcp",
+        "hermes mcp add aidememo --command aidememo [--env KEY=VALUE ...] --args --backend <resolved> --store <path> mcp",
     ),
     (
         "openclaw",
@@ -234,6 +235,7 @@ pub fn run_mcp_install(
                 actor_id,
                 storage_backend,
                 store_path: &store_path,
+                stdin_response: None,
             },
         )?,
         "hermes" => install_via_cli(
@@ -246,6 +248,11 @@ pub fn run_mcp_install(
                 actor_id,
                 storage_backend,
                 store_path: &store_path,
+                // Hermes 0.18+ discovers tools before saving the server and
+                // asks whether to enable them. A blank line accepts the
+                // default (all tools). With --force, answer the possible
+                // overwrite prompt first, then accept all discovered tools.
+                stdin_response: Some(if sub.force { b"y\n\n" } else { b"\n" }),
             },
         )?,
         "openclaw" => install_via_cli(
@@ -258,6 +265,7 @@ pub fn run_mcp_install(
                 actor_id,
                 storage_backend,
                 store_path: &store_path,
+                stdin_response: None,
             },
         )?,
         "codex" => install_codex(
@@ -290,7 +298,7 @@ pub fn run_mcp_install(
                 "pi has no MCP support by upstream design — pi rejects MCP \
                  because the protocol's tool descriptions consume too much \
                  of the context window. Use `aidememo skill install --target pi` \
-                 instead to merge aidememo's skill into ~/.config/pi/AGENTS.md."
+                 instead to install aidememo into pi's native Agent Skills directory."
                     .to_string(),
             ));
         }
@@ -347,6 +355,7 @@ struct ShellInstallOptions<'a> {
     actor_id: Option<&'a str>,
     storage_backend: &'a str,
     store_path: &'a Path,
+    stdin_response: Option<&'a [u8]>,
 }
 
 fn install_via_cli(
@@ -361,6 +370,7 @@ fn install_via_cli(
         actor_id,
         storage_backend,
         store_path,
+        stdin_response,
     } = options;
     let cmdline = format!("{} {}", bin, args.join(" "));
     let target = bin.to_string();
@@ -379,12 +389,37 @@ fn install_via_cli(
         });
     }
 
-    let out = ProcessCommand::new(bin).args(&args).output().map_err(|e| {
-        AideMemoError::InvalidInput(format!(
-            "could not run `{}` — is the {} CLI on your PATH? (raw error: {})",
-            bin, bin, e
-        ))
-    })?;
+    let out = if let Some(response) = stdin_response {
+        let mut child = ProcessCommand::new(bin)
+            .args(&args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| {
+                AideMemoError::InvalidInput(format!(
+                    "could not run `{}` — is the {} CLI on your PATH? (raw error: {})",
+                    bin, bin, e
+                ))
+            })?;
+        let mut stdin = child.stdin.take().ok_or_else(|| {
+            AideMemoError::Internal(format!("could not open stdin for `{cmdline}`"))
+        })?;
+        stdin.write_all(response).map_err(|e| {
+            AideMemoError::Internal(format!("could not answer `{cmdline}` setup prompt: {e}"))
+        })?;
+        drop(stdin);
+        child
+            .wait_with_output()
+            .map_err(|e| AideMemoError::Internal(format!("could not wait for `{cmdline}`: {e}")))?
+    } else {
+        ProcessCommand::new(bin).args(&args).output().map_err(|e| {
+            AideMemoError::InvalidInput(format!(
+                "could not run `{}` — is the {} CLI on your PATH? (raw error: {})",
+                bin, bin, e
+            ))
+        })?
+    };
 
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);
@@ -394,6 +429,18 @@ fn install_via_cli(
             out.status,
             stderr.trim()
         )));
+    }
+
+    // Hermes returns exit 0 when an existing server is declined at its
+    // overwrite prompt. Treat that as a real no-op instead of letting the
+    // subsequent list check make the stale entry look like a successful
+    // reinstall.
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    if bin == "hermes" && stdout.contains("Cancelled.") {
+        return Err(AideMemoError::InvalidInput(
+            "Hermes already has an `aidememo` MCP server; rerun with --force to overwrite it"
+                .to_string(),
+        ));
     }
 
     // Best-effort: ask the agent to list its MCP servers and check
@@ -474,12 +521,15 @@ fn claude_install_args(
     storage_backend: &str,
     store_path: &Path,
 ) -> Vec<String> {
-    let mut args = vec!["mcp".to_string(), "add".to_string()];
+    // Claude Code parses every token between `add` and the server name as an
+    // option. Put the name first so `-e` is associated with this server rather
+    // than being mistaken for an environment assignment itself.
+    let mut args = vec!["mcp".to_string(), "add".to_string(), "aidememo".to_string()];
     for (key, value) in agent_env(source_id, actor_id) {
         args.push("-e".to_string());
         args.push(format!("{key}={value}"));
     }
-    args.extend(["aidememo", "--", "aidememo"].into_iter().map(String::from));
+    args.extend(["--", "aidememo"].into_iter().map(String::from));
     args.extend(aidememo_mcp_args(storage_backend, store_path));
     args
 }
@@ -494,13 +544,17 @@ fn hermes_install_args(
         .into_iter()
         .map(String::from)
         .collect();
-    for arg in aidememo_mcp_args(storage_backend, store_path) {
-        args.push(format!("--args={arg}"));
-    }
-    for (key, value) in agent_env(source_id, actor_id) {
+    let env = agent_env(source_id, actor_id);
+    if !env.is_empty() {
         args.push("--env".to_string());
+    }
+    for (key, value) in env {
         args.push(format!("{key}={value}"));
     }
+    // Hermes declares --args as argparse.REMAINDER, so it must be the final
+    // option and every following token belongs to the MCP server command.
+    args.push("--args".to_string());
+    args.extend(aidememo_mcp_args(storage_backend, store_path));
     args
 }
 
@@ -963,6 +1017,7 @@ mod tests {
                 actor_id: None,
                 storage_backend: "libsqlite",
                 store_path: store,
+                stdin_response: None,
             },
         )
         .unwrap();
@@ -1015,6 +1070,7 @@ mod tests {
                 actor_id: None,
                 storage_backend: "libsqlite",
                 store_path: Path::new("/tmp/aidememo-test.sqlite"),
+                stdin_response: None,
             },
         )
         .unwrap();
@@ -1227,11 +1283,11 @@ mod tests {
             vec![
                 "mcp",
                 "add",
+                "aidememo",
                 "-e",
                 "AIDEMEMO_SOURCE_ID=project-alpha",
                 "-e",
                 "AIDEMEMO_ACTOR_ID=codex:account-a",
-                "aidememo",
                 "--",
                 "aidememo",
                 "--backend",
@@ -1241,13 +1297,29 @@ mod tests {
                 "mcp"
             ]
         );
-        assert!(
-            hermes_install_args(Some("project-alpha"), None, "libsqlite", store)
-                .contains(&"AIDEMEMO_SOURCE_ID=project-alpha".to_string())
-        );
-        assert!(
-            hermes_install_args(Some("project-alpha"), None, "libsqlite", store)
-                .contains(&"--args=--backend".to_string())
+        assert_eq!(
+            hermes_install_args(
+                Some("project-alpha"),
+                Some("hermes:account-a"),
+                "libsqlite",
+                store,
+            ),
+            vec![
+                "mcp",
+                "add",
+                "aidememo",
+                "--command",
+                "aidememo",
+                "--env",
+                "AIDEMEMO_SOURCE_ID=project-alpha",
+                "AIDEMEMO_ACTOR_ID=hermes:account-a",
+                "--args",
+                "--backend",
+                "libsqlite",
+                "--store",
+                "/tmp/aidememo-test.sqlite",
+                "mcp",
+            ]
         );
         let openclaw_payload =
             &openclaw_install_args(Some("project-alpha"), None, "libsqlite", store)[3];

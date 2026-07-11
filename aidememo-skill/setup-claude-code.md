@@ -1,92 +1,100 @@
 ---
 kind: doc
-title: Claude Code 설정 가이드
+title: AideMemo setup for Claude Code
 ---
 
-# Claude Code 에서 AideMemo 사용하기
+# Use AideMemo with Claude Code
 
-AideMemo는 Claude Code의 MCP / Skill / Slash command 시스템 셋 다 지원합니다.
-가장 큰 효과를 얻으려면 **MCP**를 먼저 등록하세요.
+[한국어](setup-claude-code.ko.md)
 
-## 1. 빌드
+The recommended setup is the Claude Code plugin: it bundles the MCP server
+definition, focused skills, and safe context hooks. Use the standalone MCP and
+skill installers when you want a smaller or profile-specific setup.
 
-```bash
-cd ~/dev/aidememo
-cargo build -p aidememo-cli --release
-export PATH="$HOME/dev/aidememo/target/release:$PATH"   # ~/.zshrc에 추가
-```
-
-## 2. MCP 서버 등록 (가장 중요)
-
-Claude Code가 stdio로 AideMemo를 부르도록 등록합니다. 한 번만:
+## Prerequisites
 
 ```bash
-claude mcp add aidememo -- aidememo mcp
+cargo install aidememo-cli
+aidememo init ./wiki
+claude --version
 ```
 
-또는 프로젝트 루트의 `.mcp.json`에 추가:
+`aidememo` and `claude` must both be on `PATH`.
 
-```json
-{
-  "mcpServers": {
-    "aidememo": {
-      "type": "stdio",
-      "command": "aidememo",
-      "args": ["mcp"]
-    }
-  }
-}
-```
+## Option A: install the plugin (recommended)
 
-이걸로 `aidememo_search`, `aidememo_entity_list`, `aidememo_fact_add`, `aidememo_lint`, `aidememo_traverse`
-다섯 개 툴이 Claude Code에 자동으로 노출됩니다. 별도 서버 띄울 필요 없음.
-
-## 3. Skill 설치 (선택)
-
-LLM이 AideMemo를 *언제* 써야 할지 학습시키려면 SKILL.md를 복사:
+From a clone of this repository:
 
 ```bash
-mkdir -p ~/.claude/skills/aidememo
-cp ~/dev/aidememo/aidememo-skill/SKILL.md ~/.claude/skills/aidememo/SKILL.md
-cp ~/dev/aidememo/aidememo-skill/REFERENCE.md ~/.claude/skills/aidememo/REFERENCE.md
+claude plugin marketplace add /absolute/path/to/aidememo
+claude plugin install aidememo@aidememo
+claude plugin list
 ```
 
-`SKILL.md`의 frontmatter `description`/`when_to_use`가 자동 트리거 단서가 됩니다.
+Restart Claude Code after installation. The plugin provides:
 
-## 4. Slash command 설치 (선택)
+- AideMemo's stdio MCP server and its current tool surface
+- focused `aidememo`, `aidememo-context`, and `aidememo-remember` skills
+- `SessionStart`, `PostToolUse`, and `UserPromptSubmit` hooks
 
-`/aidememo-search`, `/aidememo-add-fact`, `/aidememo-context` 단축어:
+The plugin uses the selected default AideMemo store. Set `AIDEMEMO_STORE`,
+`AIDEMEMO_SOURCE_ID`, and `AIDEMEMO_ACTOR_ID` before starting Claude Code when
+the plugin needs an explicit store or provenance. Choose Option B instead when
+you want Claude Code to persist that registration without launch-time env.
+
+For plugin development without installation:
 
 ```bash
-mkdir -p ~/.claude/commands
-cp ~/dev/aidememo/.claude/commands/aidememo-*.md ~/.claude/commands/
+claude plugin validate ./plugins/claude
+claude --plugin-dir ./plugins/claude
 ```
 
-또는 프로젝트별로 `.claude/commands/`에 두면 그 프로젝트에서만 작동.
+## Option B: install MCP and a standalone skill (without the plugin)
 
-## 5. 위키 초기화
+Pin the resolved store so Claude Code behaves the same from every working
+directory:
 
 ```bash
-aidememo init ./my-wiki        # 새 위키
-aidememo ingest ./my-wiki      # 마크다운 → 그래프
+aidememo --store "$(pwd)/wiki.sqlite" mcp-install \
+  --target claude \
+  --source-id "project:my-project" \
+  --actor-id "claude:local"
+
+aidememo skill install --target claude
+claude mcp list
 ```
 
-`~/.aidememo/config.toml`에서 store 경로/모델 등 조정 가능.
+The skill installer honors `CLAUDE_CONFIG_DIR`; otherwise it installs to
+`~/.claude/skills/aidememo`. Use `--force` to replace an older copy.
 
-## 검증
+Claude Code MCP scopes can also be managed directly with `claude mcp add`.
+Prefer `local` for a private checkout, `project` for a shared `.mcp.json`, and
+`user` when the same store should be available across projects.
+
+## Verify
+
+Inside Claude Code, run `/mcp` and confirm `aidememo` is connected. Then ask:
+
+```text
+Use AideMemo to show the current project context.
+```
+
+For a configuration health check:
 
 ```bash
-# stdio MCP 핸드셰이크
-echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | aidememo mcp
-
-# 또는 Claude Code 안에서:
-# "/mcp aidememo" → 도구 목록 확인
+aidememo doctor
+claude mcp list
 ```
 
-## 문제 해결
+## Troubleshooting
 
-| 증상 | 해결 |
+| Symptom | Fix |
 |---|---|
-| `aidememo: command not found` | PATH에 `target/release` 추가 후 셸 재시작 |
-| Claude Code가 도구를 못 봄 | `claude mcp list`로 등록 확인. 안 되면 `.mcp.json` 사용 |
-| `store not found` | `aidememo init` 안 한 상태. 또는 `--store` 옵션으로 경로 지정 |
+| `aidememo: command not found` | Install the CLI and restart the shell/Claude Code so its `PATH` refreshes. |
+| MCP is disconnected | Run `aidememo mcp-install --target claude --force`, then `claude mcp list`. |
+| Wrong store is used | Reinstall with an absolute `--store` path. |
+| Skill is missing in an isolated profile | Set `CLAUDE_CONFIG_DIR` before `aidememo skill install --target claude`. |
+| Hooks add no context | Run the hook manually as described in [the hook guide](hooks/README.md), and check `AIDEMEMO_STORE`. |
+
+The legacy files under `.claude/commands/` remain compatible, but new setups
+should use skills because they are the current Claude Code extension surface.

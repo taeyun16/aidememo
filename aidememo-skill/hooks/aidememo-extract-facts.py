@@ -51,6 +51,17 @@ def run_aidememo(*args: str, stdin: str | None = None, timeout: int = 8) -> str 
         return None
 
 
+def context_output(body: str) -> dict[str, object]:
+    """Return Claude Code's current UserPromptSubmit hook output envelope."""
+    return {
+        "continue": True,
+        "hookSpecificOutput": {
+            "hookEventName": "UserPromptSubmit",
+            "additionalContext": body,
+        },
+    }
+
+
 def main() -> int:
     try:
         payload = json.loads(sys.stdin.read() or "{}")
@@ -84,7 +95,7 @@ def main() -> int:
         f"{out}\n\n"
         "These are NOT auto-saved. Call `aidememo_fact_add` if any are worth keeping."
     )
-    print(json.dumps({"additionalContext": body, "continue": True}))
+    print(json.dumps(context_output(body)))
     return 0
 
 

@@ -37,6 +37,17 @@ def run_aidememo(*args: str, timeout: int = 4) -> str | None:
         return None
 
 
+def context_output(body: str) -> dict[str, object]:
+    """Return Claude Code's current PostToolUse hook output envelope."""
+    return {
+        "continue": True,
+        "hookSpecificOutput": {
+            "hookEventName": "PostToolUse",
+            "additionalContext": body,
+        },
+    }
+
+
 def candidate_topics(file_path: str) -> list[str]:
     """Pull a few naming-based search terms from a file path.
     'crates/aidememo-core/src/lib.rs' →
@@ -84,7 +95,18 @@ def main() -> int:
     # Try the most-specific topic first (filename), fall back to
     # the parent dir if nothing matches.
     for topic in candidate_topics(file_path):
-        out = run_aidememo("query", topic, "-l", "3", "--recent-limit", "3")
+        # Hooks run on the latency-sensitive edit path. BM25 avoids loading an
+        # embedding model in a fresh process while retaining deterministic
+        # filename and path matching.
+        out = run_aidememo(
+            "query",
+            topic,
+            "-l",
+            "3",
+            "--recent-limit",
+            "3",
+            "--bm25-only",
+        )
         if out and "no results" not in out.lower() and out.strip():
             body = (
                 f"## AideMemo facts related to `{file_path}` (via topic '{topic}')\n\n"
@@ -92,7 +114,7 @@ def main() -> int:
                 "If anything contradicts the change you just made, consider "
                 "`aidememo_fact_supersede` to retire the stale fact."
             )
-            print(json.dumps({"additionalContext": body, "continue": True}))
+            print(json.dumps(context_output(body)))
             return 0
 
     print(json.dumps({"continue": True}))

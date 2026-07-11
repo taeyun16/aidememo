@@ -28,7 +28,10 @@ fn run(args: &[&str]) -> std::process::Output {
 fn run_with_home(home: &Path, args: &[&str]) -> std::process::Output {
     Command::new(aidememo_bin())
         .env_remove("AIDEMEMO_STORE")
+        .env_remove("CLAUDE_CONFIG_DIR")
         .env_remove("CODEX_HOME")
+        .env_remove("HERMES_HOME")
+        .env_remove("PI_CODING_AGENT_DIR")
         .env("HOME", home)
         .args(args)
         .output()
@@ -48,7 +51,7 @@ fn skill_install_list_targets_lists_all_supported() {
         String::from_utf8_lossy(&out.stderr)
     );
     let stdout = String::from_utf8_lossy(&out.stdout);
-    for target in ["claude", "hermes", "openclaw", "agents"] {
+    for target in ["claude", "hermes", "openclaw", "agents", "pi"] {
         assert!(
             stdout.contains(target),
             "expected target `{}` in --list-targets output:\n{}",
@@ -56,6 +59,77 @@ fn skill_install_list_targets_lists_all_supported() {
             stdout
         );
     }
+}
+
+#[test]
+fn skill_install_hermes_honors_hermes_home() {
+    let home = tempfile::tempdir().unwrap();
+    let hermes_home = home.path().join("isolated-hermes");
+    let out = Command::new(aidememo_bin())
+        .env("HOME", home.path())
+        .env("HERMES_HOME", &hermes_home)
+        .args(["skill", "install", "--target", "hermes"])
+        .output()
+        .expect("failed to install Hermes skill");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(hermes_home.join("skills/aidememo/SKILL.md").is_file());
+    assert!(
+        !home
+            .path()
+            .join(".hermes/skills/aidememo/SKILL.md")
+            .exists()
+    );
+}
+
+#[test]
+fn skill_install_claude_honors_claude_config_dir() {
+    let home = tempfile::tempdir().unwrap();
+    let claude_config_dir = home.path().join("isolated-claude");
+    let out = Command::new(aidememo_bin())
+        .env("HOME", home.path())
+        .env("CLAUDE_CONFIG_DIR", &claude_config_dir)
+        .args(["skill", "install", "--target", "claude"])
+        .output()
+        .expect("failed to install Claude skill");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(claude_config_dir.join("skills/aidememo/SKILL.md").is_file());
+    assert!(
+        !home
+            .path()
+            .join(".claude/skills/aidememo/SKILL.md")
+            .exists()
+    );
+}
+
+#[test]
+fn skill_install_pi_uses_native_agent_skills_directory() {
+    let home = tempfile::tempdir().unwrap();
+    let pi_agent_dir = home.path().join("isolated-pi-agent");
+    let out = Command::new(aidememo_bin())
+        .env("HOME", home.path())
+        .env("PI_CODING_AGENT_DIR", &pi_agent_dir)
+        .args(["skill", "install", "--target", "pi"])
+        .output()
+        .expect("failed to install pi skill");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(pi_agent_dir.join("skills/aidememo/SKILL.md").is_file());
+    assert!(pi_agent_dir.join("skills/aidememo/REFERENCE.md").is_file());
+    assert!(!home.path().join(".config/pi/AGENTS.md").exists());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("Ready for pi"));
+    assert!(!stdout.contains("mcp-install --target pi"));
 }
 
 #[test]

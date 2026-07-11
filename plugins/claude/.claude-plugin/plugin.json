@@ -1,0 +1,12 @@
+{
+  "name": "aidememo",
+  "version": "0.1.0",
+  "description": "Persistent local project memory for Claude Code through MCP, focused skills, and safe context hooks.",
+  "author": {
+    "name": "Taeyun Jang"
+  },
+  "homepage": "https://github.com/taeyun16/aidememo",
+  "repository": "https://github.com/taeyun16/aidememo",
+  "license": "MIT OR Apache-2.0",
+  "keywords": ["memory", "knowledge-graph", "mcp", "agent-skills"]
+}
