@@ -1,6 +1,6 @@
 ---
 title: Architecture
-description: Visual system map for AideMemo's CLI, MCP, agent SDK, bindings, core, stores, and retrieval flows.
+description: Visual system map for AideMemo's CLI, MCP, agent SDK, bindings, core, stores, retrieval flows, and opt-in local SLM sidecars.
 ---
 
 # Architecture
@@ -13,7 +13,7 @@ native bindings.
 ## System map
 
 ```mermaid
-flowchart LR
+flowchart TB
   codex["Coding agents<br/>Codex / Claude Code / Cursor / Hermes"]
   human["Human CLI user"]
   scripts["Scripts and tests"]
@@ -30,6 +30,14 @@ flowchart LR
   redb[("redb hot store<br/>optional Cargo feature")]
   cold[("Cold tier<br/>*.cold.sqlite / *.cold.redb")]
   indexes["Retrieval sidecars<br/>BM25 + semantic HNSW"]
+  shadow["Optional fact-type shadow log<br/>reviewed JSONL; no write mutation"]
+
+  subgraph optional_models["Opt-in local model sidecars - downloaded separately"]
+    lfm_embed["LFM2.5 Embedding 350M 4-bit<br/>MLX / TEI-compatible embeddings"]
+    lfm_rerank["LFM2.5 ColBERT 350M 4-bit<br/>candidate rerank experiment"]
+    lfm_type["LFM2.5 1.2B Instruct + LoRA<br/>shadow fact_type_hint only"]
+    privacy_model["OpenAI Privacy Filter MLX mxfp4<br/>report / redact / block"]
+  end
 
   human --> cli
   codex --> mcp
@@ -47,12 +55,32 @@ flowchart LR
   backend --> redb
   core --> cold
   core --> indexes
+  cli -. "AIDEMEMO_FACT_TYPE_SHADOW_LOG" .-> shadow
+  mcp -. "AIDEMEMO_FACT_TYPE_SHADOW_LOG" .-> shadow
+  lfm_embed -. "model.provider=lfm-sidecar" .-> indexes
+  lfm_rerank -. "optional compatible reranker" .-> indexes
+  shadow -. "offline train and evaluate" .-> lfm_type
+  privacy_model -. "privacy.provider" .-> core
 ```
 
 The public dispatch point is `AideMemo` in `aidememo-core`. Storage selection is
 centralized behind `StoreKind`: SQLite / `libsqlite` is the default runtime
 backend, while `redb` is selected only when the crate is built with the optional
 Cargo feature and the config or CLI asks for it.
+
+The solid storage and retrieval path runs without an external LLM API. The
+dotted model edges are explicit local opt-ins, not hidden dependencies:
+LFM2.5 Embedding can supply vectors to the existing HNSW path, ColBERT can
+rerank an already-recalled candidate set, the 1.2B LoRA path emits review-only
+`fact_type_hint` values from shadow data, and the privacy model runs before
+persistence when its policy is enabled.
+
+| Boundary | Concrete opt-in used by the measured path |
+|---|---|
+| Semantic fallback | `mlx-community/LFM2.5-Embedding-350M-4bit` via `model.provider=lfm-sidecar` |
+| Candidate rerank | `mlx-community/LFM2.5-ColBERT-350M-4bit` through a compatible local scorer |
+| Shadow fact typing | `LiquidAI/LFM2.5-1.2B-Instruct-MLX-4bit` + LoRA, review hints only |
+| Write-time privacy | OpenAI Privacy Filter MLX `mxfp4`, policy opt-in |
 
 ## Retrieval flow
 
@@ -65,8 +93,15 @@ flowchart TD
   context["aidememo_context"]
   filters["Apply filters<br/>source_id / current_only / include_archive / as_of"]
   bm25["BM25 lexical search"]
-  hnsw["Optional semantic HNSW"]
-  rerank["Optional TEI rerank<br/>non-fatal fallback"]
+  auto_gate{"Lexical evidence strong?"}
+  model2vec["model2vec<br/>built-in default semantic provider"]
+  lfm_embed["LFM2.5 Embedding 350M 4-bit<br/>opt-in MLX / TEI sidecar"]
+  hnsw["Semantic HNSW lookup"]
+  fuse["RRF fusion with BM25"]
+  candidates["Candidate facts"]
+  rerank_gate{"rerank.provider enabled?"}
+  rerank["TEI-compatible candidate rerank<br/>non-fatal fallback"]
+  lfm_rerank["LFM2.5 ColBERT 350M 4-bit<br/>opt-in evaluated path"]
   graphCtx["Optional graph and recent context"]
   result["Ranked facts and context pack"]
 
@@ -78,9 +113,18 @@ flowchart TD
   query --> filters
   context --> filters
   filters --> bm25
-  filters --> hnsw
-  bm25 --> rerank
-  hnsw --> rerank
+  bm25 --> auto_gate
+  auto_gate -->|yes| candidates
+  auto_gate -->|weak or CJK and semantic ready| hnsw
+  model2vec --> hnsw
+  lfm_embed -. "configured provider" .-> hnsw
+  bm25 --> fuse
+  hnsw --> fuse
+  fuse --> candidates
+  candidates --> rerank_gate
+  rerank_gate -->|no| graphCtx
+  rerank_gate -->|yes| rerank
+  lfm_rerank -. "compatible local scorer" .-> rerank
   rerank --> graphCtx
   graphCtx --> result
 ```
@@ -92,12 +136,21 @@ promotes weak or CJK queries to semantic retrieval when the semantic path is
 ready. `--hybrid` forces semantic ranking for every query. MCP callers can pass
 `bm25_only:true` when they need deterministic low-latency behavior.
 
+`model2vec` remains the global default semantic provider. The LFM embedding
+sidecar is selected only with `model.provider=lfm-sidecar` and participates in
+the same auto-hybrid + HNSW contract; daemon startup prewarms it when that path
+is configured. ColBERT remains off by default and belongs after candidate
+recall, not in place of retrieval.
+
 ## Write and lifecycle flow
 
 ```mermaid
 flowchart TD
   fact["fact add / fact_add_many<br/>typed content + entities"]
   classify["Agent classifies fact_type<br/>decision / lesson / error / preference / note"]
+  privacy_gate{"privacy.provider enabled?"}
+  privacy["Write-time privacy policy<br/>report / redact / block"]
+  privacy_model["OpenAI Privacy Filter MLX mxfp4<br/>opt-in local sidecar"]
   entities["Auto-create or resolve entities"]
   hot["Hot store write<br/>facts + entity links + relations"]
   session["Optional session link<br/>AIDEMEMO_SESSION_ID or session_id"]
@@ -107,8 +160,15 @@ flowchart TD
   consolidate["Consolidate / GAC / TTL"]
   rebuild["vector-rebuild --current-only"]
   read["Future search / query / context"]
+  shadow["Reviewed shadow corpus<br/>explicit labels + hints"]
+  lfm_type["LFM2.5 1.2B Instruct + LoRA<br/>offline classifier"]
+  hint["Confidence + margin gated fact_type_hint<br/>pending review only"]
 
-  fact --> classify --> entities --> hot
+  fact --> classify --> privacy_gate
+  privacy_gate -->|no| entities
+  privacy_gate -->|yes| privacy --> entities
+  privacy_model -. "local policy model" .-> privacy
+  entities --> hot
   hot --> session
   hot --> pin
   hot --> supersede
@@ -119,12 +179,18 @@ flowchart TD
   supersede --> read
   archive --> read
   rebuild --> read
+  hot -. "AIDEMEMO_FACT_TYPE_SHADOW_LOG" .-> shadow
+  shadow --> lfm_type --> hint
 ```
 
 Facts are intentionally explicit. AideMemo does not need a built-in hosted
 extractor for normal agent loops because the calling agent already has the
 stronger model and should classify durable facts before writing them. The
 `extract` and `pending` commands exist for opt-in capture and review workflows.
+The local 1.2B + LoRA path is deliberately outside the persistence edge: it
+learns from reviewed shadow logs and emits hints, but never silently changes an
+explicit type or writes a fact. The privacy sidecar has the opposite placement:
+when enabled, its policy executes synchronously before persistence.
 
 ## Cloud and branch-log flow
 
@@ -158,6 +224,7 @@ semantic conflicts between competing decisions remain application policy.
 | Storage dispatch | `crates/aidememo-core/src/backend.rs`, `sqlite_store.rs`, `store.rs` | [`Operations`](OPERATIONS.md), [`Feature Inventory`](FEATURES.md) |
 | Python agent SDK | `packages/aidememo-agent-sdk/src/aidememo_agent/sdk.py` | [`Python SDK`](SDK.md), [`Agent Workflows`](AGENT_WORKFLOWS.md) |
 | Native bindings | `crates/aidememo-python`, `crates/aidememo-napi`, `crates/aidememo-nif`, `crates/aidememo-ffi` | [`Python SDK`](SDK.md), package READMEs |
+| Local model sidecars and evaluation | `scripts/lfm_mlx_embedding_sidecar.py`, `scripts/lfm_colbert_rerank.py`, `scripts/lfm_fact_type_sidecar.py`, `scripts/privacy_filter_mlx_sidecar.py` | [`Operations`](OPERATIONS.md), [`Measurements`](MEASUREMENTS.md) |
 | Validation and release gates | `scripts/changelog-release-check.py`, `scripts/registry-readiness-check.py`, `scripts/cargo-package-readiness.sh`, `scripts/docs-feature-gate.py`, `scripts/docs-i18n-status.py`, `scripts/docs-site-e2e.py`, `scripts/*smoke*.sh`, `scripts/ci-local.sh` | [`Measurements`](MEASUREMENTS.md), [`Release Checklist`](RELEASE.md) |
 
 ## Documentation contract
@@ -177,6 +244,9 @@ currently checks:
 - core explanatory docs such as this page, [`Agent Workflows`](AGENT_WORKFLOWS.md),
   and [`Measurements`](MEASUREMENTS.md) are exposed through Docusaurus;
 - Mermaid is enabled so system diagrams render as diagrams, not inert code;
+- README and English/Korean architecture diagrams retain the default local path
+  plus the opt-in LFM embedding, ColBERT rerank, fact-type hint, and privacy
+  sidecar boundaries;
 - Korean translation coverage and source fingerprints match the public English
   docs, with intentional English fallbacks recorded explicitly;
 - public wording keeps SQLite as the default backend and redb as the optional

@@ -48,6 +48,15 @@ KO_NAVBAR_JSON = ROOT / "website" / "i18n" / "ko" / "docusaurus-theme-classic" /
 PAGES_WORKFLOW = ROOT / ".github" / "workflows" / "pages.yml"
 ROBOTS_TXT = ROOT / "website" / "static" / "robots.txt"
 SOCIAL_CARD = ROOT / "website" / "static" / "img" / "aidememo-social-card.png"
+KO_ARCHITECTURE_DOC = (
+    ROOT
+    / "website"
+    / "i18n"
+    / "ko"
+    / "docusaurus-plugin-content-docs"
+    / "current"
+    / "ARCHITECTURE.md"
+)
 
 REQUIRED_SIDEBAR_DOCS = [
     "INTRODUCTION",
@@ -82,6 +91,28 @@ REQUIRED_HOMEPAGE_DOCS = [
 
 DOC_CONTENT_REQUIREMENTS = [
     (
+        README,
+        [
+            "Local SLM Extensions (Opt In)",
+            "mlx-community/LFM2.5-Embedding-350M-4bit",
+            "mlx-community/LFM2.5-ColBERT-350M-4bit",
+            "LiquidAI/LFM2.5-1.2B-Instruct-MLX-4bit",
+            "fact_type_hint",
+            "no external LLM API",
+        ],
+    ),
+    (
+        README_KO,
+        [
+            "로컬 SLM 확장(선택형)",
+            "mlx-community/LFM2.5-Embedding-350M-4bit",
+            "mlx-community/LFM2.5-ColBERT-350M-4bit",
+            "LiquidAI/LFM2.5-1.2B-Instruct-MLX-4bit",
+            "fact_type_hint",
+            "외부 LLM API",
+        ],
+    ),
+    (
         EVIDENCE_DOC,
         [
             "does not require an external LLM call",
@@ -110,6 +141,11 @@ DOC_CONTENT_REQUIREMENTS = [
             "aidememo-napi",
             "aidememo-nif",
             "aidememo-ffi",
+            "mlx-community/LFM2.5-Embedding-350M-4bit",
+            "mlx-community/LFM2.5-ColBERT-350M-4bit",
+            "LiquidAI/LFM2.5-1.2B-Instruct-MLX-4bit",
+            "OpenAI Privacy Filter MLX mxfp4",
+            "model.provider=lfm-sidecar",
             "scripts/docs-feature-gate.py",
             "scripts/docs-i18n-status.py",
             "scripts/docs-site-e2e.py",
@@ -206,6 +242,67 @@ DOC_CONTENT_REQUIREMENTS = [
             "AIDEMEMO_PUBLIC_REGISTRY_SMOKE_MODE=verify",
             "v0.1.0",
             "aidememo-core",
+        ],
+    ),
+]
+
+MERMAID_CONTENT_REQUIREMENTS = [
+    (
+        README,
+        [
+            "default_path",
+            "optional_models",
+            "lfm_embed",
+            "lfm_rerank",
+            "lfm_type",
+            "type_review",
+            "privacy_model",
+            "LFM2.5 Embedding 350M",
+            "LFM2.5 ColBERT 350M",
+            "LFM2.5 1.2B + LoRA",
+        ],
+    ),
+    (
+        README_KO,
+        [
+            "default_path",
+            "optional_models",
+            "lfm_embed",
+            "lfm_rerank",
+            "lfm_type",
+            "type_review",
+            "privacy_model",
+            "LFM2.5 Embedding 350M",
+            "LFM2.5 ColBERT 350M",
+            "LFM2.5 1.2B + LoRA",
+        ],
+    ),
+    (
+        ARCHITECTURE_DOC,
+        [
+            "optional_models",
+            "lfm_embed",
+            "lfm_rerank",
+            "lfm_type",
+            "hint",
+            "privacy_model",
+            "LFM2.5 Embedding 350M 4-bit",
+            "LFM2.5 ColBERT 350M 4-bit",
+            "LFM2.5 1.2B Instruct + LoRA",
+        ],
+    ),
+    (
+        KO_ARCHITECTURE_DOC,
+        [
+            "optional_models",
+            "lfm_embed",
+            "lfm_rerank",
+            "lfm_type",
+            "hint",
+            "privacy_model",
+            "LFM2.5 Embedding 350M 4-bit",
+            "LFM2.5 ColBERT 350M 4-bit",
+            "LFM2.5 1.2B Instruct + LoRA",
         ],
     ),
 ]
@@ -737,6 +834,33 @@ def mermaid_blocks(text: str) -> list[str]:
     return re.findall(r"```mermaid\s*\n(.*?)```", text, flags=re.DOTALL)
 
 
+def check_mermaid_content_requirements(path: Path, tokens: list[str]) -> list[str]:
+    if not path.exists():
+        return [f"{path.relative_to(ROOT)} is missing"]
+    blocks = mermaid_blocks(path.read_text(encoding="utf-8"))
+    rel = path.relative_to(ROOT)
+    if not blocks:
+        return [f"{rel}: expected a Mermaid diagram for the local SLM architecture contract"]
+    diagram_text = "\n".join(blocks)
+    return [
+        f"{rel}: Mermaid diagrams are missing local SLM architecture token {token!r}"
+        for token in tokens
+        if token not in diagram_text
+    ]
+
+
+def check_mermaid_content_self_test() -> list[str]:
+    errors: list[str] = []
+    if check_mermaid_content_requirements(README, ["lfm_embed"]):
+        errors.append("Mermaid content self-test rejected a required README SLM node")
+    if check_mermaid_content_requirements(README_KO, ["lfm_embed"]):
+        errors.append("Mermaid content self-test rejected a required Korean README SLM node")
+    missing = check_mermaid_content_requirements(README, ["missing_slm_contract_node"])
+    if not any("missing local SLM architecture token" in error for error in missing):
+        errors.append("Mermaid content self-test did not reject a missing SLM node")
+    return errors
+
+
 def check_mermaid_static_lint(path: Path, text: str) -> list[str]:
     errors: list[str] = []
     reserved_node_ids = {
@@ -904,6 +1028,16 @@ def check_docusaurus_contract() -> list[str]:
             if normalized_token not in normalized_text:
                 errors.append(f"{rel}: missing implementation-doc contract token {token!r}")
 
+    for path, tokens in MERMAID_CONTENT_REQUIREMENTS:
+        errors.extend(check_mermaid_content_requirements(path, tokens))
+    if KO_ARCHITECTURE_DOC.exists():
+        errors.extend(
+            check_mermaid_static_lint(
+                KO_ARCHITECTURE_DOC,
+                KO_ARCHITECTURE_DOC.read_text(encoding="utf-8"),
+            )
+        )
+
     if ARCHITECTURE_DOC.exists():
         architecture = ARCHITECTURE_DOC.read_text(encoding="utf-8")
         diagram_count = mermaid_diagram_count(architecture)
@@ -937,7 +1071,7 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.self_test:
-        errors = check_count_claim_self_test()
+        errors = [*check_count_claim_self_test(), *check_mermaid_content_self_test()]
         if errors:
             print("docs feature gate self-test failed:", file=sys.stderr)
             for error in errors:
@@ -955,6 +1089,7 @@ def main() -> int:
 
     errors = []
     errors.extend(check_count_claim_self_test())
+    errors.extend(check_mermaid_content_self_test())
     errors.extend(check_feature_inventory(binary))
     errors.extend(
         check_count_claims(
