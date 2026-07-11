@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://taeyun16.github.io/aidememo/sitemap.xml
+Sitemap: https://aidememo.taeyun.me/sitemap.xml

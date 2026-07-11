@@ -857,7 +857,7 @@ def check_docusaurus_contract() -> list[str]:
         encoding="utf-8"
     ):
         errors.append("website/static/pagefind-loader.js must expose the browser-only Pagefind loader")
-    if not ROBOTS_TXT.exists() or "https://taeyun16.github.io/aidememo/sitemap.xml" not in ROBOTS_TXT.read_text(
+    if not ROBOTS_TXT.exists() or "https://aidememo.taeyun.me/sitemap.xml" not in ROBOTS_TXT.read_text(
         encoding="utf-8"
     ):
         errors.append("website/static/robots.txt must advertise the deployed sitemap")

@@ -5,8 +5,8 @@ const darkCodeTheme = require('prism-react-renderer').themes.dracula;
 const config = {
   title: 'AideMemo',
   tagline: 'Local memory for coding agents.',
-  url: 'https://taeyun16.github.io',
-  baseUrl: '/aidememo/',
+  url: 'https://aidememo.taeyun.me',
+  baseUrl: '/',
   favicon: 'img/aidememo-logo.png',
   organizationName: 'taeyun16',
   projectName: 'aidememo',

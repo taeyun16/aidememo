@@ -175,5 +175,5 @@ link/asset/anchor가 해석되는지, locale별 페이지 H1과 `html lang` /
 
 게이트가 문장의 의미적 완벽성을 증명할 수는 없습니다. 대신 기능과 구조
 드리프트를 눈에 띄게 만듭니다. 문서를 갱신하지 않은 CLI/MCP 기능 변경,
-배포된 `/aidememo/` route graph 손상, 저장소 기본값 설명의 회귀는 CI를
+배포된 root route graph 손상, 저장소 기본값 설명의 회귀는 CI를
 실패시킵니다.

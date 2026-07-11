@@ -94,8 +94,8 @@ npm publishes complete, prefer the Git or checkout install paths above.
 
 The static product and documentation site lives in [`website/`](website/) and
 renders the durable English Markdown under [`docs/`](docs/) with Docusaurus.
-The product landing page is served at `/aidememo/`, documentation stays under
-`/aidememo/docs/`, and Korean is available at `/aidememo/ko/`. Translated
+The product landing page is served at `https://aidememo.taeyun.me/`,
+documentation stays under `/docs/`, and Korean is available at `/ko/`. Translated
 onboarding/workflow pages use explicit English fallback for long reference
 docs. Production builds include an in-browser local search index; no search
 service or API key is required.

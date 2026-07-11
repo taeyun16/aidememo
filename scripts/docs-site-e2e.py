@@ -25,8 +25,8 @@ DOCUSAURUS_CONFIG = WEBSITE / "docusaurus.config.js"
 ARCHITECTURE_DOC = DOCS / "ARCHITECTURE.md"
 I18N = WEBSITE / "i18n"
 
-SITE_ORIGIN = "https://taeyun16.github.io"
-BASE_PATH = "/aidememo/"
+SITE_ORIGIN = "https://aidememo.taeyun.me"
+BASE_PATH = "/"
 LOCALES = {
     "en": {"base_path": BASE_PATH, "html_lang": "en-US"},
     "ko": {"base_path": f"{BASE_PATH}ko/", "html_lang": "ko-KR"},
@@ -198,7 +198,7 @@ def parse_page(path: Path) -> PageParser:
 def localize_url(current_route: str, raw: str) -> tuple[str, str] | None:
     if raw.startswith(("mailto:", "tel:", "javascript:", "data:")):
         return None
-    if raw.startswith(("/docs/", "/img/", "/assets/")):
+    if BASE_PATH != "/" and raw.startswith(("/docs/", "/img/", "/assets/")):
         return ("missing-base-url", raw)
 
     absolute = urljoin(f"{SITE_ORIGIN}{current_route}", raw)

@@ -178,5 +178,5 @@ implementation paths still exist in the repo.
 
 The gates cannot prove that prose is semantically perfect. They do make feature
 and structure drift noisy: adding or renaming a CLI command or MCP tool without
-updating this inventory, breaking the deployed `/aidememo/` route graph, or
+updating this inventory, breaking the deployed root route graph, or
 reverting the storage positioning fails CI.
