@@ -27,7 +27,8 @@
 
 ---
 
-**AideMemo**(`aidememo`)는 Claude Code, Codex, Cursor, Hermes를 비롯한 코딩
+**AideMemo**(`aidememo`)는 Claude Code, Codex, Hermes, pi, Cursor, OpenClaw,
+OpenCode를 비롯한 코딩
 에이전트를 위한 SDK 친화적 메모리 시스템입니다. 프로젝트 지식을 엔티티와
 관계로 연결된 타입 있는 팩트로 저장하고, 유효 기간을 통해 시간 이력을
 보존하며, 하나의 저장소를 Python 에이전트 SDK, MCP 도구, CLI, 인프로세스
@@ -42,7 +43,7 @@ AideMemo는 의도적으로 호스팅 메모리 SaaS, 완전한 에이전트 런
 
 ```mermaid
 flowchart LR
-    Agent["Claude / Codex / Hermes"] --> SDK["aidememo-agent-sdk"]
+    Agent["Claude / Codex / Hermes / pi"] --> SDK["aidememo-agent-sdk"]
     Agent --> MCP["aidememo mcp / aidememo mcp-serve"]
     Human["CLI 사용자"] --> CLI["aidememo query / search / fact add"]
     Plugin["Python / Node / Elixir / C"] --> API["AideMemo API"]
@@ -151,6 +152,25 @@ args = ["--backend", "libsqlite", "mcp"]
 MCP, 기능별 스킬, 훅을 묶은 Claude 플러그인 설치 방법은
 [한국어 안내](aidememo-skill/setup-claude-code.ko.md) 또는
 [영문 안내](aidememo-skill/setup-claude-code.md)를 참고하세요.
+
+### 코딩 에이전트 설치
+
+| 에이전트 | 권장 설치 |
+|---|---|
+| Claude Code | 내장 플러그인 또는 `mcp-install --target claude` + `skill install --target claude` |
+| Codex | `mcp-install --target codex`. 격리된 `--codex-home` 프로필 반복 지원 |
+| Hermes Agent | `skill install --target hermes` + `mcp-install --target hermes`, 또는 `hermes-aidememo` 플러그인 |
+| pi coding agent | `skill install --target pi`. pi에는 의도적으로 MCP 단계가 없음 |
+| Cursor / OpenClaw / OpenCode | 지원되는 스킬과 각 설치기 대상 |
+
+정확한 명령, 프로필 변수, 검증, 문제 해결은 Docusaurus의
+[`코딩 에이전트 설치`](docs/CODING_AGENTS.md)를 참고하세요. 상세 독립 가이드는
+영문과 한글로 제공됩니다.
+
+- [Claude Code 한국어](aidememo-skill/setup-claude-code.ko.md) / [English](aidememo-skill/setup-claude-code.md)
+- [Codex 한국어](aidememo-skill/setup-codex.ko.md) / [English](aidememo-skill/setup-codex.md)
+- [Hermes Agent 한국어](aidememo-skill/setup-hermes.ko.md) / [English](aidememo-skill/setup-hermes.md)
+- [pi coding agent 한국어](aidememo-skill/setup-pi.ko.md) / [English](aidememo-skill/setup-pi.md)
 
 ## 에이전트 진입점
 

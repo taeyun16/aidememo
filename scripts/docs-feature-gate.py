@@ -18,6 +18,7 @@ COMPARE = ROOT / "COMPARE.md"
 FEATURES_DOC = ROOT / "docs" / "FEATURES.md"
 ARCHITECTURE_DOC = ROOT / "docs" / "ARCHITECTURE.md"
 AGENT_WORKFLOWS_DOC = ROOT / "docs" / "AGENT_WORKFLOWS.md"
+CODING_AGENTS_DOC = ROOT / "docs" / "CODING_AGENTS.md"
 CODEX_MULTI_PROFILE_DOC = ROOT / "docs" / "CODEX_MULTI_PROFILE.md"
 INSTALLATION_DOC = ROOT / "docs" / "INSTALLATION.md"
 QUICKSTART_DOC = ROOT / "docs" / "QUICKSTART.md"
@@ -55,6 +56,7 @@ REQUIRED_SIDEBAR_DOCS = [
     "QUICKSTART",
     "CLI",
     "MCP",
+    "CODING_AGENTS",
     "CODEX_MULTI_PROFILE",
     "AGENT_WORKFLOWS",
     "SDK",
@@ -72,6 +74,7 @@ REQUIRED_HOMEPAGE_DOCS = [
     "QUICKSTART",
     "ARCHITECTURE",
     "MCP",
+    "CODING_AGENTS",
     "CODEX_MULTI_PROFILE",
     "AGENT_WORKFLOWS",
     "EVIDENCE",
@@ -110,6 +113,25 @@ DOC_CONTENT_REQUIREMENTS = [
             "scripts/docs-feature-gate.py",
             "scripts/docs-i18n-status.py",
             "scripts/docs-site-e2e.py",
+        ],
+    ),
+    (
+        CODING_AGENTS_DOC,
+        [
+            "Claude Code",
+            "CLAUDE_CONFIG_DIR",
+            "claude plugin validate ./plugins/claude",
+            "--target codex",
+            "--codex-home",
+            "Hermes Agent",
+            "HERMES_HOME",
+            "hermes-aidememo",
+            "pi coding agent",
+            "PI_CODING_AGENT_DIR",
+            "pi does not accept MCP",
+            "--target cursor",
+            "--target openclaw",
+            "--target opencode",
         ],
     ),
     (
@@ -583,6 +605,8 @@ def check_onboarding_contract(binary: Path) -> list[str]:
                 "curl -fsSL https://raw.githubusercontent.com/taeyun16/aidememo/main/scripts/install.sh | bash",
                 "cargo install --path crates/aidememo-cli",
                 '<a href="./README.ko.md">한국어</a>',
+                "docs/CODING_AGENTS.md",
+                "skill install --target pi",
             ],
             "public install",
         )
@@ -594,6 +618,8 @@ def check_onboarding_contract(binary: Path) -> list[str]:
                 "curl -fsSL https://raw.githubusercontent.com/taeyun16/aidememo/main/scripts/install.sh | bash",
                 "cargo install --path crates/aidememo-cli",
                 '<a href="./README.md">English</a>',
+                "docs/CODING_AGENTS.md",
+                "skill install --target pi",
             ],
             "Korean public install",
         )
@@ -601,7 +627,12 @@ def check_onboarding_contract(binary: Path) -> list[str]:
     errors.extend(
         require_tokens(
             INSTALLATION_DOC,
-            ["From a checkout", "scripts/fresh-checkout-smoke.sh"],
+            [
+                "From a checkout",
+                "scripts/fresh-checkout-smoke.sh",
+                "Coding Agent Setup",
+                "aidememo mcp-install --list-targets",
+            ],
             "checkout install",
         )
     )

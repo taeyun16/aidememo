@@ -128,6 +128,11 @@ python3 scripts/docs-site-e2e.py
 | `aidememo-nif` | Elixir/Erlang NIF 바인딩 |
 | `aidememo-ffi` | C ABI 바인딩 |
 | `hermes-aidememo` | Hermes Agent plugin, slash command, lifecycle hook, SDK re-export, 선택형 pending-first 캡처 adapter |
+| Claude Code 플러그인 | `plugins/claude` 아래의 자체 완결형 MCP 정의, 기능별 스킬 세 개, 읽기 전용 컨텍스트 훅 세 개 |
+| Agent skill 설치기 | Claude(`CLAUDE_CONFIG_DIR`), Hermes(`HERMES_HOME`), pi(`PI_CODING_AGENT_DIR`) 프로필을 인식합니다. pi는 의도적으로 MCP 대신 CLI를 사용합니다. |
+
+지원 에이전트 표와 검증된 설치 경로는
+[`코딩 에이전트 설치`](CODING_AGENTS.md)를 참고하세요.
 
 네이티브 Python, Node, Elixir, C 바인딩은 CLI와 같은 백엔드 선택자를
 사용합니다. 기본 빌드는 로컬 SQLite 백엔드를 포함하며 redb 저장소를 열어야

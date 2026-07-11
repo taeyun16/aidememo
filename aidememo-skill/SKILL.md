@@ -243,8 +243,9 @@ aidememo mcp-install --target opencode     # writes mcp.aidememo in ~/.config/op
 
 `aidememo mcp-install --list-targets` and `aidememo skill install --list-targets` show
 every supported agent and the path each would write. Hand-rolled setup steps
-are in the repository's `aidememo-skill/` directory. Claude Code, Hermes, and
-pi guides are available in English (`setup-claude-code.md`, `setup-hermes.md`,
-`setup-pi.md`) and Korean (`setup-claude-code.ko.md`, `setup-hermes.ko.md`,
+are in the repository's `aidememo-skill/` directory. Claude Code, Codex,
+Hermes, and pi guides are available in English (`setup-claude-code.md`,
+`setup-codex.md`, `setup-hermes.md`, `setup-pi.md`) and Korean
+(`setup-claude-code.ko.md`, `setup-codex.ko.md`, `setup-hermes.ko.md`,
 `setup-pi.ko.md`). The
 full API + internals reference is in `REFERENCE.md`.

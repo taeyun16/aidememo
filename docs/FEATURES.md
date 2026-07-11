@@ -128,6 +128,11 @@ python3 scripts/docs-site-e2e.py
 | `aidememo-nif` | Elixir/Erlang NIF bindings. |
 | `aidememo-ffi` | C ABI bindings. |
 | `hermes-aidememo` | Hermes Agent plugin, slash commands, lifecycle hooks, SDK re-exports, and opt-in pending-first capture adapter. |
+| Claude Code plugin | Self-contained MCP definition, three focused skills, and three read-only context hooks under `plugins/claude`. |
+| Agent skill installers | Profile-aware installs for Claude (`CLAUDE_CONFIG_DIR`), Hermes (`HERMES_HOME`), and pi (`PI_CODING_AGENT_DIR`); pi intentionally uses CLI rather than MCP. |
+
+See [`Coding Agent Setup`](CODING_AGENTS.md) for the supported agent matrix and
+verified installation paths.
 
 The native Python, Node, Elixir, and C bindings use the same backend selector
 as the CLI. Default builds include the local SQLite backend; build with Cargo

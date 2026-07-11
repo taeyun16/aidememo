@@ -27,6 +27,14 @@
     "message": "MCP 설정",
     "description": "Homepage link title for MCP setup."
   },
+  "homepage.card.codingAgents.title": {
+    "message": "코딩 에이전트 설치",
+    "description": "Homepage link title for coding agent setup."
+  },
+  "homepage.card.codingAgents.description": {
+    "message": "Claude Code, Codex, Hermes, pi와 다른 에이전트에 AideMemo를 설치합니다.",
+    "description": "Homepage link description for coding agent setup."
+  },
   "homepage.card.mcp.description": {
     "message": "로컬 에이전트에 AideMemo를 등록하고 핵심 도구를 사용합니다.",
     "description": "Homepage link description for MCP setup."

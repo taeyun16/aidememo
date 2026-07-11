@@ -137,6 +137,10 @@ const config = {
                 label: 'MCP Setup',
                 to: '/docs/MCP',
               },
+              {
+                label: 'Coding Agent Setup',
+                to: '/docs/CODING_AGENTS',
+              },
             ],
           },
           {

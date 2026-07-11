@@ -27,6 +27,10 @@
     "message": "MCP 설정",
     "description": "The label of footer link with label=MCP Setup linking to /docs/MCP"
   },
+  "link.item.label.Coding Agent Setup": {
+    "message": "코딩 에이전트 설치",
+    "description": "The label of footer link with label=Coding Agent Setup linking to /docs/CODING_AGENTS"
+  },
   "link.item.label.GitHub": {
     "message": "GitHub",
     "description": "The label of footer link with label=GitHub linking to https://github.com/taeyun16/aidememo"

@@ -637,9 +637,16 @@ plausible — just unmeasured at this quota window.
 
 ### Register with Claude Code
 ```bash
-claude mcp add aidememo -- aidememo mcp
-# or commit .mcp.json at repo root (already provided)
+aidememo --store "$(pwd)/_meta/wiki.sqlite" mcp-install \
+  --target claude \
+  --source-id project:my-app \
+  --actor-id claude:local
+# Or install the repository's plugins/claude bundle for MCP + skills + hooks.
 ```
+
+See `docs/CODING_AGENTS.md` for Claude Code, Codex, Hermes, pi, Cursor,
+OpenClaw, and OpenCode setup. pi uses its native skill and local CLI rather
+than MCP.
 
 ### Register with Codex CLI
 Add to `~/.codex/config.toml`:

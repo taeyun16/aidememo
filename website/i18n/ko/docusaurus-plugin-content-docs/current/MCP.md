@@ -30,11 +30,20 @@ AIDEMEMO_SOURCE_ID = "project:my-app"
 AIDEMEMO_ACTOR_ID = "codex:account-a"
 ```
 
-Claude Code 명령 예시:
+Claude Code 독립 등록:
 
 ```bash
-claude mcp add aidememo -- aidememo mcp
+aidememo --store /absolute/project/_meta/wiki.sqlite mcp-install \
+  --target claude \
+  --source-id project:my-app \
+  --actor-id claude:local
 ```
+
+이 명령은 Claude Code의 현재 CLI 인자 순서를 사용하고 확인된 store를
+고정합니다. 기능별 스킬과 읽기 전용 훅을 함께 제공하는 Claude 플러그인을
+대신 사용할 수도 있습니다. Hermes, Cursor, OpenClaw, OpenCode에도 설치 대상이
+있습니다. pi는 MCP를 받지 않으므로 의도적으로 스킬 전용입니다. 전체 표는
+[`코딩 에이전트 설치`](CODING_AGENTS.md)를 참고하세요.
 
 ## HTTP MCP 서버
 
@@ -112,7 +121,7 @@ aidememo_fact_add
 사용합니다.
 
 ```bash
-aidememo --backend libsqlite mcp-install --target codex --source-id team-a
+aidememo --backend libsqlite mcp-install --target <agent> --source-id team-a
 ```
 
 클라이언트가 명시적인 `source_id`를 전달하지 않으면 MCP 도구는 이 소스
@@ -130,7 +139,10 @@ provenance가 필요하면 별도로 `--actor-id`를 사용합니다.
 | 증상 | 해결 방법 |
 |---|---|
 | 에이전트에서 도구가 보이지 않음 | MCP 설정 경로를 확인하고 에이전트를 다시 시작합니다. |
+| Claude 격리 프로필에 스킬이 없음 | `skill install --target claude` 전에 `CLAUDE_CONFIG_DIR`를 설정합니다. |
 | 한 Codex 프로필에서만 AideMemo가 보이지 않음 | 활성 `CODEX_HOME`에 설치하거나 `--codex-home`을 명시적으로 전달합니다. |
+| Hermes 격리 프로필에서 보이지 않음 | 스킬과 MCP를 설치하기 전에 `HERMES_HOME`을 설정합니다. |
+| pi가 MCP 단계를 제안함 | AideMemo를 업데이트하고 `skill install --target pi`만 사용합니다. |
 | `command not found: aidememo` | MCP 설정에 절대 경로를 사용합니다. |
 | 에이전트가 잘못된 저장소를 엶 | 전역 `--store`로 다시 설치합니다. `aidememo doctor`가 Codex 저장소 불일치를 보고합니다. |
 | 저장소 잠금 오류 | 공유 쓰기는 하나의 `aidememo mcp-serve` 프로세스를 사용합니다. |

@@ -153,6 +153,19 @@ const docLinks: DocLink[] = [
   },
   {
     title: translate({
+      id: 'homepage.card.codingAgents.title',
+      message: 'Coding agent setup',
+      description: 'Homepage link title for coding agent setup.',
+    }),
+    description: translate({
+      id: 'homepage.card.codingAgents.description',
+      message: 'Install AideMemo for Claude Code, Codex, Hermes, pi, and other agents.',
+      description: 'Homepage link description for coding agent setup.',
+    }),
+    to: '/docs/CODING_AGENTS',
+  },
+  {
+    title: translate({
       id: 'homepage.card.mcp.title',
       message: 'MCP setup',
       description: 'Homepage link title for MCP setup.',

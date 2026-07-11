@@ -27,8 +27,8 @@
 
 ---
 
-**AideMemo** (`aidememo`) is an agent-friendly SDK memory system for Claude Code, Codex, Cursor,
-Hermes, and other coding agents. It stores project knowledge as typed facts
+**AideMemo** (`aidememo`) is an agent-friendly SDK memory system for Claude Code,
+Codex, Hermes, pi, Cursor, OpenClaw, OpenCode, and other coding agents. It stores project knowledge as typed facts
 connected to entities and relations, keeps temporal history with validity
 windows, and exposes the same store through a Python agent SDK, MCP tools, CLI,
 and in-process bindings.
@@ -42,7 +42,7 @@ services are explicit opt-ins.
 
 ```mermaid
 flowchart LR
-    Agent["Claude / Codex / Hermes"] --> SDK["aidememo-agent-sdk"]
+    Agent["Claude / Codex / Hermes / pi"] --> SDK["aidememo-agent-sdk"]
     Agent --> MCP["aidememo mcp / aidememo mcp-serve"]
     Human["CLI user"] --> CLI["aidememo query / search / fact add"]
     Plugin["Python / Node / Elixir / C"] --> API["AideMemo API"]
@@ -160,6 +160,25 @@ args = ["--backend", "libsqlite", "mcp"]
 For the bundled Claude plugin (MCP + focused skills + hooks), see the
 [English setup guide](aidememo-skill/setup-claude-code.md) or
 [Korean setup guide](aidememo-skill/setup-claude-code.ko.md).
+
+### Coding agent setup
+
+| Agent | Recommended install |
+|---|---|
+| Claude Code | bundled plugin, or `mcp-install --target claude` + `skill install --target claude` |
+| Codex | `mcp-install --target codex`; supports repeated isolated `--codex-home` profiles |
+| Hermes Agent | `skill install --target hermes` + `mcp-install --target hermes`, or `hermes-aidememo` plugin |
+| pi coding agent | `skill install --target pi`; pi intentionally has no MCP step |
+| Cursor / OpenClaw / OpenCode | the corresponding installer target, with skills where supported |
+
+See the Docusaurus [`Coding Agent Setup`](docs/CODING_AGENTS.md) page for exact
+commands, profile variables, verification, and troubleshooting. Detailed
+standalone guides are available in English and Korean:
+
+- [Claude Code](aidememo-skill/setup-claude-code.md) / [한국어](aidememo-skill/setup-claude-code.ko.md)
+- [Codex](aidememo-skill/setup-codex.md) / [한국어](aidememo-skill/setup-codex.ko.md)
+- [Hermes Agent](aidememo-skill/setup-hermes.md) / [한국어](aidememo-skill/setup-hermes.ko.md)
+- [pi coding agent](aidememo-skill/setup-pi.md) / [한국어](aidememo-skill/setup-pi.ko.md)
 
 ## Agent Entry Points
 
