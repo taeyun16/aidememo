@@ -53,11 +53,10 @@ fn main() {
         .as_deref()
         .map(str::trim)
         .filter(|backend| !backend.is_empty())
+        && let Err(e) = config.set("store.backend", backend)
     {
-        if let Err(e) = config.set("store.backend", backend) {
-            eprintln!("Error setting backend override: {}", e);
-            exit(1);
-        }
+        eprintln!("Error setting backend override: {}", e);
+        exit(1);
     }
 
     // Resolve store path: --store > --project > default_project > store.path.
@@ -879,16 +878,16 @@ fn handle_fact(
                         auto_created.join(", ")
                     ));
                 }
-                if let Some(similar) = &existing_similar {
-                    if let (Some(fid), Some(sim_content)) = (
+                if let Some(similar) = &existing_similar
+                    && let (Some(fid), Some(sim_content)) = (
                         similar.get("fact_id").and_then(|v| v.as_str()),
                         similar.get("content").and_then(|v| v.as_str()),
-                    ) {
-                        msg.push_str(&format!(
-                            "\n  similar existing fact: [{fid}] {}",
-                            sim_content.chars().take(80).collect::<String>(),
-                        ));
-                    }
+                    )
+                {
+                    msg.push_str(&format!(
+                        "\n  similar existing fact: [{fid}] {}",
+                        sim_content.chars().take(80).collect::<String>(),
+                    ));
                 }
                 for alt in &alternatives {
                     if let (Some(req), Some(suggestions)) = (
@@ -952,24 +951,24 @@ fn handle_fact(
                 && since_ms.is_none()
                 && until_ms.is_none()
                 && as_of_ms.is_none();
-            if simple {
-                if let Some(via) = cmd::daemon::registered_endpoint(path, &config.store.backend) {
-                    tracing::debug!(via = %via, "auto-discovered daemon for fact list");
-                    let url = format!("{}/mcp", via.trim_end_matches('/'));
-                    let mut args = serde_json::json!({"limit": limit.unwrap_or(20)});
-                    if let Some(e) = entity.as_ref() {
-                        args["entity"] = serde_json::json!(e);
-                    }
-                    if let Some(source_id) = source_id.as_ref() {
-                        args["source_id"] = serde_json::json!(source_id);
-                    }
-                    let body = serde_json::json!({
-                        "jsonrpc": "2.0", "id": 1,
-                        "method": "tools/call",
-                        "params": {"name": "aidememo_fact_list", "arguments": args}
-                    });
-                    return daemon_tool_call(&url, body, "aidememo_fact_list");
+            if simple
+                && let Some(via) = cmd::daemon::registered_endpoint(path, &config.store.backend)
+            {
+                tracing::debug!(via = %via, "auto-discovered daemon for fact list");
+                let url = format!("{}/mcp", via.trim_end_matches('/'));
+                let mut args = serde_json::json!({"limit": limit.unwrap_or(20)});
+                if let Some(e) = entity.as_ref() {
+                    args["entity"] = serde_json::json!(e);
                 }
+                if let Some(source_id) = source_id.as_ref() {
+                    args["source_id"] = serde_json::json!(source_id);
+                }
+                let body = serde_json::json!({
+                    "jsonrpc": "2.0", "id": 1,
+                    "method": "tools/call",
+                    "params": {"name": "aidememo_fact_list", "arguments": args}
+                });
+                return daemon_tool_call(&url, body, "aidememo_fact_list");
             }
             with_wiki(path, config, |wiki| {
                 let entity_id = entity.and_then(|n| wiki.resolve_entity(&n).ok());
@@ -2272,10 +2271,9 @@ fn run_fact_add_via_daemon(
     if let (Some(source), Some(fact_type)) = (
         payload.get("fact_type_source").and_then(|v| v.as_str()),
         payload.get("fact_type").and_then(|v| v.as_str()),
-    ) {
-        if source == "inferred" {
-            msg.push_str(&format!("\nInferred fact_type: {fact_type}"));
-        }
+    ) && source == "inferred"
+    {
+        msg.push_str(&format!("\nInferred fact_type: {fact_type}"));
     }
     if let Some(suggested) = payload
         .get("fact_type_hint")
@@ -2295,16 +2293,16 @@ fn run_fact_add_via_daemon(
     // Surface dedup / typo hints in the human output too — agents that
     // run via `aidememo` interactively shouldn't have to switch to --json to
     // see them.
-    if let Some(similar) = payload.get("existing_similar").and_then(|v| v.as_object()) {
-        if let (Some(fid), Some(content)) = (
+    if let Some(similar) = payload.get("existing_similar").and_then(|v| v.as_object())
+        && let (Some(fid), Some(content)) = (
             similar.get("fact_id").and_then(|v| v.as_str()),
             similar.get("content").and_then(|v| v.as_str()),
-        ) {
-            msg.push_str(&format!(
-                "\nSimilar existing fact: [{fid}] {}",
-                content.chars().take(80).collect::<String>(),
-            ));
-        }
+        )
+    {
+        msg.push_str(&format!(
+            "\nSimilar existing fact: [{fid}] {}",
+            content.chars().take(80).collect::<String>(),
+        ));
     }
     if let Some(alts) = payload
         .get("entity_name_alternatives")
@@ -3103,10 +3101,10 @@ fn pull_one_batch(
 
     tracing::debug!(target: "aidememo::sync", "GET {}", endpoint);
     let mut req = ureq::get(&endpoint);
-    if let Some(t) = token {
-        if !t.is_empty() {
-            req = req.set("Authorization", &format!("Bearer {}", t));
-        }
+    if let Some(t) = token
+        && !t.is_empty()
+    {
+        req = req.set("Authorization", &format!("Bearer {}", t));
     }
     let resp = req
         .call()
@@ -3197,10 +3195,10 @@ fn handle_sync_status(
     let mut out = format!("sync status — {}\n", cursor_path.display());
     let filter = url.as_ref().map(|u| u.trim_end_matches('/').to_string());
     for (k, e) in &cursor.remotes {
-        if let Some(f) = &filter {
-            if k != f {
-                continue;
-            }
+        if let Some(f) = &filter
+            && k != f
+        {
+            continue;
         }
         let age_sec = now.saturating_sub(e.last_pulled_at) / 1000;
         out.push_str(&format!(

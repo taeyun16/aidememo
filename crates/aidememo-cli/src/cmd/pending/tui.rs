@@ -67,15 +67,13 @@ fn run_loop<B: ratatui::backend::Backend>(
         // without burning CPU when idle.
         if event::poll(Duration::from_millis(100))
             .map_err(|e| AideMemoError::Internal(format!("poll: {e}")))?
-        {
-            if let Event::Key(key) =
+            && let Event::Key(key) =
                 event::read().map_err(|e| AideMemoError::Internal(format!("read: {e}")))?
-            {
-                if key.kind != KeyEventKind::Press {
-                    continue;
-                }
-                handle_key(&mut state, key.code, key.modifiers);
+        {
+            if key.kind != KeyEventKind::Press {
+                continue;
             }
+            handle_key(&mut state, key.code, key.modifiers);
         }
 
         if state.quit {

@@ -373,10 +373,10 @@ fn expand_path(raw: &str) -> PathBuf {
         if let Some(home) = home_dir() {
             return home.join(stripped);
         }
-    } else if raw == "~" {
-        if let Some(home) = home_dir() {
-            return home;
-        }
+    } else if raw == "~"
+        && let Some(home) = home_dir()
+    {
+        return home;
     }
 
     PathBuf::from(raw)

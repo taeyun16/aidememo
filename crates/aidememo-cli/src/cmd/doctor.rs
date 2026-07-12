@@ -1054,14 +1054,12 @@ fn collect_memory(store_path: &Path, config: &Config) -> MemoryReport {
     }
     let hnsw_path = store_path.with_extension("hnsw.bin");
     let hnsw_present = hnsw_path.exists();
-    if hnsw_present {
-        if let Ok(meta) = std::fs::metadata(&hnsw_path) {
-            disk.push(MemoryEntry {
-                name: "hnsw sidecar".into(),
-                bytes: meta.len(),
-                detail: hnsw_path.display().to_string(),
-            });
-        }
+    if hnsw_present && let Ok(meta) = std::fs::metadata(&hnsw_path) {
+        disk.push(MemoryEntry {
+            name: "hnsw sidecar".into(),
+            bytes: meta.len(),
+            detail: hnsw_path.display().to_string(),
+        });
     }
 
     let model_bytes = model_load_bytes(&config.model.name);

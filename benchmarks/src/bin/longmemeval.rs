@@ -821,10 +821,10 @@ fn relevance_score(wiki: &AideMemo, question: &str, fact_content: &str) -> Optio
     }
     let q_vec = Q_EMBED.with(|cell| -> Option<Vec<f32>> {
         let mut slot = cell.borrow_mut();
-        if let Some((cached_q, vec)) = slot.as_ref() {
-            if cached_q == question {
-                return Some(vec.clone());
-            }
+        if let Some((cached_q, vec)) = slot.as_ref()
+            && cached_q == question
+        {
+            return Some(vec.clone());
         }
         match wiki.embed(question) {
             Ok(v) => {

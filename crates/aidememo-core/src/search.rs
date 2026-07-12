@@ -175,15 +175,15 @@ fn matches_time_window(fact: &FactRecord, since: Option<u64>, until: Option<u64>
         return true;
     }
     let ts = fact.observed_at.unwrap_or(fact.created_at);
-    if let Some(s) = since {
-        if ts < s {
-            return false;
-        }
+    if let Some(s) = since
+        && ts < s
+    {
+        return false;
     }
-    if let Some(u) = until {
-        if ts > u {
-            return false;
-        }
+    if let Some(u) = until
+        && ts > u
+    {
+        return false;
     }
     true
 }

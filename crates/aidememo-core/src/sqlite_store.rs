@@ -400,37 +400,37 @@ impl SqliteStore {
     }
 
     fn fact_matches_list_opts(record: &FactRecord, opts: &FactListOpts) -> bool {
-        if let Some(ref fact_type) = opts.fact_type {
-            if &record.fact_type != fact_type {
-                return false;
-            }
+        if let Some(ref fact_type) = opts.fact_type
+            && &record.fact_type != fact_type
+        {
+            return false;
         }
-        if let Some(min_confidence) = opts.min_confidence {
-            if record.source_confidence < min_confidence {
-                return false;
-            }
+        if let Some(min_confidence) = opts.min_confidence
+            && record.source_confidence < min_confidence
+        {
+            return false;
         }
-        if let Some(entity_id) = opts.entity_id {
-            if !record.entity_ids.contains(&entity_id) {
-                return false;
-            }
+        if let Some(entity_id) = opts.entity_id
+            && !record.entity_ids.contains(&entity_id)
+        {
+            return false;
         }
-        if let Some(ref source_id) = opts.source_id {
-            if record.source_id.as_deref() != Some(source_id.as_str()) {
-                return false;
-            }
+        if let Some(ref source_id) = opts.source_id
+            && record.source_id.as_deref() != Some(source_id.as_str())
+        {
+            return false;
         }
         if opts.since.is_some() || opts.until.is_some() {
             let ts = record.observed_at.unwrap_or(record.created_at);
-            if let Some(since) = opts.since {
-                if ts < since {
-                    return false;
-                }
+            if let Some(since) = opts.since
+                && ts < since
+            {
+                return false;
             }
-            if let Some(until) = opts.until {
-                if ts > until {
-                    return false;
-                }
+            if let Some(until) = opts.until
+                && ts > until
+            {
+                return false;
             }
         }
         if opts.current_only && record.superseded_at.is_some() {
@@ -637,16 +637,16 @@ impl StoreBackend for SqliteStore {
                     context: format!("entity {raw_id}"),
                     source,
                 })?;
-            if let Some(ref entity_type) = opts.entity_type {
-                if &record.entity_type != entity_type {
-                    continue;
-                }
+            if let Some(ref entity_type) = opts.entity_type
+                && &record.entity_type != entity_type
+            {
+                continue;
             }
             let fact_count = count_entity_facts(&conn, &record.id)?;
-            if let Some(min_facts) = opts.min_facts {
-                if fact_count < min_facts {
-                    continue;
-                }
+            if let Some(min_facts) = opts.min_facts
+                && fact_count < min_facts
+            {
+                continue;
             }
             out.push((
                 EntitySummary {
@@ -712,10 +712,10 @@ impl StoreBackend for SqliteStore {
                 if local.updated_at >= record.updated_at {
                     return Ok(false);
                 }
-            } else if let Ok(existing_id) = self.resolve_entity(&record.name) {
-                if existing_id != record.id {
-                    return Ok(false);
-                }
+            } else if let Ok(existing_id) = self.resolve_entity(&record.name)
+                && existing_id != record.id
+            {
+                return Ok(false);
             }
 
             let exists = self.entity_get_by_id(record.id).is_ok();

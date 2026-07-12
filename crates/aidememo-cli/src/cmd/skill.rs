@@ -735,10 +735,10 @@ fn run_install(
     // directory. Hand off to that path before falling through to
     // the directory-based install below. `--dest` still wins so an
     // operator can point a custom file.
-    if dest.is_none() {
-        if let Some(agents_path) = target_agents_md_path(&target) {
-            return install_into_agents_md(&target, agents_path, force, json);
-        }
+    if dest.is_none()
+        && let Some(agents_path) = target_agents_md_path(&target)
+    {
+        return install_into_agents_md(&target, agents_path, force, json);
     }
 
     let resolved_dest = match dest {

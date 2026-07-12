@@ -18,10 +18,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// override when set. Used for `created_at` / `updated_at` stamps and
 /// any time-decay computation that should be reproducible across runs.
 pub fn current_epoch_ms() -> u64 {
-    if let Ok(v) = std::env::var("AIDEMEMO_NOW_MS") {
-        if let Ok(n) = v.parse::<u64>() {
-            return n;
-        }
+    if let Ok(v) = std::env::var("AIDEMEMO_NOW_MS")
+        && let Ok(n) = v.parse::<u64>()
+    {
+        return n;
     }
     SystemTime::now()
         .duration_since(UNIX_EPOCH)

@@ -874,10 +874,10 @@ impl Config {
     /// Resolve the store path that should be used when no `--store` / `--project`
     /// is given. Falls through `default_project` → `store.path`.
     pub fn default_store_path(&self) -> PathBuf {
-        if let Some(name) = &self.default_project {
-            if let Some(p) = self.project_path(name) {
-                return p;
-            }
+        if let Some(name) = &self.default_project
+            && let Some(p) = self.project_path(name)
+        {
+            return p;
         }
         expand_home(&self.store.path)
     }
@@ -1260,10 +1260,10 @@ impl LintConfig {
 
 /// Expand a leading `~` in a path string to the user's home directory.
 fn expand_home(s: &str) -> PathBuf {
-    if let Some(rest) = s.strip_prefix("~/") {
-        if let Some(home) = dirs::home_dir() {
-            return home.join(rest);
-        }
+    if let Some(rest) = s.strip_prefix("~/")
+        && let Some(home) = dirs::home_dir()
+    {
+        return home.join(rest);
     }
     PathBuf::from(s)
 }

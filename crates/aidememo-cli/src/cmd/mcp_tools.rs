@@ -325,14 +325,12 @@ fn parse_time_arg(arg: Option<&Value>, as_of_mode: bool) -> Result<Option<u64>, 
     if let Ok(ms) = crate::parse_iso_to_epoch_ms(s) {
         return Ok(Some(ms));
     }
-    if !as_of_mode {
-        if let Ok(window_ms) = crate::parse_duration_to_ms(s) {
-            let now_ms = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis() as u64)
-                .unwrap_or(0);
-            return Ok(Some(now_ms.saturating_sub(window_ms)));
-        }
+    if !as_of_mode && let Ok(window_ms) = crate::parse_duration_to_ms(s) {
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        return Ok(Some(now_ms.saturating_sub(window_ms)));
     }
     Err(format!("unrecognised time argument: {s:?}"))
 }
@@ -796,10 +794,10 @@ fn attach_session_entity(
     entity_ids: &mut Vec<aidememo_core::EntityId>,
     session: Option<aidememo_core::EntityId>,
 ) {
-    if let Some(session_id) = session {
-        if !entity_ids.contains(&session_id) {
-            entity_ids.push(session_id);
-        }
+    if let Some(session_id) = session
+        && !entity_ids.contains(&session_id)
+    {
+        entity_ids.push(session_id);
     }
 }
 
@@ -1126,10 +1124,10 @@ fn tool_entity_get(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, Stri
             serde_json::to_value(&entity.tags).unwrap_or(Value::Null),
         );
     }
-    if let Some(s) = &entity.summary {
-        if !s.is_empty() {
-            obj.insert("summary".into(), Value::String(s.clone()));
-        }
+    if let Some(s) = &entity.summary
+        && !s.is_empty()
+    {
+        obj.insert("summary".into(), Value::String(s.clone()));
     }
     if let Some(p) = &entity.source_page {
         obj.insert("source_page".into(), Value::String(p.clone()));
@@ -1894,18 +1892,18 @@ fn render_query_result_markdown(
             out.push_str(&format!("- (…{}) {}\n", id_short, content));
         }
     }
-    if let Some(b) = budget {
-        if out.len() > b {
-            // Truncate from the back (recent_facts disappear first because
-            // they're rendered last). Strip trailing lines until under
-            // budget, then add an ellipsis marker.
-            while out.len() > b.saturating_sub(20)
-                && let Some(idx) = out.rfind('\n')
-            {
-                out.truncate(idx);
-            }
-            out.push_str("\n… (truncated)\n");
+    if let Some(b) = budget
+        && out.len() > b
+    {
+        // Truncate from the back (recent_facts disappear first because
+        // they're rendered last). Strip trailing lines until under
+        // budget, then add an ellipsis marker.
+        while out.len() > b.saturating_sub(20)
+            && let Some(idx) = out.rfind('\n')
+        {
+            out.truncate(idx);
         }
+        out.push_str("\n… (truncated)\n");
     }
     out
 }
@@ -3022,10 +3020,10 @@ fn tool_fact_add_many(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, S
             default_session_entity_id
         };
         attach_session_entity(&mut entity_ids_vec, session_entity_id);
-        if let Some(session_name) = item_session_id.map(str::trim).filter(|s| !s.is_empty()) {
-            if !names.iter().any(|name| name == session_name) {
-                names.push(session_name.to_string());
-            }
+        if let Some(session_name) = item_session_id.map(str::trim).filter(|s| !s.is_empty())
+            && !names.iter().any(|name| name == session_name)
+        {
+            names.push(session_name.to_string());
         }
         // Dedup auto-created across items in case the same new entity
         // is referenced by multiple facts in this batch.
