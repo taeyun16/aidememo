@@ -182,7 +182,17 @@ function main() {
 
     console.log('OK: aidememo-napi smoke test passed');
   } finally {
-    fs.rmSync(tmp, { recursive: true, force: true });
+    try {
+      fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    } catch (error) {
+      // The native store is released when the napi object is finalized. On
+      // Windows that can happen after this synchronous finally block, so the
+      // SQLite file may remain locked until the Node process exits.
+      if (process.platform !== 'win32' || !['EBUSY', 'EPERM'].includes(error.code)) {
+        throw error;
+      }
+      console.log(`cleanup deferred until process exit: ${error.code}`);
+    }
   }
 }
 
