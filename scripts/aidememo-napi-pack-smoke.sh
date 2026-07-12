@@ -123,7 +123,15 @@ trap print_summary EXIT
 cd "$NAPI_DIR"
 
 if [[ ! -x node_modules/.bin/napi ]]; then
-    run npm ci --prefer-offline --no-audit --fund=false
+    if [[ -f package-lock.json ]]; then
+        run npm ci --prefer-offline --no-audit --fund=false
+    else
+        # The root wrapper depends on platform packages that do not exist in
+        # npm until the first release. npm therefore cannot create a complete
+        # lockfile during bootstrap; use the same install path as the publish
+        # script until those packages are available.
+        run npm install --prefer-offline --no-audit --fund=false
+    fi
 fi
 run_labeled "aidememo-napi version gate" "$ROOT_DIR/scripts/aidememo-napi-version.sh"
 run npm run build
