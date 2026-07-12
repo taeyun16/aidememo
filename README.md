@@ -129,14 +129,14 @@ placement boundaries.
 Featured use case: [share one project memory across isolated Codex profiles](docs/CODEX_MULTI_PROFILE.md).
 
 ```bash
-# One-line installer
+# Install the CLI and MCP server from crates.io
+cargo install aidememo-cli
+
+# Or use the one-line installer
 curl -fsSL https://raw.githubusercontent.com/taeyun16/aidememo/main/scripts/install.sh | bash
 
-# Or directly with cargo
+# Or install the latest main branch
 cargo install --git https://github.com/taeyun16/aidememo aidememo-cli
-
-# Or from a checkout
-cargo install --path crates/aidememo-cli
 ```
 
 The binary is `aidememo`. Add `~/.cargo/bin` to your `PATH` if needed. CI and
@@ -144,8 +144,21 @@ local development versions are pinned in [`mise.toml`](mise.toml); run
 `mise install` from a checkout to use the same Rust, Node, Python, Go, and
 Elixir/Erlang versions. The workspace MSRV is `1.95`.
 
-Registry releases are staged separately. Until the first crates.io, PyPI, and
-npm publishes complete, prefer the Git or checkout install paths above.
+The public packages are available as `aidememo-cli` on
+[crates.io](https://crates.io/crates/aidememo-cli), `aidememo-agent-sdk` and
+`aidememo-python` on [PyPI](https://pypi.org/project/aidememo-agent-sdk/), and
+`aidememo-napi` on [npm](https://www.npmjs.com/package/aidememo-napi). See the
+[v0.1.0 release](https://github.com/taeyun16/aidememo/releases/tag/v0.1.0) for
+release notes. Prebuilt standalone CLI archives are not currently attached to
+the GitHub release; use Cargo or the installer above for the `aidememo` binary.
+
+Language SDKs and bindings are also available from their public registries:
+
+```bash
+python -m pip install aidememo-agent-sdk
+python -m pip install "aidememo-agent-sdk[binding]"  # optional native Python fast path
+npm install aidememo-napi                            # native Node.js binding
+```
 
 ## Documentation Site
 
@@ -321,16 +334,15 @@ needs fanout retrieval, dedupe, coverage checks, aggregation, or batch writes
 without routing every intermediate row through the LLM context.
 
 ```bash
-# From a checkout, until the PyPI release lands:
-python -m pip install -e packages/aidememo-agent-sdk
-
-# After the PyPI release:
+# Install the public Python agent SDK
 python -m pip install aidememo-agent-sdk
+
+# Optional in-process native binding
+python -m pip install "aidememo-agent-sdk[binding]"
 ```
 
-The SDK falls back to the `aidememo` CLI on `PATH`. The optional native binding
-fast path becomes `python -m pip install "aidememo-agent-sdk[binding]"` after
-the `aidememo-python` PyPI release.
+The SDK falls back to the `aidememo` CLI on `PATH`; the `binding` extra installs
+the published `aidememo-python` package for the in-process native fast path.
 
 ```python
 from aidememo_agent import Memory

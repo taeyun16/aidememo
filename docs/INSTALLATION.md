@@ -7,14 +7,17 @@ description: Install AideMemo and verify the CLI.
 
 The main binary is `aidememo`. It includes the CLI and MCP server.
 
+## From crates.io
+
+```bash
+cargo install aidememo-cli
+```
+
 ## From Git
 
 ```bash
 cargo install --git https://github.com/taeyun16/aidememo aidememo-cli
 ```
-
-The crates.io release path is being prepared. Until the first registry release
-lands, use the Git or checkout install paths.
 
 Verify the binary:
 

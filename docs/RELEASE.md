@@ -25,6 +25,12 @@ GitHub environments:
 | `npm-publish` | `.github/workflows/aidememo-napi-publish.yml` | Approval gate for npm trusted publishing |
 | `github-pages` | `.github/workflows/pages.yml` | OIDC-backed deployment of the validated Docusaurus build |
 
+Publishing a canonical `v<version>` GitHub Release also triggers
+`.github/workflows/cli-release-assets.yml`. It builds native CLI archives for
+macOS and Linux on x64 and arm64, creates `SHA256SUMS`, and attaches all five
+files to the existing GitHub Release. The publish job alone receives
+`contents: write`; matrix build jobs remain read-only.
+
 Recommended protection: require a reviewer for the registry environments and
 restrict deployment branches/tags to the release branches or tags that the
 project uses.
@@ -175,6 +181,10 @@ Package-specific tags such as `aidememo-python-v0.1.0` and
 `aidememo-napi-v0.1.0` are optional artifact or dry-run triggers. They do not
 replace the canonical `v0.1.0` source tag. Real PyPI and npm publishes remain
 manual workflow dispatches with an exact version input and approval environment.
+
+To rebuild or backfill assets for an existing release, dispatch **CLI release
+assets** with its exact tag, for example `v0.1.0`. Uploads use `--clobber`, so a
+retry replaces assets with the same names only after every matrix build passes.
 
 ## 4. Rust crates
 

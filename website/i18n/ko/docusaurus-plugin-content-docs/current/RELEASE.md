@@ -23,6 +23,12 @@ GitHub environment:
 | `npm-publish` | `.github/workflows/aidememo-napi-publish.yml` | npm trusted publishing 승인 게이트 |
 | `github-pages` | `.github/workflows/pages.yml` | 검증된 Docusaurus 빌드의 OIDC 기반 배포 |
 
+정식 `v<version>` GitHub Release를 게시하면
+`.github/workflows/cli-release-assets.yml`도 실행됩니다. 이 워크플로는 macOS와
+Linux의 x64/arm64 네이티브 CLI 압축 파일을 빌드하고 `SHA256SUMS`를 만든 뒤
+5개 파일을 기존 GitHub Release에 첨부합니다. 행렬 빌드 job은 read-only를
+유지하며 publish job에만 `contents: write` 권한이 부여됩니다.
+
 레지스트리 environment에는 reviewer를 요구하고 배포 branch/tag를 프로젝트가
 사용하는 릴리스 branch 또는 tag로 제한하는 것을 권장합니다.
 
@@ -170,6 +176,10 @@ git push origin v0.1.0
 artifact 또는 dry-run trigger입니다. 정식 `v0.1.0` 소스 tag를 대체하지
 않습니다. 실제 PyPI와 npm 배포는 정확한 버전 input과 approval environment를
 사용하는 수동 workflow dispatch로 유지합니다.
+
+기존 릴리스의 자산을 다시 만들거나 백필하려면 **CLI release assets**를 해당
+정확한 tag(예: `v0.1.0`)로 실행합니다. 모든 행렬 빌드가 통과한 뒤에만 업로드가
+진행되며, 재실행 시 `--clobber`로 같은 이름의 자산을 교체합니다.
 
 ## 4. Rust 크레이트
 

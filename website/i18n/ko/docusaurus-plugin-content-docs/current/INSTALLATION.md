@@ -7,14 +7,17 @@ description: AideMemo를 설치하고 CLI 동작을 확인합니다.
 
 기본 바이너리는 `aidememo`이며 CLI와 MCP 서버를 모두 포함합니다.
 
+## crates.io에서 설치
+
+```bash
+cargo install aidememo-cli
+```
+
 ## Git에서 설치
 
 ```bash
 cargo install --git https://github.com/taeyun16/aidememo aidememo-cli
 ```
-
-crates.io 배포 경로는 준비 중입니다. 첫 레지스트리 배포 전에는 Git 또는
-체크아웃 설치 경로를 사용하세요.
 
 바이너리를 확인합니다.
 

@@ -11,22 +11,15 @@ working set instead of one tool call at a time.
 ## Install
 
 ```bash
-# From a checkout, until the PyPI release lands:
-python -m pip install -e packages/aidememo-agent-sdk
-```
-
-After the PyPI release:
-
-```bash
 python -m pip install aidememo-agent-sdk
+
+# Optional in-process native binding
+python -m pip install "aidememo-agent-sdk[binding]"
 ```
 
 Without the native binding, the SDK falls back to the `aidememo` CLI on `PATH`.
-After `aidememo-python` is published, install the optional fast path with:
-
-```bash
-python -m pip install "aidememo-agent-sdk[binding]"
-```
+The `binding` extra installs the published `aidememo-python` package for the
+optional in-process fast path.
 
 ## Native bindings
 
@@ -35,7 +28,7 @@ are documented in their package READMEs:
 
 | Runtime | Package | Release path | Docs |
 |---|---|---|---|
-| Python native | `aidememo-python` | PyPI trusted-publisher workflow is ready | [README](https://github.com/taeyun16/aidememo/tree/main/crates/aidememo-python) |
+| Python native | `aidememo-python` | Published on PyPI | [README](https://github.com/taeyun16/aidememo/tree/main/crates/aidememo-python) |
 | Node.js | `aidememo-napi` | npm trusted-publisher workflow is ready; platform packages publish before the root wrapper | [README](https://github.com/taeyun16/aidememo/tree/main/crates/aidememo-napi) |
 | Elixir | `aidememo_nif` | Local/path binding docs are ready; no Hex publish workflow yet | [README](https://github.com/taeyun16/aidememo/tree/main/crates/aidememo-nif) |
 | C ABI | `aidememo-ffi` | Rust crate plus C header/linking docs | [README](https://github.com/taeyun16/aidememo/tree/main/crates/aidememo-ffi) |

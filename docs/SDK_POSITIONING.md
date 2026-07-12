@@ -15,9 +15,9 @@ guarantees.
 
 | Package | Current label | Why |
 |---|---|---|
-| `aidememo-agent-sdk` | Agent SDK | Pure-Python composition layer for agents that can execute code. It owns the code-first memory workflow (`Memory.open`, `search_rows`, `coverage_by`, `aggregate_many`, `remember`) and can run through either `aidememo-python` or the `aidememo` CLI fallback, making it usable from Codex, Claude Code, Hermes, CI, and local scripts. Local pack/install smoke exists; public PyPI release remains the distribution blocker, not a blocker for SDK positioning. |
-| `aidememo-python` | SDK candidate | Hermes already gets the largest measured lift from in-process Python: Scenario G showed p50 `1795.71ms` CLI vs `13.14ms` binding with shape parity. Scenario K keeps Python shape parity with CLI across sparse tickets. Python now exposes `workflow_start` and typed exceptions, so the remaining blocker is public PyPI install. |
-| `aidememo-napi` | SDK candidate | Node has platform package split, npm pack/install smoke, dry-run publish gates, a native adapter path that was `1.66x` faster than daemon BrainBench on the same checkout, a `workflowStart` API, package README examples, stable `[aidememo_code]` error messages, and Scenario K parity with CLI. The remaining blocker is public npm install. |
+| `aidememo-agent-sdk` | Agent SDK | Pure-Python composition layer for agents that can execute code. It owns the code-first memory workflow (`Memory.open`, `search_rows`, `coverage_by`, `aggregate_many`, `remember`) and can run through either the published `aidememo-python` package or the `aidememo` CLI fallback, making it usable from Codex, Claude Code, Hermes, CI, and local scripts. |
+| `aidememo-python` | SDK candidate | Hermes already gets the largest measured lift from in-process Python: Scenario G showed p50 `1795.71ms` CLI vs `13.14ms` binding with shape parity. Scenario K keeps Python shape parity with CLI across sparse tickets. Python exposes `workflow_start` and typed exceptions and is installable from PyPI; promotion now depends on the remaining workflow-level SDK criteria rather than distribution. |
+| `aidememo-napi` | SDK candidate | Node has a published platform-package split, a native adapter path that was `1.66x` faster than daemon BrainBench on the same checkout, a `workflowStart` API, package README examples, stable `[aidememo_code]` error messages, and Scenario K parity with CLI. Promotion now depends on the remaining workflow-level SDK criteria rather than distribution. |
 | `aidememo-nif` | Binding | Useful for Elixir/Erlang systems, but the package is still a thin NIF wrapper over the Rust core. Keep it low-level until Hex packaging, examples, and supervision-friendly lifecycle docs exist. |
 | `aidememo-ffi` | Binding / ABI | C should stay an ABI surface for embedding and downstream language wrappers. Calling it an SDK would imply ownership of memory-management ergonomics across C applications. |
 
@@ -49,10 +49,10 @@ AIDEMEMO_SDK_PROMOTION_REQUIRE_PUBLIC=1 scripts/sdk-promotion-check.sh
 AIDEMEMO_RELEASE_PREFLIGHT_SDK_REQUIRE_PUBLIC=1 scripts/release-preflight.sh
 ```
 
-The default check should keep `local_ready=true` but `sdk_promotable=false` for
-`aidememo-python` / `aidememo-napi` until public PyPI/npm installs are verified. That does
-not block the top-level product wording from calling `aidememo-agent-sdk` the
-agent-facing SDK path. The same gate also protects the SDK-consumer contract:
+The public-registry-required check verifies the published PyPI/npm installs in
+addition to the local package checks. The top-level product wording can call
+`aidememo-agent-sdk` the agent-facing SDK path independently of whether the
+lower-level bindings meet every promotion criterion. The same gate also protects the SDK-consumer contract:
 session-aware writes, pinned context access, and PyO3/Node/agent-SDK parity must
 stay documented and present in code before release wording changes pass.
 
@@ -61,10 +61,11 @@ stay documented and present in code before release wording changes pass.
 1. Lead public product wording with `aidememo-agent-sdk` as the agent-facing SDK path.
    It is the broadest Codex / Claude Code / Hermes-facing API and can still use
    `aidememo-python` underneath when the native binding is available.
-2. Promote `aidememo-python` after the PyPI trusted-publisher release succeeds.
-   It already has the clearest workflow evidence through Hermes and typed
-   exceptions.
-3. Promote `aidememo-napi` after npm trusted publishing succeeds.
+2. Evaluate `aidememo-python` against the remaining workflow-level criteria. It
+   already has the clearest workflow evidence through Hermes, typed exceptions,
+   and a public PyPI package.
+3. Evaluate the published `aidememo-napi` package against the same remaining
+   workflow-level criteria.
 4. Keep `aidememo-nif` and `aidememo-ffi` as bindings until packaging and lifecycle
    expectations are stronger.
 
