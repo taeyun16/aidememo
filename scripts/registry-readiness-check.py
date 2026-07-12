@@ -120,6 +120,24 @@ def validate_npm(failures: list[str], rows: list[str], workspace_version: str, r
         )
     if root_pkg.get("publishConfig", {}).get("access") != "public":
         fail(failures, label, "root package publishConfig.access must be public")
+    if root_pkg.get("homepage") != "https://aidememo.taeyun.me":
+        fail(failures, label, "root package homepage must use the documentation site")
+    root_keywords = set(root_pkg.get("keywords", []))
+    required_root_keywords = {
+        "aidememo",
+        "agent-memory",
+        "knowledge-graph",
+        "local-first",
+        "rag",
+        "semantic-search",
+        "sqlite",
+        "napi",
+    }
+    missing_root_keywords = sorted(required_root_keywords - root_keywords)
+    if missing_root_keywords:
+        fail(failures, label, f"root package keywords missing {missing_root_keywords}")
+    if "README.md" not in root_pkg.get("files", []):
+        fail(failures, label, "root package files must include README.md")
 
     optional = root_pkg.get("optionalDependencies", {})
     platform_dir = ROOT / "crates" / "aidememo-napi" / "npm"
@@ -137,6 +155,28 @@ def validate_npm(failures: list[str], rows: list[str], workspace_version: str, r
             fail(failures, label, f"{path} version={data['version']!r}")
         if data.get("publishConfig", {}).get("access") != "public":
             fail(failures, label, f"{path} publishConfig.access must be public")
+        if data.get("homepage") != "https://aidememo.taeyun.me":
+            fail(failures, label, f"{path} homepage must use the documentation site")
+        if not data.get("description", "").startswith("Prebuilt AideMemo native binding"):
+            fail(failures, label, f"{path} description must identify the prebuilt binding")
+        if data.get("engines", {}).get("node") != ">= 16":
+            fail(failures, label, f"{path} must document the supported Node.js version")
+        if "README.md" not in data.get("files", []):
+            fail(failures, label, f"{path} files must include README.md")
+        platform_readme = path.with_name("README.md")
+        if not platform_readme.exists():
+            fail(failures, label, f"{platform_readme} is missing")
+        platform_keywords = set(data.get("keywords", []))
+        missing_platform_keywords = sorted(
+            {"aidememo", "aidememo-napi", "agent-memory", "nodejs", "napi"}
+            - platform_keywords
+        )
+        if missing_platform_keywords:
+            fail(
+                failures,
+                label,
+                f"{path} keywords missing {missing_platform_keywords}",
+            )
 
     expected_packages = ["aidememo-napi", *platform_packages]
     for package in expected_packages:

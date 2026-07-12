@@ -1,9 +1,10 @@
 {
   "name": "aidememo-napi-linux-x64-gnu",
   "version": "0.1.0",
-  "description": "Linux x64 glibc native binding for aidememo-napi",
+  "description": "Prebuilt AideMemo native binding for Node.js on Linux glibc (x64)",
   "main": "aidememo-napi.linux-x64-gnu.node",
   "files": [
+    "README.md",
     "aidememo-napi.linux-x64-gnu.node"
   ],
   "os": [
@@ -16,7 +17,7 @@
     "glibc"
   ],
   "license": "MIT OR Apache-2.0",
-  "homepage": "https://github.com/taeyun16/aidememo#readme",
+  "homepage": "https://aidememo.taeyun.me",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/taeyun16/aidememo.git",
@@ -27,5 +28,20 @@
   },
   "publishConfig": {
     "access": "public"
-  }
+  },
+  "engines": {
+    "node": ">= 16"
+  },
+  "keywords": [
+    "aidememo",
+    "aidememo-napi",
+    "agent-memory",
+    "knowledge-graph",
+    "nodejs",
+    "napi",
+    "native-addon",
+    "linux",
+    "glibc",
+    "x64"
+  ]
 }

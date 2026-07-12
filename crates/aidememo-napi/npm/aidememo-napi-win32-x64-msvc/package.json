@@ -1,9 +1,10 @@
 {
   "name": "aidememo-napi-win32-x64-msvc",
   "version": "0.1.0",
-  "description": "Windows x64 MSVC native binding for aidememo-napi",
+  "description": "Prebuilt AideMemo native binding for Node.js on Windows MSVC (x64)",
   "main": "aidememo-napi.win32-x64-msvc.node",
   "files": [
+    "README.md",
     "aidememo-napi.win32-x64-msvc.node"
   ],
   "os": [
@@ -13,7 +14,7 @@
     "x64"
   ],
   "license": "MIT OR Apache-2.0",
-  "homepage": "https://github.com/taeyun16/aidememo#readme",
+  "homepage": "https://aidememo.taeyun.me",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/taeyun16/aidememo.git",
@@ -24,5 +25,20 @@
   },
   "publishConfig": {
     "access": "public"
-  }
+  },
+  "engines": {
+    "node": ">= 16"
+  },
+  "keywords": [
+    "aidememo",
+    "aidememo-napi",
+    "agent-memory",
+    "knowledge-graph",
+    "nodejs",
+    "napi",
+    "native-addon",
+    "windows",
+    "msvc",
+    "x64"
+  ]
 }
