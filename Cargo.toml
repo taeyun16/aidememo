@@ -19,7 +19,7 @@ exclude = [
 
 [workspace.package]
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.95"
 authors = ["AideMemo Team"]
 description = "AideMemo: local-first memory SDK for coding agents"
 license = "MIT OR Apache-2.0"

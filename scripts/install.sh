@@ -4,7 +4,7 @@
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/taeyun16/aidememo/main/scripts/install.sh | bash
 #
-# Requirements: cargo (Rust 1.85+).
+# Requirements: cargo (Rust 1.95+).
 
 set -euo pipefail
 
@@ -13,7 +13,7 @@ BIN_NAME="aidememo"
 
 if ! command -v cargo >/dev/null 2>&1; then
     cat >&2 <<EOF
-error: cargo not found. Install Rust 1.85+ first:
+error: cargo not found. Install Rust 1.95+ first:
   https://rustup.rs
 
 Or, if you have rustup:

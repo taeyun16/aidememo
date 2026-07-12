@@ -7,7 +7,7 @@
   </p>
   <p>
     <a href="https://github.com/taeyun16/aidememo/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/taeyun16/aidememo/actions/workflows/ci.yml/badge.svg?branch=main"></a>
-    <a href="./Cargo.toml"><img alt="Rust 1.85+" src="https://img.shields.io/badge/rust-1.85%2B-f46623?logo=rust&style=flat-square"></a>
+    <a href="./Cargo.toml"><img alt="Rust 1.95+" src="https://img.shields.io/badge/rust-1.95%2B-f46623?logo=rust&style=flat-square"></a>
     <a href="./Cargo.toml"><img alt="License: MIT OR Apache-2.0" src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-0f766e?style=flat-square"></a>
     <a href="#install"><img alt="Install with Cargo" src="https://img.shields.io/badge/install-cargo%20install-2563eb?style=flat-square"></a>
   </p>
@@ -142,7 +142,7 @@ cargo install --path crates/aidememo-cli
 The binary is `aidememo`. Add `~/.cargo/bin` to your `PATH` if needed. CI and
 local development versions are pinned in [`mise.toml`](mise.toml); run
 `mise install` from a checkout to use the same Rust, Node, Python, Go, and
-Elixir/Erlang versions. The workspace MSRV is `1.85`.
+Elixir/Erlang versions. The workspace MSRV is `1.95`.
 
 Registry releases are staged separately. Until the first crates.io, PyPI, and
 npm publishes complete, prefer the Git or checkout install paths above.
