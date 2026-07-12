@@ -112,7 +112,7 @@ jobs:
 
       - name: create checksums
         working-directory: dist
-        run: sha256sum *.tar.gz > SHA256SUMS
+        run: sha256sum ./*.tar.gz > SHA256SUMS
 
       - name: attach assets to release
         env:
