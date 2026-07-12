@@ -136,6 +136,9 @@ curl -fsSL https://raw.githubusercontent.com/taeyun16/aidememo/main/scripts/inst
 
 # 또는 최신 main 브랜치 설치
 cargo install --git https://github.com/taeyun16/aidememo aidememo-cli
+
+# 또는 로컬 체크아웃에서 설치
+cargo install --path crates/aidememo-cli
 ```
 
 바이너리 이름은 `aidememo`입니다. 필요한 경우 `~/.cargo/bin`을 `PATH`에

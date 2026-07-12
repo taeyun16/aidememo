@@ -137,6 +137,9 @@ curl -fsSL https://raw.githubusercontent.com/taeyun16/aidememo/main/scripts/inst
 
 # Or install the latest main branch
 cargo install --git https://github.com/taeyun16/aidememo aidememo-cli
+
+# Or install from a local checkout
+cargo install --path crates/aidememo-cli
 ```
 
 The binary is `aidememo`. Add `~/.cargo/bin` to your `PATH` if needed. CI and
