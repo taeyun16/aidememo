@@ -42,7 +42,7 @@ redb = { version = "2.0", optional = true }
 rusqlite = { version = "0.40.1", default-features = false, features = ["bundled", "backup"], optional = true }
 
 # 검색 엔진
-bm25 = "0.2"
+bm25 = "2.3"
 
 # SIMD 텍스트 검색
 memchr = "2.5"
