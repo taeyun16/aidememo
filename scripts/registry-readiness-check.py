@@ -590,6 +590,13 @@ def main() -> int:
         workspace_version=workspace_version,
         release_doc=release_doc,
     )
+    python_publish_script = read(ROOT / "scripts" / "aidememo-python-publish-dry-run.sh")
+    require_contains(
+        failures,
+        python_publish_script,
+        'dist_dir="$ROOT_DIR/$dist_dir"',
+        "PyPI aidememo-python repository-relative dist directory",
+    )
     validate_pypi_package(
         failures,
         rows,
