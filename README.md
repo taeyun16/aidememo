@@ -152,8 +152,8 @@ The public packages are available as `aidememo-cli` on
 `aidememo-python` on [PyPI](https://pypi.org/project/aidememo-agent-sdk/), and
 `aidememo-napi` on [npm](https://www.npmjs.com/package/aidememo-napi). See the
 [v0.1.0 release](https://github.com/taeyun16/aidememo/releases/tag/v0.1.0) for
-release notes. Prebuilt standalone CLI archives are not currently attached to
-the GitHub release; use Cargo or the installer above for the `aidememo` binary.
+release notes and prebuilt standalone CLI archives for macOS and Linux on x64
+and arm64. Verify downloaded archives with the attached `SHA256SUMS` file.
 
 Language SDKs and bindings are also available from their public registries:
 
