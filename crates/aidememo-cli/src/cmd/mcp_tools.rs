@@ -5072,7 +5072,14 @@ mod tests {
         .unwrap();
         let payload: Value =
             serde_json::from_str(hot_only.content[0].text.as_deref().unwrap()).unwrap();
-        assert!(payload["results"].as_array().unwrap().is_empty());
+        assert!(
+            payload["results"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|hit| hit["fact_id"] != id.0.to_string()),
+            "hot-only search must not surface the archived fact"
+        );
 
         let include_archive = tool_search(
             &json!({
