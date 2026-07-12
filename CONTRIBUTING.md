@@ -3,6 +3,27 @@
 Thanks for considering a contribution. The workflow is intentionally
 minimal — fast iteration over heavy process.
 
+By participating, you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
+For usage questions and design discussion, use
+[GitHub Discussions](https://github.com/taeyun16/aidememo/discussions). Use the
+structured issue forms for reproducible bugs and scoped feature requests. Report
+security issues privately as described in [SECURITY.md](SECURITY.md).
+
+## Contribution workflow
+
+1. Search existing issues and discussions. Open an issue first for substantial,
+   breaking, or cross-surface changes.
+2. Fork the repository and create a focused branch from `main`.
+3. Keep each pull request small enough to review and include tests or concrete
+   verification evidence.
+4. Update public docs, examples, changelog notes, and Korean translations when
+   the affected surface requires them.
+5. Open a pull request, link the issue, and explain any skipped checks.
+
+All contributions are licensed under the repository's dual MIT OR Apache-2.0
+terms. Do not submit code, fixtures, model output, or benchmark data that you do
+not have permission to redistribute.
+
 ## Setup
 
 ```bash
@@ -27,7 +48,7 @@ the situation calls for it (very rare).
 
 | Where | Check | Fix |
 |---|---|---|
-| pre-commit | `cargo fmt --all --check` | `cargo fmt --all` |
+| pre-commit | `cargo fmt --all -- --check` | `cargo fmt --all` |
 | pre-commit | `cargo check --features semantic` | fix the errors |
 | pre-commit (Elixir only) | `mix format --check-formatted` | `mix format` |
 | pre-push | `cargo clippy --features semantic -- -D warnings` | fix or `#[allow(…)]` with reason |
@@ -129,3 +150,10 @@ build issue.
 Feature requests: describe the use case and the simplest API you'd want
 to call. Bonus points for linking the equivalent feature in a competing
 project — that gets us closer to design alignment.
+
+## Review and release expectations
+
+- Maintainers may ask to split unrelated changes or add focused regression tests.
+- CI must pass before merge; platform-specific checks may be required for native bindings.
+- Breaking changes need an explicit migration path and release-note entry.
+- Registry releases are maintainer-operated through protected OIDC workflows.

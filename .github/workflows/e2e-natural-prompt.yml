@@ -1,10 +1,10 @@
 name: e2e — natural-language prompt (scenario C)
 
-# Triggered manually or by adding the `run-e2e-c` label to a PR.
+# Triggered manually or by adding the `run-e2e-c` label to a same-repository PR.
 # Intentionally NOT triggered on every push: this workflow burns
 # model tokens (claude + codex + hermes, ~50–100k tokens per run)
 # and depends on a self-hosted runner that has those CLIs installed
-# and authenticated.
+# and authenticated. Fork pull requests must never reach that host.
 on:
   workflow_dispatch:
   pull_request:
@@ -22,13 +22,17 @@ jobs:
   scenario-c:
     name: scenario C — claude / codex / hermes
     if: >-
-      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_dispatch' &&
+       github.ref == 'refs/heads/main') ||
       (github.event_name == 'pull_request' &&
-       github.event.label.name == 'run-e2e-c')
+       github.event.label.name == 'run-e2e-c' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, macos]   # see bench/multi-agent/README.md
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
 
       - name: build aidememo
         run: cargo build -p aidememo-cli --release

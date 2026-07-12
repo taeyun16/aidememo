@@ -1,0 +1,8 @@
+# Route public-facing and supply-chain-sensitive changes to the maintainer.
+* @taeyun16
+/.github/workflows/ @taeyun16
+/.github/dependabot.yml @taeyun16
+/scripts/*publish* @taeyun16
+/scripts/release-preflight.sh @taeyun16
+/SECURITY.md @taeyun16
+/audit.toml @taeyun16
