@@ -242,10 +242,10 @@ fn main() {
         "config"
     );
     for (label, provider, endpoint, model_id, dim) in MATRIX {
-        if let Some(allow) = &allow {
-            if !allow.iter().any(|a| a == label) {
-                continue;
-            }
+        if let Some(allow) = &allow
+            && !allow.iter().any(|a| a == label)
+        {
+            continue;
         }
         run_config(label, provider, endpoint, model_id, *dim, &golden);
     }

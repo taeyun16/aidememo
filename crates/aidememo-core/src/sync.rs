@@ -182,10 +182,10 @@ impl AideMemo {
         })?;
         let mut new_entities: Vec<EntityRecord> = Vec::new();
         for s in &entity_summaries {
-            if let Some(cut) = opts.since.entity {
-                if s.id.0 <= cut.0 {
-                    continue;
-                }
+            if let Some(cut) = opts.since.entity
+                && s.id.0 <= cut.0
+            {
+                continue;
             }
             if let Ok(rec) = store.read().entity_get_by_id(s.id) {
                 new_entities.push(rec);
@@ -213,15 +213,15 @@ impl AideMemo {
         if emitted < limit && opts.since.entity.is_some() {
             let mut updates: Vec<EntityRecord> = Vec::new();
             for s in &entity_summaries {
-                if let Some(cut) = opts.since.entity {
-                    if s.id.0 > cut.0 {
-                        continue; // already in pass A
-                    }
+                if let Some(cut) = opts.since.entity
+                    && s.id.0 > cut.0
+                {
+                    continue; // already in pass A
                 }
-                if let Ok(rec) = store.read().entity_get_by_id(s.id) {
-                    if rec.updated_at > opts.since.entity_updated_at.unwrap_or(0) {
-                        updates.push(rec);
-                    }
+                if let Ok(rec) = store.read().entity_get_by_id(s.id)
+                    && rec.updated_at > opts.since.entity_updated_at.unwrap_or(0)
+                {
+                    updates.push(rec);
                 }
             }
             updates.sort_by_key(|e| e.updated_at);
@@ -246,10 +246,10 @@ impl AideMemo {
             })?;
             let mut new_facts: Vec<FactRecord> = Vec::new();
             for f in &all_facts {
-                if let Some(cut) = opts.since.fact {
-                    if f.id.0 <= cut.0 {
-                        continue;
-                    }
+                if let Some(cut) = opts.since.fact
+                    && f.id.0 <= cut.0
+                {
+                    continue;
                 }
                 new_facts.push(f.clone());
             }
@@ -271,10 +271,10 @@ impl AideMemo {
             if emitted < limit && opts.since.fact.is_some() {
                 let mut updates: Vec<FactRecord> = Vec::new();
                 for f in &all_facts {
-                    if let Some(cut) = opts.since.fact {
-                        if f.id.0 > cut.0 {
-                            continue; // already in pass A
-                        }
+                    if let Some(cut) = opts.since.fact
+                        && f.id.0 > cut.0
+                    {
+                        continue; // already in pass A
                     }
                     if f.updated_at > opts.since.fact_updated_at.unwrap_or(0) {
                         updates.push(f.clone());
@@ -306,15 +306,15 @@ impl AideMemo {
                 ..Default::default()
             })?;
             for s in entities {
-                if let Some(cut) = opts.since.entity {
-                    if s.id.0 <= cut.0 {
-                        continue;
-                    }
+                if let Some(cut) = opts.since.entity
+                    && s.id.0 <= cut.0
+                {
+                    continue;
                 }
-                if let Some(latest) = last_entity {
-                    if s.id.0 > latest.0 {
-                        continue;
-                    }
+                if let Some(latest) = last_entity
+                    && s.id.0 > latest.0
+                {
+                    continue;
                 }
                 let rels = store
                     .read()

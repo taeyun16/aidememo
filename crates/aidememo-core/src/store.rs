@@ -729,19 +729,19 @@ impl Store {
             record.id = id;
 
             // Apply filters
-            if let Some(ref entity_type) = opts.entity_type {
-                if &record.entity_type != entity_type {
-                    continue;
-                }
+            if let Some(ref entity_type) = opts.entity_type
+                && &record.entity_type != entity_type
+            {
+                continue;
             }
 
             // Count facts for this entity
             let fact_count = self.count_entity_facts_internal(&read_txn, &record.id)?;
 
-            if let Some(min_facts) = opts.min_facts {
-                if fact_count < min_facts {
-                    continue;
-                }
+            if let Some(min_facts) = opts.min_facts
+                && fact_count < min_facts
+            {
+                continue;
             }
 
             results.push(EntitySummary {
@@ -1074,20 +1074,20 @@ impl Store {
             // but queue any new entity_ids for merge.
             if let Some(id) = existing_by_hash.get(hash.as_str()) {
                 resolved_ids.push(*id);
-                if let Some(eids) = input.entity_ids {
-                    if !eids.is_empty() {
-                        entity_merges.entry(*id).or_default().extend(eids);
-                    }
+                if let Some(eids) = input.entity_ids
+                    && !eids.is_empty()
+                {
+                    entity_merges.entry(*id).or_default().extend(eids);
                 }
                 continue;
             }
             // Already queued earlier in this batch? Reuse that id.
             if let Some(id) = batch_seen.get(hash) {
                 resolved_ids.push(*id);
-                if let Some(eids) = input.entity_ids {
-                    if !eids.is_empty() {
-                        entity_merges.entry(*id).or_default().extend(eids);
-                    }
+                if let Some(eids) = input.entity_ids
+                    && !eids.is_empty()
+                {
+                    entity_merges.entry(*id).or_default().extend(eids);
                 }
                 continue;
             }
@@ -1334,42 +1334,42 @@ impl Store {
     }
 
     fn fact_matches_list_opts(record: &FactRecord, opts: &FactListOpts) -> bool {
-        if let Some(ref fact_type) = opts.fact_type {
-            if &record.fact_type != fact_type {
-                return false;
-            }
+        if let Some(ref fact_type) = opts.fact_type
+            && &record.fact_type != fact_type
+        {
+            return false;
         }
 
-        if let Some(min_confidence) = opts.min_confidence {
-            if record.source_confidence < min_confidence {
-                return false;
-            }
+        if let Some(min_confidence) = opts.min_confidence
+            && record.source_confidence < min_confidence
+        {
+            return false;
         }
 
-        if let Some(entity_id) = opts.entity_id {
-            if !record.entity_ids.contains(&entity_id) {
-                return false;
-            }
+        if let Some(entity_id) = opts.entity_id
+            && !record.entity_ids.contains(&entity_id)
+        {
+            return false;
         }
 
-        if let Some(ref source_id) = opts.source_id {
-            if record.source_id.as_deref() != Some(source_id.as_str()) {
-                return false;
-            }
+        if let Some(ref source_id) = opts.source_id
+            && record.source_id.as_deref() != Some(source_id.as_str())
+        {
+            return false;
         }
 
         // Time filter: prefer observed_at (real-world time) over created_at (DB insertion).
         if opts.since.is_some() || opts.until.is_some() {
             let ts = record.observed_at.unwrap_or(record.created_at);
-            if let Some(since) = opts.since {
-                if ts < since {
-                    return false;
-                }
+            if let Some(since) = opts.since
+                && ts < since
+            {
+                return false;
             }
-            if let Some(until) = opts.until {
-                if ts > until {
-                    return false;
-                }
+            if let Some(until) = opts.until
+                && ts > until
+            {
+                return false;
             }
         }
 
@@ -1859,10 +1859,10 @@ impl Store {
         // Phase 2.5 change from "skip if id exists" — needed so
         // entity_describe / supersede / pin updates land on records
         // the downstream already pulled.
-        if let Ok(local) = self.entity_get_by_id(id) {
-            if local.updated_at >= record.updated_at {
-                return Ok(false);
-            }
+        if let Ok(local) = self.entity_get_by_id(id)
+            && local.updated_at >= record.updated_at
+        {
+            return Ok(false);
         }
 
         let write_txn = self.begin_write()?;
@@ -1964,10 +1964,10 @@ impl Store {
     /// the content-hash dedup path — the donor owns that decision.
     pub fn fact_upsert_record(&mut self, record: FactRecord) -> Result<bool> {
         let id = record.id;
-        if let Ok(local) = self.fact_get(&id) {
-            if local.updated_at >= record.updated_at {
-                return Ok(false);
-            }
+        if let Ok(local) = self.fact_get(&id)
+            && local.updated_at >= record.updated_at
+        {
+            return Ok(false);
         }
 
         let hash = sha256_hex(&record.content);
@@ -2058,8 +2058,8 @@ impl Store {
                 .map_err(|e| AideMemoError::TransactionBegin {
                     source: Box::new(e),
                 })?;
-            if let Ok(table) = read_txn.open_table(RELATIONS_TABLE) {
-                if table
+            if let Ok(table) = read_txn.open_table(RELATIONS_TABLE)
+                && table
                     .get(key.as_slice())
                     .map_err(|e| AideMemoError::StoreRead {
                         table: "relations",
@@ -2067,9 +2067,8 @@ impl Store {
                         source: Box::new(e),
                     })?
                     .is_some()
-                {
-                    return Ok(false);
-                }
+            {
+                return Ok(false);
             }
         }
 

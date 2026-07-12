@@ -7,7 +7,7 @@
   </p>
   <p>
     <a href="https://github.com/taeyun16/aidememo/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/taeyun16/aidememo/actions/workflows/ci.yml/badge.svg?branch=main"></a>
-    <a href="./Cargo.toml"><img alt="Rust 1.85+" src="https://img.shields.io/badge/rust-1.85%2B-f46623?logo=rust&style=flat-square"></a>
+    <a href="./Cargo.toml"><img alt="Rust 1.95+" src="https://img.shields.io/badge/rust-1.95%2B-f46623?logo=rust&style=flat-square"></a>
     <a href="./Cargo.toml"><img alt="라이선스: MIT OR Apache-2.0" src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-0f766e?style=flat-square"></a>
     <a href="#설치"><img alt="Cargo로 설치" src="https://img.shields.io/badge/install-cargo%20install-2563eb?style=flat-square"></a>
   </p>
@@ -141,7 +141,7 @@ cargo install --path crates/aidememo-cli
 바이너리 이름은 `aidememo`입니다. 필요한 경우 `~/.cargo/bin`을 `PATH`에
 추가하세요. CI와 로컬 개발 버전은 [`mise.toml`](mise.toml)에 고정되어
 있습니다. 체크아웃에서 `mise install`을 실행하면 동일한 Rust, Node, Python,
-Go, Elixir/Erlang 버전을 사용할 수 있습니다. 워크스페이스 MSRV는 `1.85`입니다.
+Go, Elixir/Erlang 버전을 사용할 수 있습니다. 워크스페이스 MSRV는 `1.95`입니다.
 
 레지스트리 릴리스는 별도로 준비됩니다. 첫 crates.io, PyPI, npm 배포가
 완료되기 전까지는 위의 Git 또는 체크아웃 설치 경로를 권장합니다.

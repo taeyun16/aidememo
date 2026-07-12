@@ -92,6 +92,20 @@ jobs:
       - run: cargo clippy --workspace --all-targets --features semantic -- -D warnings
       - run: cargo doc --workspace --no-deps --features semantic
 
+  msrv:
+    name: Rust 1.95 MSRV
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.95.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ubuntu-aidememo-msrv-v1
+      - run: cargo check --locked -p aidememo-core -p aidememo-cli
+      - run: cargo check --locked -p aidememo-core --no-default-features --features s3
+
   test:
     name: test (${{ matrix.os }})
     needs: lint

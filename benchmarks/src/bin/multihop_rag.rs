@@ -312,12 +312,11 @@ fn main() -> ExitCode {
                 t.clone()
             } else {
                 let mut name = String::new();
-                if let Ok(fact) = wiki.fact_get(&r.fact_id) {
-                    if let Some(eid) = fact.entity_ids.first() {
-                        if let Ok(ent) = wiki.entity_get_by_id(*eid) {
-                            name = ent.name;
-                        }
-                    }
+                if let Ok(fact) = wiki.fact_get(&r.fact_id)
+                    && let Some(eid) = fact.entity_ids.first()
+                    && let Ok(ent) = wiki.entity_get_by_id(*eid)
+                {
+                    name = ent.name;
                 }
                 ent_cache.insert(r.fact_id, name.clone());
                 name
@@ -343,10 +342,10 @@ fn main() -> ExitCode {
 
         // R@K: did any gold-evidence doc appear in top-K?
         for k in [1usize, 5, 10, 30] {
-            if let Some(r) = first_evidence_rank {
-                if r <= k {
-                    *hits_at_k.entry(k).or_insert(0) += 1;
-                }
+            if let Some(r) = first_evidence_rank
+                && r <= k
+            {
+                *hits_at_k.entry(k).or_insert(0) += 1;
             }
         }
         if let Some(r) = first_evidence_rank {

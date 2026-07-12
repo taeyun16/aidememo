@@ -280,10 +280,10 @@ fn main() -> ExitCode {
             }
         }
         for k in [1usize, 3, 5, 10] {
-            if let Some(rr) = first_rank {
-                if rr <= k {
-                    *hits_at_k.entry(k).or_insert(0) += 1;
-                }
+            if let Some(rr) = first_rank
+                && rr <= k
+            {
+                *hits_at_k.entry(k).or_insert(0) += 1;
             }
         }
         if let Some(rr) = first_rank {

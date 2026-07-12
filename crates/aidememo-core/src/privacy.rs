@@ -189,13 +189,13 @@ fn normalize_spans(mut spans: Vec<DetectedSpan>) -> Vec<DetectedSpan> {
     spans.sort_by_key(|span| (span.start, span_priority(&span.label), span.end));
     let mut out: Vec<DetectedSpan> = Vec::new();
     for span in spans {
-        if let Some(prev) = out.last_mut() {
-            if span.start < prev.end {
-                if span_priority(&span.label) < span_priority(&prev.label) {
-                    *prev = span;
-                }
-                continue;
+        if let Some(prev) = out.last_mut()
+            && span.start < prev.end
+        {
+            if span_priority(&span.label) < span_priority(&prev.label) {
+                *prev = span;
             }
+            continue;
         }
         out.push(span);
     }

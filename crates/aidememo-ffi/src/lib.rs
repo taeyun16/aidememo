@@ -167,10 +167,10 @@ fn open_with_backend(path: *const c_char, backend: *const c_char) -> *mut AideMe
         Err(_) => return ptr::null_mut(),
     };
     let mut config = Config::default();
-    if let Some(backend) = backend {
-        if config.set("store.backend", backend).is_err() {
-            return ptr::null_mut();
-        }
+    if let Some(backend) = backend
+        && config.set("store.backend", backend).is_err()
+    {
+        return ptr::null_mut();
     }
     match AideMemo::open(std::path::Path::new(path), config) {
         Ok(wiki) => Box::into_raw(Box::new(AideMemoStore {

@@ -60,10 +60,10 @@ impl<'a, B: StoreBackend + ?Sized> Graph<'a, B> {
 
             for rel in rels {
                 // Filter by relation type if specified
-                if let Some(ref types) = relation_types {
-                    if !types.contains(&rel.relation_type.0) {
-                        continue;
-                    }
+                if let Some(ref types) = relation_types
+                    && !types.contains(&rel.relation_type.0)
+                {
+                    continue;
                 }
 
                 relations.push(rel.clone());

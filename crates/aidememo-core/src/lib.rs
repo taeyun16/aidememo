@@ -1453,10 +1453,10 @@ impl AideMemo {
         // operators can retry with `aidememo vector-rebuild` or by
         // re-ingesting.
         #[cfg(feature = "semantic")]
-        if self.config.search.semantic_index == "hnsw" {
-            if let Err(e) = self.vector_index_rebuild() {
-                tracing::warn!("HNSW index rebuild after ingest failed: {e}");
-            }
+        if self.config.search.semantic_index == "hnsw"
+            && let Err(e) = self.vector_index_rebuild()
+        {
+            tracing::warn!("HNSW index rebuild after ingest failed: {e}");
         }
         Ok(stats)
     }

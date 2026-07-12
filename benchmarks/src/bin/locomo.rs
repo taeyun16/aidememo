@@ -313,10 +313,10 @@ fn main() -> ExitCode {
         };
 
         for (qi, qa) in conv.qa.iter().enumerate() {
-            if let Some(n) = args.limit {
-                if q_emitted >= n {
-                    break;
-                }
+            if let Some(n) = args.limit
+                && q_emitted >= n
+            {
+                break;
             }
             let results = wiki.search(&qa.question, opts.clone()).unwrap_or_else(|e| {
                 eprintln!("  ! search fail conv={} q={qi}: {e}", conv.sample_id);
@@ -350,10 +350,10 @@ fn main() -> ExitCode {
             if !gold.is_empty() {
                 total_with_evidence += 1;
                 for k in [1usize, 5, 10, 30] {
-                    if let Some(rr) = first_rank {
-                        if rr <= k {
-                            *hits_at_k.entry(k).or_insert(0) += 1;
-                        }
+                    if let Some(rr) = first_rank
+                        && rr <= k
+                    {
+                        *hits_at_k.entry(k).or_insert(0) += 1;
                     }
                 }
                 if let Some(rr) = first_rank {

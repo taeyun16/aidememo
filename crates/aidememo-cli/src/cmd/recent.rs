@@ -60,13 +60,12 @@ pub fn run_recent(
     // it verbatim. Local `--type` filter falls through to the
     // in-process path below because the tool doesn't expose it
     // (the tool is the daemon's surface, not a 1:1 of the CLI).
-    if sub.fact_type.is_none() {
-        if let Some(via) =
+    if sub.fact_type.is_none()
+        && let Some(via) =
             crate::cmd::daemon::registered_endpoint(store_path, &config.store.backend)
-        {
-            tracing::debug!(via = %via, "auto-discovered daemon for recent");
-            return run_recent_via_daemon(&via, sub.limit.unwrap_or(20), &last);
-        }
+    {
+        tracing::debug!(via = %via, "auto-discovered daemon for recent");
+        return run_recent_via_daemon(&via, sub.limit.unwrap_or(20), &last);
     }
 
     let wiki = AideMemo::open(store_path, config)?;

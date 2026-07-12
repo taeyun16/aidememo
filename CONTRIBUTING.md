@@ -33,7 +33,7 @@ mise run ci-lint
 
 # Rust-only fallback if you do not use mise.
 rustup toolchain install 1.96.0 --component rustfmt --component clippy
-# Workspace MSRV remains 1.85, but CI/development parity is pinned to 1.96.0.
+# Workspace MSRV is 1.95; CI/development parity is pinned to 1.96.0.
 
 # Recommended
 brew install lefthook                    # or `npm i -g lefthook`

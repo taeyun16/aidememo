@@ -221,10 +221,10 @@ mod model2vec {
     }
 
     fn expand_tilde(s: &str) -> PathBuf {
-        if let Some(rest) = s.strip_prefix("~/") {
-            if let Some(home) = std::env::var_os("HOME") {
-                return PathBuf::from(home).join(rest);
-            }
+        if let Some(rest) = s.strip_prefix("~/")
+            && let Some(home) = std::env::var_os("HOME")
+        {
+            return PathBuf::from(home).join(rest);
         }
         PathBuf::from(s)
     }
