@@ -1,0 +1,56 @@
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Seoul
+    open-pull-requests-limit: 5
+    groups:
+      rust-patch-and-minor:
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: npm
+    directory: /website
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:15"
+      timezone: Asia/Seoul
+    open-pull-requests-limit: 5
+    groups:
+      website-patch-and-minor:
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: npm
+    directory: /crates/aidememo-napi
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:30"
+      timezone: Asia/Seoul
+    open-pull-requests-limit: 3
+    groups:
+      napi-patch-and-minor:
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:45"
+      timezone: Asia/Seoul
+    open-pull-requests-limit: 5
+    groups:
+      actions:
+        patterns:
+          - "*"

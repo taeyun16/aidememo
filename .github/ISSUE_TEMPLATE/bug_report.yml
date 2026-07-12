@@ -3,11 +3,32 @@ description: Report a reproducible AideMemo problem.
 title: "[bug] "
 labels: ["bug"]
 body:
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and did not find a duplicate.
+          required: true
+        - label: I removed tokens, private paths, and sensitive memory content from this report.
+          required: true
   - type: textarea
     id: summary
     attributes:
       label: Summary
       description: What went wrong?
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include OS and architecture, install method, runtime version, storage backend, and relevant Cargo features.
+      placeholder: |
+        OS/arch: macOS 15 arm64
+        Install: cargo install aidememo-cli
+        Runtime: rustc 1.96.0 / Node 24 / Python 3.13
+        Backend/features: sqlite, semantic
     validations:
       required: true
   - type: input
@@ -54,3 +75,16 @@ body:
       label: Logs or output
       description: Include the last relevant command output. Redact secrets.
       render: text
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Diagnostics
+      description: If available, paste `aidememo doctor --json` after reviewing and redacting paths or sensitive content.
+      render: json
+  - type: checkboxes
+    id: conduct
+    attributes:
+      label: Code of Conduct
+      options:
+        - label: I agree to follow the project's Code of Conduct.
+          required: true

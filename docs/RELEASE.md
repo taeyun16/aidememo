@@ -34,8 +34,8 @@ publishing source to **GitHub Actions**, and restrict the generated
 `github-pages` environment to `main`. The Pages workflow keeps repository
 contents read-only during the build and grants `pages: write` plus
 `id-token: write` only to the deployment job. GitHub Pages content is publicly
-reachable even when a supported paid plan deploys from a private repository;
-do not enable it until the site is ready for public access.
+reachable independently of repository visibility; do not enable it until the
+site is ready for public access.
 
 PyPI trusted publishers:
 
@@ -57,14 +57,11 @@ Register each npm package with GitHub owner/repo `taeyun16/aidememo`, workflow
 5. `aidememo-napi-linux-x64-gnu`
 6. `aidememo-napi-win32-x64-msvc`
 
-Because npm requires a package to exist before its trusted publisher can be
-configured, the first release uses a short-lived granular token stored only as
-the `npm-publish` environment secret `NPM_TOKEN`. Run the workflow once with
-`dry_run=false` and `bootstrap=true`; it builds the five platform packages on
-native GitHub-hosted runners and publishes the root wrapper only after every
-platform job succeeds. Register the trusted publisher on all six packages,
-then delete the environment secret, revoke the token, and remove the bootstrap
-path. Normal releases use `bootstrap=false` and authenticate only through OIDC.
+All six npm packages now have GitHub Actions trusted publishers. The workflow
+builds the five platform packages on native GitHub-hosted runners and publishes
+the root wrapper only after every platform job succeeds. It authenticates only
+through OIDC; do not add an `NPM_TOKEN` or reintroduce a token bootstrap path.
+Public-repository releases also receive npm provenance from trusted publishing.
 
 Rust crates publish through `.github/workflows/crates-publish.yml` with the
 `crates-publish` environment and crates.io OIDC trusted publishers. The first
@@ -239,10 +236,10 @@ Publish the platform packages before the root wrapper:
 1. `aidememo-napi-*` platform packages
 2. `aidememo-napi`
 
-For the one-time first publish, set the manual workflow inputs to the exact
-version, `dry_run=false`, and `bootstrap=true`. The workflow is safe to rerun
-after a partial failure because it skips package versions already visible on
-npm. After trusted publishers are configured, use `bootstrap=false`.
+Set the manual workflow inputs to the exact version and `dry_run=false`. The
+workflow authenticates through the six npm trusted-publisher registrations and
+is safe to rerun after a partial failure because it skips package versions
+already visible on npm.
 
 Use each trusted-publisher workflow with the exact version input. The default
 workflow mode is dry-run:

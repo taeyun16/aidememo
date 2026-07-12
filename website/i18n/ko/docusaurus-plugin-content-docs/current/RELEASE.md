@@ -30,9 +30,8 @@ GitHub environment:
 Actions**로 설정하고, 생성된 `github-pages` environment를 `main`으로
 제한합니다. Pages 워크플로는 빌드 중 repository contents를 read-only로
 유지하고 배포 job에만 `pages: write`와 `id-token: write`를 허용합니다. 지원되는
-유료 플랜에서 private repository로 배포하더라도 GitHub Pages 콘텐츠는 공개
-인터넷에서 접근할 수 있으므로 사이트가 공개 준비를 마치기 전에는 활성화하지
-않습니다.
+GitHub Pages 콘텐츠는 repository visibility와 별개로 공개 인터넷에서 접근할 수
+있으므로 사이트가 공개 준비를 마치기 전에는 활성화하지 않습니다.
 
 PyPI trusted publisher:
 
@@ -54,13 +53,11 @@ npm trusted publisher:
 5. `aidememo-napi-linux-x64-gnu`
 6. `aidememo-napi-win32-x64-msvc`
 
-npm은 trusted publisher 설정 전에 패키지가 registry에 존재해야 하므로 최초
-릴리스에서는 `npm-publish` environment secret `NPM_TOKEN`에만 저장한 단기
-granular token을 사용합니다. Workflow를 `dry_run=false`, `bootstrap=true`로 한
-번 실행하면 GitHub-hosted native runner에서 platform 패키지 5개를 빌드하고,
-모든 platform job 성공 후 root wrapper를 배포합니다. 6개 패키지 모두 trusted
-publisher를 등록한 다음 environment secret과 token을 삭제하고 bootstrap 경로를
-제거합니다. 일반 릴리스는 `bootstrap=false`로 실행하고 OIDC만 사용합니다.
+npm 패키지 6개에는 모두 GitHub Actions trusted publisher가 등록되어 있습니다.
+Workflow는 GitHub-hosted native runner에서 platform 패키지 5개를 빌드하고 모든
+platform job 성공 후 root wrapper를 배포합니다. 인증에는 OIDC만 사용합니다.
+`NPM_TOKEN`을 추가하거나 token bootstrap 경로를 다시 도입하지 않습니다. 공개
+repository 릴리스에는 trusted publishing 기반 npm provenance도 생성됩니다.
 
 Rust 크레이트는 `.github/workflows/crates-publish.yml`과 `crates-publish`
 environment, crates.io OIDC trusted publisher를 통해 배포합니다. 최초 릴리스만
@@ -234,10 +231,9 @@ Root wrapper보다 platform 패키지를 먼저 배포합니다.
 1. `aidememo-napi-*` platform 패키지
 2. `aidememo-napi`
 
-최초 1회 배포에서는 수동 workflow에 정확한 버전과 `dry_run=false`,
-`bootstrap=true`를 입력합니다. 일부 배포 후 재실행해도 npm에 이미 보이는
-package version은 건너뜁니다. Trusted publisher 설정 후에는
-`bootstrap=false`를 사용합니다.
+수동 workflow에 정확한 버전과 `dry_run=false`를 입력합니다. npm trusted
+publisher 등록 6개를 통해 인증하며, 일부 배포 후 재실행해도 npm에 이미 보이는
+package version은 건너뜁니다.
 
 정확한 버전 input으로 각 trusted-publisher workflow를 사용합니다. 기본
 workflow mode는 dry-run입니다.

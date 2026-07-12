@@ -575,3 +575,11 @@ AideMemo is licensed under either the [MIT License](LICENSE-MIT) or the
 ## Security
 
 Please report vulnerabilities privately. See [SECURITY.md](SECURITY.md).
+
+## Community
+
+- Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
+- Ask usage questions in [GitHub Discussions](https://github.com/taeyun16/aidememo/discussions).
+- Use the structured [issue forms](https://github.com/taeyun16/aidememo/issues/new/choose) for bugs and feature requests.
+- Participation is governed by the [Code of Conduct](CODE_OF_CONDUCT.md).
+- General support expectations are documented in [SUPPORT.md](SUPPORT.md).

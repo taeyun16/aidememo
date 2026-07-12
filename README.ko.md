@@ -565,3 +565,11 @@ AideMemo는 사용자의 선택에 따라 [MIT License](LICENSE-MIT) 또는
 ## 보안
 
 취약점은 비공개로 신고해 주세요. [SECURITY.md](SECURITY.md)를 참고하세요.
+
+## 커뮤니티
+
+- Pull request를 열기 전에 [CONTRIBUTING.md](CONTRIBUTING.md)를 읽어 주세요.
+- 사용 방법에 관한 질문은 [GitHub Discussions](https://github.com/taeyun16/aidememo/discussions)에 남겨 주세요.
+- 버그와 기능 요청은 구조화된 [이슈 양식](https://github.com/taeyun16/aidememo/issues/new/choose)을 사용해 주세요.
+- 모든 참여자는 [행동 강령](CODE_OF_CONDUCT.md)을 따라야 합니다.
+- 일반적인 지원 범위는 [SUPPORT.md](SUPPORT.md)에 설명되어 있습니다.
