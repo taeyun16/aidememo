@@ -249,7 +249,7 @@ if [[ ! -f "$platform_dir/package.json" ]]; then
     echo "missing platform package scaffold: $platform_dir/package.json" >&2
     exit 1
 fi
-platform_version="$(node -p "require('$platform_dir/package.json').version")"
+platform_version="$(cd "$platform_dir" && node -p "require('./package.json').version")"
 if [[ "$platform_version" != "$root_version" ]]; then
     echo "$platform_pkg version $platform_version does not match root $root_version" >&2
     exit 1
