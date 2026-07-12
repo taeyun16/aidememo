@@ -69,6 +69,6 @@
     "test": "node tests/smoke.js"
   },
   "devDependencies": {
-    "@napi-rs/cli": "^2.18.0"
+    "@napi-rs/cli": "^3.7.2"
   }
 }
