@@ -1,5 +1,11 @@
-blank_issues_enabled: true
+blank_issues_enabled: false
 contact_links:
   - name: Security report
-    url: https://github.com/taeyun16/aidememo/security/policy
-    about: Please report vulnerabilities privately instead of opening a public issue.
+    url: https://github.com/taeyun16/aidememo/security/advisories/new
+    about: Privately report a vulnerability. Do not open a public issue.
+  - name: Questions and support
+    url: https://github.com/taeyun16/aidememo/discussions
+    about: Ask usage and integration questions in GitHub Discussions.
+  - name: Documentation
+    url: https://aidememo.taeyun.me/docs/intro
+    about: Read the installation, integration, and operations guides.

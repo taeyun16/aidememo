@@ -94,7 +94,7 @@ def validate_pypi_package(
     require_contains(
         failures,
         text,
-        "pypa/gh-action-pypi-publish@release/v1",
+        "pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b",
         f"{label} PyPI action",
     )
     require_contains(failures, text, "packages-dir: dist", f"{label} dist directory")
@@ -193,9 +193,7 @@ def validate_npm(failures: list[str], rows: list[str], workspace_version: str, r
     require_contains(failures, text, "workflow_dispatch:", f"{label} manual trigger")
     require_regex(failures, text, r"^\s+version:\s*$", f"{label} version input")
     require_regex(failures, text, r"^\s+dry_run:\s*$", f"{label} dry-run input")
-    require_regex(failures, text, r"^\s+bootstrap:\s*$", f"{label} bootstrap input")
     require_regex(failures, text, r"^\s+default:\s+true\s*$", f"{label} dry-run default")
-    require_regex(failures, text, r"^\s+default:\s+false\s*$", f"{label} bootstrap default")
     require_contains(
         failures,
         text,
@@ -212,12 +210,6 @@ def validate_npm(failures: list[str], rows: list[str], workspace_version: str, r
     require_contains(
         failures,
         text,
-        "AIDEMEMO_NAPI_BOOTSTRAP_TOKEN: ${{ inputs.bootstrap && secrets.NPM_TOKEN || '' }}",
-        f"{label} one-time bootstrap token",
-    )
-    require_contains(
-        failures,
-        text,
         "AIDEMEMO_NAPI_EXPECT_PLATFORM_PACKAGE: ${{ matrix.package }}",
         f"{label} platform identity guard",
     )
@@ -231,9 +223,19 @@ def validate_npm(failures: list[str], rows: list[str], workspace_version: str, r
     for runner, package in matrix.items():
         require_contains(failures, text, f"runner: {runner}", f"{label} matrix runner {runner}")
         require_contains(failures, text, f"package: {package}", f"{label} matrix package {package}")
-    for forbidden in ("_authToken", "npm token"):
+    publish_script = read(ROOT / "scripts" / "aidememo-napi-publish.sh")
+    for forbidden in (
+        "_authToken",
+        "npm token",
+        "NPM_TOKEN",
+        "NODE_AUTH_TOKEN",
+        "AIDEMEMO_NAPI_BOOTSTRAP",
+        "inputs.bootstrap",
+    ):
         if forbidden in text:
-            fail(failures, label, f"workflow should not require long-lived npm token {forbidden!r}")
+            fail(failures, label, f"workflow must not contain npm bootstrap token path {forbidden!r}")
+        if forbidden in publish_script:
+            fail(failures, label, f"publish script must not contain npm bootstrap token path {forbidden!r}")
 
     if len(failures) == start_failures:
         ok(rows, f"{label} ({len(expected_packages)} packages)")
@@ -263,7 +265,7 @@ def validate_non_oidc_registry_notes(failures: list[str], rows: list[str], relea
         require_contains(
             failures,
             rust_text,
-            "rust-lang/crates-io-auth-action@v1",
+            "rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18",
             "Rust crates OIDC authentication action",
         )
     if len(failures) == start_failures:
@@ -587,6 +589,13 @@ def main() -> int:
         artifact="aidememo-python-dist",
         workspace_version=workspace_version,
         release_doc=release_doc,
+    )
+    python_publish_script = read(ROOT / "scripts" / "aidememo-python-publish-dry-run.sh")
+    require_contains(
+        failures,
+        python_publish_script,
+        'dist_dir="$ROOT_DIR/$dist_dir"',
+        "PyPI aidememo-python repository-relative dist directory",
     )
     validate_pypi_package(
         failures,

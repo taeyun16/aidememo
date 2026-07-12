@@ -1,9 +1,18 @@
 # Security Policy
 
+## Supported Versions
+
+| Version | Supported |
+|---|---|
+| Latest `0.1.x` release | Yes |
+| `main` | Best effort until the next release |
+| Older releases | No |
+
 ## Reporting a Vulnerability
 
-Please report security issues privately by email to Taeyun Jang at
-taeyun16@pm.me. Do not open a public GitHub issue for vulnerabilities.
+Please use [GitHub Private Vulnerability Reporting](https://github.com/taeyun16/aidememo/security/advisories/new)
+or email Taeyun Jang at taeyun16@pm.me. Do not open a public GitHub issue for
+vulnerabilities.
 
 Include:
 
@@ -15,6 +24,10 @@ Include:
 
 We will acknowledge reports within 7 days and coordinate a fix before public
 disclosure when the issue is valid.
+
+Security fixes are released on the latest supported line. We do not promise
+backports for older versions. Please allow maintainers time to investigate and
+publish coordinated fixes before sharing details publicly.
 
 ## Scope
 

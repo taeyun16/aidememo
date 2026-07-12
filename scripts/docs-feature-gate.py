@@ -807,7 +807,7 @@ def check_community_contract() -> list[str]:
     errors.extend(
         require_tokens(
             ISSUE_TEMPLATE_CONFIG,
-            ["blank_issues_enabled: true", "security/policy"],
+            ["blank_issues_enabled: false", "security/advisories/new"],
             "issue template config",
         )
     )

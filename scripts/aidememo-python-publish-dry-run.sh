@@ -168,6 +168,9 @@ if [[ -z "${AIDEMEMO_PYTHON_DIST_DIR:-}" ]]; then
     dist_dir="$tmp_dir/dist"
 else
     dist_dir="$AIDEMEMO_PYTHON_DIST_DIR"
+    if [[ "$dist_dir" != /* ]]; then
+        dist_dir="$ROOT_DIR/$dist_dir"
+    fi
     rm -rf "$dist_dir"
 fi
 venv_dir="$tmp_dir/venv"
