@@ -653,10 +653,10 @@ async fn list_s3_manifest_keys(
             AideMemoError::Internal(format!("S3 list s3://{bucket}/{prefix} failed: {source}"))
         })?;
         for object in out.contents() {
-            if let Some(key) = object.key() {
-                if key.ends_with(".manifest.json") {
-                    keys.push(key.to_string());
-                }
+            if let Some(key) = object.key()
+                && key.ends_with(".manifest.json")
+            {
+                keys.push(key.to_string());
             }
         }
         continuation = out.next_continuation_token().map(str::to_string);
