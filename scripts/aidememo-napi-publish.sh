@@ -8,8 +8,6 @@ MODE="${AIDEMEMO_NAPI_PUBLISH_MODE:-dry-run}" # dry-run | publish
 SCOPE="${AIDEMEMO_NAPI_PUBLISH_SCOPE:-both}"   # root | platform | both
 EXPECT_VERSION="${AIDEMEMO_NAPI_EXPECT_VERSION:-}"
 EXPECT_PLATFORM_PACKAGE="${AIDEMEMO_NAPI_EXPECT_PLATFORM_PACKAGE:-}"
-BOOTSTRAP="${AIDEMEMO_NAPI_BOOTSTRAP:-0}"
-BOOTSTRAP_TOKEN="${AIDEMEMO_NAPI_BOOTSTRAP_TOKEN:-}"
 BASE="${AIDEMEMO_NAPI_PUBLISH_BASE:-$(mktemp -d "${TMPDIR:-/tmp}/aidememo-napi-publish.XXXXXX")}"
 SUMMARY_TSV="$BASE/aidememo-napi-publish.tsv"
 
@@ -132,11 +130,7 @@ run_npm_publish_capture() {
     local outvar="$1"
     local label="$2"
     shift 2
-    if [[ "$BOOTSTRAP" == "1" ]]; then
-        run_capture "$outvar" "$label" env NODE_AUTH_TOKEN="$BOOTSTRAP_TOKEN" npm publish "$@"
-    else
-        run_capture "$outvar" "$label" npm publish "$@"
-    fi
+    run_capture "$outvar" "$label" npm publish "$@"
 }
 
 print_summary() {
@@ -191,19 +185,6 @@ case "$SCOPE" in
         exit 1
         ;;
 esac
-
-case "$BOOTSTRAP" in
-    0 | 1) ;;
-    *)
-        echo "AIDEMEMO_NAPI_BOOTSTRAP must be 0 or 1 (got $BOOTSTRAP)" >&2
-        exit 1
-        ;;
-esac
-
-if [[ "$MODE" == "publish" && "$BOOTSTRAP" == "1" && -z "$BOOTSTRAP_TOKEN" ]]; then
-    echo "bootstrap publish requires the npm-publish environment NPM_TOKEN secret" >&2
-    exit 1
-fi
 
 publish_args=(--access public --json)
 if [[ "$MODE" == "dry-run" ]]; then

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Reject developer-specific home paths from first-party public files."""
+"""Reject public-repository portability and trust-boundary regressions."""
 
 from __future__ import annotations
 
@@ -21,6 +21,26 @@ FORBIDDEN = (
         re.compile(r"/home/[^/\s'\"`]+/(?:dev|src|projects|\.local|\.config|\.cache)/"),
     ),
 )
+COMMUNITY_FILES = (
+    "CODE_OF_CONDUCT.md",
+    "CONTRIBUTING.md",
+    "SECURITY.md",
+    "SUPPORT.md",
+    ".github/CODEOWNERS",
+    ".github/dependabot.yml",
+    ".github/ISSUE_TEMPLATE/bug_report.yml",
+    ".github/ISSUE_TEMPLATE/feature_request.yml",
+)
+OIDC_WORKFLOWS = (
+    "aidememo-agent-sdk-publish.yml",
+    "aidememo-napi-publish.yml",
+    "aidememo-python-publish.yml",
+    "crates-publish.yml",
+    "hermes-aidememo-publish.yml",
+    "pages.yml",
+)
+ACTION_REF_RE = re.compile(r"uses:\s+[^\s@]+@([^\s#]+)")
+COMMIT_SHA_RE = re.compile(r"[0-9a-f]{40}")
 
 
 def validate_rules() -> list[str]:
@@ -34,6 +54,57 @@ def validate_rules() -> list[str]:
     for label, pattern in FORBIDDEN:
         if not pattern.search(samples[label]):
             failures.append(f"internal rule did not match {label}")
+    return failures
+
+
+def validate_repository_contracts() -> list[str]:
+    failures: list[str] = []
+    for rel in COMMUNITY_FILES:
+        if not (ROOT / rel).is_file():
+            failures.append(f"missing public community file: {rel}")
+
+    workflows_dir = ROOT / ".github" / "workflows"
+    workflow_texts = {
+        path.name: path.read_text(encoding="utf-8")
+        for path in sorted(workflows_dir.glob("*.yml"))
+    }
+    for name, text in workflow_texts.items():
+        if "pull_request_target:" in text:
+            failures.append(f"{name}: pull_request_target is not allowed")
+
+    self_hosted = workflow_texts.get("e2e-natural-prompt.yml", "")
+    for required in (
+        "github.event.pull_request.head.repo.full_name == github.repository",
+        "github.ref == 'refs/heads/main'",
+        "persist-credentials: false",
+    ):
+        if required not in self_hosted:
+            failures.append(f"e2e-natural-prompt.yml missing trust guard: {required}")
+
+    npm_workflow = workflow_texts.get("aidememo-napi-publish.yml", "")
+    npm_script = (ROOT / "scripts" / "aidememo-napi-publish.sh").read_text(
+        encoding="utf-8"
+    )
+    for forbidden in (
+        "NPM_TOKEN",
+        "NODE_AUTH_TOKEN",
+        "AIDEMEMO_NAPI_BOOTSTRAP",
+        "inputs.bootstrap",
+    ):
+        if forbidden in npm_workflow or forbidden in npm_script:
+            failures.append(f"npm OIDC path still contains bootstrap token marker: {forbidden}")
+
+    for name in OIDC_WORKFLOWS:
+        text = workflow_texts.get(name)
+        if text is None:
+            failures.append(f"missing OIDC workflow: {name}")
+            continue
+        for lineno, line in enumerate(text.splitlines(), start=1):
+            match = ACTION_REF_RE.search(line)
+            if match and not COMMIT_SHA_RE.fullmatch(match.group(1)):
+                failures.append(
+                    f"{name}:{lineno}: OIDC workflow action is not pinned to a commit SHA"
+                )
     return failures
 
 
@@ -52,6 +123,7 @@ def tracked_paths() -> list[Path]:
 
 def main() -> int:
     failures = validate_rules()
+    failures.extend(validate_repository_contracts())
     checked = 0
     for path in tracked_paths():
         rel = path.relative_to(ROOT).as_posix()
