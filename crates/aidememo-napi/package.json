@@ -1,10 +1,10 @@
 {
   "name": "aidememo-napi",
   "version": "0.1.0",
-  "description": "Node.js bindings for AideMemo (aidememo) — local knowledge graph for LLM agents",
+  "description": "Local-first agent memory and knowledge graph for Node.js with SQLite, BM25, semantic search, and native N-API bindings",
   "main": "index.js",
   "types": "index.d.ts",
-  "homepage": "https://github.com/taeyun16/aidememo#readme",
+  "homepage": "https://aidememo.taeyun.me",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/taeyun16/aidememo.git",
@@ -33,14 +33,22 @@
     "node": ">= 16"
   },
   "keywords": [
+    "aidememo",
+    "agent-memory",
+    "ai-memory",
+    "llm-memory",
     "knowledge-graph",
+    "local-first",
     "wiki",
-    "search",
+    "rag",
     "bm25",
-    "semantic",
+    "semantic-search",
+    "vector-search",
+    "sqlite",
     "mcp",
     "llm",
-    "napi"
+    "napi",
+    "native-addon"
   ],
   "napi": {
     "name": "aidememo-napi",

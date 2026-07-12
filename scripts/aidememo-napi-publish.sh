@@ -283,7 +283,7 @@ else:
     payload = candidates[0]
 files = payload.get("files") or []
 paths = {item.get("path") for item in files}
-required = {"package.json", os.environ["NODE_BASE"]}
+required = {"package.json", "README.md", os.environ["NODE_BASE"]}
 missing = sorted(required - paths)
 if missing:
     raise SystemExit(f"platform publish payload missing required files: {missing}")
@@ -331,7 +331,7 @@ else:
     payload = candidates[0]
 files = payload.get("files") or []
 paths = {item.get("path") for item in files}
-required = {"package.json", "index.js", "index.d.ts"}
+required = {"package.json", "README.md", "index.js", "index.d.ts"}
 missing = sorted(required - paths)
 node_files = sorted(path for path in paths if path and path.endswith(".node"))
 

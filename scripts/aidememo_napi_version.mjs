@@ -73,6 +73,9 @@ assert(
 );
 
 for (const { dir, pkg } of currentPlatforms) {
+  const nodeFiles = Array.isArray(pkg.files)
+    ? pkg.files.filter((item) => item.endsWith('.node'))
+    : [];
   assert(
     pkg.version === currentRoot.version,
     `${pkg.name} version ${pkg.version} does not match root ${currentRoot.version}`,
@@ -86,13 +89,14 @@ for (const { dir, pkg } of currentPlatforms) {
     `${pkg.name} must set publishConfig.access=public`,
   );
   assert(
-    Array.isArray(pkg.files) && pkg.files.length === 1 && pkg.files[0].endsWith('.node'),
+    nodeFiles.length === 1,
     `${pkg.name} must publish exactly one .node file`,
   );
   assert(
-    pkg.main === pkg.files[0],
-    `${pkg.name} main must match files[0] (${pkg.files[0]})`,
+    pkg.main === nodeFiles[0],
+    `${pkg.name} main must match its .node file (${nodeFiles[0]})`,
   );
+  assert(pkg.files.includes('README.md'), `${pkg.name} must publish README.md`);
   const expectedDirectory = `crates/aidememo-napi/npm/${pkg.name}`;
   assert(
     pkg.repository?.directory === expectedDirectory,
@@ -104,6 +108,7 @@ assert(
   Array.isArray(currentRoot.files) &&
     currentRoot.files.includes('index.js') &&
     currentRoot.files.includes('index.d.ts') &&
+    currentRoot.files.includes('README.md') &&
     !currentRoot.files.some((item) => item.endsWith('.node') || item === '*.node'),
   'root package files must include JS/types and exclude .node binaries',
 );

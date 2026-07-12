@@ -1,34 +1,50 @@
 # aidememo-napi
 
-Node.js bindings for [AideMemo (`aidememo`)](https://github.com/taeyun16/aidememo) —
-a local knowledge-graph wiki indexed with BM25 + semantic vectors.
+[![npm version](https://img.shields.io/npm/v/aidememo-napi.svg)](https://www.npmjs.com/package/aidememo-napi)
+[![Node.js](https://img.shields.io/node/v/aidememo-napi.svg)](https://www.npmjs.com/package/aidememo-napi)
+[![license](https://img.shields.io/npm/l/aidememo-napi.svg)](https://github.com/taeyun16/aidememo)
+
+Local-first agent memory and knowledge graph for Node.js, backed by the native
+[AideMemo](https://aidememo.taeyun.me) Rust engine. Store structured facts and
+relationships, then retrieve them with BM25, semantic search, and graph traversal.
 
 The package returns JSON strings from read methods; call `JSON.parse()` at the
 boundary. This keeps the native ABI small while preserving the full Rust schema.
 
+## Highlights
+
+- Local SQLite storage by default; no hosted database or external LLM required.
+- BM25, semantic retrieval, graph traversal, validity windows, and scoped memory.
+- Workflow/session APIs for coding agents, issue automation, and multi-agent tools.
+- Prebuilt native binaries for macOS, Linux, and Windows.
+- The same data model as the AideMemo CLI, MCP server, and other language bindings.
+
 ## Install
-
-From a checkout:
-
-```bash
-cd crates/aidememo-napi
-npm install
-npm run build
-npm test
-```
-
-After public npm release, the intended install path is:
 
 ```bash
 npm install aidememo-napi
 ```
 
+The root package automatically selects the matching optional native package:
+
+| Platform | Architecture | Native package |
+|---|---|---|
+| macOS | Apple Silicon (`arm64`) | `aidememo-napi-darwin-arm64` |
+| macOS | Intel (`x64`) | `aidememo-napi-darwin-x64` |
+| Linux glibc | `arm64` | `aidememo-napi-linux-arm64-gnu` |
+| Linux glibc | `x64` | `aidememo-napi-linux-x64-gnu` |
+| Windows | `x64` MSVC | `aidememo-napi-win32-x64-msvc` |
+
+Install `aidememo-napi`, not a platform package directly. Alpine Linux/musl and
+Windows arm64 are not included in the current prebuilt matrix.
+
 ## Quick start
 
 ```js
-const { AideMemoStore } = require('aidememo-napi');
+const { AideMemoStore, version } = require('aidememo-napi');
 
 const g = new AideMemoStore('./_meta/wiki.sqlite');
+console.log(`AideMemo ${version()}`);
 
 const redis = g.entityAdd('Redis', {
   entityType: 'technology',
@@ -48,6 +64,17 @@ const hits = JSON.parse(g.search('high availability', {
 }));
 
 console.log(factId, hits.map((hit) => hit.content));
+```
+
+## Build from source
+
+From a checkout:
+
+```bash
+cd crates/aidememo-napi
+npm install
+npm run build
+npm test
 ```
 
 SQLite is the default local backend. Omit `backend` or pass an empty string to

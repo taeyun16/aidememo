@@ -163,7 +163,7 @@ payload = json.loads(os.environ["PACK_JSON"])
 if not payload:
     raise SystemExit("npm pack returned no package entries")
 files = {item["path"] for item in payload[0].get("files", [])}
-required = {"package.json", "index.js", "index.d.ts"}
+required = {"package.json", "README.md", "index.js", "index.d.ts"}
 missing = sorted(required - files)
 if missing:
     raise SystemExit(f"root package missing required files: {missing}")
@@ -187,7 +187,7 @@ payload = json.loads(os.environ["PACK_JSON"])
 if not payload:
     raise SystemExit("platform npm pack returned no package entries")
 files = {item["path"] for item in payload[0].get("files", [])}
-required = {"package.json", os.environ["NODE_BASE"]}
+required = {"package.json", "README.md", os.environ["NODE_BASE"]}
 missing = sorted(required - files)
 if missing:
     raise SystemExit(f"platform package missing required files: {missing}")
