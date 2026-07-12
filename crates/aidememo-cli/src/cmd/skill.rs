@@ -32,8 +32,8 @@ use aidememo_core::AideMemoError;
 
 // Bundled skill — included at compile time so `aidememo skill install`
 // works on a fresh machine without the source tree present.
-const BUNDLED_SKILL_MD: &str = include_str!("../../../../aidememo-skill/SKILL.md");
-const BUNDLED_REFERENCE_MD: &str = include_str!("../../../../aidememo-skill/REFERENCE.md");
+const BUNDLED_SKILL_MD: &str = include_str!("../../assets/aidememo-skill/SKILL.md");
+const BUNDLED_REFERENCE_MD: &str = include_str!("../../assets/aidememo-skill/REFERENCE.md");
 
 #[derive(Debug, Clone)]
 pub enum SkillSub {
