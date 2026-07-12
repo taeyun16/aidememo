@@ -87,7 +87,7 @@ ureq = { version = "2.12", features = ["json"], optional = true }
 # SHA-256 for exact-content dedup at fact_add. Tiny crate, already
 # in the workspace tree (transitive). Modeled after OMEGA's write-
 # time dedup pass — see docs/MEASUREMENTS.md.
-sha2 = "0.10"
+sha2 = "0.11"
 
 # Portable SIMD for dot/cosine/L2 with auto-dispatch (AVX2/NEON/AVX-512).
 # Replaces the scalar cosine loop in semantic_search. Same feature gate as
