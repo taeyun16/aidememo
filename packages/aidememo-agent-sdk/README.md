@@ -14,16 +14,15 @@ facts without spending model-visible tool calls on every intermediate step.
 ## Install
 
 ```bash
-# From a checkout, until the PyPI release lands:
-python -m pip install -e packages/aidememo-agent-sdk
-
-# After the PyPI release:
 python -m pip install aidememo-agent-sdk
+
+# Optional in-process native binding
+python -m pip install "aidememo-agent-sdk[binding]"
 ```
 
-The fallback path needs the `aidememo` CLI on `$PATH`. After `aidememo-python`
-is published, `python -m pip install "aidememo-agent-sdk[binding]"` enables the
-optional in-process binding fast path.
+The fallback path needs the `aidememo` CLI on `$PATH`. The `binding` extra
+installs the published `aidememo-python` package and enables the optional
+in-process fast path.
 
 ## Quick Start
 
