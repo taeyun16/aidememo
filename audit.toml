@@ -15,16 +15,6 @@ ignore = [
     "RUSTSEC-2026-0194",
     "RUSTSEC-2026-0195",
 
-    # rustls-webpki transitive (pulled in by ureq/reqwest's TLS stack).
-    # Both panic and name-constraint advisories are about server-cert
-    # validation paths; aidememo only uses TLS as a *client* against pinned
-    # huggingface.co / OpenAI endpoints, so the impact is bounded.
-    # Drops out once ureq/reqwest publish releases that pull in newer
-    # rustls-webpki — track in https://github.com/rustls/webpki/releases
-    "RUSTSEC-2026-0104",
-    "RUSTSEC-2026-0098",
-    "RUSTSEC-2026-0099",
-
     # Unmaintained crates (warnings, not vulnerabilities). Replacing them
     # would mean churning multiple transitive deps' API surface — accept
     # for now, revisit during 0.2.0.
