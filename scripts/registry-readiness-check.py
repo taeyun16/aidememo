@@ -153,7 +153,9 @@ def validate_npm(failures: list[str], rows: list[str], workspace_version: str, r
     require_contains(failures, text, "workflow_dispatch:", f"{label} manual trigger")
     require_regex(failures, text, r"^\s+version:\s*$", f"{label} version input")
     require_regex(failures, text, r"^\s+dry_run:\s*$", f"{label} dry-run input")
+    require_regex(failures, text, r"^\s+bootstrap:\s*$", f"{label} bootstrap input")
     require_regex(failures, text, r"^\s+default:\s+true\s*$", f"{label} dry-run default")
+    require_regex(failures, text, r"^\s+default:\s+false\s*$", f"{label} bootstrap default")
     require_contains(
         failures,
         text,
@@ -166,9 +168,30 @@ def validate_npm(failures: list[str], rows: list[str], workspace_version: str, r
     require_contains(failures, text, "AIDEMEMO_NAPI_PUBLISH_SCOPE: platform", f"{label} platform scope")
     require_contains(failures, text, "AIDEMEMO_NAPI_PUBLISH_SCOPE: root", f"{label} root scope")
     require_contains(failures, text, "AIDEMEMO_NAPI_PUBLISH_MODE:", f"{label} publish mode")
-    for os_name in ("ubuntu-latest", "macos-latest", "windows-latest"):
-        require_contains(failures, text, os_name, f"{label} matrix {os_name}")
-    for forbidden in ("NPM_TOKEN", "_authToken", "npm token"):
+    require_contains(failures, text, "npm@11.15.0", f"{label} trusted-publishing npm pin")
+    require_contains(
+        failures,
+        text,
+        "AIDEMEMO_NAPI_BOOTSTRAP_TOKEN: ${{ inputs.bootstrap && secrets.NPM_TOKEN || '' }}",
+        f"{label} one-time bootstrap token",
+    )
+    require_contains(
+        failures,
+        text,
+        "AIDEMEMO_NAPI_EXPECT_PLATFORM_PACKAGE: ${{ matrix.package }}",
+        f"{label} platform identity guard",
+    )
+    matrix = {
+        "ubuntu-24.04": "aidememo-napi-linux-x64-gnu",
+        "ubuntu-24.04-arm": "aidememo-napi-linux-arm64-gnu",
+        "macos-15-intel": "aidememo-napi-darwin-x64",
+        "macos-15": "aidememo-napi-darwin-arm64",
+        "windows-2025": "aidememo-napi-win32-x64-msvc",
+    }
+    for runner, package in matrix.items():
+        require_contains(failures, text, f"runner: {runner}", f"{label} matrix runner {runner}")
+        require_contains(failures, text, f"package: {package}", f"{label} matrix package {package}")
+    for forbidden in ("_authToken", "npm token"):
         if forbidden in text:
             fail(failures, label, f"workflow should not require long-lived npm token {forbidden!r}")
 
@@ -181,8 +204,8 @@ def validate_non_oidc_registry_notes(failures: list[str], rows: list[str], relea
     require_contains(
         failures,
         release_doc,
-        "Rust crates currently publish from an operator machine",
-        "Rust crates registry note",
+        "| `crates-publish` | `.github/workflows/crates-publish.yml` |",
+        "Rust crates environment docs",
     )
     require_contains(
         failures,
@@ -190,16 +213,21 @@ def validate_non_oidc_registry_notes(failures: list[str], rows: list[str], relea
         "There is no Hex\npublish workflow or repository `HEX_API_KEY` requirement yet",
         "Hex registry note",
     )
-    rust_publish_workflows = sorted((ROOT / ".github" / "workflows").glob("*cargo*publish*.yml"))
-    if rust_publish_workflows:
-        fail(
+    rust_workflow = ROOT / ".github" / "workflows" / "crates-publish.yml"
+    if not rust_workflow.exists():
+        fail(failures, "Rust crates registry note", "crates-publish.yml is missing")
+    else:
+        rust_text = read(rust_workflow)
+        require_contains(failures, rust_text, "environment: crates-publish", "Rust crates environment")
+        require_contains(failures, rust_text, "id-token: write", "Rust crates OIDC permission")
+        require_contains(
             failures,
-            "Rust crates registry note",
-            "found cargo publish workflow(s) but docs say local operator publish: "
-            + ", ".join(path.name for path in rust_publish_workflows),
+            rust_text,
+            "rust-lang/crates-io-auth-action@v1",
+            "Rust crates OIDC authentication action",
         )
     if len(failures) == start_failures:
-        ok(rows, "non-OIDC registry notes")
+        ok(rows, "Rust OIDC and non-OIDC registry notes")
 
 
 def validate_cargo_package_ci(failures: list[str], rows: list[str], release_doc: str) -> None:

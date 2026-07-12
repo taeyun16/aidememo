@@ -18,6 +18,7 @@ GitHub environment:
 
 | Environment | 워크플로 | 목적 |
 |---|---|---|
+| `crates-publish` | `.github/workflows/crates-publish.yml` | crates.io trusted publishing 승인 게이트 |
 | `pypi-publish` | `.github/workflows/aidememo-python-publish.yml`, `.github/workflows/aidememo-agent-sdk-publish.yml`, `.github/workflows/hermes-aidememo-publish.yml` | PyPI trusted publishing 승인 게이트 |
 | `npm-publish` | `.github/workflows/aidememo-napi-publish.yml` | npm trusted publishing 승인 게이트 |
 | `github-pages` | `.github/workflows/pages.yml` | 검증된 Docusaurus 빌드의 OIDC 기반 배포 |
@@ -53,10 +54,18 @@ npm trusted publisher:
 5. `aidememo-napi-linux-x64-gnu`
 6. `aidememo-napi-win32-x64-msvc`
 
-Rust 크레이트는 현재 GitHub Actions가 아니라 운영자 머신에서 배포합니다.
-`cargo publish`를 실행할 때 `cargo login` 또는 로컬
-`CARGO_REGISTRY_TOKEN`을 사용합니다. Rust 배포 워크플로가 생기기 전에는
-repository secret을 추가하지 않습니다.
+npm은 trusted publisher 설정 전에 패키지가 registry에 존재해야 하므로 최초
+릴리스에서는 `npm-publish` environment secret `NPM_TOKEN`에만 저장한 단기
+granular token을 사용합니다. Workflow를 `dry_run=false`, `bootstrap=true`로 한
+번 실행하면 GitHub-hosted native runner에서 platform 패키지 5개를 빌드하고,
+모든 platform job 성공 후 root wrapper를 배포합니다. 6개 패키지 모두 trusted
+publisher를 등록한 다음 environment secret과 token을 삭제하고 bootstrap 경로를
+제거합니다. 일반 릴리스는 `bootstrap=false`로 실행하고 OIDC만 사용합니다.
+
+Rust 크레이트는 `.github/workflows/crates-publish.yml`과 `crates-publish`
+environment, crates.io OIDC trusted publisher를 통해 배포합니다. 최초 릴리스만
+운영자 머신에서 bootstrap했으며 일반 릴리스에서는 repository
+`CARGO_REGISTRY_TOKEN` secret을 사용하지 않습니다.
 
 Elixir NIF는 현재 로컬/경로 바인딩으로 문서화되어 있습니다. 아직 Hex 배포
 워크플로와 repository `HEX_API_KEY` 요구사항은 없으며, 프로젝트가
@@ -224,6 +233,11 @@ Root wrapper보다 platform 패키지를 먼저 배포합니다.
 
 1. `aidememo-napi-*` platform 패키지
 2. `aidememo-napi`
+
+최초 1회 배포에서는 수동 workflow에 정확한 버전과 `dry_run=false`,
+`bootstrap=true`를 입력합니다. 일부 배포 후 재실행해도 npm에 이미 보이는
+package version은 건너뜁니다. Trusted publisher 설정 후에는
+`bootstrap=false`를 사용합니다.
 
 정확한 버전 input으로 각 trusted-publisher workflow를 사용합니다. 기본
 workflow mode는 dry-run입니다.
