@@ -45,7 +45,7 @@ jobs:
         with:
           go-version: "1.24.x"
       - name: install actionlint
-        run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.1
+        run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
       - name: actionlint
         run: |
           actionlint_bin="$(go env GOPATH)/bin/actionlint"

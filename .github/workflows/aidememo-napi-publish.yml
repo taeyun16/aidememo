@@ -12,6 +12,11 @@ on:
         required: true
         default: true
         type: boolean
+      bootstrap:
+        description: "Use the one-time npm-publish environment NPM_TOKEN for the first release"
+        required: true
+        default: false
+        type: boolean
 
 concurrency:
   group: aidememo-napi-publish-${{ github.ref }}
@@ -24,22 +29,35 @@ env:
   CARGO_NET_GIT_FETCH_WITH_CLI: true
   RUSTUP_MAX_RETRIES: 10
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  NPM_CONFIG_PROVENANCE: "false"
   AIDEMEMO_NAPI_EXPECT_VERSION: ${{ inputs.version }}
 
 permissions:
   contents: read
-  id-token: write
 
 jobs:
   platform:
-    name: platform ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
+    name: platform ${{ matrix.package }}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 25
     environment: npm-publish
+    permissions:
+      contents: read
+      id-token: write
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          - runner: ubuntu-24.04
+            package: aidememo-napi-linux-x64-gnu
+          - runner: ubuntu-24.04-arm
+            package: aidememo-napi-linux-arm64-gnu
+          - runner: macos-15-intel
+            package: aidememo-napi-darwin-x64
+          - runner: macos-15
+            package: aidememo-napi-darwin-arm64
+          - runner: windows-2025
+            package: aidememo-napi-win32-x64-msvc
     steps:
       - uses: actions/checkout@v4
 
@@ -47,6 +65,9 @@ jobs:
         with:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
+
+      - name: pin npm trusted-publishing client
+        run: npm install --global npm@11.15.0
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -57,6 +78,9 @@ jobs:
         env:
           AIDEMEMO_NAPI_PUBLISH_MODE: ${{ inputs.dry_run && 'dry-run' || 'publish' }}
           AIDEMEMO_NAPI_PUBLISH_SCOPE: platform
+          AIDEMEMO_NAPI_EXPECT_PLATFORM_PACKAGE: ${{ matrix.package }}
+          AIDEMEMO_NAPI_BOOTSTRAP: ${{ inputs.bootstrap && '1' || '0' }}
+          AIDEMEMO_NAPI_BOOTSTRAP_TOKEN: ${{ inputs.bootstrap && secrets.NPM_TOKEN || '' }}
         run: scripts/aidememo-napi-publish.sh
 
   root:
@@ -65,6 +89,9 @@ jobs:
     timeout-minutes: 25
     environment: npm-publish
     needs: platform
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v4
 
@@ -72,6 +99,9 @@ jobs:
         with:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
+
+      - name: pin npm trusted-publishing client
+        run: npm install --global npm@11.15.0
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -82,4 +112,6 @@ jobs:
         env:
           AIDEMEMO_NAPI_PUBLISH_MODE: ${{ inputs.dry_run && 'dry-run' || 'publish' }}
           AIDEMEMO_NAPI_PUBLISH_SCOPE: root
+          AIDEMEMO_NAPI_BOOTSTRAP: ${{ inputs.bootstrap && '1' || '0' }}
+          AIDEMEMO_NAPI_BOOTSTRAP_TOKEN: ${{ inputs.bootstrap && secrets.NPM_TOKEN || '' }}
         run: scripts/aidememo-napi-publish.sh

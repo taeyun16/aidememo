@@ -20,6 +20,7 @@ GitHub environments:
 
 | Environment | Workflows | Purpose |
 |---|---|---|
+| `crates-publish` | `.github/workflows/crates-publish.yml` | Approval gate for crates.io trusted publishing |
 | `pypi-publish` | `.github/workflows/aidememo-python-publish.yml`, `.github/workflows/aidememo-agent-sdk-publish.yml`, `.github/workflows/hermes-aidememo-publish.yml` | Approval gate for PyPI trusted publishing |
 | `npm-publish` | `.github/workflows/aidememo-napi-publish.yml` | Approval gate for npm trusted publishing |
 | `github-pages` | `.github/workflows/pages.yml` | OIDC-backed deployment of the validated Docusaurus build |
@@ -56,10 +57,19 @@ Register each npm package with GitHub owner/repo `taeyun16/aidememo`, workflow
 5. `aidememo-napi-linux-x64-gnu`
 6. `aidememo-napi-win32-x64-msvc`
 
-Rust crates currently publish from an operator machine, not from GitHub Actions.
-Use `cargo login` or a local `CARGO_REGISTRY_TOKEN` when running
-`cargo publish`; do not add a repository secret unless a Rust publish workflow
-is introduced.
+Because npm requires a package to exist before its trusted publisher can be
+configured, the first release uses a short-lived granular token stored only as
+the `npm-publish` environment secret `NPM_TOKEN`. Run the workflow once with
+`dry_run=false` and `bootstrap=true`; it builds the five platform packages on
+native GitHub-hosted runners and publishes the root wrapper only after every
+platform job succeeds. Register the trusted publisher on all six packages,
+then delete the environment secret, revoke the token, and remove the bootstrap
+path. Normal releases use `bootstrap=false` and authenticate only through OIDC.
+
+Rust crates publish through `.github/workflows/crates-publish.yml` with the
+`crates-publish` environment and crates.io OIDC trusted publishers. The first
+release was bootstrapped from an operator machine; normal releases do not use a
+repository `CARGO_REGISTRY_TOKEN` secret.
 
 The Elixir NIF is currently documented as a local/path binding. There is no Hex
 publish workflow or repository `HEX_API_KEY` requirement yet; add those only if
@@ -228,6 +238,11 @@ Publish the platform packages before the root wrapper:
 
 1. `aidememo-napi-*` platform packages
 2. `aidememo-napi`
+
+For the one-time first publish, set the manual workflow inputs to the exact
+version, `dry_run=false`, and `bootstrap=true`. The workflow is safe to rerun
+after a partial failure because it skips package versions already visible on
+npm. After trusted publishers are configured, use `bootstrap=false`.
 
 Use each trusted-publisher workflow with the exact version input. The default
 workflow mode is dry-run:
