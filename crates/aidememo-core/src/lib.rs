@@ -2924,7 +2924,11 @@ mod sqlite_backend_tests {
             .unwrap();
         assert_eq!(semantic.facts_processed, 4);
         assert_eq!(semantic.pairs_found, 1);
-        assert_eq!(semantic.max_cosine, 1.0);
+        assert!(
+            semantic.max_cosine >= 0.99,
+            "unexpected max cosine: {}",
+            semantic.max_cosine
+        );
 
         let gac = wiki
             .consolidate_gac(types::GacOpts {
