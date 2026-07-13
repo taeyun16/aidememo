@@ -31,8 +31,10 @@ aidememo --store "$(pwd)/_meta/wiki.sqlite" stats
 ```
 
 Use an absolute store path for agent registration. Add a `source_id` when one
-store contains more than one project or tenant, and an `actor_id` when writes
-must retain which agent profile created them.
+trusted store contains more than one project or agent namespace, and an
+`actor_id` when writes must retain which agent profile created them. An MCP
+install sets environment defaults that a caller can override; use HTTP token
+bindings when the source assignment must be enforced.
 
 ## Claude Code
 

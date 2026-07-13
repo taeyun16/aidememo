@@ -55,8 +55,16 @@ from aidememo_agent import Memory
 mem = Memory.open(source_id="team-a", storage_backend="libsqlite")
 ```
 
-Use `source_id` to isolate one team, agent, tenant, or project inside a shared
-store.
+Use `source_id` to partition one team, agent, or project inside a trusted
+shared store. The default is forwarded across search/query, entity and graph
+reads, fact get/list/pinned operations, workflow context, and source-aware
+relations—not only writes. Exact-content dedup also applies within that source,
+so the same text can exist independently in two sources.
+
+This is not a hostile multi-tenant security boundary. Native SDK callers can
+choose another source, and entity names/types form a shared ontology. Use
+separate stores for mutually untrusted tenants; use HTTP bearer identity
+bindings when authenticated agents must not override their assigned source.
 
 `storage_backend` is optional. It uses the same values as the CLI/native
 binding selector: omit it or pass an empty string for the compiled default,

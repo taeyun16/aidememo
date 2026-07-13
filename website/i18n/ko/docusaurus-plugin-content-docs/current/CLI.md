@@ -54,8 +54,8 @@ aidememo fact add \
   --actor-id codex:account-a
 ```
 
-`--source-id`는 공유 프로젝트 또는 tenant namespace로 유지합니다. 팩트를 작성한
-profile이나 agent는 `--actor-id`로 기록합니다.
+`--source-id`는 신뢰된 공유 프로젝트 또는 에이전트 namespace로 유지합니다.
+팩트를 작성한 profile이나 agent는 `--actor-id`로 기록합니다.
 
 팩트 타입을 의도적으로 선택합니다.
 
@@ -116,19 +116,33 @@ aidememo profile export --source-id team-a --limit 80
 ## 엔티티와 팩트 탐색
 
 ```bash
-aidememo entity list
-aidememo entity show Redis
-aidememo fact list --type decision --limit 20
-aidememo fact get 01H...
+aidememo entity list --source-id team-a
+aidememo entity show Redis --source-id team-a
+aidememo fact list --type decision --limit 20 --source-id team-a
+aidememo fact get 01H... --source-id team-a
+aidememo fact pinned --source-id team-a
+aidememo fact pin 01H... --source-id team-a
+aidememo fact delete 01H... --source-id team-a
+aidememo fact feedback 01H... --helpful --source-id team-a
+aidememo fact supersede 01HOLD... 01HNEW... --source-id team-a
+aidememo fact archive --ids 01H... --source-id team-a
 ```
+
+Source 범위 entity output은 fact 기반이며 전역 prose metadata를 제외합니다. 다른
+source가 소유한 fact ID를 source 범위로 조회하거나 ID 기반 mutation을 시도하면
+not-found를 반환합니다. `--source-id`를 생략하면 신뢰된 unscoped administrator
+동작을 유지합니다.
 
 ## 그래프 탐색
 
 ```bash
-aidememo traverse Redis --depth 2
-aidememo path Worker Redis
-aidememo graph --from Redis --depth 2 --format mermaid
+aidememo traverse Redis --depth 2 --source-id team-a
+aidememo path Worker Redis --source-id team-a
+aidememo graph --from Redis --depth 2 --format mermaid --source-id team-a
 ```
+
+Source 범위 graph read는 같은 source가 명시적으로 소유한 relation만 포함하며,
+기존 범위 없는 edge를 상속하지 않습니다.
 
 ## 메모리 유지 관리
 

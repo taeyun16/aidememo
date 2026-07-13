@@ -13,6 +13,18 @@ description: AideMemo를 설치하고 CLI 동작을 확인합니다.
 cargo install aidememo-cli
 ```
 
+## 한 줄 설치 프로그램 사용
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/taeyun16/aidememo/main/scripts/install.sh | bash
+```
+
+설치 프로그램은 Rust 1.95+가 필요하며 `cargo install --git`으로 최신 main
+브랜치를 빌드합니다. 컴파일 없이 설치하려면
+[v0.1.0 릴리스](https://github.com/taeyun16/aidememo/releases/tag/v0.1.0)에서
+macOS 또는 Linux x64/arm64용 독립 실행형 압축 파일을 내려받고 함께 첨부된
+`SHA256SUMS`로 검증하세요.
+
 ## Git에서 설치
 
 ```bash

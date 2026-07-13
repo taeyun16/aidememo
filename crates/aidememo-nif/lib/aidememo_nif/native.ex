@@ -24,17 +24,42 @@ defmodule AideMemoNif.Native do
   def open_with_backend(_path, _backend), do: :erlang.nif_error(:nif_not_loaded)
   def search(_h, _query, _limit, _current_only), do: :erlang.nif_error(:nif_not_loaded)
 
+  def search_scoped(_h, _query, _limit, _current_only, _source_id),
+    do: :erlang.nif_error(:nif_not_loaded)
+
   def query(_h, _topic, _limit, _depth, _recent_limit, _current_only, _mode),
     do: :erlang.nif_error(:nif_not_loaded)
 
+  def query_scoped(
+        _h,
+        _topic,
+        _limit,
+        _depth,
+        _recent_limit,
+        _current_only,
+        _mode,
+        _source_id
+      ),
+      do: :erlang.nif_error(:nif_not_loaded)
+
   def traverse(_h, _entity, _depth, _direction), do: :erlang.nif_error(:nif_not_loaded)
+
+  def traverse_scoped(_h, _entity, _depth, _direction, _source_id),
+    do: :erlang.nif_error(:nif_not_loaded)
+
   def path_find(_h, _from, _to), do: :erlang.nif_error(:nif_not_loaded)
+  def path_find_scoped(_h, _from, _to, _source_id), do: :erlang.nif_error(:nif_not_loaded)
 
   def entity_add(_h, _name, _type, _tags, _aliases, _source_page),
     do: :erlang.nif_error(:nif_not_loaded)
 
   def entity_get(_h, _name), do: :erlang.nif_error(:nif_not_loaded)
+  def entity_get_scoped(_h, _name, _source_id), do: :erlang.nif_error(:nif_not_loaded)
   def entity_list(_h, _limit, _type), do: :erlang.nif_error(:nif_not_loaded)
+
+  def entity_list_scoped(_h, _limit, _type, _source_id),
+    do: :erlang.nif_error(:nif_not_loaded)
+
   def entity_delete(_h, _name), do: :erlang.nif_error(:nif_not_loaded)
   def entity_describe(_h, _name, _summary), do: :erlang.nif_error(:nif_not_loaded)
   def resolve_entity(_h, _name), do: :erlang.nif_error(:nif_not_loaded)
@@ -42,18 +67,44 @@ defmodule AideMemoNif.Native do
   def fact_add(_h, _content, _ids, _type, _tags, _source, _confidence),
     do: :erlang.nif_error(:nif_not_loaded)
 
+  def fact_add_scoped(
+        _h,
+        _content,
+        _ids,
+        _type,
+        _tags,
+        _source,
+        _confidence,
+        _source_id,
+        _actor_id
+      ),
+      do: :erlang.nif_error(:nif_not_loaded)
+
   def fact_add_many(_h, _items), do: :erlang.nif_error(:nif_not_loaded)
+  def fact_add_many_scoped(_h, _items), do: :erlang.nif_error(:nif_not_loaded)
 
   def fact_get(_h, _id), do: :erlang.nif_error(:nif_not_loaded)
+  def fact_get_scoped(_h, _id, _source_id), do: :erlang.nif_error(:nif_not_loaded)
+  def pinned_facts(_h, _limit), do: :erlang.nif_error(:nif_not_loaded)
+  def pinned_facts_scoped(_h, _limit, _source_id), do: :erlang.nif_error(:nif_not_loaded)
 
   def fact_list(_h, _entity, _type, _limit, _current_only),
+    do: :erlang.nif_error(:nif_not_loaded)
+
+  def fact_list_scoped(_h, _entity, _type, _limit, _current_only, _source_id),
     do: :erlang.nif_error(:nif_not_loaded)
 
   def fact_delete(_h, _id), do: :erlang.nif_error(:nif_not_loaded)
   def fact_supersede(_h, _old, _new), do: :erlang.nif_error(:nif_not_loaded)
   def relation_add(_h, _src, _tgt, _type), do: :erlang.nif_error(:nif_not_loaded)
+  def relation_add_scoped(_h, _src, _tgt, _type, _source_id),
+    do: :erlang.nif_error(:nif_not_loaded)
+
   def relation_remove(_h, _src, _tgt, _type), do: :erlang.nif_error(:nif_not_loaded)
   def relations_get(_h, _entity, _direction), do: :erlang.nif_error(:nif_not_loaded)
+  def relations_get_scoped(_h, _entity, _direction, _source_id),
+    do: :erlang.nif_error(:nif_not_loaded)
+
   def ingest(_h, _root, _incremental), do: :erlang.nif_error(:nif_not_loaded)
   def lint(_h), do: :erlang.nif_error(:nif_not_loaded)
   def stats(_h), do: :erlang.nif_error(:nif_not_loaded)

@@ -74,6 +74,12 @@ pub struct AideMemo {
     /// allocation, hundreds of ms of wall time) every time.
     #[cfg(feature = "semantic")]
     provider: OnceLock<Arc<dyn embedding::EmbeddingProvider>>,
+    /// Serializes fallible provider construction. `OnceLock::set` prevents
+    /// duplicate publication but not duplicate construction; without this
+    /// guard a background prewarm and the first semantic request could load
+    /// the model concurrently before either thread stores it.
+    #[cfg(feature = "semantic")]
+    provider_init: parking_lot::Mutex<()>,
     /// Tier 7-A: LRU of recently-seen query embeddings. LLM agents
     /// often repeat the same topic across turns; cached query vectors
     /// skip the inference entirely.
@@ -149,6 +155,8 @@ impl AideMemo {
             config: Arc::new(config),
             #[cfg(feature = "semantic")]
             provider: OnceLock::new(),
+            #[cfg(feature = "semantic")]
+            provider_init: parking_lot::Mutex::new(()),
             #[cfg(feature = "semantic")]
             query_embed_cache: Arc::new(parking_lot::Mutex::new(lru::LruCache::new(
                 std::num::NonZeroUsize::new(256).expect("non-zero"),
@@ -242,9 +250,13 @@ impl AideMemo {
         if let Some(p) = self.provider.get() {
             return Ok(p.clone());
         }
+        let _init_guard = self.provider_init.lock();
+        if let Some(p) = self.provider.get() {
+            return Ok(p.clone());
+        }
         let provider: Arc<dyn embedding::EmbeddingProvider> =
             Arc::from(embedding::load_provider(&self.config)?);
-        // OnceLock::set returns Err if already initialized — race-safe.
+        // Construction is serialized above, so publication cannot race.
         let _ = self.provider.set(provider);
         Ok(self
             .provider
@@ -477,9 +489,25 @@ impl AideMemo {
         self.store.read().entity_get(name)
     }
 
+    /// Get an entity by name when it is visible in an optional source
+    /// namespace. `None` is identical to [`Self::entity_get`].
+    pub fn entity_get_scoped(&self, name: &str, source_id: Option<&str>) -> Result<EntityRecord> {
+        self.store.read().entity_get_scoped(name, source_id)
+    }
+
     /// Get an entity by ID.
     pub fn entity_get_by_id(&self, id: EntityId) -> Result<EntityRecord> {
         self.store.read().entity_get_by_id(id)
+    }
+
+    /// Get an entity by id when it is visible in an optional source
+    /// namespace. `None` is identical to [`Self::entity_get_by_id`].
+    pub fn entity_get_by_id_scoped(
+        &self,
+        id: EntityId,
+        source_id: Option<&str>,
+    ) -> Result<EntityRecord> {
+        self.store.read().entity_get_by_id_scoped(id, source_id)
     }
 
     /// Update an entity.
@@ -494,6 +522,57 @@ impl AideMemo {
     /// List entities with options.
     pub fn entity_list(&self, opts: ListOpts) -> Result<Vec<EntitySummary>> {
         self.store.read().entity_list(opts)
+    }
+
+    /// List entities that have facts in an optional source namespace.
+    /// Source filtering and source-local fact counts happen before pagination,
+    /// preventing unrelated entities from displacing a bounded page.
+    pub fn entity_list_scoped(
+        &self,
+        opts: ListOpts,
+        source_id: Option<&str>,
+    ) -> Result<Vec<EntitySummary>> {
+        let Some(source_id) = source_id else {
+            return self.entity_list(opts);
+        };
+
+        let store = self.store.read();
+        let entities = store.entity_list(ListOpts {
+            entity_type: opts.entity_type.clone(),
+            min_facts: None,
+            sort_by: types::EntitySort::Name,
+            limit: None,
+            offset: 0,
+        })?;
+        let mut scoped = Vec::with_capacity(entities.len());
+        for mut entity in entities {
+            let fact_count = store.count_entity_facts_scoped(&entity.id, Some(source_id))?;
+            if fact_count == 0 || opts.min_facts.is_some_and(|minimum| fact_count < minimum) {
+                continue;
+            }
+            entity.fact_count = fact_count;
+            // Entity tags are global metadata without source provenance.
+            entity.tags.clear();
+            let updated_at = store.entity_get_by_id(entity.id)?.updated_at;
+            scoped.push((entity, updated_at));
+        }
+
+        match opts.sort_by {
+            types::EntitySort::Name => scoped.sort_by(|a, b| a.0.name.cmp(&b.0.name)),
+            types::EntitySort::UpdatedAt => {
+                scoped.sort_by_key(|(_, updated_at)| std::cmp::Reverse(*updated_at));
+            }
+            types::EntitySort::FactCount => {
+                scoped.sort_by_key(|(entity, _)| std::cmp::Reverse(entity.fact_count));
+            }
+        }
+
+        Ok(scoped
+            .into_iter()
+            .skip(opts.offset)
+            .take(opts.limit.unwrap_or(usize::MAX))
+            .map(|(entity, _)| entity)
+            .collect())
     }
 
     /// Delete an entity.
@@ -566,8 +645,19 @@ impl AideMemo {
         text: &str,
         max_candidates: usize,
     ) -> Result<Vec<extract::ExtractCandidate>> {
+        self.extract_candidates_scoped(text, max_candidates, None)
+    }
+
+    /// Run heuristic extraction using only entity names visible in an optional
+    /// source namespace.
+    pub fn extract_candidates_scoped(
+        &self,
+        text: &str,
+        max_candidates: usize,
+        source_id: Option<&str>,
+    ) -> Result<Vec<extract::ExtractCandidate>> {
         let store = self.store.read();
-        extract::extract_candidates(text, &*store, max_candidates)
+        extract::extract_candidates_scoped(text, &*store, max_candidates, source_id)
     }
 
     /// LLM-aided extractor — same return shape as
@@ -581,8 +671,26 @@ impl AideMemo {
         text: &str,
         max_candidates: usize,
     ) -> Result<Vec<extract::ExtractCandidate>> {
+        self.extract_candidates_llm_scoped(text, max_candidates, None)
+    }
+
+    /// Run LLM extraction without exposing entity names from neighbouring
+    /// source namespaces in the remote model prompt.
+    #[cfg(feature = "semantic")]
+    pub fn extract_candidates_llm_scoped(
+        &self,
+        text: &str,
+        max_candidates: usize,
+        source_id: Option<&str>,
+    ) -> Result<Vec<extract::ExtractCandidate>> {
         let store = self.store.read();
-        extract::extract_candidates_llm(text, &*store, &self.config.extract, max_candidates)
+        extract::extract_candidates_llm_scoped(
+            text,
+            &*store,
+            &self.config.extract,
+            max_candidates,
+            source_id,
+        )
     }
 
     /// Top-N currently-pinned (`pinned=true` AND not superseded)
@@ -591,6 +699,16 @@ impl AideMemo {
     /// the runtime.
     pub fn pinned_facts(&self, limit: usize) -> Result<Vec<types::FactRecord>> {
         self.store.read().pinned_facts(limit)
+    }
+
+    /// Top-N pinned facts in an optional source namespace. Filtering is
+    /// applied before the limit so other namespaces cannot crowd out results.
+    pub fn pinned_facts_scoped(
+        &self,
+        limit: usize,
+        source_id: Option<&str>,
+    ) -> Result<Vec<types::FactRecord>> {
+        self.store.read().pinned_facts_scoped(limit, source_id)
     }
 
     /// Toggle the pinned flag on a single fact. Wraps `fact_update`
@@ -657,7 +775,7 @@ impl AideMemo {
                 fact_type: Some(new_fact.fact_type),
                 entity_id: Some(*entity_id),
                 min_confidence: None,
-                source_id: None,
+                source_id: new_fact.source_id.clone(),
                 limit: None,
                 offset: 0,
                 since: None,
@@ -667,7 +785,10 @@ impl AideMemo {
             };
             let candidates = self.store.read().fact_list(opts)?;
             for c in candidates {
-                if c.id != *new_id && !to_supersede.contains(&c.id) {
+                if c.id != *new_id
+                    && c.source_id == new_fact.source_id
+                    && !to_supersede.contains(&c.id)
+                {
                     to_supersede.push(c.id);
                 }
             }
@@ -736,6 +857,17 @@ impl AideMemo {
             }
             Err(err) => Err(err),
         }
+    }
+
+    /// Get a fact by id only when it belongs to the optional source
+    /// namespace. A mismatched source is reported as not found so scoped reads
+    /// do not expose the neighbouring fact's contents.
+    pub fn fact_get_scoped(&self, id: &FactId, source_id: Option<&str>) -> Result<FactRecord> {
+        let fact = self.fact_get(id)?;
+        if source_id.is_some_and(|source_id| fact.source_id.as_deref() != Some(source_id)) {
+            return Err(AideMemoError::FactNotFound(id.to_string()));
+        }
+        Ok(fact)
     }
 
     /// Update a fact.
@@ -879,7 +1011,9 @@ impl AideMemo {
     /// prohibitive on big wikis).
     ///
     /// Idempotent — re-running just refreshes existing edges using the
-    /// backend's relation uniqueness key `{source}\0{rel_type}\0{target}`.
+    /// backend's source-aware relation uniqueness key. Candidate facts and
+    /// emitted edges stay in the originating fact's exact `source_id`
+    /// namespace, including the legacy `None` namespace.
     /// Pure same-entity pairs are skipped; pairs already linked by a
     /// non-`related` relation are also skipped so domain-specific
     /// edges (`uses`, `decided_by`, …) don't get downgraded.
@@ -904,9 +1038,10 @@ impl AideMemo {
         // the backend per pair. Set of (source_id, target_id) regardless of
         // rel_type — aidememo's auto-relate refuses to overwrite a richer
         // edge with a generic `related`.
-        let mut existing: HashSet<(types::EntityId, types::EntityId)> = HashSet::new();
+        let mut existing: HashSet<(Option<String>, types::EntityId, types::EntityId)> =
+            HashSet::new();
         for r in self.store.read().relations_list_all()? {
-            existing.insert((r.source_id, r.target_id));
+            existing.insert((r.scope_source_id, r.source_id, r.target_id));
         }
 
         for fact in &facts {
@@ -914,23 +1049,42 @@ impl AideMemo {
             // Find similar facts. We use hybrid_search with the fact's
             // own content as query; the first hit will usually BE the
             // fact itself, so we filter it out before inspecting hits.
+            // `SearchOpts.source_id = None` means an unscoped query rather
+            // than "only records whose source_id is NULL". Ask for the full
+            // candidate set in that one legacy namespace, then apply the
+            // exact record-level equality check below. Named namespaces use
+            // the indexed source filter and retain the small top-K request.
+            let candidate_limit = if fact.source_id.is_none() {
+                facts.len().max(limit)
+            } else {
+                limit
+            };
             let results = self.hybrid_search(
                 &fact.content,
                 crate::types::SearchOpts {
-                    limit: Some(limit),
+                    limit: Some(candidate_limit),
                     bm25_only: false,
                     current_only: true,
+                    source_id: fact.source_id.clone(),
                     ..Default::default()
                 },
             )?;
+            let mut same_scope_candidates = 0usize;
             for hit in results {
                 if hit.fact_id == fact.id {
                     continue;
                 }
+                let other = self.fact_get(&hit.fact_id)?;
+                if other.source_id != fact.source_id {
+                    continue;
+                }
+                if same_scope_candidates >= opts.top_k {
+                    break;
+                }
+                same_scope_candidates += 1;
                 if hit.score < threshold {
                     continue;
                 }
-                let other = self.fact_get(&hit.fact_id)?;
                 for src in &fact.entity_ids {
                     for tgt in &other.entity_ids {
                         stats.pairs_evaluated += 1;
@@ -938,7 +1092,7 @@ impl AideMemo {
                             stats.edges_skipped_same_entity += 1;
                             continue;
                         }
-                        let pair = (*src, *tgt);
+                        let pair = (fact.source_id.clone(), *src, *tgt);
                         if existing.contains(&pair) {
                             stats.edges_skipped_existing += 1;
                             continue;
@@ -949,6 +1103,7 @@ impl AideMemo {
                             self.relation_add(crate::types::RelationInput {
                                 source: src_name,
                                 target: tgt_name,
+                                scope_source_id: fact.source_id.clone(),
                                 relation_type: crate::types::RelationType::new("related"),
                                 weight: Some(hit.score),
                                 evidence: Some(vec![format!("auto-relate via fact {}", fact.id)]),
@@ -968,6 +1123,10 @@ impl AideMemo {
     /// the older fact (smaller `created_at`) is marked superseded by
     /// the newer one. Idempotent — re-running on a wiki that's
     /// already been consolidated finds no new pairs.
+    ///
+    /// Facts are compared only inside their exact `source_id` namespace.
+    /// Named sources never consolidate each other or the legacy unscoped
+    /// (`None`) namespace.
     ///
     /// Mirrors OMEGA's compaction step (newer wins, older flows into
     /// history). Designed for periodic batch use, not a per-write
@@ -1018,6 +1177,12 @@ impl AideMemo {
                 }
                 for j in (i + 1)..facts.len() {
                     if superseded.contains(&facts[j].id) {
+                        continue;
+                    }
+                    if !same_source_namespace(
+                        facts[i].source_id.as_deref(),
+                        facts[j].source_id.as_deref(),
+                    ) {
                         continue;
                     }
                     let cos = cosine_f32(&embeds[&facts[i].id], &embeds[&facts[j].id]);
@@ -1119,6 +1284,9 @@ impl AideMemo {
     /// distance d̄, classifies each multi-fact cluster as tight
     /// (d̄ < θ' = 1 - θ, safe to compress to centroid) or spread
     /// (needs medoid+budget routing per the paper).
+    /// Cluster edges are formed only between facts with the exact same
+    /// `source_id`; the legacy unscoped (`None`) namespace is isolated from
+    /// every named source as well.
     ///
     /// Stage 2a returns `GacStats` only; no fact mutation. Stage 2b
     /// will gate `tight` clusters' supersede + `spread` clusters'
@@ -1187,6 +1355,12 @@ impl AideMemo {
         }
         for i in 0..n {
             for j in (i + 1)..n {
+                if !same_source_namespace(
+                    facts[i].source_id.as_deref(),
+                    facts[j].source_id.as_deref(),
+                ) {
+                    continue;
+                }
                 let cos = cosine_f32(&embeds[&facts[i].id], &embeds[&facts[j].id]);
                 if cos >= opts.theta {
                     let ri = find(&mut parent, i);
@@ -1414,6 +1588,20 @@ impl AideMemo {
         self.store.read().relations_get(entity, direction)
     }
 
+    /// Get relations for an entity in an optional source namespace. `None`
+    /// preserves the unscoped view; `Some` returns only edges explicitly owned
+    /// by that source and never inherits legacy unscoped edges.
+    pub fn relations_get_scoped(
+        &self,
+        entity: &str,
+        direction: TraverseDirection,
+        scope_source_id: Option<&str>,
+    ) -> Result<Vec<RelationRecord>> {
+        self.store
+            .read()
+            .relations_get_scoped(entity, direction, scope_source_id)
+    }
+
     // === Graph Operations ===
 
     /// Traverse the graph from a starting entity.
@@ -1423,11 +1611,37 @@ impl AideMemo {
         graph.traverse(start, opts)
     }
 
+    /// Traverse only entities attached to facts in an optional source
+    /// namespace. `None` is identical to [`Self::traverse`].
+    pub fn traverse_scoped(
+        &self,
+        start: &str,
+        opts: TraverseOpts,
+        source_id: Option<&str>,
+    ) -> Result<TraverseResult> {
+        let store = self.store.read();
+        let graph = Graph::new(&*store);
+        graph.traverse_scoped(start, opts, source_id)
+    }
+
     /// Find a path between two entities.
     pub fn path_find(&self, from: &str, to: &str) -> Result<Option<Vec<PathStep>>> {
         let store = self.store.read();
         let graph = Graph::new(&*store);
         graph.path_find(from, to)
+    }
+
+    /// Find a path whose entities are visible in an optional source
+    /// namespace. `None` is identical to [`Self::path_find`].
+    pub fn path_find_scoped(
+        &self,
+        from: &str,
+        to: &str,
+        source_id: Option<&str>,
+    ) -> Result<Option<Vec<PathStep>>> {
+        let store = self.store.read();
+        let graph = Graph::new(&*store);
+        graph.path_find_scoped(from, to, source_id)
     }
 
     // === Ingest ===
@@ -1750,6 +1964,8 @@ impl AideMemo {
     pub fn query(&self, topic: &str, opts: types::QueryOpts) -> Result<types::QueryResult> {
         use types::QueryMode;
 
+        let source_id = opts.source_id.as_deref();
+
         // 1. Hybrid search — every mode except `Local` runs it.
         let search = if opts.mode == QueryMode::Local {
             Vec::new()
@@ -1771,7 +1987,7 @@ impl AideMemo {
         let entity = if opts.mode == QueryMode::Naive {
             None
         } else {
-            self.entity_get(topic).ok()
+            self.entity_get_scoped(topic, source_id).ok()
         };
 
         // 3. Traverse depth — Global widens, Local narrows.
@@ -1792,13 +2008,14 @@ impl AideMemo {
         };
 
         let (related, recent_facts) = if let Some(ref e) = entity {
-            let traverse = self.traverse(
+            let traverse = self.traverse_scoped(
                 &e.name,
                 TraverseOpts {
                     depth,
                     relation_types: None,
                     direction: TraverseDirection::Both,
                 },
+                source_id,
             )?;
             let recent = self.fact_list(FactListOpts {
                 entity_id: Some(e.id),
@@ -1868,11 +2085,12 @@ impl AideMemo {
             .filter(|s| !s.is_empty());
 
         if let Some(parent_session_id) = parent_session_id {
-            self.entity_get(parent_session_id).map_err(|_| {
-                AideMemoError::InvalidInput(format!(
-                    "parent session `{parent_session_id}` does not exist"
-                ))
-            })?;
+            self.entity_get_scoped(parent_session_id, source_id)
+                .map_err(|_| {
+                    AideMemoError::InvalidInput(format!(
+                        "parent session `{parent_session_id}` does not exist"
+                    ))
+                })?;
         }
 
         let session_name = format!("session-{}", ulid::Ulid::new());
@@ -1886,6 +2104,7 @@ impl AideMemo {
             self.relation_add(RelationInput {
                 source: session_name.clone(),
                 target: parent_session_id.to_string(),
+                scope_source_id: source_id.map(str::to_string),
                 relation_type: types::RelationType::new("continued_from"),
                 weight: Some(1.0),
                 evidence: source.map(|value| vec![value.to_string()]),
@@ -2172,6 +2391,15 @@ struct FactTypeBucketAcc {
     count: u64,
 }
 
+/// Whether two facts belong to the same lifecycle namespace.
+///
+/// Keep this exact `Option` equality: `None` is the legacy unscoped namespace,
+/// not a wildcard that may consolidate facts from every named source.
+#[cfg(feature = "semantic")]
+fn same_source_namespace(left: Option<&str>, right: Option<&str>) -> bool {
+    left == right
+}
+
 /// f32 cosine similarity via simsimd. Returns 0.0 on size mismatch
 /// or empty input. Range: 0 (orthogonal) → 1 (identical).
 #[cfg(feature = "semantic")]
@@ -2248,6 +2476,15 @@ pub use types::VectorRecord;
 mod adaptive_search_tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn semantic_lifecycle_uses_exact_source_namespaces() {
+        assert!(same_source_namespace(None, None));
+        assert!(same_source_namespace(Some("tenant-a"), Some("tenant-a")));
+        assert!(!same_source_namespace(Some("tenant-a"), Some("tenant-b")));
+        assert!(!same_source_namespace(Some("tenant-a"), None));
+        assert!(!same_source_namespace(None, Some("tenant-a")));
+    }
 
     fn result(score: f32) -> SearchResult {
         SearchResult {
@@ -2364,6 +2601,24 @@ mod sqlite_backend_tests {
     use super::*;
     use tempfile::tempdir;
 
+    #[cfg(feature = "semantic")]
+    struct ConstantEmbeddingProvider;
+
+    #[cfg(feature = "semantic")]
+    impl embedding::EmbeddingProvider for ConstantEmbeddingProvider {
+        fn name(&self) -> String {
+            "constant-test".to_string()
+        }
+
+        fn dimension(&self) -> usize {
+            2
+        }
+
+        fn embed(&self, _text: &str) -> Result<Vec<f32>> {
+            Ok(vec![1.0, 0.0])
+        }
+    }
+
     fn sqlite_config(path: &std::path::Path) -> Config {
         let mut config = Config::default();
         config.store.backend = "sqlite".to_string();
@@ -2416,6 +2671,7 @@ mod sqlite_backend_tests {
         wiki.relation_add(RelationInput {
             source: "Sentinel".to_string(),
             target: "Redis".to_string(),
+            scope_source_id: None,
             relation_type: RelationType::new("monitors"),
             weight: Some(1.0),
             evidence: Some(vec!["sqlite-test".to_string()]),
@@ -2635,6 +2891,55 @@ mod sqlite_backend_tests {
         assert!(expired.superseded_by.is_none());
     }
 
+    #[cfg(feature = "semantic")]
+    #[test]
+    fn semantic_consolidation_and_gac_never_cross_source_namespaces() {
+        let (wiki, _dir) = fresh_sqlite();
+        assert!(
+            wiki.provider
+                .set(Arc::new(ConstantEmbeddingProvider))
+                .is_ok()
+        );
+
+        for (content, source_id) in [
+            ("tenant A first", Some("tenant-a")),
+            ("tenant A second", Some("tenant-a")),
+            ("tenant B only", Some("tenant-b")),
+            ("legacy unscoped", None),
+        ] {
+            wiki.fact_add(FactInput {
+                content: content.to_string(),
+                source_id: source_id.map(str::to_string),
+                ..Default::default()
+            })
+            .unwrap();
+        }
+
+        let semantic = wiki
+            .consolidate_semantic(ConsolidateOpts {
+                semantic_threshold: 0.99,
+                dry_run: true,
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(semantic.facts_processed, 4);
+        assert_eq!(semantic.pairs_found, 1);
+        assert_eq!(semantic.max_cosine, 1.0);
+
+        let gac = wiki
+            .consolidate_gac(types::GacOpts {
+                theta: 0.99,
+                dry_run: true,
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(gac.facts_processed, 4);
+        assert_eq!(gac.n_clusters, 3);
+        assert_eq!(gac.n_singletons, 2);
+        assert_eq!(gac.n_multi_clusters, 1);
+        assert_eq!(gac.max_cluster_size, 2);
+    }
+
     #[cfg(feature = "redb")]
     #[test]
     fn archive_contract_matches_redb_sqlite_and_libsqlite_public_api() {
@@ -2781,6 +3086,7 @@ mod sqlite_backend_tests {
             wiki.relation_add(RelationInput {
                 source: "Redis".to_string(),
                 target: "CacheLayer".to_string(),
+                scope_source_id: None,
                 relation_type: RelationType::new("uses"),
                 weight: Some(1.0),
                 evidence: Some(vec!["mutation-contract".to_string()]),
@@ -2955,6 +3261,7 @@ mod sqlite_backend_search_tests {
         wiki.relation_add(RelationInput {
             source: "Sentinel".to_string(),
             target: "Redis".to_string(),
+            scope_source_id: None,
             relation_type: RelationType::new("monitors"),
             weight: Some(1.0),
             evidence: Some(vec!["parity".to_string()]),

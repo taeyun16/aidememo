@@ -311,15 +311,21 @@ impl Default for RelationType {
     }
 }
 
-/// Relation record stored in redb.
+/// Relation record stored by the selected backend.
 ///
-/// Key: "{source_id}\0{rel_type}\0{target_id}"
+/// `source_id` and `target_id` identify the endpoint entities. The optional
+/// `scope_source_id` is a separate provenance namespace used to isolate edges
+/// in a shared store. Legacy relations deserialize into the unscoped `None`
+/// namespace.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RelationRecord {
     /// Source entity ID.
     pub source_id: EntityId,
     /// Target entity ID.
     pub target_id: EntityId,
+    /// Optional source/tenant namespace that owns this edge.
+    #[serde(default)]
+    pub scope_source_id: Option<String>,
     /// Relation type (e.g., "uses", "depends_on").
     pub relation_type: RelationType,
     /// Weight/confidence (0.0-1.0).
@@ -335,6 +341,9 @@ pub struct RelationRecord {
 pub struct RelationInput {
     pub source: String, // entity name (resolved to ID)
     pub target: String, // entity name (resolved to ID)
+    /// Optional source/tenant namespace that owns this edge.
+    #[serde(default)]
+    pub scope_source_id: Option<String>,
     pub relation_type: RelationType,
     #[serde(default)]
     pub weight: Option<f32>,
@@ -470,6 +479,18 @@ pub struct FactRecord {
     /// existing wikis behave unchanged after migration.
     #[serde(default)]
     pub pinned: bool,
+}
+
+/// Canonicalise an optional source namespace at the storage boundary.
+///
+/// MCP and CLI callers already trim identity arguments, but native SDKs can
+/// construct [`FactInput`] / [`FactRecord`] directly. Keeping the canonical
+/// form in core makes source-scoped indexes and record-level filters agree.
+pub(crate) fn normalize_source_id(source_id: Option<&str>) -> Option<String> {
+    source_id
+        .map(str::trim)
+        .filter(|source_id| !source_id.is_empty())
+        .map(str::to_string)
 }
 
 impl FactRecord {

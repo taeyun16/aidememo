@@ -231,6 +231,32 @@ pub extern "C" fn aidememo_search(
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn aidememo_search_scoped(
+    store: *const AideMemoStore,
+    query: *const c_char,
+    limit: u32,
+    current_only: bool,
+    source_id: *const c_char,
+) -> *mut c_char {
+    return_json(|| {
+        let s = store_ref(store)?;
+        let q = ptr_to_str(query)?;
+        let opts = SearchOpts {
+            limit: if limit == 0 {
+                None
+            } else {
+                Some(limit as usize)
+            },
+            current_only,
+            source_id: ptr_to_optional_str(source_id)?.map(str::to_string),
+            ..Default::default()
+        };
+        let results = s.wiki.hybrid_search(q, opts).map_err(|e| e.to_string())?;
+        json_serialize(&results)
+    })
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn aidememo_query(
     store: *const AideMemoStore,
     topic: *const c_char,
@@ -267,6 +293,44 @@ pub extern "C" fn aidememo_query(
     })
 }
 
+#[unsafe(no_mangle)]
+pub extern "C" fn aidememo_query_scoped(
+    store: *const AideMemoStore,
+    topic: *const c_char,
+    limit: u32,
+    depth: u32,
+    recent_limit: u32,
+    current_only: bool,
+    mode: *const c_char,
+    source_id: *const c_char,
+) -> *mut c_char {
+    return_json(|| {
+        let s = store_ref(store)?;
+        let topic = ptr_to_str(topic)?;
+        let mode = if mode.is_null() {
+            aidememo_core::QueryMode::default()
+        } else {
+            aidememo_core::QueryMode::parse(ptr_to_str(mode)?)
+        };
+        let opts = QueryOpts {
+            search_limit: if limit == 0 { 10 } else { limit as usize },
+            depth: if depth == 0 { 2 } else { depth },
+            recent_limit: if recent_limit == 0 {
+                10
+            } else {
+                recent_limit as usize
+            },
+            since: None,
+            current_only,
+            mode,
+            bm25_only: false,
+            source_id: ptr_to_optional_str(source_id)?.map(str::to_string),
+        };
+        let result = s.wiki.query(topic, opts).map_err(|e| e.to_string())?;
+        json_serialize(&result)
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Graph
 // ---------------------------------------------------------------------------
@@ -297,6 +361,36 @@ pub extern "C" fn aidememo_traverse(
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn aidememo_traverse_scoped(
+    store: *const AideMemoStore,
+    entity: *const c_char,
+    depth: u32,
+    direction: *const c_char,
+    source_id: *const c_char,
+) -> *mut c_char {
+    return_json(|| {
+        let s = store_ref(store)?;
+        let entity = ptr_to_str(entity)?;
+        let direction = if direction.is_null() {
+            "both"
+        } else {
+            ptr_to_str(direction)?
+        };
+        let opts = TraverseOpts {
+            depth: if depth == 0 { 2 } else { depth },
+            relation_types: None,
+            direction: parse_direction(direction),
+        };
+        let source_id = ptr_to_optional_str(source_id)?;
+        let result = s
+            .wiki
+            .traverse_scoped(entity, opts, source_id)
+            .map_err(|e| e.to_string())?;
+        json_serialize(&result)
+    })
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn aidememo_path_find(
     store: *const AideMemoStore,
     from: *const c_char,
@@ -307,6 +401,26 @@ pub extern "C" fn aidememo_path_find(
         let from = ptr_to_str(from)?;
         let to = ptr_to_str(to)?;
         let path = s.wiki.path_find(from, to).map_err(|e| e.to_string())?;
+        json_serialize(&path)
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aidememo_path_find_scoped(
+    store: *const AideMemoStore,
+    from: *const c_char,
+    to: *const c_char,
+    source_id: *const c_char,
+) -> *mut c_char {
+    return_json(|| {
+        let s = store_ref(store)?;
+        let from = ptr_to_str(from)?;
+        let to = ptr_to_str(to)?;
+        let source_id = ptr_to_optional_str(source_id)?;
+        let path = s
+            .wiki
+            .path_find_scoped(from, to, source_id)
+            .map_err(|e| e.to_string())?;
         json_serialize(&path)
     })
 }
@@ -386,6 +500,24 @@ pub extern "C" fn aidememo_entity_get(
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn aidememo_entity_get_scoped(
+    store: *const AideMemoStore,
+    name: *const c_char,
+    source_id: *const c_char,
+) -> *mut c_char {
+    return_json(|| {
+        let s = store_ref(store)?;
+        let name = ptr_to_str(name)?;
+        let source_id = ptr_to_optional_str(source_id)?;
+        let entity = s
+            .wiki
+            .entity_get_scoped(name, source_id)
+            .map_err(|e| e.to_string())?;
+        json_serialize(&entity)
+    })
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn aidememo_entity_list(
     store: *const AideMemoStore,
     limit: u32,
@@ -410,6 +542,40 @@ pub extern "C" fn aidememo_entity_list(
             offset: 0,
         };
         let entities = s.wiki.entity_list(opts).map_err(|e| e.to_string())?;
+        json_serialize(&entities)
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aidememo_entity_list_scoped(
+    store: *const AideMemoStore,
+    limit: u32,
+    entity_type: *const c_char,
+    source_id: *const c_char,
+) -> *mut c_char {
+    return_json(|| {
+        let s = store_ref(store)?;
+        let entity_type = if entity_type.is_null() {
+            None
+        } else {
+            parse_entity_type(ptr_to_str(entity_type)?)
+        };
+        let opts = ListOpts {
+            entity_type,
+            min_facts: None,
+            limit: if limit == 0 {
+                None
+            } else {
+                Some(limit as usize)
+            },
+            sort_by: Default::default(),
+            offset: 0,
+        };
+        let source_id = ptr_to_optional_str(source_id)?;
+        let entities = s
+            .wiki
+            .entity_list_scoped(opts, source_id)
+            .map_err(|e| e.to_string())?;
         json_serialize(&entities)
     })
 }
@@ -475,6 +641,58 @@ pub extern "C" fn aidememo_fact_add(
     source: *const c_char,
     confidence: f32,
 ) -> *mut c_char {
+    fact_add_impl(
+        store,
+        content,
+        entity_ids_json,
+        fact_type,
+        tags_json,
+        source,
+        confidence,
+        ptr::null(),
+        ptr::null(),
+    )
+}
+
+/// Source-aware fact insert with optional writer provenance. Pass NULL or an
+/// empty string for either identity to leave it unset.
+#[unsafe(no_mangle)]
+pub extern "C" fn aidememo_fact_add_scoped(
+    store: *const AideMemoStore,
+    content: *const c_char,
+    entity_ids_json: *const c_char,
+    fact_type: *const c_char,
+    tags_json: *const c_char,
+    source: *const c_char,
+    confidence: f32,
+    source_id: *const c_char,
+    actor_id: *const c_char,
+) -> *mut c_char {
+    fact_add_impl(
+        store,
+        content,
+        entity_ids_json,
+        fact_type,
+        tags_json,
+        source,
+        confidence,
+        source_id,
+        actor_id,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn fact_add_impl(
+    store: *const AideMemoStore,
+    content: *const c_char,
+    entity_ids_json: *const c_char,
+    fact_type: *const c_char,
+    tags_json: *const c_char,
+    source: *const c_char,
+    confidence: f32,
+    source_id: *const c_char,
+    actor_id: *const c_char,
+) -> *mut c_char {
     return_json(|| {
         let s = store_ref(store)?;
         let content = ptr_to_str(content)?.to_string();
@@ -503,24 +721,15 @@ pub extern "C" fn aidememo_fact_add(
             let arr = parse_string_array(ptr_to_str(tags_json)?)?;
             if arr.is_empty() { None } else { Some(arr) }
         };
-        let source = if source.is_null() {
-            None
-        } else {
-            let v = ptr_to_str(source)?;
-            if v.is_empty() {
-                None
-            } else {
-                Some(v.to_string())
-            }
-        };
+        let source = ptr_to_optional_str(source)?.map(str::to_string);
         let input = FactInput {
             content,
             fact_type,
             entity_ids,
             tags,
             source,
-            source_id: None,
-            actor_id: None,
+            source_id: ptr_to_optional_str(source_id)?.map(str::to_string),
+            actor_id: ptr_to_optional_str(actor_id)?.map(str::to_string),
             source_confidence: if confidence > 0.0 {
                 Some(confidence)
             } else {
@@ -617,7 +826,11 @@ pub extern "C" fn aidememo_fact_add_many(
                 entity_ids,
                 tags,
                 source,
-                source_id: None,
+                source_id: obj
+                    .get("source_id")
+                    .and_then(|v| v.as_str())
+                    .filter(|v| !v.trim().is_empty())
+                    .map(|v| v.trim().to_string()),
                 actor_id: obj
                     .get("actor_id")
                     .and_then(|v| v.as_str())
@@ -643,6 +856,89 @@ pub extern "C" fn aidememo_fact_get(
         let id = FactId::parse(id_str).ok_or_else(|| format!("invalid fact id: {id_str}"))?;
         let fact = s.wiki.fact_get(&id).map_err(|e| e.to_string())?;
         json_serialize(&fact)
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aidememo_fact_get_scoped(
+    store: *const AideMemoStore,
+    fact_id: *const c_char,
+    source_id: *const c_char,
+) -> *mut c_char {
+    return_json(|| {
+        let s = store_ref(store)?;
+        let id_str = ptr_to_str(fact_id)?;
+        let id = FactId::parse(id_str).ok_or_else(|| format!("invalid fact id: {id_str}"))?;
+        let source_id = ptr_to_optional_str(source_id)?;
+        let fact = s
+            .wiki
+            .fact_get_scoped(&id, source_id)
+            .map_err(|e| e.to_string())?;
+        json_serialize(&fact)
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aidememo_pinned_facts(store: *const AideMemoStore, limit: u32) -> *mut c_char {
+    return_json(|| {
+        let s = store_ref(store)?;
+        let facts = s
+            .wiki
+            .pinned_facts(if limit == 0 { 10 } else { limit as usize })
+            .map_err(|e| e.to_string())?;
+        json_serialize(&facts)
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aidememo_pinned_facts_scoped(
+    store: *const AideMemoStore,
+    limit: u32,
+    source_id: *const c_char,
+) -> *mut c_char {
+    return_json(|| {
+        let s = store_ref(store)?;
+        let source_id = ptr_to_optional_str(source_id)?;
+        let facts = s
+            .wiki
+            .pinned_facts_scoped(if limit == 0 { 10 } else { limit as usize }, source_id)
+            .map_err(|e| e.to_string())?;
+        json_serialize(&facts)
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aidememo_fact_pin(
+    store: *const AideMemoStore,
+    fact_id: *const c_char,
+    pinned: bool,
+) -> *mut c_char {
+    return_json(|| {
+        let s = store_ref(store)?;
+        let id_str = ptr_to_str(fact_id)?;
+        let id = FactId::parse(id_str).ok_or_else(|| format!("invalid fact id: {id_str}"))?;
+        s.wiki.fact_pin(&id, pinned).map_err(|e| e.to_string())?;
+        Ok(json!({ "ok": true }).to_string())
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aidememo_fact_pin_scoped(
+    store: *const AideMemoStore,
+    fact_id: *const c_char,
+    pinned: bool,
+    source_id: *const c_char,
+) -> *mut c_char {
+    return_json(|| {
+        let s = store_ref(store)?;
+        let id_str = ptr_to_str(fact_id)?;
+        let id = FactId::parse(id_str).ok_or_else(|| format!("invalid fact id: {id_str}"))?;
+        let source_id = ptr_to_optional_str(source_id)?;
+        s.wiki
+            .fact_get_scoped(&id, source_id)
+            .map_err(|e| e.to_string())?;
+        s.wiki.fact_pin(&id, pinned).map_err(|e| e.to_string())?;
+        Ok(json!({ "ok": true }).to_string())
     })
 }
 
@@ -686,6 +982,59 @@ pub extern "C" fn aidememo_fact_list(
             current_only,
             as_of: None,
             source_id: None,
+        };
+        let facts = s.wiki.fact_list(opts).map_err(|e| e.to_string())?;
+        json_serialize(&facts)
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aidememo_fact_list_scoped(
+    store: *const AideMemoStore,
+    entity: *const c_char,
+    fact_type: *const c_char,
+    limit: u32,
+    current_only: bool,
+    source_id: *const c_char,
+) -> *mut c_char {
+    return_json(|| {
+        let s = store_ref(store)?;
+        let source_id = ptr_to_optional_str(source_id)?;
+        let entity_id = if entity.is_null() {
+            None
+        } else {
+            let name = ptr_to_str(entity)?;
+            if name.is_empty() {
+                None
+            } else {
+                Some(
+                    s.wiki
+                        .entity_get_scoped(name, source_id)
+                        .map_err(|e| e.to_string())?
+                        .id,
+                )
+            }
+        };
+        let fact_type = if fact_type.is_null() {
+            None
+        } else {
+            parse_fact_type(ptr_to_str(fact_type)?)
+        };
+        let opts = FactListOpts {
+            fact_type,
+            entity_id,
+            min_confidence: None,
+            limit: if limit == 0 {
+                None
+            } else {
+                Some(limit as usize)
+            },
+            offset: 0,
+            since: None,
+            until: None,
+            current_only,
+            as_of: None,
+            source_id: source_id.map(str::to_string),
         };
         let facts = s.wiki.fact_list(opts).map_err(|e| e.to_string())?;
         json_serialize(&facts)
@@ -744,7 +1093,31 @@ pub extern "C" fn aidememo_relation_add(
         let input = RelationInput {
             source,
             target,
+            scope_source_id: None,
             relation_type: RelationType::new(rel_type),
+            weight: None,
+            evidence: None,
+        };
+        s.wiki.relation_add(input).map_err(|e| e.to_string())?;
+        Ok(json!({ "ok": true }).to_string())
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aidememo_relation_add_scoped(
+    store: *const AideMemoStore,
+    source: *const c_char,
+    target: *const c_char,
+    rel_type: *const c_char,
+    source_id: *const c_char,
+) -> *mut c_char {
+    return_json(|| {
+        let s = store_ref(store)?;
+        let input = RelationInput {
+            source: ptr_to_str(source)?.to_string(),
+            target: ptr_to_str(target)?.to_string(),
+            scope_source_id: Some(ptr_to_str(source_id)?.to_string()),
+            relation_type: RelationType::new(ptr_to_str(rel_type)?),
             weight: None,
             evidence: None,
         };
@@ -789,6 +1162,30 @@ pub extern "C" fn aidememo_relations_get(
         let relations = s
             .wiki
             .relations_get(entity, parse_direction(direction))
+            .map_err(|e| e.to_string())?;
+        json_serialize(&relations)
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn aidememo_relations_get_scoped(
+    store: *const AideMemoStore,
+    entity: *const c_char,
+    direction: *const c_char,
+    source_id: *const c_char,
+) -> *mut c_char {
+    return_json(|| {
+        let s = store_ref(store)?;
+        let entity = ptr_to_str(entity)?;
+        let direction = if direction.is_null() {
+            "both"
+        } else {
+            ptr_to_str(direction)?
+        };
+        let source_id = ptr_to_str(source_id)?;
+        let relations = s
+            .wiki
+            .relations_get_scoped(entity, parse_direction(direction), Some(source_id))
             .map_err(|e| e.to_string())?;
         json_serialize(&relations)
     })

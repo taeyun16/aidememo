@@ -89,6 +89,7 @@ fn attach_session_entity(
     wiki: &AideMemo,
     entity_ids: &mut Vec<EntityId>,
     session_id: Option<String>,
+    source_id: Option<&str>,
 ) -> napi::Result<()> {
     let Some(session_id) = session_id
         .as_deref()
@@ -97,7 +98,10 @@ fn attach_session_entity(
     else {
         return Ok(());
     };
-    let session_entity_id = wiki.resolve_entity(session_id).map_err(map_err)?;
+    let session_entity_id = wiki
+        .entity_get_scoped(session_id, source_id)
+        .map_err(map_err)?
+        .id;
     if !entity_ids.contains(&session_entity_id) {
         entity_ids.push(session_entity_id);
     }
@@ -149,6 +153,7 @@ pub struct WorkflowStartArgs {
 pub struct TraverseArgs {
     pub depth: Option<u32>,
     pub direction: Option<String>,
+    pub source_id: Option<String>,
 }
 
 #[napi(object)]
@@ -164,6 +169,7 @@ pub struct EntityListArgs {
     pub limit: Option<u32>,
     pub entity_type: Option<String>,
     pub min_facts: Option<u32>,
+    pub source_id: Option<String>,
 }
 
 #[napi(object)]
@@ -356,19 +362,31 @@ impl AideMemoStore {
         let args = args.unwrap_or(TraverseArgs {
             depth: None,
             direction: None,
+            source_id: None,
         });
         let opts = TraverseOpts {
             depth: args.depth.unwrap_or(2),
             relation_types: None,
             direction: parse_direction(args.direction),
         };
-        let result = self.wiki.traverse(&entity, opts).map_err(map_err)?;
+        let result = self
+            .wiki
+            .traverse_scoped(&entity, opts, args.source_id.as_deref())
+            .map_err(map_err)?;
         to_json(&result)
     }
 
     #[napi]
-    pub fn path_find(&self, from: String, to: String) -> napi::Result<String> {
-        let path = self.wiki.path_find(&from, &to).map_err(map_err)?;
+    pub fn path_find(
+        &self,
+        from: String,
+        to: String,
+        source_id: Option<String>,
+    ) -> napi::Result<String> {
+        let path = self
+            .wiki
+            .path_find_scoped(&from, &to, source_id.as_deref())
+            .map_err(map_err)?;
         to_json(&path)
     }
 
@@ -394,8 +412,11 @@ impl AideMemoStore {
     }
 
     #[napi]
-    pub fn entity_get(&self, name: String) -> napi::Result<String> {
-        let entity = self.wiki.entity_get(&name).map_err(map_err)?;
+    pub fn entity_get(&self, name: String, source_id: Option<String>) -> napi::Result<String> {
+        let entity = self
+            .wiki
+            .entity_get_scoped(&name, source_id.as_deref())
+            .map_err(map_err)?;
         to_json(&entity)
     }
 
@@ -405,6 +426,7 @@ impl AideMemoStore {
             limit: None,
             entity_type: None,
             min_facts: None,
+            source_id: None,
         });
         let opts = ListOpts {
             entity_type: args.entity_type.as_deref().and_then(parse_entity_type),
@@ -413,7 +435,10 @@ impl AideMemoStore {
             sort_by: Default::default(),
             offset: 0,
         };
-        let entities = self.wiki.entity_list(opts).map_err(map_err)?;
+        let entities = self
+            .wiki
+            .entity_list_scoped(opts, args.source_id.as_deref())
+            .map_err(map_err)?;
         to_json(&entities)
     }
 
@@ -455,7 +480,12 @@ impl AideMemoStore {
                 .collect::<napi::Result<Vec<_>>>()?,
             None => Vec::new(),
         };
-        attach_session_entity(&self.wiki, &mut ids, args.session_id)?;
+        attach_session_entity(
+            &self.wiki,
+            &mut ids,
+            args.session_id,
+            args.source_id.as_deref(),
+        )?;
         let entity_ids = if ids.is_empty() { None } else { Some(ids) };
         let input = FactInput {
             content,
@@ -486,7 +516,12 @@ impl AideMemoStore {
                     .collect::<napi::Result<Vec<_>>>()?,
                 None => Vec::new(),
             };
-            attach_session_entity(&self.wiki, &mut ids, item.session_id)?;
+            attach_session_entity(
+                &self.wiki,
+                &mut ids,
+                item.session_id,
+                item.source_id.as_deref(),
+            )?;
             let entity_ids = if ids.is_empty() { None } else { Some(ids) };
             inputs.push(FactInput {
                 content: item.content,
@@ -505,24 +540,39 @@ impl AideMemoStore {
     }
 
     #[napi]
-    pub fn fact_get(&self, fact_id: String) -> napi::Result<String> {
+    pub fn fact_get(&self, fact_id: String, source_id: Option<String>) -> napi::Result<String> {
         let id = parse_fact_id(&fact_id)?;
-        let fact = self.wiki.fact_get(&id).map_err(map_err)?;
+        let fact = self
+            .wiki
+            .fact_get_scoped(&id, source_id.as_deref())
+            .map_err(map_err)?;
         to_json(&fact)
     }
 
     #[napi]
-    pub fn pinned_facts(&self, limit: Option<u32>) -> napi::Result<String> {
+    pub fn pinned_facts(
+        &self,
+        limit: Option<u32>,
+        source_id: Option<String>,
+    ) -> napi::Result<String> {
         let facts = self
             .wiki
-            .pinned_facts(limit.unwrap_or(10) as usize)
+            .pinned_facts_scoped(limit.unwrap_or(10) as usize, source_id.as_deref())
             .map_err(map_err)?;
         to_json(&facts)
     }
 
     #[napi]
-    pub fn fact_pin(&self, fact_id: String, pinned: bool) -> napi::Result<()> {
+    pub fn fact_pin(
+        &self,
+        fact_id: String,
+        pinned: bool,
+        source_id: Option<String>,
+    ) -> napi::Result<()> {
         let id = parse_fact_id(&fact_id)?;
+        self.wiki
+            .fact_get_scoped(&id, source_id.as_deref())
+            .map_err(map_err)?;
         self.wiki.fact_pin(&id, pinned).map_err(map_err)
     }
 
@@ -537,7 +587,12 @@ impl AideMemoStore {
             current_only: None,
         });
         let entity_id = match args.entity {
-            Some(name) => Some(self.wiki.resolve_entity(&name).map_err(map_err)?),
+            Some(name) => Some(
+                self.wiki
+                    .entity_get_scoped(&name, args.source_id.as_deref())
+                    .map_err(map_err)?
+                    .id,
+            ),
             None => None,
         };
         let opts = FactListOpts {
@@ -577,10 +632,12 @@ impl AideMemoStore {
         source: String,
         target: String,
         rel_type: String,
+        source_id: Option<String>,
     ) -> napi::Result<()> {
         let input = RelationInput {
             source,
             target,
+            scope_source_id: source_id,
             relation_type: RelationType::new(rel_type),
             weight: None,
             evidence: None,
@@ -601,9 +658,17 @@ impl AideMemoStore {
     }
 
     #[napi]
-    pub fn relations_get(&self, entity: String, direction: Option<String>) -> napi::Result<String> {
+    pub fn relations_get(
+        &self,
+        entity: String,
+        direction: Option<String>,
+        source_id: Option<String>,
+    ) -> napi::Result<String> {
         let dir = parse_direction(direction);
-        let relations = self.wiki.relations_get(&entity, dir).map_err(map_err)?;
+        let relations = self
+            .wiki
+            .relations_get_scoped(&entity, dir, source_id.as_deref())
+            .map_err(map_err)?;
         to_json(&relations)
     }
 
@@ -889,5 +954,90 @@ mod backend_binding_tests {
             .expect("repeat branch merge");
         let repeat: serde_json::Value = serde_json::from_str(&repeat_json).expect("repeat json");
         assert_eq!(repeat["facts_inserted"], 0);
+    }
+
+    #[test]
+    fn source_scoped_binding_reads_hide_neighbouring_facts() {
+        let backend = expected_default_backend();
+        let path = temp_store_path("source-scope", backend);
+        let store = AideMemoStore::new(path.to_string_lossy().into_owned(), None)
+            .expect("open scoped store");
+        let shared = store
+            .wiki
+            .entity_add(EntityInput {
+                name: "Shared".to_string(),
+                ..Default::default()
+            })
+            .expect("shared entity");
+        let beta_only = store
+            .wiki
+            .entity_add(EntityInput {
+                name: "BetaOnly".to_string(),
+                ..Default::default()
+            })
+            .expect("beta entity");
+        store
+            .wiki
+            .entity_describe("Shared", "global summary")
+            .expect("summary");
+        let alpha = store
+            .wiki
+            .fact_add(FactInput {
+                content: "alpha visible".to_string(),
+                entity_ids: Some(vec![shared]),
+                source_id: Some("alpha".to_string()),
+                ..Default::default()
+            })
+            .expect("alpha fact");
+        let beta = store
+            .wiki
+            .fact_add(FactInput {
+                content: "beta private".to_string(),
+                entity_ids: Some(vec![beta_only]),
+                source_id: Some("beta".to_string()),
+                ..Default::default()
+            })
+            .expect("beta fact");
+        store.wiki.fact_pin(&alpha, true).expect("pin alpha");
+        store.wiki.fact_pin(&beta, true).expect("pin beta");
+
+        let entity: serde_json::Value = serde_json::from_str(
+            &store
+                .entity_get("Shared".to_string(), Some("alpha".to_string()))
+                .expect("scoped entity"),
+        )
+        .expect("entity json");
+        assert!(entity["summary"].is_null());
+        assert!(
+            store
+                .entity_get("BetaOnly".to_string(), Some("alpha".to_string()))
+                .is_err()
+        );
+        assert!(
+            store
+                .fact_get(beta.to_string(), Some("alpha".to_string()))
+                .is_err()
+        );
+        let pinned: Vec<serde_json::Value> = serde_json::from_str(
+            &store
+                .pinned_facts(Some(10), Some("alpha".to_string()))
+                .expect("scoped pinned"),
+        )
+        .expect("pinned json");
+        assert_eq!(pinned.len(), 1);
+        assert_eq!(pinned[0]["id"], alpha.to_string());
+        let entities: Vec<serde_json::Value> = serde_json::from_str(
+            &store
+                .entity_list(Some(EntityListArgs {
+                    limit: Some(10),
+                    entity_type: None,
+                    min_facts: None,
+                    source_id: Some("alpha".to_string()),
+                }))
+                .expect("scoped list"),
+        )
+        .expect("entity list json");
+        assert_eq!(entities.len(), 1);
+        assert_eq!(entities[0]["name"], "Shared");
     }
 }

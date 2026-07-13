@@ -35,7 +35,7 @@ python3 scripts/docs-site-e2e.py
 | `aidememo project` | Manage named projects and their store paths. |
 | `aidememo bench` | Benchmark search quality against a golden JSONL set. |
 | `aidememo skill` | Validate or install agent skill files. |
-| `aidememo backup` | Create or restore SQLite snapshot backups with manifest verification. |
+| `aidememo backup` | Create or restore hot + optional cold-tier SQLite snapshots with manifest verification. |
 | `aidememo branch` | Push or merge append-only memory branch logs for cloud agents and speculative experiments. |
 | `aidememo export` | Export entities, relations, and facts to JSONL. |
 | `aidememo import` | Import JSONL data. |

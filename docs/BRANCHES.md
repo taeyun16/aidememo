@@ -139,6 +139,9 @@ What is covered:
 - `branch merge --branch <ID>` imports only that branch.
 - Merging the same segment again does not duplicate facts because it goes
   through `sync_import`.
+- All selected segments retain their original LWW order; after import, records
+  actually changed by the merge receive one coordinator relay timestamp so an
+  already-advanced downstream sync cursor still observes historical IDs.
 - S3 is a transport for branch artifacts, not the live database backend.
 
 What is not covered yet:

@@ -147,8 +147,9 @@ cargo install --path crates/aidememo-cli
 Go, Elixir/Erlang 버전을 사용할 수 있습니다. 워크스페이스 MSRV는 `1.95`입니다.
 
 공개 패키지는 [crates.io](https://crates.io/crates/aidememo-cli)의
-`aidememo-cli`, [PyPI](https://pypi.org/project/aidememo-agent-sdk/)의
-`aidememo-agent-sdk`와 `aidememo-python`,
+`aidememo-cli`, PyPI의
+[`aidememo-agent-sdk`](https://pypi.org/project/aidememo-agent-sdk/)와
+[`aidememo-python`](https://pypi.org/project/aidememo-python/),
 [npm](https://www.npmjs.com/package/aidememo-napi)의 `aidememo-napi`로
 제공됩니다. 릴리스 노트는 [v0.1.0 릴리스](https://github.com/taeyun16/aidememo/releases/tag/v0.1.0)를
 참조하세요. 해당 릴리스에는 macOS와 Linux의 x64/arm64용 독립 실행형 CLI
@@ -293,7 +294,7 @@ aidememo fact add "Use LRU for Redis edge caches" \
   --type convention \
   --entities Redis,Cache
 
-aidememo fact supersede <OLD_ID> <NEW_ID>
+aidememo fact supersede <OLD_ID> <NEW_ID> [--source-id ID]
 aidememo edit fact <ID> --append "Confirmed in load test"
 ```
 
@@ -320,6 +321,30 @@ MCP 에이전트는 `--source-id`와 함께 설치하여 서버 환경에
 ```bash
 aidememo --backend libsqlite mcp-install --target codex --source-id agent-a
 ```
+
+`AIDEMEMO_SOURCE_ID`는 신뢰된 프로세스의 기본값이지 인증 경계가 아닙니다.
+호출자가 다른 `source_id`를 직접 보낼 수 있기 때문입니다. 서로 독립적으로
+인증되는 에이전트가 HTTP 서버를 공유한다면 bearer token마다 고정된
+`source_id`와 `actor_id`를 바인딩하세요. Bound caller는 두 값을 재정의하거나
+전역 sync stream을 export하거나 전역 admin status를 조회할 수 없습니다.
+
+```json
+{"tokens":[{"token":"replace-me","source_id":"agent-a","actor_id":"codex-a"}]}
+```
+
+```bash
+aidememo mcp-serve --port 3000 --auth-bindings-file ./token-bindings.json
+```
+
+정확한 content dedup은 source 범위를 따르며, entity, fact, pinned context,
+graph 조회도 같은 source namespace 안에서 동작합니다. Source 범위가 있는 graph
+edge는 relation namespace도 정확히 같아야 하며, 기존 범위 없는 edge는 숨깁니다.
+전체 경계와 admin token
+지침은 [MCP 설정](website/i18n/ko/docusaurus-plugin-content-docs/current/MCP.md)을
+참고하세요. `mcp-serve` 자체는 평문 HTTP이므로 loopback이 아닌 배포에는 TLS
+reverse proxy 또는 암호화된 private tunnel도 필요합니다. Source partition은
+entity name/type ontology를 공유하므로 상호 신뢰하지 않는 tenant는 별도 store를
+사용해야 합니다.
 
 ### 에이전트가 코드를 실행할 수 있을 때 Python으로 메모리 조합
 
@@ -481,7 +506,7 @@ aidememo config set store.lock_retry_ms 5000     # 짧은 쓰기 경합 완화
 aidememo doctor --json                           # sharing.mode와 데몬 안내 포함
 aidememo config set model.provider fastembed
 aidememo config set model.name bge-small-en-v1.5
-aidememo backup create ~/backups/aidememo       # 일관된 SQLite snapshot + manifest
+aidememo backup create ~/backups/aidememo       # hot + 기존 cold-tier SQLite snapshot + manifest
 aidememo backup restore ~/backups/aidememo/backup-01... --force
 aidememo branch push --branch agent-a --base ~/backups/aidememo/backup-01... ~/backups/aidememo
 aidememo branch merge --branch agent-a ~/backups/aidememo

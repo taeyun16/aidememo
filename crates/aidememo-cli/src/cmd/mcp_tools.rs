@@ -362,8 +362,13 @@ fn tool_search(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, String> 
     let since = parse_time_arg(args.get("since"), false)?;
     let until = parse_time_arg(args.get("until"), false)?;
     let as_of = parse_time_arg(args.get("as_of"), true)?;
+    let source_id = mcp_source_id(args);
     let entity_filter = match args.get("entity").and_then(|v| v.as_str()) {
-        Some(name) => Some(vec![wiki.resolve_entity(name).map_err(|e| e.to_string())?]),
+        Some(name) => Some(vec![
+            wiki.entity_get_scoped(name, source_id.as_deref())
+                .map_err(|e| e.to_string())?
+                .id,
+        ]),
         None => None,
     };
     let min_confidence = args
@@ -384,8 +389,6 @@ fn tool_search(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, String> 
         .get("include_archive")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
-    let source_id = mcp_source_id(args);
-
     let opts = aidememo_core::SearchOpts {
         limit: Some(limit),
         bm25_only,
@@ -523,6 +526,8 @@ fn tool_feedback(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, String
         .and_then(|v| v.as_str())
         .ok_or("fact_id required")?;
     let fact_id = parse_fact_id(fact_id_str)?;
+    wiki.fact_get_scoped(&fact_id, mcp_source_id(args).as_deref())
+        .map_err(|e| e.to_string())?;
     let helpful = args
         .get("helpful")
         .and_then(|v| v.as_bool())
@@ -548,14 +553,20 @@ fn tool_feedback(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, String
 
 fn tool_pinned_context(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, String> {
     let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
-    let pinned = wiki.pinned_facts(limit).map_err(|e| e.to_string())?;
+    let source_id = mcp_source_id(args);
+    let pinned = wiki
+        .pinned_facts_scoped(limit, source_id.as_deref())
+        .map_err(|e| e.to_string())?;
     let entries: Vec<Value> = pinned
         .into_iter()
         .map(|f| {
             let entity_names: Vec<String> = f
                 .entity_ids
                 .iter()
-                .filter_map(|eid| wiki.entity_get_by_id(*eid).ok())
+                .filter_map(|eid| {
+                    wiki.entity_get_by_id_scoped(*eid, source_id.as_deref())
+                        .ok()
+                })
                 .map(|e| e.name)
                 .collect();
             json!({
@@ -586,6 +597,8 @@ fn tool_fact_pin(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, String
         .and_then(|v| v.as_bool())
         .ok_or("pinned (boolean) required — true to pin, false to unpin")?;
     let fact_id = parse_fact_id(id_str)?;
+    wiki.fact_get_scoped(&fact_id, mcp_source_id(args).as_deref())
+        .map_err(|e| e.to_string())?;
     wiki.fact_pin(&fact_id, pinned).map_err(|e| e.to_string())?;
     Ok(ToolCallResult {
         content: vec![ContentBlock::text(
@@ -619,8 +632,11 @@ fn tool_session_start(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, S
         .get("top_entities_limit")
         .and_then(|v| v.as_u64())
         .unwrap_or(10) as usize;
+    let source_id = mcp_source_id(args);
 
-    let pinned = wiki.pinned_facts(pinned_limit).map_err(|e| e.to_string())?;
+    let pinned = wiki
+        .pinned_facts_scoped(pinned_limit, source_id.as_deref())
+        .map_err(|e| e.to_string())?;
     let pinned_json: Vec<Value> = pinned
         .iter()
         .map(|f| {
@@ -642,7 +658,7 @@ fn tool_session_start(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, S
             fact_type: None,
             entity_id: None,
             min_confidence: None,
-            source_id: None,
+            source_id: source_id.clone(),
             limit: Some(recent_limit),
             offset: 0,
             since,
@@ -664,13 +680,16 @@ fn tool_session_start(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, S
         .collect();
 
     let top_entities = wiki
-        .entity_list(aidememo_core::ListOpts {
-            entity_type: None,
-            min_facts: None,
-            sort_by: aidememo_core::EntitySort::FactCount,
-            limit: Some(top_entities_limit),
-            offset: 0,
-        })
+        .entity_list_scoped(
+            aidememo_core::ListOpts {
+                entity_type: None,
+                min_facts: None,
+                sort_by: aidememo_core::EntitySort::FactCount,
+                limit: Some(top_entities_limit),
+                offset: 0,
+            },
+            source_id.as_deref(),
+        )
         .map_err(|e| e.to_string())?;
     let top_entities_json: Vec<Value> = top_entities
         .iter()
@@ -683,39 +702,73 @@ fn tool_session_start(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, S
         })
         .collect();
 
-    let issues = wiki.lint().map_err(|e| e.to_string())?;
-    let mut codes: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
-    for issue in &issues {
-        *codes.entry(issue.code.clone()).or_insert(0) += 1;
-    }
-    let by_code: Vec<Value> = codes
-        .into_iter()
-        .map(|(code, count)| {
-            json!({
-                "code": code,
-                "count": count,
-                "action": lint_action_hint(&code),
+    let (stats, open_issues) = if let Some(source_id) = source_id.as_deref() {
+        let scoped_entities = wiki
+            .entity_list_scoped(
+                aidememo_core::ListOpts {
+                    limit: None,
+                    ..Default::default()
+                },
+                Some(source_id),
+            )
+            .map_err(|e| e.to_string())?;
+        let scoped_facts = wiki
+            .fact_list(aidememo_core::FactListOpts {
+                source_id: Some(source_id.to_string()),
+                limit: None,
+                ..Default::default()
             })
-        })
-        .collect();
+            .map_err(|e| e.to_string())?;
+        (
+            json!({
+                "entity_count": scoped_entities.len(),
+                "fact_count": scoped_facts.len(),
+                "relation_count": Value::Null,
+                "source_id": source_id,
+            }),
+            json!({
+                "total": Value::Null,
+                "by_code": [],
+                "unavailable": "lint is global and is not exposed to a source-scoped identity",
+            }),
+        )
+    } else {
+        let issues = wiki.lint().map_err(|e| e.to_string())?;
+        let mut codes: std::collections::BTreeMap<String, usize> =
+            std::collections::BTreeMap::new();
+        for issue in &issues {
+            *codes.entry(issue.code.clone()).or_insert(0) += 1;
+        }
+        let by_code: Vec<Value> = codes
+            .into_iter()
+            .map(|(code, count)| {
+                json!({
+                    "code": code,
+                    "count": count,
+                    "action": lint_action_hint(&code),
+                })
+            })
+            .collect();
+        (
+            serde_json::to_value(wiki.stats().map_err(|e| e.to_string())?)
+                .map_err(|e| e.to_string())?,
+            json!({"total": issues.len(), "by_code": by_code}),
+        )
+    };
 
     // Personalisation tier — ALL preference / lesson / error facts
     // (decay-exempt by default). These are the OMEGA-equivalent of
     // 'profile' + 'lessons' surfaced unconditionally at session start
     // so the agent doesn't have to remember to look them up.
-    let personalisation = collect_personalisation(wiki, 50, None);
+    let personalisation = collect_personalisation(wiki, 50, source_id.as_deref());
 
-    let stats = wiki.stats().map_err(|e| e.to_string())?;
     let payload = json!({
         "stats": stats,
         "pinned": pinned_json,
         "personalisation": personalisation,
         "recent": recent_json,
         "top_entities": top_entities_json,
-        "open_issues": {
-            "total": issues.len(),
-            "by_code": by_code,
-        },
+        "open_issues": open_issues,
     });
     Ok(ToolCallResult {
         content: vec![ContentBlock::text(payload.to_string())],
@@ -727,13 +780,6 @@ fn tool_session_start(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, S
 /// a slim JSON array. These are the durable, agent-relevant signals
 /// that should always be in the model's context window — surfaced
 /// unconditionally at session start.
-fn source_id_matches(f: &aidememo_core::FactRecord, source_id: Option<&str>) -> bool {
-    match source_id {
-        Some(source_id) => f.source_id.as_deref() == Some(source_id),
-        None => true,
-    }
-}
-
 fn source_id_from_value(value: Option<&Value>) -> Option<String> {
     value
         .and_then(|v| v.as_str())
@@ -781,11 +827,12 @@ fn mcp_actor_id(args: &Value) -> Option<String> {
 fn resolve_session_entity(
     wiki: &AideMemo,
     session_id: Option<&str>,
+    source_id: Option<&str>,
 ) -> Result<Option<aidememo_core::EntityId>, String> {
     let Some(session_id) = session_id.map(str::trim).filter(|s| !s.is_empty()) else {
         return Ok(None);
     };
-    wiki.entity_get(session_id)
+    wiki.entity_get_scoped(session_id, source_id)
         .map(|entity| Some(entity.id))
         .map_err(|e| format!("session_id {session_id:?} does not resolve to an entity: {e}"))
 }
@@ -854,17 +901,18 @@ fn tool_extract(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, String>
         .map(|x| x as f32)
         .unwrap_or(0.5);
 
+    let source_id = mcp_source_id(args);
     let mut candidates = if llm {
-        match wiki.extract_candidates_llm(text, max_candidates) {
+        match wiki.extract_candidates_llm_scoped(text, max_candidates, source_id.as_deref()) {
             Ok(c) => c,
             Err(e) => {
                 tracing::warn!("LLM extract failed, falling back to heuristic: {e}");
-                wiki.extract_candidates(text, max_candidates)
+                wiki.extract_candidates_scoped(text, max_candidates, source_id.as_deref())
                     .map_err(|e| e.to_string())?
             }
         }
     } else {
-        wiki.extract_candidates(text, max_candidates)
+        wiki.extract_candidates_scoped(text, max_candidates, source_id.as_deref())
             .map_err(|e| e.to_string())?
     };
     candidates.retain(|c| c.confidence >= min_confidence);
@@ -895,7 +943,8 @@ fn tool_extract(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, String>
     // back a list of `id`s plus the candidates that were used.
     let mut added: Vec<Value> = Vec::new();
     for cand in &candidates {
-        let resolved = resolve_or_create_entities(wiki, &cand.suggested_entities)?;
+        let resolved =
+            resolve_or_create_entities(wiki, &cand.suggested_entities, source_id.as_deref())?;
         let entity_ids = if resolved.ids.is_empty() {
             None
         } else {
@@ -907,7 +956,7 @@ fn tool_extract(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, String>
             entity_ids,
             tags: None,
             source: None,
-            source_id: None,
+            source_id: source_id.clone(),
             actor_id: mcp_actor_id(args),
             source_confidence: Some(cand.confidence),
             observed_at: None,
@@ -942,7 +991,10 @@ fn tool_path(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, String> {
         .get("to")
         .and_then(|v| v.as_str())
         .ok_or("to required")?;
-    let result = wiki.path_find(from, to).map_err(|e| e.to_string())?;
+    let source_id = mcp_source_id(args);
+    let result = wiki
+        .path_find_scoped(from, to, source_id.as_deref())
+        .map_err(|e| e.to_string())?;
     let payload = serde_json::json!({
         "from": from,
         "to": to,
@@ -959,11 +1011,15 @@ fn tool_fact_list(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, Strin
     let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
     let offset = args.get("offset").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
     let entity = args.get("entity").and_then(|v| v.as_str());
+    let source_id = mcp_source_id(args);
     let entity_id = match entity {
-        Some(name) => Some(wiki.resolve_entity(name).map_err(|e| e.to_string())?),
+        Some(name) => Some(
+            wiki.entity_get_scoped(name, source_id.as_deref())
+                .map_err(|e| e.to_string())?
+                .id,
+        ),
         None => None,
     };
-    let source_id = mcp_source_id(args);
     let opts = aidememo_core::FactListOpts {
         fact_type: None,
         entity_id,
@@ -1108,7 +1164,10 @@ fn tool_entity_get(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, Stri
         .get("name")
         .and_then(|v| v.as_str())
         .ok_or("name required")?;
-    let entity = wiki.entity_get(name).map_err(|e| e.to_string())?;
+    let source_id = mcp_source_id(args);
+    let entity = wiki
+        .entity_get_scoped(name, source_id.as_deref())
+        .map_err(|e| e.to_string())?;
     let mut obj = serde_json::Map::new();
     obj.insert("name".into(), Value::String(entity.name.clone()));
     obj.insert("type".into(), Value::String(entity.entity_type.to_string()));
@@ -1145,7 +1204,9 @@ fn tool_fact_get(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, String
         .and_then(|v| v.as_str())
         .ok_or("id required")?;
     let fact_id = parse_fact_id(id)?;
-    let fact = wiki.fact_get(&fact_id).map_err(|e| e.to_string())?;
+    let fact = wiki
+        .fact_get_scoped(&fact_id, mcp_source_id(args).as_deref())
+        .map_err(|e| e.to_string())?;
     let text = serde_json::to_string(&slim_fact_record(&fact, wiki)).map_err(|e| e.to_string())?;
     Ok(ToolCallResult {
         content: vec![ContentBlock::text(text)],
@@ -1176,7 +1237,10 @@ fn tool_entity_list(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, Str
         sort_by: Default::default(),
         offset,
     };
-    let entities = wiki.entity_list(opts).map_err(|e| e.to_string())?;
+    let source_id = mcp_source_id(args);
+    let entities = wiki
+        .entity_list_scoped(opts, source_id.as_deref())
+        .map_err(|e| e.to_string())?;
     let next_offset = if entities.len() == limit {
         Some(offset + entities.len())
     } else {
@@ -1211,13 +1275,14 @@ fn tool_traverse(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, String
     };
 
     let result = wiki
-        .traverse(
+        .traverse_scoped(
             entity,
             aidememo_core::TraverseOpts {
                 depth,
                 relation_types: None,
                 direction,
             },
+            mcp_source_id(args).as_deref(),
         )
         .map_err(|e| e.to_string())?;
 
@@ -1256,6 +1321,13 @@ fn lint_action_hint(code: &str) -> &'static str {
 }
 
 fn tool_overview(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, String> {
+    if mcp_source_id(args).is_some() {
+        return Err(aidememo_core::AideMemoError::InvalidInput(
+            "aidememo_overview reports global store metadata and is unavailable to a source-scoped MCP identity"
+                .to_string(),
+        )
+        .to_string());
+    }
     let mut opts = aidememo_core::OverviewOpts::default();
     if let Some(n) = args.get("top_n").and_then(|v| v.as_u64()) {
         opts.top_n_entities = n as usize;
@@ -1324,7 +1396,14 @@ fn tool_overview(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, String
     })
 }
 
-fn tool_doctor(wiki: &AideMemo) -> Result<ToolCallResult, String> {
+fn tool_doctor(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, String> {
+    if mcp_source_id(args).is_some() {
+        return Err(aidememo_core::AideMemoError::InvalidInput(
+            "aidememo_doctor reports global store metadata and is unavailable to a source-scoped MCP identity"
+                .to_string(),
+        )
+        .to_string());
+    }
     let issues = wiki.lint().map_err(|e| e.to_string())?;
     let stats = wiki.stats().map_err(|e| e.to_string())?;
     let sharing = collect_sharing_status(wiki.store_path(), wiki.config());
@@ -1387,7 +1466,7 @@ fn tool_recent(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, String> 
         fact_type: None,
         entity_id: None,
         min_confidence: None,
-        source_id: None,
+        source_id: mcp_source_id(args),
         limit: Some(limit),
         offset: 0,
         since,
@@ -1436,8 +1515,13 @@ fn tool_aggregate(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, Strin
         .get("fact_type")
         .and_then(|v| v.as_str())
         .map(aidememo_core::FactType::parse);
+    let source_id = mcp_source_id(args);
     let entity_filter = match args.get("entity").and_then(|v| v.as_str()) {
-        Some(name) => Some(vec![wiki.resolve_entity(name).map_err(|e| e.to_string())?]),
+        Some(name) => Some(vec![
+            wiki.entity_get_scoped(name, source_id.as_deref())
+                .map_err(|e| e.to_string())?
+                .id,
+        ]),
         None => None,
     };
     let since = parse_time_arg(args.get("since"), false)?;
@@ -1445,8 +1529,6 @@ fn tool_aggregate(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, Strin
         .get("current_only")
         .and_then(|v| v.as_bool())
         .unwrap_or(true);
-    let source_id = mcp_source_id(args);
-
     let hits = wiki
         .hybrid_search(
             query,
@@ -1749,6 +1831,7 @@ fn tool_query(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, String> {
         .and_then(|v| v.as_str())
         .map(aidememo_core::QueryMode::parse)
         .unwrap_or_default();
+    let source_id = mcp_source_id(args);
     let opts = aidememo_core::QueryOpts {
         search_limit: args.get("limit").and_then(|v| v.as_u64()).unwrap_or(10) as usize,
         depth: args.get("depth").and_then(|v| v.as_u64()).unwrap_or(2) as u32,
@@ -1766,7 +1849,7 @@ fn tool_query(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, String> {
             .get("bm25_only")
             .and_then(|v| v.as_bool())
             .unwrap_or(false),
-        source_id: mcp_source_id(args),
+        source_id: source_id.clone(),
     };
     // Agent UX: format / max_chars budget. Default "full" preserves the
     // existing contract; "compact" truncates each snippet's content to
@@ -1803,7 +1886,7 @@ fn tool_query(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, String> {
     }
     let text = match (format, level) {
         ("text", "session") => {
-            let blocks = collect_session_blocks(&result.search, wiki, 20);
+            let blocks = collect_session_blocks(&result.search, wiki, 20, source_id.as_deref());
             render_session_blocks_markdown(&result, &blocks, preview_chars, max_chars)
         }
         ("text", "entity") => {
@@ -2059,6 +2142,7 @@ fn collect_session_blocks(
     hits: &[aidememo_core::SearchResult],
     wiki: &AideMemo,
     max_blocks: usize,
+    source_id: Option<&str>,
 ) -> Vec<SessionBlock> {
     use std::collections::BTreeMap;
     // Group hits by their first session-prefixed entity name. Hits
@@ -2086,14 +2170,14 @@ fn collect_session_blocks(
         let Some(hits_in_sess) = by_session.get(sess_name) else {
             continue;
         };
-        let Ok(eid) = wiki.resolve_entity(sess_name) else {
+        let Ok(entity) = wiki.entity_get_scoped(sess_name, source_id) else {
             continue;
         };
         let mut facts = match wiki.fact_list(aidememo_core::FactListOpts {
             fact_type: None,
-            entity_id: Some(eid),
+            entity_id: Some(entity.id),
             min_confidence: None,
-            source_id: None,
+            source_id: source_id.map(str::to_string),
             limit: Some(200),
             offset: 0,
             since: None,
@@ -2311,15 +2395,9 @@ fn tool_context(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, String>
 
     // ── Tier 1: always-on context ─────────────────────────────────
     let pinned: Vec<Value> = wiki
-        .pinned_facts(if source_id.is_some() {
-            pinned_limit.saturating_mul(4).max(pinned_limit)
-        } else {
-            pinned_limit
-        })
+        .pinned_facts_scoped(pinned_limit, source_id)
         .map_err(|e| e.to_string())?
         .iter()
-        .filter(|f| source_id_matches(f, source_id))
-        .take(pinned_limit)
         .map(|f| slim_fact_record(f, wiki))
         .collect();
     let personalisation = collect_personalisation(wiki, 50, source_id);
@@ -2369,8 +2447,8 @@ fn tool_context(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, String>
             std::collections::HashSet::new();
         for hit in &qres.search {
             for name in &hit.entity_names {
-                if let Ok(id) = wiki.resolve_entity(name) {
-                    topic_entity_ids.insert(id);
+                if let Ok(entity) = wiki.entity_get_scoped(name, source_id) {
+                    topic_entity_ids.insert(entity.id);
                 }
             }
         }
@@ -2526,8 +2604,15 @@ fn tool_session_canvas(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, 
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
-    let artifact = artifacts::session_canvas(wiki, session, limit, include_superseded)
-        .map_err(|e| e.to_string())?;
+    let source_id = mcp_source_id(args);
+    let artifact = artifacts::session_canvas_scoped(
+        wiki,
+        session,
+        limit,
+        include_superseded,
+        source_id.as_deref(),
+    )
+    .map_err(|e| e.to_string())?;
     let payload = json!({
         "artifact": "session_canvas",
         "session_id": artifact.session_id,
@@ -2718,6 +2803,13 @@ fn tool_entity_describe(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult,
         .and_then(|v| v.as_str())
         .ok_or("name required")?;
     let summary = args.get("summary").and_then(|v| v.as_str()).unwrap_or("");
+    if mcp_source_id(args).is_some() {
+        return Err(aidememo_core::AideMemoError::InvalidInput(
+            "entity summaries are global metadata and cannot be changed from a source-scoped MCP identity"
+                .to_string(),
+        )
+        .to_string());
+    }
     wiki.entity_describe(name, summary)
         .map_err(|e| e.to_string())?;
     let msg = if summary.is_empty() {
@@ -2736,7 +2828,11 @@ fn tool_entity_describe(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult,
 struct ResolvedEntities {
     /// Entity IDs in the same order as the input names.
     ids: Vec<aidememo_core::EntityId>,
-    /// Names that did not previously exist and were freshly created.
+    /// Names newly materialized for this caller. In an unscoped call these are
+    /// newly created global entities; in a source-scoped call this also
+    /// includes a shared-ontology entity that existed globally but was not yet
+    /// visible in the caller's namespace. This prevents the response shape
+    /// from becoming a cross-source existence oracle.
     created: Vec<String>,
     /// Per-newly-created name, the trigram-similar entities that
     /// already exist. Empty Vec when no candidates passed the
@@ -2770,18 +2866,30 @@ struct EntityNameAlternative {
 fn resolve_or_create_entities(
     wiki: &AideMemo,
     names: &[String],
+    source_id: Option<&str>,
 ) -> Result<ResolvedEntities, String> {
     let mut ids = Vec::with_capacity(names.len());
     let mut created = Vec::new();
     let mut alternatives = Vec::new();
     for name in names {
+        let was_visible = source_id.is_none() || wiki.entity_get_scoped(name, source_id).is_ok();
         match wiki.resolve_entity(name) {
-            Ok(id) => ids.push(id),
+            Ok(id) => {
+                ids.push(id);
+                if !was_visible {
+                    created.push(name.clone());
+                }
+            }
             Err(_) => {
                 // Look for a near-miss BEFORE creating so the lookup
                 // sees only entities that pre-date this batch — keeps
                 // a "Postgres + Postgrs" pair from masking each other.
-                let suggestions = wiki.suggest_similar_entities(name).unwrap_or_default();
+                let suggestions: Vec<String> = wiki
+                    .suggest_similar_entities(name)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|suggestion| wiki.entity_get_scoped(suggestion, source_id).is_ok())
+                    .collect();
                 let id = wiki
                     .entity_add(aidememo_core::EntityInput {
                         name: name.clone(),
@@ -2851,20 +2959,19 @@ fn tool_fact_add(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, String
         })
         .unwrap_or_default();
 
-    let resolved = resolve_or_create_entities(wiki, &entity_names)?;
+    let source_id = mcp_source_id(args);
+    let actor_id = mcp_actor_id(args);
+    let resolved = resolve_or_create_entities(wiki, &entity_names, source_id.as_deref())?;
     let mut entity_ids = resolved.ids;
     let auto_created = resolved.created;
     let alternatives = resolved.alternatives;
     let session_id_arg = args.get("session_id").and_then(|v| v.as_str());
-    let session_entity_id = resolve_session_entity(wiki, session_id_arg)?;
+    let session_entity_id = resolve_session_entity(wiki, session_id_arg, source_id.as_deref())?;
     attach_session_entity(&mut entity_ids, session_entity_id);
     let fact_type_arg = args.get("fact_type");
     let fact_type_provided = fact_type_arg.is_some_and(|v| !v.is_null());
     let fact_type = parse_fact_type_arg(fact_type_arg)?;
     let fact_type_meta = resolve_write_fact_type(content, fact_type, fact_type_provided);
-    let source_id = mcp_source_id(args);
-    let actor_id = mcp_actor_id(args);
-
     // Pre-add similarity check (non-blocking). BM25-only so we don't
     // pay the embedding-model load on every add — the goal is just to
     // surface "this looks like an existing fact" so the agent can opt
@@ -2881,6 +2988,7 @@ fn tool_fact_add(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, String
                 limit: Some(1),
                 bm25_only: true,
                 current_only: true,
+                source_id: source_id.clone(),
                 ..Default::default()
             },
         )
@@ -2987,7 +3095,6 @@ fn tool_fact_add_many(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, S
     let mut auto_created_total: Vec<String> = Vec::new();
     let mut alternatives_total: Vec<EntityNameAlternative> = Vec::new();
     let default_session_id = args.get("session_id").and_then(|v| v.as_str());
-    let default_session_entity_id = resolve_session_entity(wiki, default_session_id)?;
     let default_source_id = mcp_source_id(args);
     let default_actor_id = mcp_actor_id(args);
     for (i, item) in items.iter().enumerate() {
@@ -3008,17 +3115,18 @@ fn tool_fact_add_many(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, S
                     .collect()
             })
             .unwrap_or_default();
-        let resolved = resolve_or_create_entities(wiki, &names)?;
+        let source_id =
+            source_id_from_value(obj.get("source_id")).or_else(|| default_source_id.clone());
+        let actor_id =
+            source_id_from_value(obj.get("actor_id")).or_else(|| default_actor_id.clone());
+        let resolved = resolve_or_create_entities(wiki, &names, source_id.as_deref())?;
         let mut entity_ids_vec = resolved.ids;
         let item_session_id = obj
             .get("session_id")
             .and_then(|v| v.as_str())
             .or(default_session_id);
-        let session_entity_id = if obj.get("session_id").is_some() {
-            resolve_session_entity(wiki, item_session_id)?
-        } else {
-            default_session_entity_id
-        };
+        let session_entity_id =
+            resolve_session_entity(wiki, item_session_id, source_id.as_deref())?;
         attach_session_entity(&mut entity_ids_vec, session_entity_id);
         if let Some(session_name) = item_session_id.map(str::trim).filter(|s| !s.is_empty())
             && !names.iter().any(|name| name == session_name)
@@ -3060,10 +3168,6 @@ fn tool_fact_add_many(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, S
         let fact_type =
             parse_fact_type_arg(fact_type_arg).map_err(|e| format!("items[{i}].fact_type: {e}"))?;
         let fact_type_meta = resolve_write_fact_type(&content, fact_type, fact_type_provided);
-        let source_id =
-            source_id_from_value(obj.get("source_id")).or_else(|| default_source_id.clone());
-        let actor_id =
-            source_id_from_value(obj.get("actor_id")).or_else(|| default_actor_id.clone());
         per_item_fact_type_meta.push(fact_type_meta);
         inputs.push(aidememo_core::types::FactInput {
             content,
@@ -3140,6 +3244,7 @@ fn tool_fact_supersede(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, 
         .unwrap_or(false);
     let old = parse_fact_id(old_id)?;
     let new = parse_fact_id(new_id)?;
+    let source_id = mcp_source_id(args);
     // Resolve both records before any write so the agent sees the
     // before/after content, the entity links that survive, and the
     // existence checks both fail-fast on bad ULIDs. Use the hot store
@@ -3149,6 +3254,18 @@ fn tool_fact_supersede(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, 
         let store = wiki.store().read();
         let old_record = store.fact_get(&old).map_err(|e| e.to_string())?;
         let new_record = store.fact_get(&new).map_err(|e| e.to_string())?;
+        if source_id
+            .as_deref()
+            .is_some_and(|source_id| old_record.source_id.as_deref() != Some(source_id))
+        {
+            return Err(aidememo_core::AideMemoError::FactNotFound(old.to_string()).to_string());
+        }
+        if source_id
+            .as_deref()
+            .is_some_and(|source_id| new_record.source_id.as_deref() != Some(source_id))
+        {
+            return Err(aidememo_core::AideMemoError::FactNotFound(new.to_string()).to_string());
+        }
         (old_record, new_record)
     };
     if !dry_run {
@@ -3189,6 +3306,12 @@ fn tool_fact_archive(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, St
             )],
             is_error: None,
         });
+    }
+    if let Some(source_id) = mcp_source_id(args) {
+        for id in &targets {
+            wiki.fact_get_scoped(id, Some(&source_id))
+                .map_err(|e| e.to_string())?;
+        }
     }
     let moved = if dry_run {
         // Pre-check existence to give the agent a useful preview count
@@ -3253,7 +3376,9 @@ fn tool_fact_edit(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, Strin
         return Err("find and replace must be used together".into());
     }
 
-    let current = wiki.fact_get(&fact_id).map_err(|e| e.to_string())?;
+    let current = wiki
+        .fact_get_scoped(&fact_id, mcp_source_id(args).as_deref())
+        .map_err(|e| e.to_string())?;
     let original = current.content.clone();
     let mut new_content = current.content;
 
@@ -3381,7 +3506,8 @@ pub fn list_tools() -> Vec<Tool> {
                 "properties": {
                     "session_id": {"type": "string", "description": "session_id from the aidememo_search response"},
                     "fact_id":    {"type": "string", "description": "ULID of the fact in question"},
-                    "helpful":    {"type": "boolean", "description": "true = the fact answered the query; false = it did not"}
+                    "helpful":    {"type": "boolean", "description": "true = the fact answered the query; false = it did not"},
+                    "source_id":  {"type": "string", "description": "Optional source namespace. The fact must belong to this source. If omitted, MCP falls back to AIDEMEMO_SOURCE_ID when set."}
                 },
                 "required": ["session_id", "fact_id", "helpful"]
             }),
@@ -3396,7 +3522,8 @@ pub fn list_tools() -> Vec<Tool> {
                     "pinned_limit": {"type": "number", "default": 20},
                     "recent_limit": {"type": "number", "default": 10},
                     "recent_days":  {"type": "number", "default": 7, "description": "Lookback window for the 'recent' section."},
-                    "top_entities_limit": {"type": "number", "default": 10}
+                    "top_entities_limit": {"type": "number", "default": 10},
+                    "source_id": {"type": "string", "description": "Restrict pinned, personalisation, recent, and top entities to this source. If omitted, MCP falls back to AIDEMEMO_SOURCE_ID when set."}
                 }
             }),
         },
@@ -3407,7 +3534,8 @@ pub fn list_tools() -> Vec<Tool> {
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "limit": {"type": "number", "default": 20, "description": "Cap on the returned set so the warmup envelope stays bounded."}
+                    "limit": {"type": "number", "default": 20, "description": "Cap on the returned set so the warmup envelope stays bounded."},
+                    "source_id": {"type": "string", "description": "Restrict pinned facts to this source before applying the limit. If omitted, MCP falls back to AIDEMEMO_SOURCE_ID when set."}
                 }
             }),
         },
@@ -3419,7 +3547,8 @@ pub fn list_tools() -> Vec<Tool> {
                 "type": "object",
                 "properties": {
                     "id":     {"type": "string", "description": "Fact ULID"},
-                    "pinned": {"type": "boolean", "description": "true = pin, false = unpin"}
+                    "pinned": {"type": "boolean", "description": "true = pin, false = unpin"},
+                    "source_id": {"type": "string", "description": "Optional source namespace. The fact must belong to this source. If omitted, MCP falls back to AIDEMEMO_SOURCE_ID when set."}
                 },
                 "required": ["id", "pinned"]
             }),
@@ -3434,7 +3563,8 @@ pub fn list_tools() -> Vec<Tool> {
                     "max_candidates": {"type": "number", "default": 20, "description": "Cap on candidates returned, scored highest first."},
                     "min_confidence": {"type": "number", "default": 0.5, "description": "Drop candidates below this threshold. 0.0 returns everything; 0.7 keeps only high-signal hits."},
                     "llm": {"type": "boolean", "default": false, "description": "Use the LLM extractor (extract.provider). Falls back to heuristic on failure."},
-                    "apply": {"type": "boolean", "default": false, "description": "If true, persist every surviving candidate via fact_add (each runs the standard dedup + typo guards) and return the ULIDs alongside."}
+                    "apply": {"type": "boolean", "default": false, "description": "If true, persist every surviving candidate via fact_add (each runs the standard dedup + typo guards) and return the ULIDs alongside."},
+                    "source_id": {"type": "string", "description": "Source namespace assigned to facts when apply=true. If omitted, MCP falls back to AIDEMEMO_SOURCE_ID when set."}
                 },
                 "required": ["text"]
             }),
@@ -3446,7 +3576,8 @@ pub fn list_tools() -> Vec<Tool> {
                 "type": "object",
                 "properties": {
                     "from": {"type": "string", "description": "Source entity name/alias"},
-                    "to":   {"type": "string", "description": "Target entity name/alias"}
+                    "to":   {"type": "string", "description": "Target entity name/alias"},
+                    "source_id": {"type": "string", "description": "Restrict the path to entities visible in this source. If omitted, MCP falls back to AIDEMEMO_SOURCE_ID when set."}
                 },
                 "required": ["from", "to"]
             }),
@@ -3471,7 +3602,10 @@ pub fn list_tools() -> Vec<Tool> {
                 .into(),
             input_schema: json!({
                 "type": "object",
-                "properties": {"name": {"type": "string"}},
+                "properties": {
+                    "name": {"type": "string"},
+                    "source_id": {"type": "string", "description": "Only return the entity when it has facts in this source. If omitted, MCP falls back to AIDEMEMO_SOURCE_ID when set."}
+                },
                 "required": ["name"]
             }),
         },
@@ -3480,7 +3614,10 @@ pub fn list_tools() -> Vec<Tool> {
             description: "Get a single fact by ULID. Returns the JSON record.".into(),
             input_schema: json!({
                 "type": "object",
-                "properties": {"id": {"type": "string", "description": "Fact ULID"}},
+                "properties": {
+                    "id": {"type": "string", "description": "Fact ULID"},
+                    "source_id": {"type": "string", "description": "Only return the fact when it belongs to this source. If omitted, MCP falls back to AIDEMEMO_SOURCE_ID when set."}
+                },
                 "required": ["id"]
             }),
         },
@@ -3492,6 +3629,7 @@ pub fn list_tools() -> Vec<Tool> {
                 "properties": {
                     "limit": {"type": "number", "default": 20},
                     "offset": {"type": "number", "default": 0, "description": "Skip the first N entities. Combined with `limit`, paginate through the full set. Response includes `next_offset`."},
+                    "source_id": {"type": "string", "description": "Restrict entities and fact counts to this source before pagination. If omitted, MCP falls back to AIDEMEMO_SOURCE_ID when set."},
                     "type": {
                         "type": "string",
                         "description": "Filter by entity type. Built-in: technology, concept, comparison, query, person, team, unknown. Any other string is a Custom type (e.g. service, rfc, incident)."
@@ -3507,7 +3645,8 @@ pub fn list_tools() -> Vec<Tool> {
                 "properties": {
                     "entity": {"type": "string"},
                     "depth": {"type": "number", "default": 2},
-                    "direction": {"type": "string", "enum": ["forward", "reverse"], "default": "forward", "description": "forward = outbound (X → ?); reverse = inbound (? → X), the 'who depends on X' query."}
+                    "direction": {"type": "string", "enum": ["forward", "reverse"], "default": "forward", "description": "forward = outbound (X → ?); reverse = inbound (? → X), the 'who depends on X' query."},
+                    "source_id": {"type": "string", "description": "Restrict traversal to entities visible in this source. If omitted, MCP falls back to AIDEMEMO_SOURCE_ID when set."}
                 },
                 "required": ["entity"]
             }),
@@ -3524,6 +3663,7 @@ pub fn list_tools() -> Vec<Tool> {
                     "entity": {"type": "string", "description": "Optional entity scope — restrict to facts attached to this entity."},
                     "since": {"type": ["string", "number"], "description": "Lower bound on observed_at. ISO date / RFC3339 / epoch ms / duration DSL (30d, 4w)."},
                     "current_only": {"type": "boolean", "default": true, "description": "Exclude superseded facts."},
+                    "source_id": {"type": "string", "description": "Restrict search, entity resolution, and aggregation to one source namespace. If omitted, MCP falls back to AIDEMEMO_SOURCE_ID when set."},
                     "limit": {"type": "number", "default": 50, "description": "Top-K to consider before fact_type filter. Larger → more recall, slower."},
                     "preview_chars": {"type": "number", "default": 120, "description": "Per-item content preview length when op=enumerate."},
                     "relevance_threshold": {"type": "number", "default": 0.0, "description": "For value-level ops only. Cosine similarity 0..1; facts below the threshold are dropped before structured extraction. 0 = no filter (default). 0.4 ≈ p50 on LongMemEval data — drops half the off-topic facts."}
@@ -3562,7 +3702,8 @@ pub fn list_tools() -> Vec<Tool> {
                         "type": "string",
                         "description": "Lookback window, e.g. '30d', '12h', '4w', '1y'. Wins over last_days when both set."
                     },
-                    "last_days": {"type": "number", "default": 7}
+                    "last_days": {"type": "number", "default": 7},
+                    "source_id": {"type": "string", "description": "Restrict recent facts to this source. If omitted, MCP falls back to AIDEMEMO_SOURCE_ID when set."}
                 }
             }),
         },
@@ -3619,7 +3760,8 @@ pub fn list_tools() -> Vec<Tool> {
                     "session": {"type": "string", "description": "Tracked session entity id/name, e.g. session-01H... . If omitted, the MCP process falls back to AIDEMEMO_SESSION_ID."},
                     "session_id": {"type": "string", "description": "Alias for session."},
                     "limit": {"type": "number", "default": 80, "description": "Max facts from the session thread to include."},
-                    "include_superseded": {"type": "boolean", "default": false, "description": "Include superseded facts for historical/audit replay."}
+                    "include_superseded": {"type": "boolean", "default": false, "description": "Include superseded facts for historical/audit replay."},
+                    "source_id": {"type": "string", "description": "Restrict the session and its facts to this source. If omitted, MCP falls back to AIDEMEMO_SOURCE_ID when set."}
                 }
             }),
         },
@@ -3666,7 +3808,8 @@ pub fn list_tools() -> Vec<Tool> {
                 "type": "object",
                 "properties": {
                     "name": {"type": "string"},
-                    "summary": {"type": "string", "description": "Prose summary; empty string clears."}
+                    "summary": {"type": "string", "description": "Prose summary; empty string clears."},
+                    "source_id": {"type": "string", "description": "Entity summaries are global metadata, so any source-scoped identity is rejected. Omit only for an intentionally unscoped local MCP process."}
                 },
                 "required": ["name", "summary"]
             }),
@@ -3776,7 +3919,8 @@ pub fn list_tools() -> Vec<Tool> {
                 "properties": {
                     "old_id": {"type": "string", "description": "ULID of the fact being replaced"},
                     "new_id": {"type": "string", "description": "ULID of the replacement fact (must already exist; create it first via aidememo_fact_add)"},
-                    "dry_run": {"type": "boolean", "default": false, "description": "Validate both ULIDs and return before/after content without writing. Use this to confirm you're about to retire the right fact."}
+                    "dry_run": {"type": "boolean", "default": false, "description": "Validate both ULIDs and return before/after content without writing. Use this to confirm you're about to retire the right fact."},
+                    "source_id": {"type": "string", "description": "Both facts must belong to this source. If omitted, MCP falls back to AIDEMEMO_SOURCE_ID when set."}
                 },
                 "required": ["old_id", "new_id"]
             }),
@@ -3805,7 +3949,8 @@ pub fn list_tools() -> Vec<Tool> {
                         "type": "boolean",
                         "default": false,
                         "description": "Count valid candidates but do not move anything."
-                    }
+                    },
+                    "source_id": {"type": "string", "description": "Every fact must belong to this source. If omitted, MCP falls back to AIDEMEMO_SOURCE_ID when set."}
                 },
                 "required": ["ids"]
             }),
@@ -3825,7 +3970,8 @@ pub fn list_tools() -> Vec<Tool> {
                     "find":    {"type": "string", "description": "Substring to find (must use with replace)"},
                     "replace": {"type": "string", "description": "Replacement text (must use with find)"},
                     "content": {"type": "string", "description": "Replace the entire content"},
-                    "dry_run": {"type": "boolean", "default": false, "description": "Compute the new content (and validate the operation) but skip the write. Returns `{before, after}` so the agent can review."}
+                    "dry_run": {"type": "boolean", "default": false, "description": "Compute the new content (and validate the operation) but skip the write. Returns `{before, after}` so the agent can review."},
+                    "source_id": {"type": "string", "description": "The fact must belong to this source. If omitted, MCP falls back to AIDEMEMO_SOURCE_ID when set."}
                 },
                 "required": ["id"]
             }),
@@ -3902,7 +4048,7 @@ fn call_tool(name: &str, args: &Value, wiki: &AideMemo) -> Result<ToolCallResult
         "aidememo_fact_list" => tool_fact_list(args, wiki),
         "aidememo_path" => tool_path(args, wiki),
         "aidememo_traverse" => tool_traverse(args, wiki),
-        "aidememo_doctor" => tool_doctor(wiki),
+        "aidememo_doctor" => tool_doctor(args, wiki),
         "aidememo_overview" => tool_overview(args, wiki),
         "aidememo_recent" => tool_recent(args, wiki),
         "aidememo_query" => tool_query(args, wiki),
@@ -4021,6 +4167,28 @@ mod tests {
             content: content.to_string(),
             fact_type: Some(FactType::Decision),
             entity_ids: Some(vec![id]),
+            ..Default::default()
+        })
+        .unwrap()
+    }
+
+    fn add_scoped_fact(
+        wiki: &AideMemo,
+        content: &str,
+        entity: &str,
+        source_id: &str,
+    ) -> aidememo_core::FactId {
+        wiki.entity_add(EntityInput {
+            name: entity.to_string(),
+            ..Default::default()
+        })
+        .ok();
+        let entity_id = wiki.resolve_entity(entity).unwrap();
+        wiki.add_fact(FactInput {
+            content: content.to_string(),
+            fact_type: Some(FactType::Decision),
+            entity_ids: Some(vec![entity_id]),
+            source_id: Some(source_id.to_string()),
             ..Default::default()
         })
         .unwrap()
@@ -4183,6 +4351,367 @@ mod tests {
         let results = search_payload["results"].as_array().expect("results array");
         assert_eq!(results.len(), 1);
         assert_eq!(results[0]["source_id"].as_str(), Some("beta"));
+    }
+
+    #[test]
+    fn scoped_read_tools_do_not_expose_neighbouring_source_content() {
+        let (_dir, wiki) = open_temp_wiki();
+        wiki.entity_add(EntityInput {
+            name: "Shared".to_string(),
+            aliases: Some(vec!["GlobalAlias".to_string()]),
+            tags: Some(vec!["global-tag".to_string()]),
+            source_page: Some("private/global.md".to_string()),
+            ..Default::default()
+        })
+        .unwrap();
+        wiki.entity_describe("Shared", "global compiled summary")
+            .unwrap();
+
+        let shared_alpha = add_scoped_fact(&wiki, "alpha shared memory", "Shared", "alpha");
+        let alpha = add_scoped_fact(&wiki, "alpha-only memory", "AlphaOnly", "alpha");
+        let beta = add_scoped_fact(&wiki, "beta-only secret", "BetaOnly", "beta");
+        wiki.fact_pin(&shared_alpha, true).unwrap();
+        wiki.fact_pin(&beta, true).unwrap();
+        wiki.relation_add(aidememo_core::RelationInput {
+            source: "Shared".to_string(),
+            target: "AlphaOnly".to_string(),
+            scope_source_id: Some("alpha".to_string()),
+            relation_type: aidememo_core::RelationType::new("links"),
+            weight: None,
+            evidence: None,
+        })
+        .unwrap();
+        wiki.relation_add(aidememo_core::RelationInput {
+            source: "Shared".to_string(),
+            target: "BetaOnly".to_string(),
+            scope_source_id: Some("beta".to_string()),
+            relation_type: aidememo_core::RelationType::new("links"),
+            weight: None,
+            evidence: None,
+        })
+        .unwrap();
+
+        let entity =
+            tool_entity_get(&json!({"name": "Shared", "source_id": "alpha"}), &wiki).unwrap();
+        let entity: Value =
+            serde_json::from_str(entity.content[0].text.as_deref().unwrap()).unwrap();
+        assert!(entity.get("summary").is_none());
+        assert!(entity.get("aliases").is_none());
+        assert!(entity.get("tags").is_none());
+        assert!(entity.get("source_page").is_none());
+        assert!(
+            tool_entity_get(&json!({"name": "BetaOnly", "source_id": "alpha"}), &wiki).is_err()
+        );
+        let typo_error =
+            tool_entity_get(&json!({"name": "BetaOnl", "source_id": "alpha"}), &wiki).unwrap_err();
+        assert!(!typo_error.contains("BetaOnly"));
+
+        let entities =
+            tool_entity_list(&json!({"source_id": "alpha", "limit": 10}), &wiki).unwrap();
+        let entities = entities.content[0].text.as_deref().unwrap();
+        assert!(entities.contains("Shared"));
+        assert!(entities.contains("AlphaOnly"));
+        assert!(!entities.contains("BetaOnly"));
+
+        let traverse = tool_traverse(
+            &json!({"entity": "Shared", "source_id": "alpha", "depth": 1}),
+            &wiki,
+        )
+        .unwrap();
+        let traverse = traverse.content[0].text.as_deref().unwrap();
+        assert!(traverse.contains("AlphaOnly"));
+        assert!(!traverse.contains("BetaOnly"));
+        assert!(
+            tool_path(
+                &json!({"from": "Shared", "to": "BetaOnly", "source_id": "alpha"}),
+                &wiki,
+            )
+            .is_err()
+        );
+
+        let pinned =
+            tool_pinned_context(&json!({"source_id": "alpha", "limit": 1}), &wiki).unwrap();
+        let pinned: Value =
+            serde_json::from_str(pinned.content[0].text.as_deref().unwrap()).unwrap();
+        assert_eq!(pinned["facts"].as_array().unwrap().len(), 1);
+        assert_eq!(pinned["facts"][0]["id"], shared_alpha.to_string());
+        assert!(
+            tool_fact_get(
+                &json!({"id": beta.to_string(), "source_id": "alpha"}),
+                &wiki,
+            )
+            .is_err()
+        );
+        assert!(
+            tool_fact_get(
+                &json!({"id": alpha.to_string(), "source_id": "alpha"}),
+                &wiki,
+            )
+            .is_ok()
+        );
+
+        let query = wiki
+            .query(
+                "Shared",
+                aidememo_core::QueryOpts {
+                    mode: aidememo_core::QueryMode::Local,
+                    source_id: Some("alpha".to_string()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let query = serde_json::to_string(&query).unwrap();
+        assert!(query.contains("AlphaOnly"));
+        assert!(!query.contains("BetaOnly"));
+        assert!(!query.contains("global compiled summary"));
+
+        let session = tool_session_start(&json!({"source_id": "alpha"}), &wiki).unwrap();
+        let session: Value =
+            serde_json::from_str(session.content[0].text.as_deref().unwrap()).unwrap();
+        assert_eq!(session["stats"]["fact_count"].as_u64(), Some(2));
+        assert_eq!(session["stats"]["entity_count"].as_u64(), Some(2));
+        assert!(session["stats"]["relation_count"].is_null());
+        assert!(session["open_issues"]["total"].is_null());
+        assert!(
+            !serde_json::to_string(&session)
+                .unwrap()
+                .contains("BetaOnly")
+        );
+
+        let entity_count_before = wiki.stats().unwrap().entity_count;
+        let reused = tool_fact_add(
+            &json!({
+                "content": "alpha materializes an exact shared ontology name",
+                "entities": ["BetaOnly"],
+                "source_id": "alpha",
+                "dedup_check": false
+            }),
+            &wiki,
+        )
+        .unwrap();
+        let reused: Value =
+            serde_json::from_str(reused.content[0].text.as_deref().unwrap()).unwrap();
+        assert_eq!(
+            reused["auto_created_entities"].as_array().unwrap(),
+            &vec![Value::String("BetaOnly".to_string())]
+        );
+        assert_eq!(wiki.stats().unwrap().entity_count, entity_count_before);
+    }
+
+    #[test]
+    fn scoped_identity_cannot_mutate_neighbouring_facts_or_global_entity_summary() {
+        let (_dir, wiki) = open_temp_wiki();
+        let alpha = add_scoped_fact(&wiki, "alpha replacement", "Shared", "alpha");
+        let beta = add_scoped_fact(&wiki, "beta protected content", "Shared", "beta");
+        wiki.entity_describe("Shared", "global summary").unwrap();
+
+        assert!(
+            tool_fact_pin(
+                &json!({"id": beta.to_string(), "pinned": true, "source_id": "alpha"}),
+                &wiki,
+            )
+            .is_err()
+        );
+        assert!(
+            tool_fact_edit(
+                &json!({"id": beta.to_string(), "content": "overwritten", "source_id": "alpha"}),
+                &wiki,
+            )
+            .is_err()
+        );
+        assert!(
+            tool_fact_archive(
+                &json!({"ids": [beta.to_string()], "dry_run": true, "source_id": "alpha"}),
+                &wiki,
+            )
+            .is_err()
+        );
+        assert!(
+            tool_fact_supersede(
+                &json!({
+                    "old_id": alpha.to_string(),
+                    "new_id": beta.to_string(),
+                    "source_id": "alpha"
+                }),
+                &wiki,
+            )
+            .is_err()
+        );
+        assert!(
+            tool_feedback(
+                &json!({
+                    "session_id": "session-alpha",
+                    "fact_id": beta.to_string(),
+                    "helpful": true,
+                    "source_id": "alpha"
+                }),
+                &wiki,
+            )
+            .is_err()
+        );
+        assert!(
+            tool_entity_describe(
+                &json!({"name": "Shared", "summary": "scoped overwrite", "source_id": "alpha"}),
+                &wiki,
+            )
+            .is_err()
+        );
+
+        let beta_after = wiki.fact_get(&beta).unwrap();
+        assert_eq!(beta_after.content, "beta protected content");
+        assert!(!beta_after.pinned);
+        assert!(beta_after.superseded_at.is_none());
+        assert_eq!(
+            wiki.entity_get("Shared").unwrap().summary.as_deref(),
+            Some("global summary")
+        );
+    }
+
+    #[test]
+    fn fact_add_similarity_hint_is_scoped_to_the_writer_source() {
+        let (_dir, wiki) = open_temp_wiki();
+        tool_fact_add(
+            &json!({
+                "content": "Redis migration policy uses sapphire zebra marker",
+                "entities": ["Redis"],
+                "source_id": "beta",
+                "dedup_check": false
+            }),
+            &wiki,
+        )
+        .unwrap();
+        let result = tool_fact_add(
+            &json!({
+                "content": "Redis migration policy uses sapphire zebra marker revised",
+                "entities": ["Redis"],
+                "source_id": "alpha",
+                "dedup_check": true
+            }),
+            &wiki,
+        )
+        .unwrap();
+        let payload: Value =
+            serde_json::from_str(result.content[0].text.as_deref().unwrap()).unwrap();
+        assert!(payload["existing_similar"].is_null());
+        assert_eq!(payload["source_id"].as_str(), Some("alpha"));
+    }
+
+    #[test]
+    fn auto_supersede_atomic_types_stays_within_source() {
+        let dir = TempDir::new().unwrap();
+        let mut config = Config::default();
+        if cfg!(all(feature = "redb", not(feature = "sqlite"))) {
+            config.store.backend = "redb".to_string();
+        }
+        config.lifecycle.auto_supersede_atomic_types = true;
+        config.store.path = dir
+            .path()
+            .join(if config.store.backend == "redb" {
+                "store.redb"
+            } else {
+                "store.sqlite"
+            })
+            .to_string_lossy()
+            .into_owned();
+        let wiki = AideMemo::open(&PathBuf::from(&config.store.path), config).unwrap();
+
+        let beta = add_scoped_fact(&wiki, "beta decision", "Shared", "beta");
+        let alpha_old = add_scoped_fact(&wiki, "alpha old decision", "Shared", "alpha");
+        let alpha_new = add_scoped_fact(&wiki, "alpha new decision", "Shared", "alpha");
+
+        let shared_id = wiki.resolve_entity("Shared").unwrap();
+        let unscoped_old = wiki
+            .add_fact(FactInput {
+                content: "unscoped old decision".to_string(),
+                fact_type: Some(FactType::Decision),
+                entity_ids: Some(vec![shared_id]),
+                ..Default::default()
+            })
+            .unwrap();
+        let unscoped_new = wiki
+            .add_fact(FactInput {
+                content: "unscoped new decision".to_string(),
+                fact_type: Some(FactType::Decision),
+                entity_ids: Some(vec![shared_id]),
+                ..Default::default()
+            })
+            .unwrap();
+
+        assert!(wiki.fact_get(&beta).unwrap().superseded_at.is_none());
+        assert_eq!(
+            wiki.fact_get(&alpha_old).unwrap().superseded_by,
+            Some(alpha_new)
+        );
+        assert_eq!(
+            wiki.fact_get(&unscoped_old).unwrap().superseded_by,
+            Some(unscoped_new)
+        );
+        assert!(wiki.fact_get(&alpha_new).unwrap().superseded_at.is_none());
+    }
+
+    #[test]
+    fn source_scoped_global_diagnostics_are_rejected() {
+        let (_dir, wiki) = open_temp_wiki();
+        assert!(tool_overview(&json!({"source_id": "alpha"}), &wiki).is_err());
+        assert!(tool_doctor(&json!({"source_id": "alpha"}), &wiki).is_err());
+    }
+
+    #[test]
+    fn extract_apply_persists_bound_source_id() {
+        let (_dir, wiki) = open_temp_wiki();
+        wiki.entity_add(EntityInput {
+            name: "Postgres".to_string(),
+            ..Default::default()
+        })
+        .unwrap();
+        let result = tool_extract(
+            &json!({
+                "text": "We decided to use Postgres for durable writes.",
+                "apply": true,
+                "min_confidence": 0.0,
+                "source_id": "alpha"
+            }),
+            &wiki,
+        )
+        .unwrap();
+        let payload: Value =
+            serde_json::from_str(result.content[0].text.as_deref().unwrap()).unwrap();
+        let added = payload["added"].as_array().unwrap();
+        assert!(!added.is_empty());
+        for row in added {
+            let id = parse_fact_id(row["id"].as_str().unwrap()).unwrap();
+            assert_eq!(
+                wiki.fact_get(&id).unwrap().source_id.as_deref(),
+                Some("alpha")
+            );
+        }
+    }
+
+    #[test]
+    fn session_rollup_filters_full_thread_by_source() {
+        let (_dir, wiki) = open_temp_wiki();
+        let session = "session-source-bound";
+        let alpha = add_scoped_fact(&wiki, "alpha session evidence", session, "alpha");
+        add_scoped_fact(&wiki, "beta private session evidence", session, "beta");
+        let hit = aidememo_core::SearchResult {
+            fact_id: alpha,
+            content: "alpha session evidence".to_string(),
+            fact_type: FactType::Decision,
+            entity_names: vec![session.to_string()],
+            source: None,
+            source_id: Some("alpha".to_string()),
+            actor_id: None,
+            score: 1.0,
+            rank: 1,
+            created_at: 0,
+            observed_at: None,
+            session_id: None,
+        };
+
+        let blocks = collect_session_blocks(&[hit], &wiki, 20, Some("alpha"));
+        assert_eq!(blocks.len(), 1);
+        assert!(blocks[0].content.contains("alpha session evidence"));
+        assert!(!blocks[0].content.contains("beta private session evidence"));
     }
 
     #[test]
@@ -4458,7 +4987,11 @@ mod tests {
         let child_session = child_payload["session_id"].as_str().unwrap();
         let parent_entity = wiki.entity_get(parent_session).unwrap();
         let relations = wiki
-            .relations_get(child_session, aidememo_core::TraverseDirection::Forward)
+            .relations_get_scoped(
+                child_session,
+                aidememo_core::TraverseDirection::Forward,
+                Some("project:aidememo"),
+            )
             .unwrap();
         assert!(relations.iter().any(|relation| {
             relation.target_id == parent_entity.id && relation.relation_type.0 == "continued_from"
@@ -4468,6 +5001,33 @@ mod tests {
             wiki.fact_get(&ticket_id).unwrap().actor_id.as_deref(),
             Some("codex:account-b")
         );
+    }
+
+    #[test]
+    fn workflow_parent_session_must_be_visible_in_source() {
+        let (_dir, wiki) = open_temp_wiki();
+        let beta = tool_workflow_start(
+            &json!({
+                "title": "Beta-only parent workflow",
+                "source_id": "beta",
+                "bm25_only": true
+            }),
+            &wiki,
+        )
+        .unwrap();
+        let beta: Value = serde_json::from_str(beta.content[0].text.as_deref().unwrap()).unwrap();
+        let beta_session = beta["session_id"].as_str().unwrap();
+
+        let result = tool_workflow_start(
+            &json!({
+                "title": "Alpha child workflow",
+                "source_id": "alpha",
+                "parent_session_id": beta_session,
+                "bm25_only": true
+            }),
+            &wiki,
+        );
+        assert!(result.is_err());
     }
 
     #[test]
@@ -4485,6 +5045,8 @@ mod tests {
             &wiki,
         )
         .unwrap();
+        wiki.entity_describe("AideMemo", "private global compiled summary")
+            .unwrap();
         tool_fact_add(
             &json!({
                 "content": "Beta durable decision: unrelated profile fact",
@@ -4556,6 +5118,7 @@ mod tests {
         assert!(profile_text.contains("## Evidence Contract"));
         assert!(profile_text.contains("bounded session canvas"));
         assert!(!profile_text.contains("unrelated profile fact"));
+        assert!(!profile_text.contains("private global compiled summary"));
     }
 
     #[test]
@@ -5153,7 +5716,7 @@ mod tests {
         })
         .unwrap();
 
-        let result = tool_doctor(&wiki).unwrap();
+        let result = tool_doctor(&json!({}), &wiki).unwrap();
         let payload: Value =
             serde_json::from_str(result.content[0].text.as_deref().unwrap()).unwrap();
         let by_code = payload["by_code"].as_array().expect("by_code present");

@@ -55,8 +55,17 @@ from aidememo_agent import Memory
 mem = Memory.open(source_id="team-a", storage_backend="libsqlite")
 ```
 
-공유 저장소 안에서 한 팀, 에이전트, tenant, 프로젝트를 분리하려면
-`source_id`를 사용합니다.
+신뢰된 공유 저장소 안에서 한 팀, 에이전트, 프로젝트를 partition하려면
+`source_id`를 사용합니다. 이 기본값은 write뿐 아니라 search/query, entity와
+graph read, fact get/list/pinned, workflow context, source-aware relation에도
+전파됩니다. 정확한 content dedup도 source 안에서 적용되므로 같은 텍스트가
+서로 다른 두 source에 독립적으로 존재할 수 있습니다.
+
+이는 상호 적대적인 multi-tenant security boundary가 아닙니다. Native SDK
+호출자는 다른 source를 선택할 수 있고 entity name/type은 공유 ontology를
+구성합니다. 상호 신뢰하지 않는 tenant는 별도 store를 사용하고, 인증된
+에이전트가 할당된 source를 재정의하면 안 될 때는 HTTP bearer identity
+binding을 사용하세요.
 
 `storage_backend`는 선택 사항이며 CLI와 네이티브 바인딩 선택자와 같은 값을
 사용합니다. 컴파일된 기본값은 생략하거나 빈 문자열을 전달하고, 기본 로컬

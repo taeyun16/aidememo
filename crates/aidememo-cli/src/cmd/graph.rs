@@ -16,6 +16,7 @@ pub struct GraphSub {
     pub from: Option<String>,
     pub depth: Option<u32>,
     pub limit: Option<usize>,
+    pub source_id: Option<String>,
 }
 
 pub fn graph_command() -> impl Parser<Command> {
@@ -38,12 +39,17 @@ pub fn graph_command() -> impl Parser<Command> {
         .help("Max entities when --from is omitted (default 100)")
         .argument::<usize>("LIMIT")
         .optional();
+    let source_id = long("source-id")
+        .help("Restrict nodes and edges to this source namespace")
+        .argument::<String>("SOURCE_ID")
+        .optional();
 
     construct!(GraphSub {
         format,
         from,
         depth,
-        limit
+        limit,
+        source_id
     })
     .map(Command::Graph)
     .to_options()
@@ -84,13 +90,14 @@ pub fn run_graph(
 
     if let Some(start) = sub.from {
         let depth = sub.depth.unwrap_or(2);
-        let result = wiki.traverse(
+        let result = wiki.traverse_scoped(
             &start,
             TraverseOpts {
                 depth,
                 relation_types: None,
                 direction: TraverseDirection::Both,
             },
+            sub.source_id.as_deref(),
         )?;
         for e in &result.entities {
             add_node(
@@ -102,11 +109,11 @@ pub fn run_graph(
         }
         for r in &result.relations {
             let from_name = wiki
-                .entity_get_by_id(r.source_id)
+                .entity_get_by_id_scoped(r.source_id, sub.source_id.as_deref())
                 .map(|e| e.name)
                 .unwrap_or_default();
             let to_name = wiki
-                .entity_get_by_id(r.target_id)
+                .entity_get_by_id_scoped(r.target_id, sub.source_id.as_deref())
                 .map(|e| e.name)
                 .unwrap_or_default();
             let key = format!("{}->{}->{}", from_name, r.relation_type, to_name);
@@ -117,13 +124,16 @@ pub fn run_graph(
     } else {
         // Whole-graph dump capped by --limit.
         let limit = sub.limit.unwrap_or(100);
-        let entities = wiki.entity_list(ListOpts {
-            entity_type: None,
-            min_facts: None,
-            limit: Some(limit),
-            sort_by: Default::default(),
-            offset: 0,
-        })?;
+        let entities = wiki.entity_list_scoped(
+            ListOpts {
+                entity_type: None,
+                min_facts: None,
+                limit: Some(limit),
+                sort_by: Default::default(),
+                offset: 0,
+            },
+            sub.source_id.as_deref(),
+        )?;
         for e in &entities {
             add_node(
                 &e.name,
@@ -132,10 +142,14 @@ pub fn run_graph(
                 &mut node_keys,
             );
             // pull both directions of relations for each entity
-            let rels = wiki.relations_get(&e.name, TraverseDirection::Forward)?;
+            let rels = wiki.relations_get_scoped(
+                &e.name,
+                TraverseDirection::Forward,
+                sub.source_id.as_deref(),
+            )?;
             for r in rels {
                 let target_name = wiki
-                    .entity_get_by_id(r.target_id)
+                    .entity_get_by_id_scoped(r.target_id, sub.source_id.as_deref())
                     .map(|t| t.name)
                     .unwrap_or_default();
                 if target_name.is_empty() {

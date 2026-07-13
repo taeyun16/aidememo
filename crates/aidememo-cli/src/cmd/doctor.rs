@@ -1447,7 +1447,10 @@ mod tests {
 
         assert_eq!(
             hint.action,
-            "aidememo --backend sqlite mcp-install --target codex --source-id team-alpha"
+            format!(
+                "aidememo --backend {} mcp-install --target codex --source-id team-alpha",
+                wiki.config().store.backend
+            )
         );
         assert!(
             !report
@@ -1576,9 +1579,15 @@ mod tests {
     #[test]
     fn doctor_json_includes_backend_path_mismatch_hint() {
         let dir = TempDir::new().unwrap();
-        let store_path = dir.path().join("wiki.redb");
+        let (backend, mismatched_extension) =
+            if cfg!(all(feature = "redb", not(feature = "sqlite"))) {
+                ("redb", "sqlite")
+            } else {
+                ("sqlite", "redb")
+            };
+        let store_path = dir.path().join(format!("wiki.{mismatched_extension}"));
         let mut config = Config::default();
-        config.store.backend = "sqlite".to_string();
+        config.store.backend = backend.to_string();
         config.store.path = store_path.to_string_lossy().into_owned();
 
         let output = run_doctor(

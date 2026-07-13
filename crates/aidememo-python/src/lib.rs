@@ -129,11 +129,15 @@ fn attach_session_entity(
     wiki: &AideMemo,
     entity_ids: &mut Vec<EntityId>,
     session_id: Option<&str>,
+    source_id: Option<&str>,
 ) -> PyResult<()> {
     let Some(session_id) = session_id.map(str::trim).filter(|s| !s.is_empty()) else {
         return Ok(());
     };
-    let session_entity_id = wiki.resolve_entity(session_id).map_err(map_err)?;
+    let session_entity_id = wiki
+        .entity_get_scoped(session_id, source_id)
+        .map_err(map_err)?
+        .id;
     if !entity_ids.contains(&session_entity_id) {
         entity_ids.push(session_entity_id);
     }
@@ -192,7 +196,8 @@ fn fact_input_from_dict(
     let item_session_id = dict_opt::<String>(item, "session_id")?;
     let session_id = item_session_id.as_deref().or(default_session_id);
     let mut ids = entity_ids.take().unwrap_or_default();
-    attach_session_entity(wiki, &mut ids, session_id)?;
+    let source_id = dict_opt::<String>(item, "source_id")?;
+    attach_session_entity(wiki, &mut ids, session_id, source_id.as_deref())?;
     let entity_ids = if ids.is_empty() { None } else { Some(ids) };
 
     Ok(FactInput {
@@ -201,7 +206,7 @@ fn fact_input_from_dict(
         entity_ids,
         tags: dict_opt::<Vec<String>>(item, "tags")?,
         source: dict_opt::<String>(item, "source")?,
-        source_id: dict_opt::<String>(item, "source_id")?,
+        source_id,
         actor_id: dict_opt::<String>(item, "actor_id")?,
         source_confidence: dict_opt::<f32>(item, "confidence")?,
         observed_at: None,
@@ -367,26 +372,40 @@ impl PyAideMemo {
     // === Graph ===
 
     /// Traverse the entity graph from `entity` up to `depth` hops.
-    #[pyo3(signature = (entity, depth=2, direction=None))]
+    #[pyo3(signature = (entity, depth=2, direction=None, source_id=None))]
     fn traverse(
         &self,
         py: Python<'_>,
         entity: String,
         depth: u32,
         direction: Option<String>,
+        source_id: Option<String>,
     ) -> PyResult<Py<PyAny>> {
         let opts = TraverseOpts {
             depth,
             relation_types: None,
             direction: parse_direction(direction.as_deref()),
         };
-        let result = self.0.traverse(&entity, opts).map_err(map_err)?;
+        let result = self
+            .0
+            .traverse_scoped(&entity, opts, source_id.as_deref())
+            .map_err(map_err)?;
         to_py(py, &result)
     }
 
     /// Find a path between two entities. Returns a list of steps or `None`.
-    fn path_find(&self, py: Python<'_>, from: String, to: String) -> PyResult<Py<PyAny>> {
-        let result = self.0.path_find(&from, &to).map_err(map_err)?;
+    #[pyo3(signature = (from, to, source_id=None))]
+    fn path_find(
+        &self,
+        py: Python<'_>,
+        from: String,
+        to: String,
+        source_id: Option<String>,
+    ) -> PyResult<Py<PyAny>> {
+        let result = self
+            .0
+            .path_find_scoped(&from, &to, source_id.as_deref())
+            .map_err(map_err)?;
         to_py(py, &result)
     }
 
@@ -414,19 +433,29 @@ impl PyAideMemo {
     }
 
     /// Get a single entity by name (or alias).
-    fn entity_get(&self, py: Python<'_>, name: String) -> PyResult<Py<PyAny>> {
-        let entity = self.0.entity_get(&name).map_err(map_err)?;
+    #[pyo3(signature = (name, source_id=None))]
+    fn entity_get(
+        &self,
+        py: Python<'_>,
+        name: String,
+        source_id: Option<String>,
+    ) -> PyResult<Py<PyAny>> {
+        let entity = self
+            .0
+            .entity_get_scoped(&name, source_id.as_deref())
+            .map_err(map_err)?;
         to_py(py, &entity)
     }
 
     /// List entities. Filters: entity_type, min_facts, limit.
-    #[pyo3(signature = (limit=None, entity_type=None, min_facts=None))]
+    #[pyo3(signature = (limit=None, entity_type=None, min_facts=None, source_id=None))]
     fn entity_list(
         &self,
         py: Python<'_>,
         limit: Option<usize>,
         entity_type: Option<String>,
         min_facts: Option<u32>,
+        source_id: Option<String>,
     ) -> PyResult<Py<PyAny>> {
         let opts = ListOpts {
             entity_type: entity_type.as_deref().and_then(parse_entity_type),
@@ -435,7 +464,10 @@ impl PyAideMemo {
             sort_by: Default::default(),
             offset: 0,
         };
-        let entities = self.0.entity_list(opts).map_err(map_err)?;
+        let entities = self
+            .0
+            .entity_list_scoped(opts, source_id.as_deref())
+            .map_err(map_err)?;
         to_py(py, &entities)
     }
 
@@ -479,7 +511,12 @@ impl PyAideMemo {
                 .collect::<PyResult<Vec<_>>>()?,
             None => Vec::new(),
         };
-        attach_session_entity(&self.0, &mut ids, session_id.as_deref())?;
+        attach_session_entity(
+            &self.0,
+            &mut ids,
+            session_id.as_deref(),
+            source_id.as_deref(),
+        )?;
         let entity_ids = if ids.is_empty() { None } else { Some(ids) };
         let input = FactInput {
             content,
@@ -518,9 +555,18 @@ impl PyAideMemo {
     }
 
     /// Get a fact by ID.
-    fn fact_get(&self, py: Python<'_>, fact_id: String) -> PyResult<Py<PyAny>> {
+    #[pyo3(signature = (fact_id, source_id=None))]
+    fn fact_get(
+        &self,
+        py: Python<'_>,
+        fact_id: String,
+        source_id: Option<String>,
+    ) -> PyResult<Py<PyAny>> {
         let id = parse_fact_id(&fact_id)?;
-        let fact = self.0.fact_get(&id).map_err(map_err)?;
+        let fact = self
+            .0
+            .fact_get_scoped(&id, source_id.as_deref())
+            .map_err(map_err)?;
         to_py(py, &fact)
     }
 
@@ -551,7 +597,12 @@ impl PyAideMemo {
         source_id: Option<String>,
     ) -> PyResult<Py<PyAny>> {
         let entity_id = match entity {
-            Some(name) => Some(self.0.resolve_entity(&name).map_err(map_err)?),
+            Some(name) => Some(
+                self.0
+                    .entity_get_scoped(&name, source_id.as_deref())
+                    .map_err(map_err)?
+                    .id,
+            ),
             None => None,
         };
         let opts = FactListOpts {
@@ -577,15 +628,27 @@ impl PyAideMemo {
     }
 
     /// Return currently pinned facts, sorted by recency.
-    #[pyo3(signature = (limit=10))]
-    fn pinned_facts(&self, py: Python<'_>, limit: usize) -> PyResult<Py<PyAny>> {
-        let facts = self.0.pinned_facts(limit).map_err(map_err)?;
+    #[pyo3(signature = (limit=10, source_id=None))]
+    fn pinned_facts(
+        &self,
+        py: Python<'_>,
+        limit: usize,
+        source_id: Option<String>,
+    ) -> PyResult<Py<PyAny>> {
+        let facts = self
+            .0
+            .pinned_facts_scoped(limit, source_id.as_deref())
+            .map_err(map_err)?;
         to_py(py, &facts)
     }
 
     /// Pin or unpin a fact in the always-loaded tier.
-    fn fact_pin(&self, fact_id: String, pinned: bool) -> PyResult<()> {
+    #[pyo3(signature = (fact_id, pinned, source_id=None))]
+    fn fact_pin(&self, fact_id: String, pinned: bool, source_id: Option<String>) -> PyResult<()> {
         let id = parse_fact_id(&fact_id)?;
+        self.0
+            .fact_get_scoped(&id, source_id.as_deref())
+            .map_err(map_err)?;
         self.0.fact_pin(&id, pinned).map_err(map_err)
     }
 
@@ -599,10 +662,18 @@ impl PyAideMemo {
     // === Relations ===
 
     /// Add a relation between two entities (referenced by name or alias).
-    fn relation_add(&self, source: String, target: String, rel_type: String) -> PyResult<()> {
+    #[pyo3(signature = (source, target, rel_type, source_id=None))]
+    fn relation_add(
+        &self,
+        source: String,
+        target: String,
+        rel_type: String,
+        source_id: Option<String>,
+    ) -> PyResult<()> {
         let input = RelationInput {
             source,
             target,
+            scope_source_id: source_id,
             relation_type: RelationType::new(rel_type),
             weight: None,
             evidence: None,
@@ -618,15 +689,19 @@ impl PyAideMemo {
     }
 
     /// List relations attached to an entity. `direction`: forward / reverse / both.
-    #[pyo3(signature = (entity, direction=None))]
+    #[pyo3(signature = (entity, direction=None, source_id=None))]
     fn relations_get(
         &self,
         py: Python<'_>,
         entity: String,
         direction: Option<String>,
+        source_id: Option<String>,
     ) -> PyResult<Py<PyAny>> {
         let dir = parse_direction(direction.as_deref());
-        let relations = self.0.relations_get(&entity, dir).map_err(map_err)?;
+        let relations = self
+            .0
+            .relations_get_scoped(&entity, dir, source_id.as_deref())
+            .map_err(map_err)?;
         to_py(py, &relations)
     }
 

@@ -136,12 +136,46 @@ g.factAdd('Lesson: follow-up facts can attach to this workflow session', {
   sourceId: 'team-a',
   sessionId: pack.session_id,
 });
-const thread = JSON.parse(g.factList({ entity: pack.session_id, limit: 20 }));
+const thread = JSON.parse(g.factList({
+  entity: pack.session_id,
+  sourceId: 'team-a',
+  limit: 20,
+}));
 ```
 
-For a multi-agent shared store, pass `sourceId` on writes and reads. The same
-field flows through `search`, `query`, `factList`, `factAdd`, `factAddMany`,
-and `workflowStart`.
+## Shared source namespaces
+
+For a multi-agent shared store, pass the same `sourceId` on writes and reads.
+It scopes `search`, `query`, `workflowStart`, `traverse`, `pathFind`,
+`entityGet` / `entityList`, `factGet` / `factList`, `factPin` / `pinnedFacts`,
+and `relationAdd` / `relationsGet`. `workflowStart` carries the namespace into
+its ticket fact, optional parent-session relation, and all returned retrieval
+context. Omitting `sourceId` preserves the legacy store-wide view.
+
+```js
+const worker = g.entityAdd('Worker', { entityType: 'service' });
+g.factAdd('Worker uses Redis', { entityIds: [worker], sourceId: 'team-a' });
+g.relationAdd('Redis', 'Worker', 'used_by', 'team-a');
+
+const entity = JSON.parse(g.entityGet('Redis', 'team-a'));
+const facts = JSON.parse(g.factList({ entity: 'Redis', sourceId: 'team-a' }));
+const edges = JSON.parse(g.relationsGet('Redis', 'forward', 'team-a'));
+const path = JSON.parse(g.pathFind('Redis', 'Worker', 'team-a'));
+g.factPin(facts[0].id, true, 'team-a');
+const alwaysOn = JSON.parse(g.pinnedFacts(10, 'team-a'));
+```
+
+Exact-content deduplication is local to a source namespace, so two sources can
+store the same text as independent facts with distinct provenance.
+Entities are a shared ontology: names, IDs, and types can be reused by several
+sources. A scoped entity read only exposes entities backed by facts in that
+source and omits globally-authored descriptive metadata; scoped relation reads
+return only edges added with that exact `sourceId`. The native binding does not
+authenticate callers or prevent them from choosing another `sourceId`, and
+global mutation methods remain available. Treat this as a trusted-team
+boundary. Use separate stores/processes for untrusted tenants, or expose the
+store through the MCP server's token-to-source bindings described in
+[`docs/MCP.md`](../../docs/MCP.md).
 
 ## Branch logs
 
@@ -188,14 +222,16 @@ try {
 | Method | Returns |
 |---|---|
 | `new AideMemoStore(path, args?)` | store handle; defaults to SQLite. `args.backend` may be `"sqlite"` or `"libsqlite"` in default builds, or `"redb"` when built with the Cargo `redb` feature |
-| `search(query, args?)` | JSON string: `SearchResult[]` |
-| `query(topic, args?)` | JSON string: `QueryResult` |
-| `workflowStart(title, args?)` | JSON string: workflow context pack |
-| `traverse(entity, args?)` | JSON string: graph traversal |
-| `pathFind(from, to)` | JSON string: path or `null` |
-| `entityAdd/get/list/delete`, `resolveEntity`, `entityDescribe` | entity operations |
-| `factAdd`, `factAddMany`, `factGet/list`, `factSupersede`, `factDelete` | fact operations |
-| `factPin`, `pinnedFacts` | always-loaded facts |
-| `relationAdd/remove`, `relationsGet` | relation operations |
+| `search(query, { sourceId?, ... }?)` | JSON string: `SearchResult[]` |
+| `query(topic, { sourceId?, ... }?)` | JSON string: `QueryResult` |
+| `workflowStart(title, { sourceId?, actorId?, parentSessionId?, ... }?)` | JSON string: workflow context pack |
+| `traverse(entity, { sourceId?, ... }?)` | JSON string: graph traversal |
+| `pathFind(from, to, sourceId?)` | JSON string: path or `null` |
+| `entityGet(name, sourceId?)`, `entityList({ sourceId?, ... }?)` | JSON string: scoped entity operations |
+| `entityAdd/delete`, `resolveEntity`, `entityDescribe` | global shared-ontology operations |
+| `factAdd`, `factAddMany`, `factGet(id, sourceId?)`, `factList({ sourceId?, ... }?)` | fact operations |
+| `factPin(id, pinned, sourceId?)`, `pinnedFacts(limit?, sourceId?)` | always-loaded facts |
+| `relationAdd(source, target, type, sourceId?)`, `relationsGet(entity, direction?, sourceId?)` | scoped relation operations |
+| `relationRemove`, `factSupersede`, `factDelete` | global mutation operations |
 | `ingest(wikiRoot, incremental?)`, `lint()`, `stats()` | maintenance |
 | `branchPush(branch, destination, args?)`, `branchMerge(source, args?)` | JSON string branch-log reports |

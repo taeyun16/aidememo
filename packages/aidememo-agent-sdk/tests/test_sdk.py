@@ -4,7 +4,9 @@ import json
 import sys
 import types
 
-from aidememo_agent.client import AideMemoClient
+import pytest
+
+from aidememo_agent.client import AideMemoClient, AideMemoUnavailable
 from aidememo_agent.sdk import AideMemoMemorySDK
 
 
@@ -347,7 +349,12 @@ def test_client_artifact_methods_use_mcp_tools(monkeypatch) -> None:
     assert calls[0][0] == ["aidememo", "--backend", "libsqlite", "--store", "/tmp/wiki.sqlite", "mcp"]
     assert calls[0][1] == {
         "name": "aidememo_session_canvas",
-        "arguments": {"limit": 7, "include_superseded": False, "session": "session-1"},
+        "arguments": {
+            "limit": 7,
+            "include_superseded": False,
+            "session": "session-1",
+            "source_id": "team-a",
+        },
     }
     assert calls[1][1] == {
         "name": "aidememo_profile_export",
@@ -355,11 +362,69 @@ def test_client_artifact_methods_use_mcp_tools(monkeypatch) -> None:
     }
 
 
+def test_scoped_client_rejects_global_diagnostics() -> None:
+    client = AideMemoClient.__new__(AideMemoClient)
+    client.default_source_id = "team-a"
+    client.default_actor_id = "codex:a"
+    client._py = object()
+
+    for operation in (client.doctor, client.lint, client.stats):
+        with pytest.raises(AideMemoUnavailable, match="global store metadata"):
+            operation()
+
+
+def test_pyo3_workflow_validates_parent_in_source_before_child_creation() -> None:
+    class FakePyBackend:
+        def __init__(self) -> None:
+            self.calls = []
+
+        def entity_get(self, name, **kwargs):
+            self.calls.append(("entity_get", name, kwargs))
+            return {"name": name}
+
+        def entity_add(self, name, **kwargs):
+            self.calls.append(("entity_add", name, kwargs))
+            return "child-entity"
+
+        def relation_add(self, source, target, relation_type, **kwargs):
+            self.calls.append(("relation_add", source, target, relation_type, kwargs))
+
+        def fact_add(self, content, **kwargs):
+            self.calls.append(("fact_add", content, kwargs))
+            return "ticket-fact"
+
+        def query(self, topic, **kwargs):
+            return {"topic": topic, "source_id": kwargs.get("source_id")}
+
+        def search(self, topic, **kwargs):
+            return []
+
+    backend = FakePyBackend()
+    client = AideMemoClient.__new__(AideMemoClient)
+    client.default_source_id = "team-a"
+    client.default_actor_id = "codex:a"
+    client._py = backend
+
+    result = client.workflow_start("Scoped child", parent_session_id="session-parent")
+
+    assert result["source_id"] == "team-a"
+    assert backend.calls[0] == (
+        "entity_get",
+        "session-parent",
+        {"source_id": "team-a"},
+    )
+    assert backend.calls[1][0] == "entity_add"
+    assert backend.calls[2][0] == "relation_add"
+    assert backend.calls[2][4] == {"source_id": "team-a"}
+
+
 def test_pyo3_backend_preserves_session_and_context_scope() -> None:
     class FakePyBackend:
         def __init__(self) -> None:
             self.fact_add_kwargs = {}
             self.fact_add_many_items = []
+            self.fact_list_kwargs = {}
+            self.pinned_kwargs = {}
 
         def resolve_entity(self, name):
             return f"entity-{name}"
@@ -373,16 +438,20 @@ def test_pyo3_backend_preserves_session_and_context_scope() -> None:
             return ["fact-batch"]
 
         def fact_list(self, **kwargs):
-            return [
+            self.fact_list_kwargs = kwargs
+            rows = [
                 {"id": "recent-a", "source_id": "team-a", "fact_type": "lesson"},
                 {"id": "recent-b", "source_id": "team-b", "fact_type": "lesson"},
             ]
+            return [row for row in rows if row["source_id"] == kwargs.get("source_id")]
 
         def pinned_facts(self, **kwargs):
-            return [
+            self.pinned_kwargs = kwargs
+            rows = [
                 {"id": "pinned-a", "source_id": "team-a", "fact_type": "decision"},
                 {"id": "pinned-b", "source_id": "team-b", "fact_type": "decision"},
             ]
+            return [row for row in rows if row["source_id"] == kwargs.get("source_id")]
 
     backend = FakePyBackend()
     client = AideMemoClient.__new__(AideMemoClient)
@@ -417,6 +486,9 @@ def test_pyo3_backend_preserves_session_and_context_scope() -> None:
     assert [row["id"] for row in context["pinned"]] == ["pinned-a"]
     assert [row["id"] for row in context["recent"]] == ["recent-a"]
     assert [row["id"] for row in context["personalisation"]] == ["recent-a"]
+    assert backend.fact_list_kwargs["source_id"] == "team-a"
+    assert backend.fact_list_kwargs["limit"] == 10
+    assert backend.pinned_kwargs == {"limit": 10, "source_id": "team-a"}
 
 
 def test_branch_uses_pyo3_for_local_paths() -> None:

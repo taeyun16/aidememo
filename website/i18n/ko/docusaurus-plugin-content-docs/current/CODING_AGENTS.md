@@ -30,9 +30,11 @@ mkdir -p ./_meta
 aidememo --store "$(pwd)/_meta/wiki.sqlite" stats
 ```
 
-에이전트 등록에는 절대 store 경로를 사용하세요. 한 store에 여러 프로젝트나
-tenant가 있으면 `source_id`를, 어느 에이전트 프로필이 썼는지 남겨야 하면
-`actor_id`를 추가합니다.
+에이전트 등록에는 절대 store 경로를 사용하세요. 하나의 신뢰된 store에 여러
+프로젝트나 에이전트 namespace가 있으면 `source_id`를, 어느 에이전트 프로필이
+썼는지 남겨야 하면 `actor_id`를 추가합니다. MCP install은 호출자가 덮어쓸 수
+있는 환경 기본값을 설정하므로 source 할당을 강제해야 하면 HTTP token binding을
+사용합니다.
 
 ## Claude Code
 

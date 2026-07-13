@@ -55,8 +55,8 @@ aidememo fact add \
   --actor-id codex:account-a
 ```
 
-Keep `--source-id` as the shared project or tenant namespace. Use `--actor-id`
-for the profile or agent that authored the fact.
+Keep `--source-id` as the trusted shared project or agent namespace. Use
+`--actor-id` for the profile or agent that authored the fact.
 
 Choose fact types intentionally:
 
@@ -117,19 +117,32 @@ agents can call `Memory.project_profile(...)`.
 ## Browse entities and facts
 
 ```bash
-aidememo entity list
-aidememo entity show Redis
-aidememo fact list --type decision --limit 20
-aidememo fact get 01H...
+aidememo entity list --source-id team-a
+aidememo entity show Redis --source-id team-a
+aidememo fact list --type decision --limit 20 --source-id team-a
+aidememo fact get 01H... --source-id team-a
+aidememo fact pinned --source-id team-a
+aidememo fact pin 01H... --source-id team-a
+aidememo fact delete 01H... --source-id team-a
+aidememo fact feedback 01H... --helpful --source-id team-a
+aidememo fact supersede 01HOLD... 01HNEW... --source-id team-a
+aidememo fact archive --ids 01H... --source-id team-a
 ```
+
+Scoped entity output is fact-backed and omits global prose metadata. A scoped
+fact lookup or ID-based mutation returns not-found for an ID owned by another
+source. Omitting `--source-id` preserves trusted unscoped administrator behavior.
 
 ## Traverse the graph
 
 ```bash
-aidememo traverse Redis --depth 2
-aidememo path Worker Redis
-aidememo graph --from Redis --depth 2 --format mermaid
+aidememo traverse Redis --depth 2 --source-id team-a
+aidememo path Worker Redis --source-id team-a
+aidememo graph --from Redis --depth 2 --format mermaid --source-id team-a
 ```
+
+Scoped graph reads include only relations explicitly owned by the same source;
+legacy unscoped edges are not inherited.
 
 ## Maintain memory
 

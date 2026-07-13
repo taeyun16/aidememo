@@ -62,6 +62,40 @@ http://127.0.0.1:3000/mcp
 HTTP 모드는 웜 모델 재사용과 공유 쓰기에 유용합니다. 한 번에 하나의 writer
 프로세스만 데이터베이스 잠금을 가질 수 있는 redb 저장소에는 특히 권장합니다.
 
+네트워크에 노출한 공유 저장소에서는 모든 클라이언트에 같은 범위 없는 토큰을
+주기보다 bearer token마다 하나의 source와 writer identity를 고정하세요.
+
+```json title="/etc/aidememo/token-bindings.json"
+{
+  "tokens": [
+    {
+      "token": "replace-with-a-random-secret",
+      "source_id": "project:my-app",
+      "actor_id": "codex:account-a"
+    }
+  ]
+}
+```
+
+```bash
+chmod 600 /etc/aidememo/token-bindings.json
+aidememo --store ~/.aidememo/team.sqlite mcp-serve \
+  --bind 0.0.0.0 \
+  --auth-bindings-file /etc/aidememo/token-bindings.json
+```
+
+환경 변수로는 `AIDEMEMO_MCP_AUTH_BINDINGS_FILE`을 사용합니다. Bound token으로
+호출하면 서버가 설정된 `source_id`와 `actor_id`를 모든 MCP tool call에 주입하고,
+`aidememo_fact_add_many` item 내부를 포함해 호출자가 다른 값을 전달하면
+거부합니다. Bound token은 범위 없는 `/sync/since`와 `/admin/status` endpoint를
+사용할 수 없으며 `/health`에서는 health와 semantic prewarm 상태만 받습니다.
+신뢰할 수 있는 범위 없는 관리자는 기존 `--auth-token-file` mode를 사용하세요.
+
+`mcp-serve` 자체는 평문 HTTP를 사용합니다. Bearer binding은 identity와 scope를
+강제하지만 전송 구간을 암호화하지 않습니다. Loopback이 아닌 배포에서는 반드시
+TLS를 종료하는 reverse proxy 또는 암호화된 private tunnel 뒤에 서버를 두고,
+backend port에 대한 직접 접근을 제한하세요.
+
 ## 핵심 도구
 
 대부분의 에이전트 워크플로에는 다음 도구만 필요합니다.
@@ -129,6 +163,23 @@ aidememo --backend libsqlite mcp-install --target <agent> --source-id team-a
 저장소 경로도 고정하므로 에이전트 프로세스가 다른 설정 기본값이나 작업 디렉터리로
 이동하지 않습니다. 여러 에이전트 프로필이 같은 네임스페이스를 공유하면서 작성자
 provenance가 필요하면 별도로 `--actor-id`를 사용합니다.
+
+Source 범위는 fact search/list/get, pinned context, entity read, graph
+traversal/path/export, ID 기반 fact mutation에 일관되게 적용됩니다. Source 범위가
+있는 entity 결과는 해당 source의 fact가 연결된 경우에만 반환하며, source
+provenance가 없는 전역 entity metadata는 제외합니다. 같은 fact content는 한
+source 안에서만 중복 제거되고, 서로 다른 두 source의 같은 텍스트는 독립된 두
+fact ID로 유지됩니다. Graph relation은 별도의 source provenance를 가지므로,
+source 범위가 있는 graph read는 relation namespace가 정확히 같은 edge만
+허용합니다. 기존의 범위 없는 edge나 다른 source의 evidence, weight,
+relation type은 노출되지 않습니다. 클라이언트가 자기 범위를 선택하거나
+덮어쓰면 안 되는 경우 위 token binding을 사용하세요.
+
+이 경계는 하나의 신뢰된 팀 저장소에서 협력하는 에이전트에 강한 partition을
+제공하지만, 상호 적대적인 tenant를 위한 완전한 database boundary는 아닙니다.
+Entity name과 entity type은 source 간 공유 ontology를 의도합니다. Tenant끼리
+ontology조차 공유하면 안 되거나 서로의 resource 사용으로부터 격리해야 한다면
+별도 store 또는 별도 AideMemo process를 사용하세요.
 
 격리된 Codex 계정에는 같은 명시적 저장소를 가리키면서 `--codex-home`과
 `--actor-id`를 반복합니다. [`여러 Codex 프로필에서 메모리 공유`](CODEX_MULTI_PROFILE.md)를

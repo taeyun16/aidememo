@@ -172,6 +172,20 @@ aidememo --backend libsqlite --store ~/.aidememo/team.sqlite \
   mcp-install --target codex --source-id team-a
 ```
 
+같은 경계가 fact get/list/mutation, pinned context, entity, graph read에도
+적용됩니다. 정확히 같은 content의 중복 제거 key는
+`(source_id, content_hash)`이므로, 두 source에 있는 같은 문장은 독립된 두
+fact로 유지됩니다. Relation은 별도의 소유 source namespace를 가지며, source
+범위가 있는 traversal/path는 namespace가 정확히 같은 relation만 반환합니다.
+기존의 범위 없는 relation을 모든 source가 상속하지 않습니다. Network client가
+자기 scope를 선택하면 안 되는 경우 `mcp-serve --auth-bindings-file`을 사용하세요.
+자세한 내용은 [MCP 설정](MCP.md)을 참고합니다.
+
+이 경계는 상호 적대적인 tenant boundary가 아니라 신뢰된 팀 내부 partition으로
+사용하세요. Entity name/type은 의도적으로 공유 ontology이며 native/CLI 호출자는
+자기 `source_id`를 선택할 수 있습니다. 상호 신뢰하지 않는 tenant는 별도 store를
+사용해야 합니다.
+
 ## 로컬 저장소 쓰기 경합 방지
 
 기본 SQLite 백엔드는 WAL mode를 사용하고 `BEGIN IMMEDIATE`로 쓰기를 시작합니다.
@@ -259,9 +273,11 @@ provider를 cold-load하지 않고 `aidememo vector-rebuild`가 사이드카를 
 승격에 실패하면 BM25로 폴백합니다. 반복 에이전트 호출은 daemon을 통해
 실행해 모델을 웜 상태로 유지합니다.
 
-Daemon 저장소에서 `search.auto_hybrid=true`이면 `aidememo mcp-serve` 시작
-시 semantic provider를 사전 워밍해 첫 사용자 쿼리가 아니라 startup이 모델
-로드 비용을 지불합니다. 설정을 바꾸지 않고 사전 워밍하려면
+Daemon 저장소에서 `search.auto_hybrid=true`이면 `aidememo mcp-serve`가 listener를
+bind한 뒤 background task에서 semantic provider를 사전 워밍합니다. 따라서
+health check와 lexical request는 model cold load를 기다리지 않고 사용할 수
+있습니다. `/admin/status`의 `semantic_prewarm`은 `warming`, `ready`, `failed`,
+`disabled` 중 하나입니다. 설정을 바꾸지 않고 사전 워밍하려면
 `AIDEMEMO_PREWARM_SEMANTIC=1`로 시작합니다.
 
 ### 선택적 Liquid AI LFM 실험
@@ -281,7 +297,13 @@ AideMemo의 기본 저장소는 SQLite입니다. 실행 중인 `.sqlite` file을
 복사하지 말고 backup command를 사용합니다. 이 명령은 일관된 SQLite
 snapshot과 byte count 및 SHA-256 checksum이 담긴 manifest를 만들고,
 restore 시 target store를 교체하기 전에 manifest와 `PRAGMA integrity_check`를
-검증합니다.
+검증합니다. `<store>.cold.sqlite`가 있으면 함께 snapshot하고 같은 manifest에
+별도의 size와 checksum을 기록합니다. Local backup은 `wiki.cold.sqlite`, S3
+backup은 `wiki.cold.sqlite.zst`로 저장합니다. archive 이동이 hot-then-cold
+snapshot 구간과 겹치면 cold copy를 우선하고, hot snapshot 및 FTS/entity
+index에서 중복 FactId를 제거합니다. 또한 더 늦은 hot metadata snapshot에서
+cold fact가 필요로 하는 entity/name mapping만 복사하며, 해결되지 않은 cross-tier
+entity reference가 있으면 orphan을 복원하지 않고 backup을 실패시킵니다.
 
 ```bash
 aidememo --store ~/.aidememo/wiki.sqlite backup create ~/backups/aidememo
@@ -296,9 +318,44 @@ aidememo --store ~/.aidememo/wiki.sqlite backup create s3://my-bucket/aidememo
 aidememo --store ~/.aidememo/wiki.sqlite backup restore s3://my-bucket/aidememo/backup-01... --force
 ```
 
-S3 경로는 live database가 아니라 backup 저장용입니다. Restore는 local SQLite
-store를 교체하고 target 옆의 오래된 SQLite WAL/SHM 및 HNSW sidecar file을
-제거합니다.
+S3 경로는 live database가 아니라 backup 저장용입니다. Restore는 offline
+maintenance 작업이므로 먼저 `aidememo daemon`과 target store를 사용하는 모든
+process를 중지해야 합니다. Restore는 기존 hot/cold SQLite store를 checkpoint한
+뒤 완전한 `<store>.restore-prev...` safety snapshot을 만들고 나서 WAL/SHM 및
+HNSW sidecar를 제거하며, checkpoint가 busy이면 restore를 거부합니다. Tier
+설치가 실패하면 이전 snapshot 두 개를 모두 rollback하고 integrity-check하며,
+rollback 실패도 원래 restore 오류와 함께 보고합니다. 기존 hot-only backup은
+target의 cold tier를 물려받지 않습니다. `--force` restore는
+기존 cold file을 `<store>.restore-prev.cold.sqlite` safety snapshot으로 보존하며,
+`--force`가 없으면 hot store나 cold tier 중 하나만 존재해도 restore를
+중단합니다. Manifest payload 이름은 선택한 backup prefix 바로 아래의 단순한
+파일명이어야 하고 hot/cold object가 달라야 하며, manifest backend는
+SQLite-compatible이어야 합니다.
+
+## 복제 저장소를 안전하게 pull
+
+`aidememo sync pull`은 entity, fact, relation에 독립된 high-water mark를
+유지합니다. Entity와 fact update stream은 `(updated_at, id)`로 pagination하여
+같은 millisecond에 발생한 mutation이 page 사이에서 누락되지 않습니다. 기존
+timestamp-only cursor는 boundary를 한 번 재실행합니다. Relation sync는 정렬된
+전체 relation snapshot을 `relation_generation`으로 fingerprint하고, snapshot이
+변하지 않았을 때 `relation_scan_key`로 이어서 스캔합니다. 과거 timestamp의
+늦은 insert나 weight/evidence/scope 변경은 generation을 바꾸어 idempotent full
+scan을 재시작합니다. 업그레이드 전 client를 위해 기존
+`(created_at, relation_key)` field도 fallback으로 유지합니다.
+
+전체 JSONL envelope(supported leading header, 유효한 record shape, 하나의 유효한
+trailing cursor)를 첫 write 전에 검증하므로 잘못되거나 지원하지 않는
+batch는 record를 하나도 적용하지 않습니다. Store-level 오류는 이미 적용된
+record를 남길 수 있지만 upsert가 idempotent하고 cursor를 노출하지 않아 전체
+batch를 안전하게 재시도할 수 있습니다. CLI는 pull/import/persist 전체에 걸쳐
+같은 directory의 cursor lock을 유지하고, 고유한 temporary cursor file을 atomic
+rename하여 동시 pull process가 서로의 cursor를 덮어쓰지 못하게 합니다.
+
+이 구조는 여전히 canonical-writer, pull-only replication model입니다. Relation
+record는 append/upsert만 복제하며 relation delete는 전파하지 않습니다. 모든
+write/delete를 canonical shared `mcp-serve`로 보낸 뒤, local cache를 peer로
+다루지 말고 canonical state를 read cache로 pull하세요.
 
 ## 클라우드 에이전트 브랜치 공유
 
@@ -309,6 +366,9 @@ Backup manifest는 sync cursor를 기록하며 `branch push --base`는 이 curso
 실험에도 적합합니다. 하나의 backup에서 여러 candidate store를 fork하고, 각
 시도가 local lesson을 기록하게 한 뒤 가장 나은 branch만 merge하고 나머지는
 merge하지 않습니다.
+선택한 모든 segment를 원래 LWW 순서대로 merge한 뒤, 변경된 과거 entity/fact
+ID에는 coordinator relay timestamp 하나를 부여합니다. 따라서 원래 ID를 이미
+지난 downstream cursor도 merge 결과를 다시 pull합니다.
 
 ```bash
 # Coordinator creates a baseline snapshot.

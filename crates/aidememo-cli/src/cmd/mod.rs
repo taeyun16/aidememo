@@ -178,22 +178,30 @@ pub enum SessionSub {
         recent_limit: Option<usize>,
         recent_days: Option<u64>,
         top_entities_limit: Option<usize>,
+        source_id: Option<String>,
     },
     /// Create a new tracked session (entity of type `session`).
     /// Prints shell-evaluable `export AIDEMEMO_SESSION_ID=…`. While the env
     /// var is set, every `aidememo fact add` auto-attaches the session
     /// entity to the new fact's entity list — that's how cross-
     /// session retrieval gets a persistent thread to follow.
-    New { topic: String },
+    New {
+        source_id: Option<String>,
+        topic: String,
+    },
     /// Show the current session entity (per AIDEMEMO_SESSION_ID).
-    Current,
+    Current { source_id: Option<String> },
     /// List recent session entities.
-    List { limit: Option<usize> },
+    List {
+        limit: Option<usize>,
+        source_id: Option<String>,
+    },
     /// Export a session thread as an auditable Markdown + Mermaid canvas.
     Canvas {
         output: Option<PathBuf>,
         limit: Option<usize>,
         include_superseded: bool,
+        source_id: Option<String>,
         session: Option<String>,
     },
 }
@@ -219,6 +227,7 @@ pub enum EntitySub {
         name: String,
     },
     Get {
+        source_id: Option<String>,
         name: String,
     },
     List {
@@ -226,6 +235,7 @@ pub enum EntitySub {
         entity_type: Option<String>,
         min_facts: Option<u32>,
         limit: Option<usize>,
+        source_id: Option<String>,
     },
     Rename {
         old_name: String,
@@ -247,6 +257,7 @@ pub enum EntitySub {
     },
     Show {
         recent: Option<usize>,
+        source_id: Option<String>,
         name: String,
     },
 }
@@ -270,6 +281,7 @@ pub enum FactSub {
         content: String,
     },
     Get {
+        source_id: Option<String>,
         id: String,
     },
     List {
@@ -284,22 +296,28 @@ pub enum FactSub {
         limit: Option<usize>,
     },
     Delete {
+        source_id: Option<String>,
         id: String,
     },
     Feedback {
         helpful: bool,
+        source_id: Option<String>,
         id: String,
     },
     Pin {
+        source_id: Option<String>,
         id: String,
     },
     Unpin {
+        source_id: Option<String>,
         id: String,
     },
     Pinned {
         limit: Option<usize>,
+        source_id: Option<String>,
     },
     Supersede {
+        source_id: Option<String>,
         old_id: String,
         new_id: String,
     },
@@ -314,17 +332,21 @@ pub enum FactSub {
         fact_type: Option<String>,
         /// Print the candidate id list but don't move anything.
         dry_run: bool,
+        /// Restrict explicit IDs and bulk selection to one source namespace.
+        source_id: Option<String>,
     },
 }
 
 #[derive(Debug, Clone)]
 pub struct TraverseSub {
     pub depth: Option<u32>,
+    pub source_id: Option<String>,
     pub entity: String,
 }
 
 #[derive(Debug, Clone)]
 pub struct PathSub {
+    pub source_id: Option<String>,
     pub from: String,
     pub to: String,
 }
@@ -716,19 +738,28 @@ fn session_command() -> impl Parser<Command> {
         .help("Max top-entities to surface (default 10)")
         .argument::<usize>("N")
         .optional();
+    let source_id = long("source-id")
+        .help("Restrict session context to one source namespace")
+        .argument::<String>("SOURCE_ID")
+        .optional();
 
     let start = construct!(SessionSub::Start {
         pinned_limit,
         recent_limit,
         recent_days,
         top_entities_limit,
+        source_id,
     })
     .to_options()
     .command("start")
     .help("Return one envelope: stats + pinned + recent + top entities + open issues");
 
+    let source_id = long("source-id")
+        .help("Create a source-owned session marker fact")
+        .argument::<String>("SOURCE_ID")
+        .optional();
     let topic = positional::<String>("TOPIC");
-    let new_cmd = construct!(SessionSub::New { topic })
+    let new_cmd = construct!(SessionSub::New { source_id, topic })
         .to_options()
         .command("new")
         .help(
@@ -738,7 +769,11 @@ fn session_command() -> impl Parser<Command> {
              Usage:  eval \"$(aidememo session new 'auth migration')\"",
         );
 
-    let current_cmd = pure(SessionSub::Current)
+    let source_id = long("source-id")
+        .help("Only show a current session visible in this source")
+        .argument::<String>("SOURCE_ID")
+        .optional();
+    let current_cmd = construct!(SessionSub::Current { source_id })
         .to_options()
         .command("current")
         .help("Show the current session entity (per AIDEMEMO_SESSION_ID env)");
@@ -747,7 +782,11 @@ fn session_command() -> impl Parser<Command> {
         .help("Max sessions to return (default 20)")
         .argument::<usize>("N")
         .optional();
-    let list_cmd = construct!(SessionSub::List { limit })
+    let source_id = long("source-id")
+        .help("Only list sessions visible in this source")
+        .argument::<String>("SOURCE_ID")
+        .optional();
+    let list_cmd = construct!(SessionSub::List { limit, source_id })
         .to_options()
         .command("list")
         .help("List recent session entities (entity_type=session)");
@@ -765,11 +804,16 @@ fn session_command() -> impl Parser<Command> {
     let include_superseded = long("include-superseded")
         .help("Include facts superseded after the session was recorded")
         .switch();
+    let source_id = long("source-id")
+        .help("Restrict the canvas and session lookup to this source")
+        .argument::<String>("SOURCE_ID")
+        .optional();
     let session = positional::<String>("SESSION").optional();
     let canvas_cmd = construct!(SessionSub::Canvas {
         output,
         limit,
         include_superseded,
+        source_id,
         session,
     })
     .to_options()
@@ -934,8 +978,12 @@ fn entity_command() -> impl Parser<Command> {
     .command("add")
     .help("Add a new entity");
 
+    let source_id = long("source-id")
+        .help("Only return entities visible in this source namespace")
+        .argument::<String>("SOURCE_ID")
+        .optional();
     let name = positional::<String>("NAME");
-    let get = construct!(EntitySub::Get { name })
+    let get = construct!(EntitySub::Get { source_id, name })
         .to_options()
         .command("get")
         .help("Get an entity by name");
@@ -958,11 +1006,16 @@ fn entity_command() -> impl Parser<Command> {
         .help("Maximum number of results")
         .argument::<usize>("LIMIT")
         .optional();
+    let source_id = long("source-id")
+        .help("Filter entities and fact counts by source namespace")
+        .argument::<String>("SOURCE_ID")
+        .optional();
     let list = construct!(EntitySub::List {
         sort,
         entity_type,
         min_facts,
         limit,
+        source_id,
     })
     .to_options()
     .command("list")
@@ -1014,11 +1067,19 @@ fn entity_command() -> impl Parser<Command> {
         .help("Number of recent facts to include (default 5)")
         .argument::<usize>("N")
         .optional();
+    let source_id = long("source-id")
+        .help("Only show entity facts from this source namespace")
+        .argument::<String>("SOURCE_ID")
+        .optional();
     let name = positional::<String>("NAME");
-    let show = construct!(EntitySub::Show { recent, name })
-        .to_options()
-        .command("show")
-        .help("Show entity page: summary + recent facts (the compiled view)");
+    let show = construct!(EntitySub::Show {
+        recent,
+        source_id,
+        name
+    })
+    .to_options()
+    .command("show")
+    .help("Show entity page: summary + recent facts (the compiled view)");
 
     construct!([add, get, list, rename, alias, delete, describe, show])
         .map(Command::Entity)
@@ -1086,8 +1147,12 @@ fn fact_command() -> impl Parser<Command> {
     .command("add")
     .help("Add a new fact");
 
+    let source_id = long("source-id")
+        .help("Only return a fact from this source namespace")
+        .argument::<String>("SOURCE_ID")
+        .optional();
     let id = positional::<String>("ID");
-    let get = construct!(FactSub::Get { id })
+    let get = construct!(FactSub::Get { source_id, id })
         .to_options()
         .command("get")
         .help("Get a fact by ID");
@@ -1153,36 +1218,64 @@ fn fact_command() -> impl Parser<Command> {
     .command("list")
     .help("List facts");
 
+    let source_id = long("source-id")
+        .help("Require the fact to belong to this source namespace")
+        .argument::<String>("SOURCE_ID")
+        .optional();
     let id = positional::<String>("ID");
-    let delete = construct!(FactSub::Delete { id })
+    let delete = construct!(FactSub::Delete { source_id, id })
         .to_options()
         .command("delete")
         .help("Delete a fact");
 
     let id = positional::<String>("ID");
     let helpful = long("helpful").short('h').help("Mark as helpful").switch();
-    let feedback = construct!(FactSub::Feedback { helpful, id })
-        .to_options()
-        .command("feedback")
-        .help("Record fact feedback");
+    let source_id = long("source-id")
+        .help("Require the fact to belong to this source namespace")
+        .argument::<String>("SOURCE_ID")
+        .optional();
+    let feedback = construct!(FactSub::Feedback {
+        helpful,
+        source_id,
+        id,
+    })
+    .to_options()
+    .command("feedback")
+    .help("Record fact feedback");
 
+    let source_id = long("source-id")
+        .help("Require both facts to belong to this source namespace")
+        .argument::<String>("SOURCE_ID")
+        .optional();
     let old_id = positional::<String>("OLD_ID");
     let new_id = positional::<String>("NEW_ID");
-    let supersede = construct!(FactSub::Supersede { old_id, new_id })
-        .to_options()
-        .command("supersede")
-        .help("Mark OLD_ID as superseded by NEW_ID (validity window)");
+    let supersede = construct!(FactSub::Supersede {
+        source_id,
+        old_id,
+        new_id,
+    })
+    .to_options()
+    .command("supersede")
+    .help("Mark OLD_ID as superseded by NEW_ID (validity window)");
 
+    let source_id = long("source-id")
+        .help("Require the fact to belong to this source namespace")
+        .argument::<String>("SOURCE_ID")
+        .optional();
     let id = positional::<String>("ID");
-    let pin = construct!(FactSub::Pin { id })
+    let pin = construct!(FactSub::Pin { source_id, id })
         .to_options()
         .command("pin")
         .help(
             "Add a fact to the always-loaded tier (aidememo fact pinned, aidememo_pinned_context)",
         );
 
+    let source_id = long("source-id")
+        .help("Require the fact to belong to this source namespace")
+        .argument::<String>("SOURCE_ID")
+        .optional();
     let id = positional::<String>("ID");
-    let unpin = construct!(FactSub::Unpin { id })
+    let unpin = construct!(FactSub::Unpin { source_id, id })
         .to_options()
         .command("unpin")
         .help("Remove a fact from the always-loaded tier");
@@ -1192,7 +1285,11 @@ fn fact_command() -> impl Parser<Command> {
         .help("Cap on facts returned")
         .argument::<usize>("N")
         .optional();
-    let pinned = construct!(FactSub::Pinned { limit })
+    let source_id = long("source-id")
+        .help("Filter pinned facts by source namespace before limiting")
+        .argument::<String>("SOURCE_ID")
+        .optional();
+    let pinned = construct!(FactSub::Pinned { limit, source_id })
         .to_options()
         .command("pinned")
         .help("List pinned facts (the always-loaded tier), most-recently-accessed first");
@@ -1213,11 +1310,16 @@ fn fact_command() -> impl Parser<Command> {
     let dry_run = long("dry-run")
         .help("Print candidate ids without moving any fact")
         .switch();
+    let source_id = long("source-id")
+        .help("Restrict explicit IDs and bulk selection to this source namespace")
+        .argument::<String>("SOURCE_ID")
+        .optional();
     let archive = construct!(FactSub::Archive {
         ids,
         older_than,
         fact_type,
         dry_run,
+        source_id,
     })
     .to_options()
     .command("archive")
@@ -1239,31 +1341,47 @@ fn fact_command() -> impl Parser<Command> {
 }
 
 fn traverse_command() -> impl Parser<Command> {
-    let entity = positional::<String>("ENTITY");
     let depth = long("depth")
         .short('d')
         .help("Maximum traversal depth")
         .argument::<u32>("DEPTH")
         .optional();
+    let source_id = long("source-id")
+        .help("Restrict traversal to this source namespace")
+        .argument::<String>("SOURCE_ID")
+        .optional();
+    let entity = positional::<String>("ENTITY");
 
-    construct!(TraverseSub { depth, entity })
-        .map(Command::Traverse)
-        .to_options()
-        .command("traverse")
-        .short('t')
-        .help("Traverse the entity graph")
+    construct!(TraverseSub {
+        depth,
+        source_id,
+        entity
+    })
+    .map(Command::Traverse)
+    .to_options()
+    .command("traverse")
+    .short('t')
+    .help("Traverse the entity graph")
 }
 
 fn path_command() -> impl Parser<Command> {
+    let source_id = long("source-id")
+        .help("Restrict the path to this source namespace")
+        .argument::<String>("SOURCE_ID")
+        .optional();
     let from = positional::<String>("FROM");
     let to = positional::<String>("TO");
 
-    construct!(PathSub { from, to })
-        .map(Command::Path)
-        .to_options()
-        .command("path")
-        .short('p')
-        .help("Find a path between two entities")
+    construct!(PathSub {
+        source_id,
+        from,
+        to
+    })
+    .map(Command::Path)
+    .to_options()
+    .command("path")
+    .short('p')
+    .help("Find a path between two entities")
 }
 
 fn search_command() -> impl Parser<Command> {
