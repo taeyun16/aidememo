@@ -82,6 +82,20 @@ persistence when its policy is enabled.
 | Shadow fact typing | `LiquidAI/LFM2.5-1.2B-Instruct-MLX-4bit` + LoRA, review hints only |
 | Write-time privacy | OpenAI Privacy Filter MLX `mxfp4`, policy opt-in |
 
+## Shared-memory boundary
+
+One store can serve several agents through stdio MCP, a local daemon, or HTTP
+MCP. `source_id` selects the fact and relation namespace; `actor_id` records
+writer provenance. For authenticated HTTP clients, a token-binding file fixes
+both values at the server boundary and rejects caller overrides before MCP tool
+dispatch. Scoped reads filter facts, pinned context, entity visibility, and
+graph relations before limits are applied.
+
+Entity names and types remain a shared ontology, so this is a cooperating-agent
+partition rather than hostile tenant isolation. See
+[`Shared Memory Layer`](SHARED_MEMORY.md) for the deployment patterns and trust
+boundary.
+
 ## Retrieval flow
 
 ```mermaid
@@ -220,6 +234,7 @@ semantic conflicts between competing decisions remain application policy.
 |---|---|---|
 | CLI commands and parsers | `crates/aidememo-cli/src/cmd/mod.rs`, `crates/aidememo-cli/src/main.rs` | [`CLI Usage`](CLI.md), [`Feature Inventory`](FEATURES.md) |
 | MCP tools and schemas | `crates/aidememo-cli/src/cmd/mcp_tools.rs` | [`MCP Setup`](MCP.md), [`Agent Workflows`](AGENT_WORKFLOWS.md) |
+| Shared-memory identity boundary | `crates/aidememo-cli/src/cmd/mcp_serve.rs`, `crates/aidememo-core/src/backend.rs` | [`Shared Memory Layer`](SHARED_MEMORY.md), [`MCP Setup`](MCP.md) |
 | Core API and retrieval | `crates/aidememo-core/src/lib.rs`, `search.rs`, `graph.rs` | [`Architecture`](ARCHITECTURE.md), [`Operations`](OPERATIONS.md) |
 | Storage dispatch | `crates/aidememo-core/src/backend.rs`, `sqlite_store.rs`, `store.rs` | [`Operations`](OPERATIONS.md), [`Feature Inventory`](FEATURES.md) |
 | Python agent SDK | `packages/aidememo-agent-sdk/src/aidememo_agent/sdk.py` | [`Python SDK`](SDK.md), [`Agent Workflows`](AGENT_WORKFLOWS.md) |

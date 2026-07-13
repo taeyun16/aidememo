@@ -18,8 +18,10 @@ description: 추측성 메모리 변경과 클라우드 에이전트 실험에 A
 | 에이전트 실행의 재생 가능한 아티팩트가 필요 | segment JSONL과 manifest가 해당 브랜치가 추가하려 한 내용을 기록합니다. |
 
 브랜치 로그를 완전한 multi-master 충돌 해결로 사용하지 마세요. Merge는
-멱등적이고 append 중심입니다. 중복 레코드는 건너뛰고 독립적인 새 팩트는
-추가하며, 경쟁하는 두 결정 같은 semantic 충돌은 호출자 정책에 맡깁니다.
+멱등적이고 append 중심입니다. 동일하거나 오래된 entity/fact record는 건너뛰고,
+같은 ID의 더 새로운 record는 LWW 순서로 적용하며, relation identity는 insert
+또는 replace합니다. 독립적인 새 팩트는 추가하고, 경쟁하는 두 결정 같은 semantic
+충돌은 호출자 정책에 맡깁니다.
 
 ## 워크플로
 
@@ -139,6 +141,12 @@ s3://bucket/prefix/branches/<branch-id>/segments/<segment-id>.manifest.json
 - `branch merge --branch <ID>`는 해당 브랜치만 가져옵니다.
 - 같은 segment를 다시 병합해도 `sync_import`를 거치므로 팩트가 중복되지
   않습니다.
+- 선택한 모든 segment는 원래 LWW 순서를 유지합니다. Import 뒤 merge로 실제
+  변경된 record에는 coordinator relay timestamp 하나를 부여하므로 이미 진행된
+  downstream sync cursor도 과거 ID의 변경을 관찰합니다.
+- Relay timestamp는 entity/fact record에 적용합니다. Relation insert 또는
+  replacement는 전체 relation snapshot generation을 바꾸므로 이미 진행된
+  downstream도 relation snapshot을 다시 실행합니다.
 - S3는 브랜치 아티팩트 전송 수단이며 live database 백엔드가 아닙니다.
 
 아직 보장하지 않는 항목:

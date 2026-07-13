@@ -346,6 +346,11 @@ reverse proxy 또는 암호화된 private tunnel도 필요합니다. Source part
 entity name/type ontology를 공유하므로 상호 신뢰하지 않는 tenant는 별도 store를
 사용해야 합니다.
 
+하나의 신뢰된 store, token에 바인딩된 source partition, 별도 store 중
+적합한 배치 방식을 고르려면
+[공유 메모리 배치 가이드](website/i18n/ko/docusaurus-plugin-content-docs/current/SHARED_MEMORY.md)를
+참고하세요.
+
 ### 에이전트가 코드를 실행할 수 있을 때 Python으로 메모리 조합
 
 한 번의 모델 가시 호출에는 MCP 도구를 사용하세요. 모든 중간 행을 LLM
@@ -493,7 +498,7 @@ curl http://127.0.0.1:3000/admin/status
 |---|---|
 | 설정 | `aidememo init`, `aidememo init --agent codex`, `aidememo project create/use/list` |
 | 읽기 | `aidememo search`, `aidememo query`, `aidememo recent`, `aidememo overview`, `aidememo traverse`, `aidememo path`, `aidememo graph` |
-| 쓰기 | `aidememo fact add`, `aidememo fact supersede`, `aidememo fact archive`, `aidememo edit fact`, `aidememo entity describe`, `aidememo relation add` |
+| 쓰기 | `aidememo fact add`, `aidememo fact supersede`, `aidememo fact pin`, `aidememo fact archive`, `aidememo fact delete`, `aidememo edit fact`, `aidememo entity describe` |
 | 유지보수 | `aidememo doctor`, `aidememo lint`, `aidememo bench`, `aidememo backup`, `aidememo branch`, `aidememo pending`, `aidememo workflow`, `aidememo ingest`, `aidememo watch`, `aidememo vector-rebuild`, `aidememo consolidate` |
 | 서버 | `aidememo mcp`, `aidememo mcp-serve`, `aidememo daemon start/status/stop`, `aidememo mcp-install` |
 | 설정값 | `aidememo config get/set/list`, `aidememo auth generate/login/list/logout` |

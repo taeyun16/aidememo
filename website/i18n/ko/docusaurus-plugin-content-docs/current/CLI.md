@@ -56,6 +56,9 @@ aidememo fact add \
 
 `--source-id`는 신뢰된 공유 프로젝트 또는 에이전트 namespace로 유지합니다.
 팩트를 작성한 profile이나 agent는 `--actor-id`로 기록합니다.
+정확히 같은 content의 dedup은 정규화된 source ID 범위에서 수행됩니다.
+같은 source에서 반복해 쓰면 기존 fact를 반환하지만, 다른 source의 동일한
+content는 별도 fact로 유지됩니다.
 
 팩트 타입을 의도적으로 선택합니다.
 
@@ -91,7 +94,8 @@ aidememo workflow start "Fix Redis timeout" --bm25-only
 결과 스레드를 범위가 제한되고 감사 가능한 canvas로 내보냅니다.
 
 ```bash
-aidememo session canvas "$AIDEMEMO_SESSION_ID" --limit 20 --output session_canvas.md
+aidememo session canvas "$AIDEMEMO_SESSION_ID" --limit 20 \
+  --source-id team-a --output session_canvas.md
 ```
 
 Canvas는 파생된 Markdown 아티팩트입니다. 먼저 Mermaid 지도를 제공하고,
@@ -117,11 +121,13 @@ aidememo profile export --source-id team-a --limit 80
 
 ```bash
 aidememo entity list --source-id team-a
+aidememo entity get Redis --source-id team-a
 aidememo entity show Redis --source-id team-a
 aidememo fact list --type decision --limit 20 --source-id team-a
 aidememo fact get 01H... --source-id team-a
 aidememo fact pinned --source-id team-a
 aidememo fact pin 01H... --source-id team-a
+aidememo fact unpin 01H... --source-id team-a
 aidememo fact delete 01H... --source-id team-a
 aidememo fact feedback 01H... --helpful --source-id team-a
 aidememo fact supersede 01HOLD... 01HNEW... --source-id team-a
@@ -143,6 +149,39 @@ aidememo graph --from Redis --depth 2 --format mermaid --source-id team-a
 
 Source 범위 graph read는 같은 source가 명시적으로 소유한 relation만 포함하며,
 기존 범위 없는 edge를 상속하지 않습니다.
+
+## Tracked session의 source 범위 유지
+
+Session marker와 파생 context를 수집 대상 fact와 같은 namespace에
+유지합니다.
+
+```bash
+eval "$(aidememo session new 'billing retry audit' --source-id team-a)"
+aidememo session current --source-id team-a
+aidememo session list --source-id team-a
+aidememo session start --source-id team-a
+```
+
+## 공유 HTTP 서버에 identity 고정
+
+`AIDEMEMO_SOURCE_ID`는 신뢰된 process의 기본값일 뿐입니다. 독립적으로
+인증된 agent들이 HTTP 서버 하나를 공유한다면 bearer token마다 고정된
+source와 writer identity를 바인딩합니다.
+
+```json
+{"tokens":[{"token":"replace-me","source_id":"team-a","actor_id":"codex:a"}]}
+```
+
+```bash
+chmod 600 ./token-bindings.json
+aidememo mcp-serve --port 3000 --auth-bindings-file ./token-bindings.json
+```
+
+바인딩은 batch item을 포함한 모든 MCP 호출에 주입되며, 호출자는
+`source_id`나 `actor_id`를 재정의할 수 없습니다. Bound token은
+`/admin/status`나 `/sync/since`를 읽을 수 없습니다. `mcp-serve`는 평문
+HTTP를 사용하므로 loopback 외 배포 앞에 TLS termination 또는 암호화된
+private tunnel을 두세요.
 
 ## 메모리 유지 관리
 

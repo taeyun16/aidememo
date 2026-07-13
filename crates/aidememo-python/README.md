@@ -112,6 +112,7 @@ pack = g.workflow_start(
     body="Worker jobs intermittently time out. The issue has no more detail.",
     source="github:org/app#123",
     source_id="team-a",
+    actor_id="codex:account-a",
     limit=8,
     depth=2,
     recent_limit=5,
@@ -166,6 +167,11 @@ and global mutation methods remain available. Treat this as a trusted-team
 boundary. Use separate stores/processes for untrusted tenants, or expose the
 store through the MCP server's token-to-source bindings described in
 [`docs/MCP.md`](../../docs/MCP.md).
+
+There is no handle-level source or actor default in `aidememo-python`: pass
+`source_id` on every scoped operation and `actor_id` on `workflow_start`,
+`fact_add`, or each `fact_add_many` item. `lint()` and `stats()` are always
+store-wide diagnostics; do not expose them to source-restricted callers.
 
 ## Branch logs
 
@@ -224,7 +230,7 @@ Exception classes:
 | `path_find(from, to, source_id?)` | `list[dict] \| None` |
 | `entity_add(name, ...)` / `entity_get(name, source_id?)` / `entity_list(..., source_id?)` / `entity_delete(name)` | … |
 | `resolve_entity(name)` | ULID string |
-| `fact_add(content, ..., source_id?, actor_id?, session_id?)` / `fact_add_many(items, session_id?)` | ULID(s) |
+| `fact_add(content, ..., source_id?, actor_id?, session_id?)` / `fact_add_many(items, session_id?)` | ULID(s); each batch item may carry its own `source_id` and `actor_id` |
 | `fact_get(id, source_id?)` / `fact_list(..., source_id?)` / `fact_delete(id)` | … |
 | `fact_pin(id, pinned, source_id?)` / `pinned_facts(limit?, source_id?)` | always-loaded facts |
 | `relation_add(source, target, type, source_id?)` / `relations_get(entity, direction?, source_id?)` / `relation_remove(...)` | … |

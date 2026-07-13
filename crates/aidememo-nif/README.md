@@ -32,6 +32,7 @@ AideMemoNif.fact_add(g, "Redis Sentinel provides HA",
   fact_type: "decision",
   tags: ["ha"],
   source_id: "team-a",
+  actor_id: "codex:account-a",
   confidence: 0.9
 )
 
@@ -67,7 +68,11 @@ functions for `search`, `query`, `traverse`, `path_find`, `entity_get` /
 
 ```elixir
 worker = AideMemoNif.entity_add(g, "Worker", entity_type: "service")
-AideMemoNif.fact_add(g, "Worker uses Redis", entity_ids: [worker], source_id: "team-a")
+AideMemoNif.fact_add(g, "Worker uses Redis",
+  entity_ids: [worker],
+  source_id: "team-a",
+  actor_id: "codex:account-a"
+)
 AideMemoNif.relation_add(g, "Redis", "Worker", "used_by", source_id: "team-a")
 
 entity = AideMemoNif.entity_get(g, "Redis", source_id: "team-a")
@@ -90,6 +95,11 @@ and global mutation methods remain available. Treat this as a trusted-team
 boundary. Use separate stores/processes for untrusted tenants, or expose the
 store through the MCP server's token-to-source bindings described in
 [`docs/MCP.md`](../../docs/MCP.md).
+
+There is no handle-level source or actor default in `aidememo_nif`: pass
+`source_id:` on every scoped operation and `actor_id:` on `fact_add` or each
+`fact_add_many` item. `lint/1` and `stats/1` are always store-wide diagnostics;
+do not expose them to source-restricted callers.
 
 ## Branch logs
 
@@ -116,10 +126,12 @@ s3`.
 ## API surface
 
 `AideMemoNif` (high-level, JSON-decoding) wraps `AideMemoNif.Native` (raw NIF).
-Source-aware reads accept `source_id:` in their optional keyword list:
+Source-aware operations accept `source_id:` in their optional keyword list:
 `search/3`, `query/3`, `traverse/3`, `path_find/4`, `entity_get/3`,
 `entity_list/2`, `fact_get/3`, `fact_list/2`, `pinned_facts/2`,
-`relation_add/5`, and `relations_get/3`. Other core functions include
+`fact_add/3`, `relation_add/5`, and `relations_get/3`. `fact_add/3` also accepts
+`actor_id:`; each `fact_add_many/2` item may carry its own `source_id` and
+`actor_id`. Other core functions include
 `open!/1`, `open!/2`, `version/0`, `entity_add/3`, `entity_delete/2`,
 `entity_describe/3`, `resolve_entity/2`, `fact_add/3`, `fact_add_many/2`,
 `fact_delete/2`, `fact_supersede/3`, `relation_remove/4`, `ingest/3`,

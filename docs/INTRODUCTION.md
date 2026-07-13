@@ -16,9 +16,10 @@ extraction, embedding, and reranking remain opt-in.
 Use it when your agent needs project memory that survives across sessions,
 editors, and model providers.
 
-For the system map, read [`Architecture`](ARCHITECTURE.md). For the validated
-scorecard, read [`Evidence`](EVIDENCE.md). For the per-turn tool choice guide,
-read [`Agent Workflows`](AGENT_WORKFLOWS.md).
+For the system map, read [`Architecture`](ARCHITECTURE.md). To run one durable
+store across multiple agents, read [`Shared Memory Layer`](SHARED_MEMORY.md).
+For the validated scorecard, read [`Evidence`](EVIDENCE.md). For the per-turn
+tool choice guide, read [`Agent Workflows`](AGENT_WORKFLOWS.md).
 
 ## What it gives you
 
@@ -27,7 +28,7 @@ read [`Agent Workflows`](AGENT_WORKFLOWS.md).
 | Remember project decisions | `aidememo fact add --type decision` |
 | Search prior context | `aidememo search` and `aidememo query` |
 | Start work from a sparse ticket | `aidememo workflow start` |
-| Share memory across agents | `source_id` scoping and `aidememo mcp-serve` |
+| Share memory across agents | Stable `source_id` / `actor_id` identities and `aidememo mcp-serve` |
 | Give agents tool access | `aidememo mcp` or HTTP MCP |
 | Use memory from code | `aidememo-agent-sdk` |
 

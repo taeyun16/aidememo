@@ -51,7 +51,7 @@ targets. pi is intentionally skill-only because it does not accept MCP. See
 Use HTTP when multiple agents should share one warm process:
 
 ```bash
-aidememo mcp-serve --port 3000 --store ~/.aidememo/team.sqlite
+aidememo --store ~/.aidememo/team.sqlite mcp-serve --port 3000
 ```
 
 Then point MCP clients at:
@@ -87,12 +87,20 @@ aidememo --store ~/.aidememo/team.sqlite mcp-serve \
 ```
 
 `AIDEMEMO_MCP_AUTH_BINDINGS_FILE` is the environment-variable equivalent.
+The file may be either the wrapped `{"tokens": [...]}` object shown above or
+a top-level JSON array. Every `token`, `source_id`, and `actor_id` is trimmed
+and must be non-empty, and token values must be unique. `--auth-bindings-file`
+cannot be combined with `--auth-token` or `--auth-token-file`; an explicit CLI
+auth option takes precedence over the auth environment variables.
+
 For a bound token, the server injects the configured `source_id` and
 `actor_id` into every MCP tool call and rejects a caller-supplied mismatch,
 including overrides inside `aidememo_fact_add_many` items. Bound tokens cannot
 use the unscoped `/sync/since` or `/admin/status` endpoints; `/health` returns
 only the health and semantic-prewarm state. Keep the existing
-`--auth-token-file` mode for a trusted, unscoped administrator.
+`--auth-token-file` mode for a trusted, unscoped administrator. A single-token
+administrator is not source-bound: that client may choose `source_id` and
+`actor_id` in tool arguments and can use the global status and sync endpoints.
 
 `mcp-serve` itself speaks plain HTTP. Bearer binding provides identity and
 scope enforcement, not transport encryption. For any non-loopback deployment,
@@ -183,6 +191,8 @@ not a full hostile multi-tenant database boundary. Entity names and entity
 types intentionally form a shared ontology across sources. If tenants must not
 share even that ontology or must be protected from one another's resource use,
 give them separate stores (or separate AideMemo processes) instead.
+See [`Shared Memory Layer`](SHARED_MEMORY.md) for the deployment shapes,
+trust boundary, and production checklist behind this choice.
 
 For isolated Codex accounts, repeat `--codex-home` and `--actor-id` while
 pointing every profile at the same explicit store. See

@@ -57,6 +57,9 @@ aidememo fact add \
 
 Keep `--source-id` as the trusted shared project or agent namespace. Use
 `--actor-id` for the profile or agent that authored the fact.
+Exact-content dedup is scoped by the normalized source ID: a repeated write in
+the same source resolves to the existing fact, while identical content in a
+different source remains an independent fact.
 
 Choose fact types intentionally:
 
@@ -92,7 +95,8 @@ aidememo workflow start "Fix Redis timeout" --bm25-only
 Export the resulting thread as a bounded, auditable canvas:
 
 ```bash
-aidememo session canvas "$AIDEMEMO_SESSION_ID" --limit 20 --output session_canvas.md
+aidememo session canvas "$AIDEMEMO_SESSION_ID" --limit 20 \
+  --source-id team-a --output session_canvas.md
 ```
 
 The canvas is a derived Markdown artifact: a Mermaid map first, then fact-id
@@ -118,11 +122,13 @@ agents can call `Memory.project_profile(...)`.
 
 ```bash
 aidememo entity list --source-id team-a
+aidememo entity get Redis --source-id team-a
 aidememo entity show Redis --source-id team-a
 aidememo fact list --type decision --limit 20 --source-id team-a
 aidememo fact get 01H... --source-id team-a
 aidememo fact pinned --source-id team-a
 aidememo fact pin 01H... --source-id team-a
+aidememo fact unpin 01H... --source-id team-a
 aidememo fact delete 01H... --source-id team-a
 aidememo fact feedback 01H... --helpful --source-id team-a
 aidememo fact supersede 01HOLD... 01HNEW... --source-id team-a
@@ -143,6 +149,39 @@ aidememo graph --from Redis --depth 2 --format mermaid --source-id team-a
 
 Scoped graph reads include only relations explicitly owned by the same source;
 legacy unscoped edges are not inherited.
+
+## Scope tracked sessions
+
+Keep session markers and their derived context in the same namespace as the
+facts they collect:
+
+```bash
+eval "$(aidememo session new 'billing retry audit' --source-id team-a)"
+aidememo session current --source-id team-a
+aidememo session list --source-id team-a
+aidememo session start --source-id team-a
+```
+
+## Pin identities on a shared HTTP server
+
+`AIDEMEMO_SOURCE_ID` is only a trusted-process default. When independently
+authenticated agents share one HTTP server, bind every bearer token to a fixed
+source and writer identity instead:
+
+```json
+{"tokens":[{"token":"replace-me","source_id":"team-a","actor_id":"codex:a"}]}
+```
+
+```bash
+chmod 600 ./token-bindings.json
+aidememo mcp-serve --port 3000 --auth-bindings-file ./token-bindings.json
+```
+
+The binding is injected into every MCP call, including batch items, and a
+caller cannot override either `source_id` or `actor_id`. Bound tokens cannot
+read `/admin/status` or `/sync/since`. Put TLS termination or an encrypted
+private tunnel in front of non-loopback deployments because `mcp-serve` speaks
+plain HTTP.
 
 ## Maintain memory
 

@@ -354,6 +354,9 @@ private tunnel because `mcp-serve` itself uses plain HTTP. Source partitions
 share the entity-name/type ontology; mutually untrusted tenants should use
 separate stores.
 
+See the [shared-memory deployment guide](docs/SHARED_MEMORY.md) for choosing
+between one trusted store, token-bound source partitions, and separate stores.
+
 ### Compose memory in Python when the agent can run code
 
 Use MCP tools for one-off, model-visible calls. Use `aidememo-agent-sdk` when a task
@@ -501,7 +504,7 @@ and temporal memory semantics, not a SOTA benchmark claim.
 |---|---|
 | Setup | `aidememo init`, `aidememo init --agent codex`, `aidememo project create/use/list` |
 | Read | `aidememo search`, `aidememo query`, `aidememo recent`, `aidememo overview`, `aidememo traverse`, `aidememo path`, `aidememo graph` |
-| Write | `aidememo fact add`, `aidememo fact supersede`, `aidememo fact archive`, `aidememo edit fact`, `aidememo entity describe`, `aidememo relation add` |
+| Write | `aidememo fact add`, `aidememo fact supersede`, `aidememo fact pin`, `aidememo fact archive`, `aidememo fact delete`, `aidememo edit fact`, `aidememo entity describe` |
 | Maintenance | `aidememo doctor`, `aidememo lint`, `aidememo bench`, `aidememo backup`, `aidememo branch`, `aidememo pending`, `aidememo workflow`, `aidememo ingest`, `aidememo watch`, `aidememo vector-rebuild`, `aidememo consolidate` |
 | Server | `aidememo mcp`, `aidememo mcp-serve`, `aidememo daemon start/status/stop`, `aidememo mcp-install` |
 | Config | `aidememo config get/set/list`, `aidememo auth generate/login/list/logout` |

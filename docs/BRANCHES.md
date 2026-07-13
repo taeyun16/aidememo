@@ -18,9 +18,11 @@ This is useful when the memory itself is part of an experiment:
 | You need a replayable artifact for an agent run | The segment JSONL plus manifest records what that branch tried to add. |
 
 Do not use branch logs as full multi-master conflict resolution. Merge is
-idempotent and append-oriented: duplicate records are skipped, independent new
-facts are appended, and semantic conflicts such as two competing decisions are
-left to the caller's policy.
+idempotent and append-oriented: identical or stale entity/fact records are
+skipped, newer records with the same ID are applied in LWW order, relation
+identities are inserted or replaced, independent new facts are appended, and
+semantic conflicts such as two competing decisions are left to the caller's
+policy.
 
 ## Workflow
 
@@ -142,6 +144,9 @@ What is covered:
 - All selected segments retain their original LWW order; after import, records
   actually changed by the merge receive one coordinator relay timestamp so an
   already-advanced downstream sync cursor still observes historical IDs.
+- The relay timestamp applies to entity/fact records. Relation inserts or
+  replacements change the complete relation-snapshot generation, which makes
+  an already-advanced downstream replay the relation snapshot instead.
 - S3 is a transport for branch artifacts, not the live database backend.
 
 What is not covered yet:

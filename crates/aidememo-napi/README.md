@@ -55,6 +55,7 @@ const factId = g.factAdd('Redis Sentinel provides high availability', {
   entityIds: [redis],
   factType: 'decision',
   sourceId: 'team-a',
+  actorId: 'codex:account-a',
 });
 
 const hits = JSON.parse(g.search('high availability', {
@@ -120,6 +121,7 @@ const pack = JSON.parse(g.workflowStart('Fix Redis timeout in worker', {
   body: 'Worker jobs intermittently time out. The issue has no more detail.',
   source: 'github:org/app#123',
   sourceId: 'team-a',
+  actorId: 'codex:account-a',
   limit: 8,
   depth: 2,
   recentLimit: 5,
@@ -177,6 +179,11 @@ boundary. Use separate stores/processes for untrusted tenants, or expose the
 store through the MCP server's token-to-source bindings described in
 [`docs/MCP.md`](../../docs/MCP.md).
 
+There is no store-handle source or actor default in `aidememo-napi`: pass
+`sourceId` on every scoped operation and `actorId` on `workflowStart`,
+`factAdd`, or each `factAddMany` item. `lint()` and `stats()` are always
+store-wide diagnostics; do not expose them to source-restricted callers.
+
 ## Branch logs
 
 Use `branchPush` / `branchMerge` when a Node agent or plugin forks a memory
@@ -229,7 +236,7 @@ try {
 | `pathFind(from, to, sourceId?)` | JSON string: path or `null` |
 | `entityGet(name, sourceId?)`, `entityList({ sourceId?, ... }?)` | JSON string: scoped entity operations |
 | `entityAdd/delete`, `resolveEntity`, `entityDescribe` | global shared-ontology operations |
-| `factAdd`, `factAddMany`, `factGet(id, sourceId?)`, `factList({ sourceId?, ... }?)` | fact operations |
+| `factAdd(content, { sourceId?, actorId?, ... }?)`, `factAddMany(items)`, `factGet(id, sourceId?)`, `factList({ sourceId?, ... }?)` | fact operations; each batch item may carry its own `sourceId` and `actorId` |
 | `factPin(id, pinned, sourceId?)`, `pinnedFacts(limit?, sourceId?)` | always-loaded facts |
 | `relationAdd(source, target, type, sourceId?)`, `relationsGet(entity, direction?, sourceId?)` | scoped relation operations |
 | `relationRemove`, `factSupersede`, `factDelete` | global mutation operations |

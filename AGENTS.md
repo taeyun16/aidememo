@@ -83,7 +83,8 @@ aidememo init <wiki-root> [--no-ingest]                  create store + ingest m
 aidememo init --agent codex <wiki-root>                  init + register aidememo MCP for an agent
 aidememo init --agent claude --agent-force <wiki-root>   overwrite existing agent MCP config
 aidememo --store <PATH> mcp-install --target codex       pin the resolved store in Codex MCP config
-         [--codex-home PATH --actor-id ID]...            install isolated Codex profiles with writer provenance
+         [--source-id ID] [--codex-home PATH --actor-id ID]...
+                                                          install isolated Codex profiles with source scope + writer provenance
 ```
 
 ### Read / search
@@ -108,11 +109,15 @@ aidememo query <topic> [-l N] [-d N] [--recent-limit N] [--bm25-only] [-m naive|
                                                    embedding lookup for
                                                    deterministic demos/hooks.
 aidememo recent [-n N] [--type T] [--last 30d]          last 7d facts (default)
-aidememo traverse <entity> [-d N]                        forward graph walk
-aidememo path <from> <to>                                shortest path
-aidememo graph [--from E] [--depth N] [--format mermaid|dot]
-aidememo entity get|list|show <NAME>                     show: compiled view (summary + recent)
-aidememo fact get|list
+aidememo traverse <entity> [-d N] [--source-id ID]       forward graph walk
+aidememo path <from> <to> [--source-id ID]               shortest path
+aidememo graph [--from E] [--depth N] [--format mermaid|dot] [--source-id ID]
+aidememo entity get <NAME> [--source-id ID]
+aidememo entity list [--type T] [--limit N] [--source-id ID]
+aidememo entity show <NAME> [--recent N] [--source-id ID]
+aidememo fact get <ID> [--source-id ID]
+aidememo fact list [--type T] [--entity E] [--source-id ID]
+aidememo fact pinned [--limit N] [--source-id ID]
 aidememo stats                                           counts + size
 ```
 
@@ -120,10 +125,11 @@ aidememo stats                                           counts + size
 ```
 aidememo fact add <content> --entities A,B [--type T] [--source-id ID] [--actor-id ID]
                                                    auto-creates missing entities; optional
-                                                   source_id scopes shared-store retrieval.
+                                                   source_id owns dedup + scoped retrieval.
 aidememo fact delete <ID> [--source-id ID]                source-checked destructive delete
 aidememo fact feedback <ID> [--helpful] [--source-id ID]  source-checked direct feedback
 aidememo fact supersede <OLD_ID> <NEW_ID> [--source-id ID] validity-window invalidate
+aidememo fact pin|unpin <ID> [--source-id ID]             source-checked always-loaded tier
 aidememo fact archive --ids <ID,…> [--source-id ID]       move to backend-specific cold tier
                                                    (`<store>.cold.redb` or `<store>.cold.sqlite`;
                                                    preserves FactId)
@@ -132,7 +138,6 @@ aidememo fact archive --older-than 30d [--type note] [--source-id ID]
 aidememo edit fact <ID> --append/--prepend/--find+--replace/--content
 aidememo entity add <name> [--type service]               custom types accepted
 aidememo entity describe <name> "..." | --from-stdin | --clear   compiled-truth summary
-aidememo relation add <src> <tgt> <rel_type>
 ```
 
 ### Maintenance
@@ -201,16 +206,21 @@ aidememo consolidate --gac [--gac-theta 0.85] [--gac-spread-budget N] [--gac-col
                                             Pair with `aidememo vector-rebuild --current-only` to
                                             shrink the HNSW index proportionally — supersede
                                             alone leaves losers in the sidecar.
-aidememo session new <topic>                      tracked session entity + shell-evaluable
+aidememo session new <topic> [--source-id ID]     tracked session entity + shell-evaluable
                                             'export AIDEMEMO_SESSION_ID=…'. Auto-attaches to every
                                             subsequent fact_add while the env var is set.
-aidememo session current / list                   current/recent tracked sessions.
+aidememo session start [--source-id ID]           scoped warmup envelope.
+aidememo session current|list [--source-id ID]    current/recent tracked sessions.
+aidememo session canvas [SESSION] [--source-id ID]
+                                            auditable Markdown + Mermaid session artifact.
 aidememo workflow start <TITLE> [--body-file issue.md] [--source github:org/repo#123]
-                                            [--actor-id ID] [--parent-session SESSION]
+                                            [--source-id ID] [--actor-id ID]
+                                            [--parent-session SESSION]
                                             sparse issue/ticket entry point: create session,
                                             store trigger, return project context pack.
                                             Use --bm25-only for deterministic demos/hooks
                                             that should skip embedding-model load.
+aidememo profile export [--source-id ID]          read-only typed-fact profile artifact.
 aidememo export [--scope all|...] / aidememo import
 aidememo config get/set/list
 
@@ -673,7 +683,7 @@ another process holds that lock. Two ways to handle shared writes:
    URL. Each agent's MCP client sees the same tools, the same store,
    no lock contention.
    ```bash
-   aidememo mcp-serve --port 3000 --store ~/.aidememo/team.sqlite &
+   aidememo --store ~/.aidememo/team.sqlite mcp-serve --port 3000 &
    # In each agent's MCP config: type=http, url=http://localhost:3000/mcp
    ```
 2. **Brief opportunistic contention** is fine: set
@@ -743,7 +753,7 @@ trusted unscoped administrator. Semantic prewarm starts in a blocking-worker
 task after the listener binds, so `/health` does not wait for model cold load;
 `/admin/status.semantic_prewarm` reports `warming|ready|failed|disabled`.
 
-### Token UX — `aidememo auth` (commit will land alongside this section)
+### Token UX — `aidememo auth`
 
 Operators rarely want to type bearer tokens. `aidememo auth` ships four
 small commands so the secret never has to live in shell history:

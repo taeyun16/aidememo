@@ -92,11 +92,31 @@ without spending model turns on intermediate state. `session_canvas(...)` and
 `project_profile(...)` return read-only Markdown strings suitable for direct
 prompt injection before resuming long work.
 
+## Identity defaults and source scope
+
 `source_id` can be passed to `Memory.open(...)` or inherited from
-`AIDEMEMO_SOURCE_ID`, matching the MCP `aidememo mcp-install --source-id <namespace>` path.
-Use it for the project/upstream namespace. `actor_id`, inherited from
-`AIDEMEMO_ACTOR_ID`, records which account or agent wrote each fact without
-splitting shared project retrieval.
+`AIDEMEMO_SOURCE_ID`, matching the MCP
+`aidememo mcp-install --source-id <namespace>` path. The client forwards it
+through search/query/context, recent/entity/traverse reads, aggregation,
+workflow/session/project context, and fact writes. `actor_id`, inherited from
+`AIDEMEMO_ACTOR_ID`, records which account or agent wrote workflow and fact
+records without splitting shared project retrieval.
+
+Open-time identities are defaults, not an authorization boundary. Explicit
+per-call values take precedence; for `remember(...)` / `fact_add_many(...)`, an
+identity on an individual item wins over the method and open-time defaults.
+Native and CLI callers can therefore select another source. Use separate
+stores for untrusted tenants, or the HTTP MCP server's bearer-token bindings
+when callers must not override `source_id` or `actor_id`.
+
+Because `doctor`, `lint`, and `stats` expose global store metadata,
+`mem.client.doctor()`, `lint()`, and `stats()` raise `AideMemoUnavailable` when
+the client has a default source. Run those diagnostics from an unscoped
+administrator client instead.
+
+Exact-content deduplication is source-local. Entity names and types remain a
+shared ontology, while source-scoped entity visibility is fact-backed and
+source-scoped graph traversal uses only relations created in that source.
 
 `storage_backend` is optional and matches the CLI/native binding selector:
 omit it or pass an empty string for the compiled default, pass `"sqlite"` or

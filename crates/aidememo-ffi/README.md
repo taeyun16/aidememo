@@ -77,6 +77,11 @@ printf("%s\n", facts);
 aidememo_free_string(facts);
 ```
 
+The C handle has no source or actor default: pass `source_id` to every scoped
+call. `aidememo_fact_add_scoped` accepts `actor_id`, and each
+`aidememo_fact_add_many` item may carry independent `source_id` and `actor_id`
+values.
+
 Exact-content deduplication is local to a source namespace, so two sources can
 store the same text as independent facts with distinct provenance.
 Entities are a shared ontology: names, IDs, and types can be reused by several
@@ -88,6 +93,9 @@ global mutation functions remain available. Treat this as a trusted-team
 boundary. Use separate stores/processes for untrusted tenants, or expose the
 store through the MCP server's token-to-source bindings described in
 [`docs/MCP.md`](../../docs/MCP.md).
+
+`aidememo_lint` and `aidememo_stats` always report store-wide diagnostics; do
+not expose them to source-restricted callers.
 
 ## API
 

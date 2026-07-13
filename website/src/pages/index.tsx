@@ -179,6 +179,19 @@ const docLinks: DocLink[] = [
   },
   {
     title: translate({
+      id: 'homepage.card.sharedMemory.title',
+      message: 'Shared memory',
+      description: 'Homepage link title for the shared-memory deployment guide.',
+    }),
+    description: translate({
+      id: 'homepage.card.sharedMemory.description',
+      message: 'Give multiple agents one durable store with explicit source and writer identities.',
+      description: 'Homepage link description for the shared-memory deployment guide.',
+    }),
+    to: '/docs/SHARED_MEMORY',
+  },
+  {
+    title: translate({
       id: 'homepage.card.workflows.title',
       message: 'Agent workflows',
       description: 'Homepage link title for agent workflows.',
