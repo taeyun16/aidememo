@@ -31,8 +31,10 @@ aidememo --store "$(pwd)/_meta/wiki.sqlite" stats
 ```
 
 Use an absolute store path for agent registration. Add a `source_id` when one
-store contains more than one project or tenant, and an `actor_id` when writes
-must retain which agent profile created them.
+trusted store contains more than one project or agent namespace, and an
+`actor_id` when writes must retain which agent profile created them. An MCP
+install sets environment defaults that a caller can override; use HTTP token
+bindings when the source assignment must be enforced.
 
 ## Claude Code
 
@@ -149,15 +151,18 @@ record project memory naturally. If an older installer suggests
 
 ```bash
 # Cursor: writes mcpServers.aidememo in ~/.cursor/mcp.json
-aidememo --store "$(pwd)/_meta/wiki.sqlite" mcp-install --target cursor
+aidememo --store "$(pwd)/_meta/wiki.sqlite" mcp-install --target cursor \
+  --source-id project:my-app --actor-id cursor:local
 
 # OpenClaw: native skill plus MCP registration
 aidememo skill install --target openclaw
-aidememo --store "$(pwd)/_meta/wiki.sqlite" mcp-install --target openclaw
+aidememo --store "$(pwd)/_meta/wiki.sqlite" mcp-install --target openclaw \
+  --source-id project:my-app --actor-id openclaw:local
 
 # OpenCode: appends managed instructions and writes mcp.aidememo
 aidememo skill install --target opencode
-aidememo --store "$(pwd)/_meta/wiki.sqlite" mcp-install --target opencode
+aidememo --store "$(pwd)/_meta/wiki.sqlite" mcp-install --target opencode \
+  --source-id project:my-app --actor-id opencode:local
 ```
 
 Run either installer with `--list-targets` to inspect every supported target
@@ -176,6 +181,11 @@ For an MCP agent, confirm that `aidememo` is connected, then begin a normal
 turn with `aidememo_context` or a ticket with `aidememo_workflow_start`. Use
 `aidememo_query` for a narrower follow-up and write only durable decisions,
 conventions, preferences, lessons, and recurring errors.
+
+`aidememo doctor` above is an administrator-side CLI check. Source-scoped MCP
+identities cannot call `aidememo_doctor` or `aidememo_overview` because both
+return global store metadata. Run those diagnostics outside the scoped agent;
+use `aidememo_context`, `aidememo_query`, and scoped entity/fact tools inside it.
 
 | Symptom | Fix |
 |---|---|

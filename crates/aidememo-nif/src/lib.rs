@@ -153,6 +153,27 @@ fn search(
 }
 
 #[rustler::nif]
+fn search_scoped(
+    handle: ResourceArc<AideMemoNif>,
+    query: String,
+    limit: u32,
+    current_only: bool,
+    source_id: String,
+) -> NifResult<String> {
+    let opts = SearchOpts {
+        limit: Some(limit as usize),
+        current_only,
+        source_id: opt_str(source_id),
+        ..Default::default()
+    };
+    let results = handle
+        .wiki
+        .hybrid_search(&query, opts)
+        .map_err(|_| rustler::Error::BadArg)?;
+    to_json(&results)
+}
+
+#[rustler::nif]
 fn query(
     handle: ResourceArc<AideMemoNif>,
     topic: String,
@@ -171,6 +192,35 @@ fn query(
         mode: aidememo_core::QueryMode::parse(&mode),
         bm25_only: false,
         source_id: None,
+    };
+    let result = handle
+        .wiki
+        .query(&topic, opts)
+        .map_err(|_| rustler::Error::BadArg)?;
+    to_json(&result)
+}
+
+#[rustler::nif]
+#[allow(clippy::too_many_arguments)]
+fn query_scoped(
+    handle: ResourceArc<AideMemoNif>,
+    topic: String,
+    limit: u32,
+    depth: u32,
+    recent_limit: u32,
+    current_only: bool,
+    mode: String,
+    source_id: String,
+) -> NifResult<String> {
+    let opts = QueryOpts {
+        search_limit: limit as usize,
+        depth,
+        recent_limit: recent_limit as usize,
+        since: None,
+        current_only,
+        mode: aidememo_core::QueryMode::parse(&mode),
+        bm25_only: false,
+        source_id: opt_str(source_id),
     };
     let result = handle
         .wiki
@@ -203,10 +253,46 @@ fn traverse(
 }
 
 #[rustler::nif]
+fn traverse_scoped(
+    handle: ResourceArc<AideMemoNif>,
+    entity: String,
+    depth: u32,
+    direction: String,
+    source_id: String,
+) -> NifResult<String> {
+    let opts = TraverseOpts {
+        depth,
+        relation_types: None,
+        direction: parse_direction(&direction),
+    };
+    let source_id = opt_str(source_id);
+    let result = handle
+        .wiki
+        .traverse_scoped(&entity, opts, source_id.as_deref())
+        .map_err(|_| rustler::Error::BadArg)?;
+    to_json(&result)
+}
+
+#[rustler::nif]
 fn path_find(handle: ResourceArc<AideMemoNif>, from: String, to: String) -> NifResult<String> {
     let path = handle
         .wiki
         .path_find(&from, &to)
+        .map_err(|_| rustler::Error::BadArg)?;
+    to_json(&path)
+}
+
+#[rustler::nif]
+fn path_find_scoped(
+    handle: ResourceArc<AideMemoNif>,
+    from: String,
+    to: String,
+    source_id: String,
+) -> NifResult<String> {
+    let source_id = opt_str(source_id);
+    let path = handle
+        .wiki
+        .path_find_scoped(&from, &to, source_id.as_deref())
         .map_err(|_| rustler::Error::BadArg)?;
     to_json(&path)
 }
@@ -248,6 +334,20 @@ fn entity_get(handle: ResourceArc<AideMemoNif>, name: String) -> NifResult<Strin
 }
 
 #[rustler::nif]
+fn entity_get_scoped(
+    handle: ResourceArc<AideMemoNif>,
+    name: String,
+    source_id: String,
+) -> NifResult<String> {
+    let source_id = opt_str(source_id);
+    let entity = handle
+        .wiki
+        .entity_get_scoped(&name, source_id.as_deref())
+        .map_err(|_| rustler::Error::BadArg)?;
+    to_json(&entity)
+}
+
+#[rustler::nif]
 fn entity_list(
     handle: ResourceArc<AideMemoNif>,
     limit: u32,
@@ -271,6 +371,36 @@ fn entity_list(
     let entities = handle
         .wiki
         .entity_list(opts)
+        .map_err(|_| rustler::Error::BadArg)?;
+    to_json(&entities)
+}
+
+#[rustler::nif]
+fn entity_list_scoped(
+    handle: ResourceArc<AideMemoNif>,
+    limit: u32,
+    entity_type: String,
+    source_id: String,
+) -> NifResult<String> {
+    let opts = ListOpts {
+        entity_type: if entity_type.is_empty() {
+            None
+        } else {
+            parse_entity_type(&entity_type)
+        },
+        min_facts: None,
+        limit: if limit == 0 {
+            None
+        } else {
+            Some(limit as usize)
+        },
+        sort_by: Default::default(),
+        offset: 0,
+    };
+    let source_id = opt_str(source_id);
+    let entities = handle
+        .wiki
+        .entity_list_scoped(opts, source_id.as_deref())
         .map_err(|_| rustler::Error::BadArg)?;
     to_json(&entities)
 }
@@ -352,6 +482,51 @@ fn fact_add(
     Ok(id.to_string())
 }
 
+#[rustler::nif]
+#[allow(clippy::too_many_arguments)]
+fn fact_add_scoped(
+    handle: ResourceArc<AideMemoNif>,
+    content: String,
+    entity_ids: Vec<String>,
+    fact_type: String,
+    tags: Vec<String>,
+    source: String,
+    confidence: f32,
+    source_id: String,
+    actor_id: String,
+) -> NifResult<String> {
+    let entity_ids = if entity_ids.is_empty() {
+        None
+    } else {
+        Some(
+            entity_ids
+                .iter()
+                .map(|s| parse_entity_id(s))
+                .collect::<NifResult<Vec<_>>>()?,
+        )
+    };
+    let input = FactInput {
+        content,
+        fact_type: parse_fact_type(&fact_type),
+        entity_ids,
+        tags: opt_vec(tags),
+        source: opt_str(source),
+        source_id: opt_str(source_id),
+        actor_id: opt_str(actor_id),
+        source_confidence: if confidence > 0.0 {
+            Some(confidence)
+        } else {
+            None
+        },
+        observed_at: None,
+    };
+    let id = handle
+        .wiki
+        .fact_add(input)
+        .map_err(|_| rustler::Error::BadArg)?;
+    Ok(id.to_string())
+}
+
 /// Single item for `fact_add_many`. Pass each item as an Elixir map
 /// with these keys; an empty `entity_ids` / `tags` / `source` /
 /// `fact_type` skips the corresponding field, and `confidence <= 0`
@@ -363,6 +538,18 @@ struct FactAddManyItem {
     fact_type: String,
     tags: Vec<String>,
     source: String,
+    confidence: f32,
+}
+
+#[derive(rustler::NifMap)]
+struct ScopedFactAddManyItem {
+    content: String,
+    entity_ids: Vec<String>,
+    fact_type: String,
+    tags: Vec<String>,
+    source: String,
+    source_id: String,
+    actor_id: String,
     confidence: f32,
 }
 
@@ -407,6 +594,46 @@ fn fact_add_many(
 }
 
 #[rustler::nif]
+fn fact_add_many_scoped(
+    handle: ResourceArc<AideMemoNif>,
+    items: Vec<ScopedFactAddManyItem>,
+) -> NifResult<Vec<String>> {
+    let mut inputs = Vec::with_capacity(items.len());
+    for item in items {
+        let entity_ids = if item.entity_ids.is_empty() {
+            None
+        } else {
+            Some(
+                item.entity_ids
+                    .iter()
+                    .map(|s| parse_entity_id(s))
+                    .collect::<NifResult<Vec<_>>>()?,
+            )
+        };
+        inputs.push(FactInput {
+            content: item.content,
+            fact_type: parse_fact_type(&item.fact_type),
+            entity_ids,
+            tags: opt_vec(item.tags),
+            source: opt_str(item.source),
+            source_id: opt_str(item.source_id),
+            actor_id: opt_str(item.actor_id),
+            source_confidence: if item.confidence > 0.0 {
+                Some(item.confidence)
+            } else {
+                None
+            },
+            observed_at: None,
+        });
+    }
+    let ids = handle
+        .wiki
+        .fact_add_many(inputs)
+        .map_err(|_| rustler::Error::BadArg)?;
+    Ok(ids.iter().map(|id| id.to_string()).collect())
+}
+
+#[rustler::nif]
 fn fact_get(handle: ResourceArc<AideMemoNif>, fact_id: String) -> NifResult<String> {
     let id = parse_fact_id(&fact_id)?;
     let fact = handle
@@ -414,6 +641,44 @@ fn fact_get(handle: ResourceArc<AideMemoNif>, fact_id: String) -> NifResult<Stri
         .fact_get(&id)
         .map_err(|_| rustler::Error::BadArg)?;
     to_json(&fact)
+}
+
+#[rustler::nif]
+fn fact_get_scoped(
+    handle: ResourceArc<AideMemoNif>,
+    fact_id: String,
+    source_id: String,
+) -> NifResult<String> {
+    let id = parse_fact_id(&fact_id)?;
+    let source_id = opt_str(source_id);
+    let fact = handle
+        .wiki
+        .fact_get_scoped(&id, source_id.as_deref())
+        .map_err(|_| rustler::Error::BadArg)?;
+    to_json(&fact)
+}
+
+#[rustler::nif]
+fn pinned_facts(handle: ResourceArc<AideMemoNif>, limit: u32) -> NifResult<String> {
+    let facts = handle
+        .wiki
+        .pinned_facts(limit as usize)
+        .map_err(|_| rustler::Error::BadArg)?;
+    to_json(&facts)
+}
+
+#[rustler::nif]
+fn pinned_facts_scoped(
+    handle: ResourceArc<AideMemoNif>,
+    limit: u32,
+    source_id: String,
+) -> NifResult<String> {
+    let source_id = opt_str(source_id);
+    let facts = handle
+        .wiki
+        .pinned_facts_scoped(limit as usize, source_id.as_deref())
+        .map_err(|_| rustler::Error::BadArg)?;
+    to_json(&facts)
 }
 
 #[rustler::nif]
@@ -448,6 +713,54 @@ fn fact_list(
         current_only,
         as_of: None,
         source_id: None,
+    };
+    let facts = handle
+        .wiki
+        .fact_list(opts)
+        .map_err(|_| rustler::Error::BadArg)?;
+    to_json(&facts)
+}
+
+#[rustler::nif]
+fn fact_list_scoped(
+    handle: ResourceArc<AideMemoNif>,
+    entity: String,
+    fact_type: String,
+    limit: u32,
+    current_only: bool,
+    source_id: String,
+) -> NifResult<String> {
+    let source_id = opt_str(source_id);
+    let entity_id = if entity.is_empty() {
+        None
+    } else {
+        Some(
+            handle
+                .wiki
+                .entity_get_scoped(&entity, source_id.as_deref())
+                .map_err(|_| rustler::Error::BadArg)?
+                .id,
+        )
+    };
+    let opts = FactListOpts {
+        fact_type: if fact_type.is_empty() {
+            None
+        } else {
+            parse_fact_type(&fact_type)
+        },
+        entity_id,
+        min_confidence: None,
+        limit: if limit == 0 {
+            None
+        } else {
+            Some(limit as usize)
+        },
+        offset: 0,
+        since: None,
+        until: None,
+        current_only,
+        as_of: None,
+        source_id,
     };
     let facts = handle
         .wiki
@@ -495,6 +808,30 @@ fn relation_add(
     let input = RelationInput {
         source,
         target,
+        scope_source_id: None,
+        relation_type: RelationType::new(rel_type),
+        weight: None,
+        evidence: None,
+    };
+    handle
+        .wiki
+        .relation_add(input)
+        .map_err(|_| rustler::Error::BadArg)?;
+    Ok(rustler::types::atom::ok())
+}
+
+#[rustler::nif]
+fn relation_add_scoped(
+    handle: ResourceArc<AideMemoNif>,
+    source: String,
+    target: String,
+    rel_type: String,
+    source_id: String,
+) -> NifResult<rustler::Atom> {
+    let input = RelationInput {
+        source,
+        target,
+        scope_source_id: opt_str(source_id),
         relation_type: RelationType::new(rel_type),
         weight: None,
         evidence: None,
@@ -530,6 +867,22 @@ fn relations_get(
     let relations = handle
         .wiki
         .relations_get(&entity, dir)
+        .map_err(|_| rustler::Error::BadArg)?;
+    to_json(&relations)
+}
+
+#[rustler::nif]
+fn relations_get_scoped(
+    handle: ResourceArc<AideMemoNif>,
+    entity: String,
+    direction: String,
+    source_id: String,
+) -> NifResult<String> {
+    let dir = parse_direction(&direction);
+    let source_id = opt_str(source_id);
+    let relations = handle
+        .wiki
+        .relations_get_scoped(&entity, dir, source_id.as_deref())
         .map_err(|_| rustler::Error::BadArg)?;
     to_json(&relations)
 }

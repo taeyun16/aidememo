@@ -51,7 +51,7 @@ targets. pi is intentionally skill-only because it does not accept MCP. See
 Use HTTP when multiple agents should share one warm process:
 
 ```bash
-aidememo mcp-serve --port 3000 --store ~/.aidememo/team.sqlite
+aidememo --store ~/.aidememo/team.sqlite mcp-serve --port 3000
 ```
 
 Then point MCP clients at:
@@ -63,6 +63,49 @@ http://127.0.0.1:3000/mcp
 HTTP mode is still useful for warm model reuse and shared writes. It is
 especially recommended for redb stores, where only one writer process can hold
 the database lock at a time.
+
+For a network-exposed shared store, bind each bearer token to one source and
+writer identity instead of giving every client the same unscoped token:
+
+```json title="/etc/aidememo/token-bindings.json"
+{
+  "tokens": [
+    {
+      "token": "replace-with-a-random-secret",
+      "source_id": "project:my-app",
+      "actor_id": "codex:account-a"
+    }
+  ]
+}
+```
+
+```bash
+chmod 600 /etc/aidememo/token-bindings.json
+aidememo --store ~/.aidememo/team.sqlite mcp-serve \
+  --bind 0.0.0.0 \
+  --auth-bindings-file /etc/aidememo/token-bindings.json
+```
+
+`AIDEMEMO_MCP_AUTH_BINDINGS_FILE` is the environment-variable equivalent.
+The file may be either the wrapped `{"tokens": [...]}` object shown above or
+a top-level JSON array. Every `token`, `source_id`, and `actor_id` is trimmed
+and must be non-empty, and token values must be unique. `--auth-bindings-file`
+cannot be combined with `--auth-token` or `--auth-token-file`; an explicit CLI
+auth option takes precedence over the auth environment variables.
+
+For a bound token, the server injects the configured `source_id` and
+`actor_id` into every MCP tool call and rejects a caller-supplied mismatch,
+including overrides inside `aidememo_fact_add_many` items. Bound tokens cannot
+use the unscoped `/sync/since` or `/admin/status` endpoints; `/health` returns
+only the health and semantic-prewarm state. Keep the existing
+`--auth-token-file` mode for a trusted, unscoped administrator. A single-token
+administrator is not source-bound: that client may choose `source_id` and
+`actor_id` in tool arguments and can use the global status and sync endpoints.
+
+`mcp-serve` itself speaks plain HTTP. Bearer binding provides identity and
+scope enforcement, not transport encryption. For any non-loopback deployment,
+put the server behind a TLS-terminating reverse proxy or an encrypted private
+tunnel and restrict direct access to the backend port.
 
 ## Core tools
 
@@ -131,6 +174,25 @@ explicit `source_id`. The installed command also pins the selected storage
 backend and resolved store path so an agent process does not drift back to a
 different config default or working directory. Use `--actor-id` independently
 when multiple agent profiles share that namespace and writes need provenance.
+
+Source scoping applies consistently to fact search/list/get, pinned context,
+entity reads, graph traversal/path/export, and ID-based fact mutations. A
+source-scoped entity result is returned only when that entity has facts in the
+source; global entity metadata without source provenance is omitted. Identical
+fact content deduplicates within one source, while the same text in two sources
+keeps two independent fact IDs. Graph relations have their own source
+provenance: a scoped graph read accepts only an exact relation namespace match,
+so legacy unscoped edges and another source's evidence, weight, or relation type
+are not exposed. Use token bindings above when the client must not be allowed to
+choose or override its own scope.
+
+This is a strong partition for cooperating agents in one trusted team store,
+not a full hostile multi-tenant database boundary. Entity names and entity
+types intentionally form a shared ontology across sources. If tenants must not
+share even that ontology or must be protected from one another's resource use,
+give them separate stores (or separate AideMemo processes) instead.
+See [`Shared Memory Layer`](SHARED_MEMORY.md) for the deployment shapes,
+trust boundary, and production checklist behind this choice.
 
 For isolated Codex accounts, repeat `--codex-home` and `--actor-id` while
 pointing every profile at the same explicit store. See

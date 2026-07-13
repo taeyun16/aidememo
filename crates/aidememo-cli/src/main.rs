@@ -130,6 +130,7 @@ fn main() {
                 sub.bind,
                 sub.auth_token,
                 sub.auth_token_file,
+                sub.auth_bindings_file,
                 path,
                 config,
             )
@@ -341,10 +342,11 @@ fn render_backup_create(
         });
     }
     Ok(format!(
-        "backup created: {}\nmanifest: {}\ndatabase: {}\nsha256: {}",
+        "backup created: {}\nmanifest: {}\ndatabase: {}\ncold database: {}\nsha256: {}",
         report.destination,
         report.manifest_uri,
         report.database_uri,
+        report.cold_database_uri.as_deref().unwrap_or("none"),
         report.manifest.database.sqlite_sha256
     ))
 }
@@ -360,11 +362,15 @@ fn render_backup_restore(
         });
     }
     let previous = report.previous_store.as_deref().unwrap_or("none");
+    let restored_cold = report.restored_cold_store.as_deref().unwrap_or("none");
+    let previous_cold = report.previous_cold_store.as_deref().unwrap_or("none");
     Ok(format!(
-        "backup restored: {}\nsource: {}\nprevious: {}\nremoved sidecars: {}",
+        "backup restored: {}\nsource: {}\nrestored cold: {}\nprevious: {}\nprevious cold: {}\nremoved sidecars: {}",
         report.restored_store,
         report.source,
+        restored_cold,
         previous,
+        previous_cold,
         report.removed_sidecars.len()
     ))
 }
@@ -548,17 +554,17 @@ fn handle_entity(
             })?;
             Ok(format!("Added entity '{}' with ID {}", name, id))
         }),
-        cmd::EntitySub::Get { name } => {
+        cmd::EntitySub::Get { source_id, name } => {
             // Daemon discovery — aidememo_entity_get tool returns JSON.
             // We forward the JSON directly so the user gets a single
             // self-contained record; the local table view of an entity
             // doesn't carry meaningfully more than the JSON does.
             if let Some(via) = cmd::daemon::registered_endpoint(path, &config.store.backend) {
                 tracing::debug!(via = %via, "auto-discovered daemon for entity get");
-                return run_entity_get_via_daemon(&via, &name);
+                return run_entity_get_via_daemon(&via, &name, source_id.as_deref());
             }
             with_wiki(path, config, |wiki| {
-                let entity = wiki.entity_get(&name)?;
+                let entity = wiki.entity_get_scoped(&name, source_id.as_deref())?;
                 output::format_entity(&entity, fmt(json))
             })
         }
@@ -567,6 +573,7 @@ fn handle_entity(
             entity_type,
             min_facts,
             limit,
+            source_id,
         } => {
             if let Some(via) = cmd::daemon::registered_endpoint(path, &config.store.backend) {
                 tracing::debug!(via = %via, "auto-discovered daemon for entity list");
@@ -578,6 +585,9 @@ fn handle_entity(
                 if let Some(t) = entity_type {
                     args["type"] = serde_json::json!(t);
                 }
+                if let Some(source_id) = source_id.as_deref() {
+                    args["source_id"] = serde_json::json!(source_id);
+                }
                 let body = serde_json::json!({
                     "jsonrpc": "2.0", "id": 1,
                     "method": "tools/call",
@@ -587,13 +597,16 @@ fn handle_entity(
             }
             // Local path — uses sort + min_facts the tool doesn't expose.
             with_wiki(path, config, |wiki| {
-                let entities = wiki.entity_list(ListOpts {
-                    entity_type: parse_entity_type(entity_type),
-                    min_facts,
-                    sort_by: parse_entity_sort(sort),
-                    limit,
-                    offset: 0,
-                })?;
+                let entities = wiki.entity_list_scoped(
+                    ListOpts {
+                        entity_type: parse_entity_type(entity_type),
+                        min_facts,
+                        sort_by: parse_entity_sort(sort),
+                        limit,
+                        offset: 0,
+                    },
+                    source_id.as_deref(),
+                )?;
                 output::format_entity_list(&entities, fmt(json))
             })
         }
@@ -648,11 +661,16 @@ fn handle_entity(
                 ))
             }
         }),
-        cmd::EntitySub::Show { recent, name } => with_wiki(path, config, |wiki| {
-            let entity = wiki.entity_get(&name)?;
+        cmd::EntitySub::Show {
+            recent,
+            source_id,
+            name,
+        } => with_wiki(path, config, |wiki| {
+            let entity = wiki.entity_get_scoped(&name, source_id.as_deref())?;
             let recent_n = recent.unwrap_or(5);
             let facts = wiki.fact_list(FactListOpts {
                 entity_id: Some(entity.id),
+                source_id,
                 limit: Some(recent_n),
                 current_only: false,
                 ..Default::default()
@@ -704,6 +722,7 @@ fn handle_fact(
                 );
             }
             with_wiki_mut(path, config, |wiki| {
+                let scoped_source_id = source_id.clone();
                 let mut auto_created: Vec<String> = Vec::new();
                 let mut alternatives: Vec<serde_json::Value> = Vec::new();
                 let entity_ids = match entities {
@@ -720,8 +739,17 @@ fn handle_fact(
                             .collect();
                         let mut ids = Vec::new();
                         for name in &names {
+                            let was_visible = scoped_source_id.is_none()
+                                || wiki
+                                    .entity_get_scoped(name, scoped_source_id.as_deref())
+                                    .is_ok();
                             match wiki.resolve_entity(name) {
-                                Ok(id) => ids.push(id),
+                                Ok(id) => {
+                                    ids.push(id);
+                                    if !was_visible {
+                                        auto_created.push(name.clone());
+                                    }
+                                }
                                 Err(_) => {
                                     // Same fuzzy guard as the MCP tool —
                                     // surface near-miss candidates so a
@@ -729,8 +757,18 @@ fn handle_fact(
                                     // graph (live agent test caught
                                     // "Postgres" + "Postgrs" coexisting
                                     // as separate entities).
-                                    let suggestions =
-                                        wiki.suggest_similar_entities(name).unwrap_or_default();
+                                    let suggestions: Vec<String> = wiki
+                                        .suggest_similar_entities(name)
+                                        .unwrap_or_default()
+                                        .into_iter()
+                                        .filter(|suggestion| {
+                                            wiki.entity_get_scoped(
+                                                suggestion,
+                                                scoped_source_id.as_deref(),
+                                            )
+                                            .is_ok()
+                                        })
+                                        .collect();
                                     let new_id = wiki.entity_add(EntityInput {
                                         name: name.clone(),
                                         entity_type: Some(EntityType::Unknown),
@@ -757,16 +795,20 @@ fn handle_fact(
                 // give every subsequent fact the session as a thread.
                 let entity_ids = match std::env::var("AIDEMEMO_SESSION_ID") {
                     Ok(sid) if !sid.is_empty() => match wiki.resolve_entity(&sid) {
-                        Ok(sess_id) => {
+                        Ok(sess_id)
+                            if wiki
+                                .entity_get_by_id_scoped(sess_id, scoped_source_id.as_deref())
+                                .is_ok() =>
+                        {
                             let mut ids = entity_ids.unwrap_or_default();
                             if !ids.contains(&sess_id) {
                                 ids.push(sess_id);
                             }
                             Some(ids)
                         }
-                        Err(_) => {
+                        Ok(_) | Err(_) => {
                             tracing::warn!(
-                                "AIDEMEMO_SESSION_ID={sid} doesn't resolve to an entity; skipping session auto-attach"
+                                "AIDEMEMO_SESSION_ID={sid} isn't visible in the selected source; skipping session auto-attach"
                             );
                             entity_ids
                         }
@@ -786,6 +828,7 @@ fn handle_fact(
                             limit: Some(1),
                             bm25_only: true,
                             current_only: true,
+                            source_id: scoped_source_id.clone(),
                             ..Default::default()
                         },
                     )
@@ -822,11 +865,14 @@ fn handle_fact(
                     // stable envelope regardless of whether the daemon
                     // was online or the local in-process path was
                     // used.
-                    let record = wiki.fact_get(&id)?;
+                    let record = wiki.fact_get_scoped(&id, scoped_source_id.as_deref())?;
                     let entity_names_resolved: Vec<String> = record
                         .entity_ids
                         .iter()
-                        .filter_map(|eid| wiki.entity_get_by_id(*eid).ok())
+                        .filter_map(|eid| {
+                            wiki.entity_get_by_id_scoped(*eid, scoped_source_id.as_deref())
+                                .ok()
+                        })
                         .map(|e| e.name)
                         .collect();
                     let alternatives_field = if alternatives.is_empty() {
@@ -909,19 +955,19 @@ fn handle_fact(
                 Ok(msg)
             })
         }
-        cmd::FactSub::Get { id } => {
+        cmd::FactSub::Get { source_id, id } => {
             // Same daemon-aware fast path as entity get — aidememo_fact_get
             // tool returns a JSON Fact record we forward verbatim.
             if let Some(via) = cmd::daemon::registered_endpoint(path, &config.store.backend) {
                 tracing::debug!(via = %via, "auto-discovered daemon for fact get");
-                return run_fact_get_via_daemon(&via, &id);
+                return run_fact_get_via_daemon(&via, &id, source_id.as_deref());
             }
             with_wiki(path, config, |wiki| {
                 let fact_id =
                     aidememo_core::FactId(aidememo_core::ulid::Ulid::from_string(&id).map_err(
                         |_| AideMemoError::InvalidInput(format!("Invalid fact ID: {}", id)),
                     )?);
-                let fact = wiki.fact_get(&fact_id)?;
+                let fact = wiki.fact_get_scoped(&fact_id, source_id.as_deref())?;
                 output::format_fact(&fact, &wiki, fmt(json))
             })
         }
@@ -971,7 +1017,10 @@ fn handle_fact(
                 return daemon_tool_call(&url, body, "aidememo_fact_list");
             }
             with_wiki(path, config, |wiki| {
-                let entity_id = entity.and_then(|n| wiki.resolve_entity(&n).ok());
+                let entity_id = match entity {
+                    Some(name) => Some(wiki.entity_get_scoped(&name, source_id.as_deref())?.id),
+                    None => None,
+                };
                 let facts = wiki.fact_list(FactListOpts {
                     fact_type: parse_fact_type(fact_type),
                     entity_id,
@@ -987,19 +1036,25 @@ fn handle_fact(
                 output::format_fact_list(&facts, &wiki, fmt(json))
             })
         }
-        cmd::FactSub::Delete { id } => with_wiki_mut(path, config, |wiki| {
+        cmd::FactSub::Delete { source_id, id } => with_wiki_mut(path, config, |wiki| {
             let fact_id = aidememo_core::FactId(
                 aidememo_core::ulid::Ulid::from_string(&id)
                     .map_err(|_| AideMemoError::InvalidInput(format!("Invalid fact ID: {}", id)))?,
             );
+            wiki.fact_get_scoped(&fact_id, source_id.as_deref())?;
             wiki.fact_delete(&fact_id)?;
             Ok(format!("Deleted fact {}", id))
         }),
-        cmd::FactSub::Feedback { id, helpful } => with_wiki_mut(path, config, |wiki| {
+        cmd::FactSub::Feedback {
+            id,
+            helpful,
+            source_id,
+        } => with_wiki_mut(path, config, |wiki| {
             let fact_id = aidememo_core::FactId(
                 aidememo_core::ulid::Ulid::from_string(&id)
                     .map_err(|_| AideMemoError::InvalidInput(format!("Invalid fact ID: {}", id)))?,
             );
+            wiki.fact_get_scoped(&fact_id, source_id.as_deref())?;
             wiki.fact_feedback(&fact_id, helpful)?;
             Ok(format!(
                 "Recorded {} feedback for fact {}",
@@ -1007,35 +1062,34 @@ fn handle_fact(
                 id
             ))
         }),
-        cmd::FactSub::Supersede { old_id, new_id } => {
+        cmd::FactSub::Supersede {
+            source_id,
+            old_id,
+            new_id,
+        } => {
             // Daemon discovery — aidememo_fact_supersede MCP tool exists.
             if let Some(via) = cmd::daemon::registered_endpoint(path, &config.store.backend) {
                 tracing::debug!(via = %via, "auto-discovered daemon for fact supersede");
-                return run_fact_supersede_via_daemon(&via, &old_id, &new_id);
+                return run_fact_supersede_via_daemon(&via, &old_id, &new_id, source_id.as_deref());
             }
             with_wiki_mut(path, config, |wiki| {
-                let parse = |s: &str| {
-                    aidememo_core::FactId(
-                        aidememo_core::ulid::Ulid::from_string(s)
-                            .map_err(|_| {
-                                AideMemoError::InvalidInput(format!("Invalid fact ID: {s}"))
-                            })
-                            .unwrap_or_default(),
-                    )
-                };
-                let old = parse(&old_id);
-                let new = parse(&new_id);
+                let old = parse_fact_id_str(&old_id)?;
+                let new = parse_fact_id_str(&new_id)?;
+                wiki.fact_get_scoped(&old, source_id.as_deref())?;
+                wiki.fact_get_scoped(&new, source_id.as_deref())?;
                 wiki.fact_supersede(&old, &new)?;
                 Ok(format!("Superseded {old_id} by {new_id}"))
             })
         }
-        cmd::FactSub::Pin { id } => with_wiki(path, config, |wiki| {
+        cmd::FactSub::Pin { source_id, id } => with_wiki(path, config, |wiki| {
             let fact_id = parse_fact_id_str(&id)?;
+            wiki.fact_get_scoped(&fact_id, source_id.as_deref())?;
             wiki.fact_pin(&fact_id, true)?;
             Ok(format!("Pinned fact {id}"))
         }),
-        cmd::FactSub::Unpin { id } => with_wiki(path, config, |wiki| {
+        cmd::FactSub::Unpin { source_id, id } => with_wiki(path, config, |wiki| {
             let fact_id = parse_fact_id_str(&id)?;
+            wiki.fact_get_scoped(&fact_id, source_id.as_deref())?;
             wiki.fact_pin(&fact_id, false)?;
             Ok(format!("Unpinned fact {id}"))
         }),
@@ -1044,6 +1098,7 @@ fn handle_fact(
             older_than,
             fact_type,
             dry_run,
+            source_id,
         } => with_wiki_mut(path, config, |wiki| {
             let mut targets: Vec<aidememo_core::FactId> = Vec::new();
             if let Some(spec) = &ids {
@@ -1058,6 +1113,7 @@ fn handle_fact(
                 if let Some(t) = &fact_type {
                     opts.fact_type = Some(aidememo_core::FactType::parse(t));
                 }
+                opts.source_id = source_id.clone();
                 let candidates = wiki.fact_list(opts)?;
                 for f in candidates {
                     let ts = f.observed_at.unwrap_or(f.created_at);
@@ -1068,6 +1124,9 @@ fn handle_fact(
             }
             if targets.is_empty() {
                 return Ok("No facts matched (give --ids or --older-than).".into());
+            }
+            for id in &targets {
+                wiki.fact_get_scoped(id, source_id.as_deref())?;
             }
             if dry_run {
                 let hot_targets: Vec<_> = {
@@ -1092,9 +1151,9 @@ fn handle_fact(
                 targets.len()
             ))
         }),
-        cmd::FactSub::Pinned { limit } => with_wiki(path, config, |wiki| {
+        cmd::FactSub::Pinned { limit, source_id } => with_wiki(path, config, |wiki| {
             let limit = limit.unwrap_or(20);
-            let pinned = wiki.pinned_facts(limit)?;
+            let pinned = wiki.pinned_facts_scoped(limit, source_id.as_deref())?;
             if json {
                 return serde_json::to_string_pretty(&pinned).map_err(|e| {
                     AideMemoError::Serialize {
@@ -1278,13 +1337,14 @@ fn handle_session(
             recent_limit,
             recent_days,
             top_entities_limit,
+            source_id,
         } => with_wiki(store_path, config, |wiki| {
             let pinned_limit = pinned_limit.unwrap_or(20);
             let recent_limit = recent_limit.unwrap_or(10);
             let recent_days = recent_days.unwrap_or(7);
             let top_entities_limit = top_entities_limit.unwrap_or(10);
 
-            let pinned = wiki.pinned_facts(pinned_limit)?;
+            let pinned = wiki.pinned_facts_scoped(pinned_limit, source_id.as_deref())?;
             let now_ms = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_millis() as u64)
@@ -1294,7 +1354,7 @@ fn handle_session(
                 fact_type: None,
                 entity_id: None,
                 min_confidence: None,
-                source_id: None,
+                source_id: source_id.clone(),
                 limit: Some(recent_limit),
                 offset: 0,
                 since,
@@ -1302,15 +1362,67 @@ fn handle_session(
                 current_only: true,
                 as_of: None,
             })?;
-            let top_entities = wiki.entity_list(aidememo_core::ListOpts {
-                entity_type: None,
-                min_facts: None,
-                sort_by: aidememo_core::EntitySort::FactCount,
-                limit: Some(top_entities_limit),
-                offset: 0,
-            })?;
-            let issues = wiki.lint()?;
-            let stats = wiki.stats()?;
+            let top_entities = wiki.entity_list_scoped(
+                aidememo_core::ListOpts {
+                    entity_type: None,
+                    min_facts: None,
+                    sort_by: aidememo_core::EntitySort::FactCount,
+                    limit: Some(top_entities_limit),
+                    offset: 0,
+                },
+                source_id.as_deref(),
+            )?;
+            let (stats, open_issues, entity_count, fact_count, relation_count, issue_count) =
+                if let Some(source_id) = source_id.as_deref() {
+                    let entity_count = wiki
+                        .entity_list_scoped(
+                            aidememo_core::ListOpts {
+                                limit: None,
+                                ..Default::default()
+                            },
+                            Some(source_id),
+                        )?
+                        .len() as u64;
+                    let fact_count = wiki
+                        .fact_list(aidememo_core::FactListOpts {
+                            source_id: Some(source_id.to_string()),
+                            limit: None,
+                            ..Default::default()
+                        })?
+                        .len() as u64;
+                    (
+                        serde_json::json!({
+                            "entity_count": entity_count,
+                            "fact_count": fact_count,
+                            "relation_count": null,
+                            "source_id": source_id,
+                        }),
+                        serde_json::json!({
+                            "total": null,
+                            "issues": [],
+                            "unavailable": "lint is global store metadata",
+                        }),
+                        entity_count,
+                        fact_count,
+                        None,
+                        None,
+                    )
+                } else {
+                    let issues = wiki.lint()?;
+                    let stats = wiki.stats()?;
+                    let entity_count = stats.entity_count;
+                    let fact_count = stats.fact_count;
+                    let relation_count = Some(stats.relation_count);
+                    let issue_count = Some(issues.len());
+                    (
+                        serde_json::json!(stats),
+                        serde_json::json!({"total": issues.len(), "issues": issues}),
+                        entity_count,
+                        fact_count,
+                        relation_count,
+                        issue_count,
+                    )
+                };
 
             if json {
                 return serde_json::to_string_pretty(&serde_json::json!({
@@ -1318,10 +1430,7 @@ fn handle_session(
                     "pinned": pinned,
                     "recent": recent,
                     "top_entities": top_entities,
-                    "open_issues": {
-                        "total": issues.len(),
-                        "issues": issues,
-                    },
+                    "open_issues": open_issues,
                 }))
                 .map_err(|e| AideMemoError::Serialize {
                     context: "session start (json)".into(),
@@ -1330,9 +1439,13 @@ fn handle_session(
             }
             let mut out = String::new();
             out.push_str(&format!(
-                "stats: {} entities, {} facts, {} relations",
-                stats.entity_count, stats.fact_count, stats.relation_count
+                "stats: {entity_count} entities, {fact_count} facts"
             ));
+            if let Some(relation_count) = relation_count {
+                out.push_str(&format!(", {relation_count} relations"));
+            } else {
+                out.push_str(", relations unavailable in source scope");
+            }
             out.push_str(&format!("\npinned ({}/{}):", pinned.len(), pinned_limit));
             for f in pinned.iter().take(5) {
                 out.push_str(&format!(
@@ -1360,24 +1473,38 @@ fn handle_session(
                     e.name, e.entity_type, e.fact_count
                 ));
             }
-            out.push_str(&format!("\nopen issues: {}", issues.len()));
+            match issue_count {
+                Some(issue_count) => out.push_str(&format!("\nopen issues: {issue_count}")),
+                None => out.push_str("\nopen issues: unavailable in source scope"),
+            }
             Ok(out)
         }),
-        cmd::SessionSub::New { topic } => with_wiki(store_path, config, |wiki| {
+        cmd::SessionSub::New { source_id, topic } => with_wiki(store_path, config, |wiki| {
             // Mint a session entity. Name is `session-<ULID>` so it's
             // sortable by creation time and globally unique even
             // across stores. source_page carries the human topic.
             let session_name = format!("session-{}", aidememo_core::ulid::Ulid::new());
-            wiki.entity_add(aidememo_core::EntityInput {
+            let session_entity_id = wiki.entity_add(aidememo_core::EntityInput {
                 name: session_name.clone(),
                 entity_type: Some(aidememo_core::EntityType::parse("session")),
                 source_page: Some(topic.clone()),
                 ..Default::default()
             })?;
+            if let Some(source_id) = source_id.clone() {
+                wiki.fact_add(aidememo_core::FactInput {
+                    content: format!("Session {session_name} started: {topic}"),
+                    fact_type: Some(aidememo_core::FactType::Question),
+                    entity_ids: Some(vec![session_entity_id]),
+                    tags: Some(vec!["session-start".to_string()]),
+                    source_id: Some(source_id),
+                    ..Default::default()
+                })?;
+            }
             if json {
                 return serde_json::to_string_pretty(&serde_json::json!({
                     "session_id": session_name,
                     "topic": topic,
+                    "source_id": source_id,
                     "export": format!("export AIDEMEMO_SESSION_ID={}", session_name),
                 }))
                 .map_err(|e| AideMemoError::Serialize {
@@ -1391,7 +1518,7 @@ fn handle_session(
                 "# aidememo session: {topic}\n# id: {session_name}\nexport AIDEMEMO_SESSION_ID={session_name}"
             ))
         }),
-        cmd::SessionSub::Current => with_wiki(store_path, config, |wiki| {
+        cmd::SessionSub::Current { source_id } => with_wiki(store_path, config, |wiki| {
             let Ok(sid) = std::env::var("AIDEMEMO_SESSION_ID") else {
                 if json {
                     return Ok("null".to_string());
@@ -1401,13 +1528,13 @@ fn handle_session(
                         .into(),
                 );
             };
-            let entity = wiki.entity_get(&sid)?;
+            let entity = wiki.entity_get_scoped(&sid, source_id.as_deref())?;
             let fact_count = wiki
                 .fact_list(aidememo_core::FactListOpts {
                     fact_type: None,
                     entity_id: Some(entity.id),
                     min_confidence: None,
-                    source_id: None,
+                    source_id: source_id.clone(),
                     limit: None,
                     offset: 0,
                     since: None,
@@ -1435,15 +1562,18 @@ fn handle_session(
                 fact_count,
             ))
         }),
-        cmd::SessionSub::List { limit } => with_wiki(store_path, config, |wiki| {
+        cmd::SessionSub::List { limit, source_id } => with_wiki(store_path, config, |wiki| {
             let limit = limit.unwrap_or(20);
-            let sessions = wiki.entity_list(aidememo_core::ListOpts {
-                entity_type: Some(aidememo_core::EntityType::parse("session")),
-                min_facts: None,
-                sort_by: aidememo_core::EntitySort::UpdatedAt,
-                limit: Some(limit),
-                offset: 0,
-            })?;
+            let sessions = wiki.entity_list_scoped(
+                aidememo_core::ListOpts {
+                    entity_type: Some(aidememo_core::EntityType::parse("session")),
+                    min_facts: None,
+                    sort_by: aidememo_core::EntitySort::UpdatedAt,
+                    limit: Some(limit),
+                    offset: 0,
+                },
+                source_id.as_deref(),
+            )?;
             if json {
                 return serde_json::to_string_pretty(&sessions).map_err(|e| {
                     AideMemoError::Serialize {
@@ -1465,13 +1595,15 @@ fn handle_session(
             output,
             limit,
             include_superseded,
+            source_id,
             session,
         } => with_wiki(store_path, config, |wiki| {
-            let artifact = cmd::artifacts::session_canvas(
+            let artifact = cmd::artifacts::session_canvas_scoped(
                 &wiki,
                 session.as_deref(),
                 limit.unwrap_or(80),
                 include_superseded,
+                source_id.as_deref(),
             )?;
             cmd::artifacts::write_artifact_or_stdout(
                 output.as_deref(),
@@ -1677,23 +1809,39 @@ fn render_workflow_start_text(pack: &serde_json::Value, max_chars: usize) -> Str
 
 /// `aidememo entity get NAME` daemon path. aidememo_entity_get returns the
 /// entity record as JSON; we forward it verbatim.
-fn run_entity_get_via_daemon(base_url: &str, name: &str) -> Result<String, AideMemoError> {
+fn run_entity_get_via_daemon(
+    base_url: &str,
+    name: &str,
+    source_id: Option<&str>,
+) -> Result<String, AideMemoError> {
     let url = format!("{}/mcp", base_url.trim_end_matches('/'));
+    let mut args = serde_json::json!({"name": name});
+    if let Some(source_id) = source_id {
+        args["source_id"] = serde_json::json!(source_id);
+    }
     let body = serde_json::json!({
         "jsonrpc": "2.0", "id": 1,
         "method": "tools/call",
-        "params": {"name": "aidememo_entity_get", "arguments": {"name": name}}
+        "params": {"name": "aidememo_entity_get", "arguments": args}
     });
     daemon_tool_call(&url, body, "aidememo_entity_get")
 }
 
 /// `aidememo fact get ID` daemon path. Symmetric with entity get.
-fn run_fact_get_via_daemon(base_url: &str, id: &str) -> Result<String, AideMemoError> {
+fn run_fact_get_via_daemon(
+    base_url: &str,
+    id: &str,
+    source_id: Option<&str>,
+) -> Result<String, AideMemoError> {
     let url = format!("{}/mcp", base_url.trim_end_matches('/'));
+    let mut args = serde_json::json!({"id": id});
+    if let Some(source_id) = source_id {
+        args["source_id"] = serde_json::json!(source_id);
+    }
     let body = serde_json::json!({
         "jsonrpc": "2.0", "id": 1,
         "method": "tools/call",
-        "params": {"name": "aidememo_fact_get", "arguments": {"id": id}}
+        "params": {"name": "aidememo_fact_get", "arguments": args}
     });
     daemon_tool_call(&url, body, "aidememo_fact_get")
 }
@@ -1705,14 +1853,19 @@ fn run_fact_supersede_via_daemon(
     base_url: &str,
     old_id: &str,
     new_id: &str,
+    source_id: Option<&str>,
 ) -> Result<String, AideMemoError> {
     let url = format!("{}/mcp", base_url.trim_end_matches('/'));
+    let mut args = serde_json::json!({"old_id": old_id, "new_id": new_id});
+    if let Some(source_id) = source_id {
+        args["source_id"] = serde_json::json!(source_id);
+    }
     let body = serde_json::json!({
         "jsonrpc": "2.0", "id": 1,
         "method": "tools/call",
         "params": {
             "name": "aidememo_fact_supersede",
-            "arguments": {"old_id": old_id, "new_id": new_id}
+            "arguments": args
         }
     });
     let _ = daemon_tool_call(&url, body, "aidememo_fact_supersede")?;
@@ -1728,24 +1881,32 @@ fn handle_traverse(
     if let Some(via) = cmd::daemon::registered_endpoint(path, &config.store.backend) {
         tracing::debug!(via = %via, "auto-discovered daemon for traverse");
         let url = format!("{}/mcp", via.trim_end_matches('/'));
+        let mut args = serde_json::json!({
+            "entity": sub.entity,
+            "depth": sub.depth.unwrap_or(2),
+        });
+        if let Some(source_id) = &sub.source_id {
+            args["source_id"] = serde_json::json!(source_id);
+        }
         let body = serde_json::json!({
             "jsonrpc": "2.0", "id": 1,
             "method": "tools/call",
             "params": {
                 "name": "aidememo_traverse",
-                "arguments": {"entity": sub.entity, "depth": sub.depth.unwrap_or(2)}
+                "arguments": args
             }
         });
         return daemon_tool_call(&url, body, "aidememo_traverse");
     }
     with_wiki(path, config, |wiki| {
-        let result = wiki.traverse(
+        let result = wiki.traverse_scoped(
             &sub.entity,
             TraverseOpts {
                 depth: sub.depth.unwrap_or(2),
                 relation_types: None,
                 direction: TraverseDirection::Forward,
             },
+            sub.source_id.as_deref(),
         )?;
         output::format_traverse(&result, fmt(json))
     })
@@ -1760,18 +1921,22 @@ fn handle_path(
     if let Some(via) = cmd::daemon::registered_endpoint(path, &config.store.backend) {
         tracing::debug!(via = %via, "auto-discovered daemon for path");
         let url = format!("{}/mcp", via.trim_end_matches('/'));
+        let mut args = serde_json::json!({"from": sub.from, "to": sub.to});
+        if let Some(source_id) = &sub.source_id {
+            args["source_id"] = serde_json::json!(source_id);
+        }
         let body = serde_json::json!({
             "jsonrpc": "2.0", "id": 1,
             "method": "tools/call",
             "params": {
                 "name": "aidememo_path",
-                "arguments": {"from": sub.from, "to": sub.to}
+                "arguments": args
             }
         });
         return daemon_tool_call(&url, body, "aidememo_path");
     }
     with_wiki(path, config, |wiki| {
-        let path_steps = wiki.path_find(&sub.from, &sub.to)?;
+        let path_steps = wiki.path_find_scoped(&sub.from, &sub.to, sub.source_id.as_deref())?;
         if json {
             return serde_json::to_string_pretty(&serde_json::json!({
                 "from": &sub.from,
@@ -1789,11 +1954,11 @@ fn handle_path(
                 out.push_str(&format!("Path from '{}' to '{}':\n", sub.from, sub.to));
                 for (i, step) in steps.iter().enumerate() {
                     let from_name = wiki
-                        .entity_get_by_id(step.from)
+                        .entity_get_by_id_scoped(step.from, sub.source_id.as_deref())
                         .map(|e| e.name)
                         .unwrap_or_default();
                     let to_name = wiki
-                        .entity_get_by_id(step.to)
+                        .entity_get_by_id_scoped(step.to, sub.source_id.as_deref())
                         .map(|e| e.name)
                         .unwrap_or_default();
                     out.push_str(&format!(
@@ -2982,7 +3147,13 @@ struct PullSummary {
     cursor_entity: Option<String>,
     cursor_fact: Option<String>,
     cursor_entity_updated_at: Option<u64>,
+    cursor_entity_updated_id: Option<String>,
     cursor_fact_updated_at: Option<u64>,
+    cursor_fact_updated_id: Option<String>,
+    cursor_relation_created_at: Option<u64>,
+    cursor_relation_key: Option<String>,
+    cursor_relation_generation: Option<String>,
+    cursor_relation_scan_key: Option<String>,
     elapsed_ms: u128,
 }
 
@@ -2995,6 +3166,10 @@ fn drain_pull(
 ) -> Result<PullSummary, AideMemoError> {
     let started = std::time::Instant::now();
     let cursor_path = sync_cursor_path(store_path);
+    // Serialize the entire read → pull/import → persist cycle per local
+    // store. Holding the same-directory lock across HTTP prevents concurrent
+    // CLI processes from racing a stale cursor and overwriting each other.
+    let _cursor_lock = acquire_sync_cursor_lock(&cursor_path)?;
     let mut summary = PullSummary {
         url: key.to_string(),
         ..Default::default()
@@ -3007,7 +3182,7 @@ fn drain_pull(
     for _ in 0..max_iter {
         // Re-load on every iteration so concurrent writers (rare but
         // possible during local-tier writes) see the freshest cursor.
-        let cursor_file = load_sync_cursor(&cursor_path);
+        let cursor_file = load_sync_cursor(&cursor_path)?;
         let prev = cursor_file.remotes.get(key).cloned().unwrap_or_default();
 
         let body = pull_one_batch(key, token, &prev, batch_limit)?;
@@ -3015,12 +3190,50 @@ fn drain_pull(
         let stats = wiki.sync_import(&body)?;
         drop(wiki); // release redb lock before saving cursor + next loop
 
+        ensure_sync_import_complete(&stats)?;
+
         let cycle_records = stats.entities_inserted
             + stats.entities_skipped
             + stats.facts_inserted
             + stats.facts_skipped
             + stats.relations_inserted
             + stats.relations_skipped;
+
+        // Update watermarks are an atomic `(timestamp, id)` pair. When a
+        // legacy server advances only the timestamp, clear any prior ID so
+        // the next request safely replays every boundary-timestamp tie.
+        let (entity_updated_at, entity_updated_id) = merge_update_cursor_pair(
+            stats.new_cursor.entity_updated_at,
+            stats
+                .new_cursor
+                .entity_updated_id
+                .map(|id| id.0.to_string()),
+            prev.entity_updated_at,
+            prev.entity_updated_id.clone(),
+        );
+        let (fact_updated_at, fact_updated_id) = merge_update_cursor_pair(
+            stats.new_cursor.fact_updated_at,
+            stats.new_cursor.fact_updated_id.map(|id| id.0.to_string()),
+            prev.fact_updated_at,
+            prev.fact_updated_id.clone(),
+        );
+        let legacy_relation_cursor_changed = stats.new_cursor.relation_created_at
+            != prev.relation_created_at
+            || stats.new_cursor.relation_key.as_deref() != prev.relation_key.as_deref();
+        let (relation_generation, relation_scan_key) =
+            if let Some(generation) = stats.new_cursor.relation_generation.clone() {
+                (Some(generation), stats.new_cursor.relation_scan_key.clone())
+            } else if legacy_relation_cursor_changed {
+                // A legacy/downgraded server advanced without a snapshot
+                // generation. Clear stale snapshot state rather than pairing
+                // it with unrelated legacy watermarks.
+                (None, None)
+            } else {
+                (
+                    prev.relation_generation.clone(),
+                    prev.relation_scan_key.clone(),
+                )
+            };
 
         let entry = StoredCursor {
             entity: stats
@@ -3033,14 +3246,23 @@ fn drain_pull(
                 .fact
                 .map(|f| f.0.to_string())
                 .or_else(|| prev.fact.clone()),
-            entity_updated_at: stats
+            entity_updated_at,
+            entity_updated_id,
+            fact_updated_at,
+            fact_updated_id,
+            relation_created_at: stats
                 .new_cursor
-                .entity_updated_at
-                .or(prev.entity_updated_at),
-            fact_updated_at: stats.new_cursor.fact_updated_at.or(prev.fact_updated_at),
+                .relation_created_at
+                .or(prev.relation_created_at),
+            relation_key: stats
+                .new_cursor
+                .relation_key
+                .or_else(|| prev.relation_key.clone()),
+            relation_generation,
+            relation_scan_key,
             last_pulled_at: aidememo_core::time::current_epoch_ms(),
         };
-        let mut cursor_file_now = load_sync_cursor(&cursor_path);
+        let mut cursor_file_now = load_sync_cursor(&cursor_path)?;
         cursor_file_now
             .remotes
             .insert(key.to_string(), entry.clone());
@@ -3057,7 +3279,13 @@ fn drain_pull(
         summary.cursor_entity = entry.entity;
         summary.cursor_fact = entry.fact;
         summary.cursor_entity_updated_at = entry.entity_updated_at;
+        summary.cursor_entity_updated_id = entry.entity_updated_id;
         summary.cursor_fact_updated_at = entry.fact_updated_at;
+        summary.cursor_fact_updated_id = entry.fact_updated_id;
+        summary.cursor_relation_created_at = entry.relation_created_at;
+        summary.cursor_relation_key = entry.relation_key;
+        summary.cursor_relation_generation = entry.relation_generation;
+        summary.cursor_relation_scan_key = entry.relation_scan_key;
 
         // Stop conditions:
         //  - Upstream returned nothing (steady state — fully drained)
@@ -3078,6 +3306,30 @@ fn drain_pull(
     Ok(summary)
 }
 
+fn ensure_sync_import_complete(
+    stats: &aidememo_core::sync::SyncImportStats,
+) -> Result<(), AideMemoError> {
+    if stats.errors > 0 {
+        return Err(AideMemoError::InvalidInput(format!(
+            "sync import had {} record error(s); cursor was not advanced and the batch is safe to retry",
+            stats.errors
+        )));
+    }
+    Ok(())
+}
+
+fn merge_update_cursor_pair(
+    next_updated_at: Option<u64>,
+    next_updated_id: Option<String>,
+    previous_updated_at: Option<u64>,
+    previous_updated_id: Option<String>,
+) -> (Option<u64>, Option<String>) {
+    match next_updated_at {
+        Some(updated_at) => (Some(updated_at), next_updated_id),
+        None => (previous_updated_at, previous_updated_id),
+    }
+}
+
 fn pull_one_batch(
     key: &str,
     token: Option<&str>,
@@ -3095,8 +3347,26 @@ fn pull_one_batch(
     if let Some(t) = prev.entity_updated_at {
         endpoint.push_str(&format!("&entity_updated_at={}", t));
     }
+    if let Some(id) = &prev.entity_updated_id {
+        endpoint.push_str(&format!("&entity_updated_id={id}"));
+    }
     if let Some(t) = prev.fact_updated_at {
         endpoint.push_str(&format!("&fact_updated_at={}", t));
+    }
+    if let Some(id) = &prev.fact_updated_id {
+        endpoint.push_str(&format!("&fact_updated_id={id}"));
+    }
+    if let Some(t) = prev.relation_created_at {
+        endpoint.push_str(&format!("&relation_created_at={}", t));
+    }
+    if let Some(key) = &prev.relation_key {
+        endpoint.push_str(&format!("&relation_key={}", key));
+    }
+    if let Some(generation) = &prev.relation_generation {
+        endpoint.push_str(&format!("&relation_generation={generation}"));
+    }
+    if let Some(scan_key) = &prev.relation_scan_key {
+        endpoint.push_str(&format!("&relation_scan_key={scan_key}"));
     }
 
     tracing::debug!(target: "aidememo::sync", "GET {}", endpoint);
@@ -3154,7 +3424,7 @@ fn handle_sync_status(
     json: bool,
 ) -> Result<String, AideMemoError> {
     let cursor_path = sync_cursor_path(store_path);
-    let cursor = load_sync_cursor(&cursor_path);
+    let cursor = load_sync_cursor(&cursor_path)?;
     let now = aidememo_core::time::current_epoch_ms();
 
     if json {
@@ -3173,7 +3443,13 @@ fn handle_sync_status(
                 "entity": e.entity,
                 "fact": e.fact,
                 "entity_updated_at": e.entity_updated_at,
+                "entity_updated_id": e.entity_updated_id,
                 "fact_updated_at": e.fact_updated_at,
+                "fact_updated_id": e.fact_updated_id,
+                "relation_created_at": e.relation_created_at,
+                "relation_key": e.relation_key,
+                "relation_generation": e.relation_generation,
+                "relation_scan_key": e.relation_scan_key,
                 "last_pulled_at": e.last_pulled_at,
                 "age_ms": now.saturating_sub(e.last_pulled_at),
             }));
@@ -3204,8 +3480,21 @@ fn handle_sync_status(
         out.push_str(&format!(
             "  {}\n    last_pulled_at: {} ({} sec ago)\n    \
              cursor: entity={:?} fact={:?}\n    \
-             updated_at: entity={:?} fact={:?}\n",
-            k, e.last_pulled_at, age_sec, e.entity, e.fact, e.entity_updated_at, e.fact_updated_at
+             updated: entity=({:?}, {:?}) fact=({:?}, {:?})\n    \
+             relation: legacy=({:?}, {:?}) snapshot=({:?}, {:?})\n",
+            k,
+            e.last_pulled_at,
+            age_sec,
+            e.entity,
+            e.fact,
+            e.entity_updated_at,
+            e.entity_updated_id,
+            e.fact_updated_at,
+            e.fact_updated_id,
+            e.relation_created_at,
+            e.relation_key,
+            e.relation_generation,
+            e.relation_scan_key,
         ));
     }
     Ok(out)
@@ -3221,7 +3510,19 @@ struct StoredCursor {
     #[serde(default)]
     entity_updated_at: Option<u64>,
     #[serde(default)]
+    entity_updated_id: Option<String>,
+    #[serde(default)]
     fact_updated_at: Option<u64>,
+    #[serde(default)]
+    fact_updated_id: Option<String>,
+    #[serde(default)]
+    relation_created_at: Option<u64>,
+    #[serde(default)]
+    relation_key: Option<String>,
+    #[serde(default)]
+    relation_generation: Option<String>,
+    #[serde(default)]
+    relation_scan_key: Option<String>,
     last_pulled_at: u64,
 }
 
@@ -3241,24 +3542,176 @@ fn sync_cursor_path(store_path: &Path) -> std::path::PathBuf {
     p
 }
 
-fn load_sync_cursor(path: &Path) -> SyncCursorFile {
-    std::fs::read_to_string(path)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default()
+fn load_sync_cursor(path: &Path) -> Result<SyncCursorFile, AideMemoError> {
+    let contents = match std::fs::read_to_string(path) {
+        Ok(contents) => contents,
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(SyncCursorFile::default());
+        }
+        Err(source) => {
+            return Err(AideMemoError::Internal(format!(
+                "read sync cursor {}: {source}",
+                path.display()
+            )));
+        }
+    };
+    serde_json::from_str(&contents).map_err(|source| AideMemoError::Deserialize {
+        context: format!("sync cursor {}", path.display()),
+        source,
+    })
+}
+
+fn sync_cursor_lock_path(cursor_path: &Path) -> PathBuf {
+    let file_name = cursor_path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "wiki.sync.json".to_string());
+    cursor_path.with_file_name(format!("{file_name}.lock"))
+}
+
+fn acquire_sync_cursor_lock(cursor_path: &Path) -> Result<std::fs::File, AideMemoError> {
+    let lock_path = sync_cursor_lock_path(cursor_path);
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(&lock_path)
+        .map_err(|source| {
+            AideMemoError::Internal(format!(
+                "open sync cursor lock {}: {source}",
+                lock_path.display()
+            ))
+        })?;
+    file.lock().map_err(|source| {
+        AideMemoError::Internal(format!(
+            "lock sync cursor {}: {source}",
+            lock_path.display()
+        ))
+    })?;
+    Ok(file)
 }
 
 fn save_sync_cursor(path: &Path, cursor: &SyncCursorFile) -> Result<(), AideMemoError> {
-    let tmp = path.with_extension("json.tmp");
     let bytes = serde_json::to_vec_pretty(cursor).map_err(|e| AideMemoError::Serialize {
         context: "sync cursor".to_string(),
         source: e,
     })?;
-    std::fs::write(&tmp, bytes)
-        .map_err(|e| AideMemoError::Internal(format!("write sync cursor: {e}")))?;
-    std::fs::rename(&tmp, path)
-        .map_err(|e| AideMemoError::Internal(format!("rename sync cursor: {e}")))?;
+    let file_name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "wiki.sync.json".to_string());
+    let tmp = path.with_file_name(format!(
+        ".{file_name}.{}.tmp",
+        aidememo_core::ulid::Ulid::new()
+    ));
+    let mut file = std::fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&tmp)
+        .map_err(|source| {
+            AideMemoError::Internal(format!(
+                "create sync cursor tempfile {}: {source}",
+                tmp.display()
+            ))
+        })?;
+    let write_result = (|| -> std::io::Result<()> {
+        use std::io::Write as _;
+        file.write_all(&bytes)?;
+        file.write_all(b"\n")?;
+        file.sync_all()
+    })();
+    if let Err(source) = write_result {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(AideMemoError::Internal(format!(
+            "write sync cursor tempfile {}: {source}",
+            tmp.display()
+        )));
+    }
+    if let Err(source) = std::fs::rename(&tmp, path) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(AideMemoError::Internal(format!(
+            "persist sync cursor {}: {source}",
+            path.display()
+        )));
+    }
     Ok(())
+}
+
+#[cfg(test)]
+mod sync_pull_tests {
+    use super::*;
+
+    #[test]
+    fn failed_import_is_rejected_before_cursor_persistence() {
+        let stats = aidememo_core::sync::SyncImportStats {
+            errors: 1,
+            new_cursor: aidememo_core::sync::SyncCursor {
+                fact_updated_at: Some(99),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let error = ensure_sync_import_complete(&stats).unwrap_err();
+        assert!(error.to_string().contains("cursor was not advanced"));
+    }
+
+    #[test]
+    fn legacy_timestamp_advance_clears_previous_tie_breaker() {
+        let merged =
+            merge_update_cursor_pair(Some(200), None, Some(100), Some("01OLD".to_string()));
+        assert_eq!(merged, (Some(200), None));
+
+        let preserved = merge_update_cursor_pair(None, None, Some(100), Some("01OLD".to_string()));
+        assert_eq!(preserved, (Some(100), Some("01OLD".to_string())));
+    }
+
+    #[test]
+    fn corrupt_cursor_file_is_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("wiki.sync.json");
+        std::fs::write(&path, b"{not json").unwrap();
+        let error = load_sync_cursor(&path).unwrap_err();
+        assert!(error.to_string().contains("sync cursor"));
+    }
+
+    #[test]
+    fn cursor_save_is_atomic_and_uses_process_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("wiki.sync.json");
+        let _lock = acquire_sync_cursor_lock(&path).unwrap();
+        let second_lock_file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(sync_cursor_lock_path(&path))
+            .unwrap();
+        assert!(second_lock_file.try_lock().is_err());
+
+        let mut cursor = SyncCursorFile::default();
+        cursor.remotes.insert(
+            "http://upstream".to_string(),
+            StoredCursor {
+                entity_updated_at: Some(10),
+                entity_updated_id: Some("01TIE".to_string()),
+                relation_generation: Some("generation".to_string()),
+                last_pulled_at: 20,
+                ..Default::default()
+            },
+        );
+        save_sync_cursor(&path, &cursor).unwrap();
+        let loaded = load_sync_cursor(&path).unwrap();
+        let remote = loaded.remotes.get("http://upstream").unwrap();
+        assert_eq!(remote.entity_updated_id.as_deref(), Some("01TIE"));
+        assert_eq!(remote.relation_generation.as_deref(), Some("generation"));
+        let tempfiles: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(std::result::Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().ends_with(".tmp"))
+            .collect();
+        assert!(tempfiles.is_empty());
+    }
 }
 
 fn handle_config(config: Config, sub: cmd::ConfigSub) -> Result<String, AideMemoError> {
@@ -3507,5 +3960,132 @@ mod time_tests {
             .unwrap();
         // last=1d, so since = now - 1d; should be much greater than 2024-01-01
         assert!(s > 1_704_067_200_000);
+    }
+}
+
+#[cfg(test)]
+mod local_source_scope_tests {
+    use super::*;
+
+    fn add_json(
+        path: &Path,
+        config: Config,
+        content: &str,
+        entity: &str,
+        source_id: &str,
+    ) -> serde_json::Value {
+        let output = handle_fact(
+            path,
+            config,
+            cmd::FactSub::Add {
+                fact_type: Some("note".to_string()),
+                entities: Some(vec![entity.to_string()]),
+                tags: None,
+                source: None,
+                source_id: Some(source_id.to_string()),
+                actor_id: None,
+                confidence: None,
+                observed_at: None,
+                content: content.to_string(),
+            },
+            true,
+        )
+        .unwrap();
+        serde_json::from_str(&output).unwrap()
+    }
+
+    #[test]
+    fn local_fact_add_similarity_and_typo_hints_stay_in_source() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("scope.sqlite");
+        let config = Config::default();
+
+        let beta = add_json(
+            &path,
+            config.clone(),
+            "The deployment uses PostgreSQL for durable state",
+            "Postgres",
+            "beta",
+        );
+        let alpha = add_json(
+            &path,
+            config,
+            "The deployment uses PostgreSQL for durable state",
+            "Postgrs",
+            "alpha",
+        );
+
+        assert_ne!(beta["id"], alpha["id"]);
+        assert!(alpha["existing_similar"].is_null());
+        assert!(alpha["entity_name_alternatives"].is_null());
+    }
+
+    #[test]
+    fn local_id_mutations_reject_a_neighbouring_source_fact() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mutations.sqlite");
+        let config = Config::default();
+        let alpha = add_json(&path, config.clone(), "alpha fact", "Shared", "alpha");
+        let beta = add_json(&path, config.clone(), "beta fact", "Shared", "beta");
+        let alpha_id = alpha["id"].as_str().unwrap().to_string();
+        let beta_id = beta["id"].as_str().unwrap().to_string();
+
+        let delete = handle_fact(
+            &path,
+            config.clone(),
+            cmd::FactSub::Delete {
+                source_id: Some("alpha".to_string()),
+                id: beta_id.clone(),
+            },
+            false,
+        );
+        assert!(delete.is_err());
+
+        let feedback = handle_fact(
+            &path,
+            config.clone(),
+            cmd::FactSub::Feedback {
+                helpful: true,
+                source_id: Some("alpha".to_string()),
+                id: beta_id.clone(),
+            },
+            false,
+        );
+        assert!(feedback.is_err());
+
+        let supersede = handle_fact(
+            &path,
+            config.clone(),
+            cmd::FactSub::Supersede {
+                source_id: Some("alpha".to_string()),
+                old_id: alpha_id,
+                new_id: beta_id.clone(),
+            },
+            false,
+        );
+        assert!(supersede.is_err());
+
+        let archive = handle_fact(
+            &path,
+            config.clone(),
+            cmd::FactSub::Archive {
+                ids: Some(beta_id.clone()),
+                older_than: None,
+                fact_type: None,
+                dry_run: false,
+                source_id: Some("alpha".to_string()),
+            },
+            false,
+        );
+        assert!(archive.is_err());
+
+        let wiki = AideMemo::open(&path, config).unwrap();
+        let beta_id = parse_fact_id_str(&beta_id).unwrap();
+        assert_eq!(
+            wiki.fact_get_scoped(&beta_id, Some("beta"))
+                .unwrap()
+                .content,
+            "beta fact"
+        );
     }
 }

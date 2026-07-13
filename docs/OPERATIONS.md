@@ -178,6 +178,21 @@ aidememo --backend libsqlite --store ~/.aidememo/team.sqlite \
   mcp-install --target codex --source-id team-a
 ```
 
+The same boundary is applied to fact get/list/mutations, pinned context,
+entities, and graph reads. Exact-content deduplication is keyed by
+`(source_id, content_hash)`, so an identical sentence in two sources remains
+two independent facts. Relations carry a separate owning source namespace;
+scoped traversal/path reads require an exact namespace match, and legacy
+unscoped edges are hidden rather than inherited by every source. For network
+clients that must not select their own scope, use
+`mcp-serve --auth-bindings-file`; see [MCP Setup](MCP.md).
+
+Treat this as a trusted-team partition, not a hostile tenant boundary. Entity
+names and types intentionally remain a shared ontology, and native/CLI callers
+can choose their own `source_id`. Use separate stores for mutually untrusted
+tenants. See [`Shared Memory Layer`](SHARED_MEMORY.md) for the reference
+deployment patterns and production checklist.
+
 ## Avoid local store write contention
 
 SQLite is the default backend. It uses WAL mode, starts writes with
@@ -268,9 +283,15 @@ load. The auto-hybrid path falls back to BM25 if semantic promotion fails. For
 repeated agent calls, run through the daemon so the model is warm.
 
 For daemon-backed stores, `search.auto_hybrid=true` prewarms the semantic
-provider when `aidememo mcp-serve` starts, so the startup pays the model load
-instead of the first user query. To prewarm a daemon without changing config,
-start it with `AIDEMEMO_PREWARM_SEMANTIC=1`.
+provider and configured HNSW index in a background task after the listener for
+`aidememo mcp-serve` has bound. Health checks and lexical requests therefore
+become available without waiting for the model cold load. Provider construction
+is serialized with any concurrent first semantic request, so the background
+task and request path cannot construct duplicate providers. `/admin/status`
+reports `semantic_prewarm` as `warming`, `ready`, `failed`, or `disabled`. A
+failed prewarm does not stop the server; a later semantic request retries the
+normal on-demand path. To prewarm a daemon without changing config, start it
+with `AIDEMEMO_PREWARM_SEMANTIC=1`.
 
 ### Optional Liquid AI LFM experiments
 
@@ -289,6 +310,17 @@ AideMemo's default store is SQLite. Use the backup command instead of copying
 the hot `.sqlite` file directly: it creates a consistent SQLite snapshot,
 writes a manifest with byte counts and SHA-256 checksums, and restore verifies
 the manifest plus `PRAGMA integrity_check` before replacing the target store.
+When `<store>.cold.sqlite` exists, backup snapshots it as well and records a
+separate size and checksum entry in the same manifest. Local backups store it
+as `wiki.cold.sqlite`; S3 backups store `wiki.cold.sqlite.zst`. If an archive
+move overlaps the hot-then-cold snapshot window, the cold copy wins and backup
+removes the duplicate FactId from the hot snapshot and its FTS/entity indexes.
+Backup also takes a later hot metadata snapshot and copies only entity/name
+mappings required by cold facts; any unresolved cross-tier entity reference
+fails the backup instead of producing an orphan after restore.
+The backup cursor is captured only after draining snapshot sync export to an
+empty page, so `branch push --base` starts after the complete baseline instead
+of replaying baseline records.
 
 ```bash
 aidememo --store ~/.aidememo/wiki.sqlite backup create ~/backups/aidememo
@@ -304,8 +336,49 @@ aidememo --store ~/.aidememo/wiki.sqlite backup restore s3://my-bucket/aidememo/
 ```
 
 The S3 path is for backup storage, not for using S3 as the live database.
-Restores replace the local SQLite store and remove stale SQLite WAL/SHM and
-HNSW sidecar files next to the target.
+Restore is an offline maintenance operation: stop `aidememo daemon` and every
+other process using the target store first. Restore checkpoints each existing
+hot/cold SQLite store and writes complete `<store>.restore-prev...` safety
+snapshots before removing WAL/SHM or HNSW sidecars; a busy checkpoint refuses
+the restore. Every manifested payload is checksum-verified, decoded, and
+SQLite-integrity-checked before the target is touched. If tier installation
+fails, rollback restores and integrity-checks both prior snapshots, and any
+rollback failure is reported together with the original restore error. A legacy
+hot-only backup never inherits the target's existing cold tier: with `--force`,
+restore preserves that file as the
+`<store>.restore-prev.cold.sqlite` safety snapshot. Without `--force`, either an
+existing hot store or cold tier blocks restore. Manifest payload names must be
+simple filenames under the selected backup prefix, hot and cold objects must be
+distinct, and the manifest backend must be SQLite-compatible.
+
+## Pull replicated stores safely
+
+`aidememo sync pull` tracks entities, facts, and relations with independent
+high-water marks. Entity and fact update streams paginate by `(updated_at, id)`,
+so same-millisecond mutations cannot fall between pages; legacy
+timestamp-only cursors replay their boundary once. Relation sync fingerprints
+the complete sorted relation snapshot with `relation_generation` and resumes
+an unchanged snapshot with `relation_scan_key`. The fingerprint covers each
+complete serialized relation record, so any late historical insert or weight,
+evidence, scope, or other payload change restarts an idempotent full relation
+scan. The older `(created_at, relation_key)` fields remain as a fallback for
+pre-upgrade clients.
+
+The complete JSONL envelope (supported leading header, valid record shapes,
+and exactly one valid trailing cursor) is checked before the first write, so a
+malformed or unsupported batch applies zero records. Store-level failures can
+still leave already-applied records, but upserts are idempotent and the cursor
+is withheld, making the whole batch safe to retry. The CLI holds a same-directory
+cursor lock across pull/import/persist and atomically renames a unique temporary
+cursor file after flushing it with `fsync`, so concurrent pull processes cannot
+overwrite one another or persist a partially written cursor.
+
+This remains a canonical-writer, pull-only replication model. Relation records
+are append/upsert replicated; relation deletions are not propagated. A deletion
+does change the snapshot generation and replay the surviving records, but the
+wire has no tombstone with which to remove the downstream copy. Route all writes
+and deletions through the canonical shared `mcp-serve`, then pull its current
+state into local read caches rather than treating caches as peers.
 
 ## Share cloud agent branches
 
@@ -316,6 +389,11 @@ cursor to export only the records written after the baseline. This is also the
 right shape for what-if memory experiments: fork several candidate stores from
 one backup, let each attempt write local lessons, merge the best branch, and
 leave the rest unmerged.
+After all selected segments are merged with their original LWW ordering,
+changed historical entity/fact IDs receive one coordinator relay timestamp so
+downstream cursors that already passed their original IDs still pull the result.
+Relations do not need that timestamp: an inserted or replaced relation changes
+`relation_generation`, which makes downstreams replay the relation snapshot.
 
 ```bash
 # Coordinator creates a baseline snapshot.
@@ -338,9 +416,11 @@ backup and branch-log locations. S3 branch payloads are zstd-compressed JSONL
 segments with a manifest containing byte counts and SHA-256 checksums.
 
 This is not full multi-master conflict resolution. Merge currently relies on
-the existing idempotent `sync_import` path: duplicate entities, facts, and
-relations are skipped, while independent new facts are appended. Use distinct
-branch ids per cloud agent or worker, and treat semantic conflict handling
-between competing decisions as an application policy for now. See
+the existing idempotent `sync_import` path: identical or stale entity/fact
+records are skipped, newer records with the same ID are applied by LWW order,
+relation identities are inserted or replaced, and independent new facts are
+appended. Use distinct branch ids per cloud agent or worker, and treat semantic
+conflict handling between competing decisions as an application policy for
+now. See
 [`Branch Logs`](BRANCHES.md) for the speculative experiment workflow and
 storage layout.

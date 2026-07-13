@@ -92,6 +92,7 @@ def _make_handlers(client: AideMemoClient) -> list[tuple[str, dict, Callable[...
             client.recent(
                 last=str(args.get("last") or "7d"),
                 limit=int(args.get("limit") or 10),
+                source_id=args.get("source_id"),
             )
         )
 
@@ -130,13 +131,19 @@ def _make_handlers(client: AideMemoClient) -> list[tuple[str, dict, Callable[...
         )
 
     def _entity_list(args: dict, **_: Any) -> str:
-        return _serialize(client.entity_list(limit=int(args.get("limit") or 50)))
+        return _serialize(
+            client.entity_list(
+                limit=int(args.get("limit") or 50),
+                source_id=args.get("source_id"),
+            )
+        )
 
     def _traverse(args: dict, **_: Any) -> str:
         return _serialize(
             client.traverse(
                 str(args.get("entity") or ""),
                 depth=int(args.get("depth") or 2),
+                source_id=args.get("source_id"),
             )
         )
 

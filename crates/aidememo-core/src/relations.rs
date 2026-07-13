@@ -37,6 +37,7 @@ impl TypedRelation {
         RelationInput {
             source: self.source,
             target: self.target,
+            scope_source_id: None,
             relation_type: RelationType::new(self.relation_type),
             weight: None,
             evidence: Some(vec![self.evidence]),

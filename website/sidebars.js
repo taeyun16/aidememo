@@ -14,6 +14,7 @@ const sidebars = {
       items: [
         'CLI',
         'MCP',
+        'SHARED_MEMORY',
         'CODING_AGENTS',
         'CODEX_MULTI_PROFILE',
         'AGENT_WORKFLOWS',

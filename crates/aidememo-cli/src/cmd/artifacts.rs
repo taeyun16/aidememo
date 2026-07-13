@@ -63,15 +63,17 @@ pub fn write_artifact_or_stdout(
     Ok(body)
 }
 
-pub fn session_canvas(
+pub fn session_canvas_scoped(
     wiki: &AideMemo,
     session: Option<&str>,
     limit: usize,
     include_superseded: bool,
+    source_id: Option<&str>,
 ) -> Result<SessionCanvasArtifact, AideMemoError> {
-    let session = resolve_session_entity(wiki, session)?;
+    let session = resolve_session_entity(wiki, session, source_id)?;
     let facts = wiki.fact_list(FactListOpts {
         entity_id: Some(session.id),
+        source_id: source_id.map(str::to_string),
         limit: Some(limit),
         current_only: !include_superseded,
         ..Default::default()
@@ -97,6 +99,7 @@ pub fn project_profile(
 fn resolve_session_entity(
     wiki: &AideMemo,
     session: Option<&str>,
+    source_id: Option<&str>,
 ) -> Result<EntityRecord, AideMemoError> {
     let name = match session.map(str::trim).filter(|s| !s.is_empty()) {
         Some(session) => session.to_string(),
@@ -106,7 +109,7 @@ fn resolve_session_entity(
             )
         })?,
     };
-    let entity = wiki.entity_get(&name)?;
+    let entity = wiki.entity_get_scoped(&name, source_id)?;
     if entity.entity_type.to_string() != "session" {
         return Err(AideMemoError::InvalidInput(format!(
             "{name} is a {} entity, not a session",
@@ -192,7 +195,7 @@ fn render_project_profile(
     include_sessions: bool,
 ) -> Result<ProjectProfileArtifact, AideMemoError> {
     let mut facts = wiki.fact_list(FactListOpts {
-        source_id,
+        source_id: source_id.clone(),
         limit: Some(limit),
         current_only: true,
         ..Default::default()
@@ -211,11 +214,14 @@ fn render_project_profile(
         facts = retained;
     }
 
-    let mut top_entities = wiki.entity_list(ListOpts {
-        sort_by: EntitySort::FactCount,
-        limit: Some(24),
-        ..Default::default()
-    })?;
+    let mut top_entities = wiki.entity_list_scoped(
+        ListOpts {
+            sort_by: EntitySort::FactCount,
+            limit: Some(24),
+            ..Default::default()
+        },
+        source_id.as_deref(),
+    )?;
     if !include_sessions {
         top_entities.retain(|entity| {
             entity.entity_type.to_string() != "session" && !is_session_entity_name(&entity.name)
@@ -244,7 +250,7 @@ fn render_project_profile(
 
     out.push_str("## Top Entities\n\n");
     for entity in top_entities {
-        push_entity_profile_line(wiki, &mut out, &entity)?;
+        push_entity_profile_line(wiki, &mut out, &entity, source_id.as_deref())?;
     }
     out.push('\n');
 
@@ -297,8 +303,9 @@ fn push_entity_profile_line(
     wiki: &AideMemo,
     out: &mut String,
     entity: &EntitySummary,
+    source_id: Option<&str>,
 ) -> Result<(), AideMemoError> {
-    let record = wiki.entity_get_by_id(entity.id)?;
+    let record = wiki.entity_get_by_id_scoped(entity.id, source_id)?;
     let summary = record
         .summary
         .as_deref()

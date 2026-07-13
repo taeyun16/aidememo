@@ -60,6 +60,19 @@ pub fn extract_candidates(
     store: &(impl StoreBackend + ?Sized),
     max_candidates: usize,
 ) -> Result<Vec<ExtractCandidate>> {
+    extract_candidates_scoped(text, store, max_candidates, None)
+}
+
+/// Source-scoped variant of [`extract_candidates`]. Entity names are only
+/// drawn from entities that have at least one fact in `source_id`, preventing
+/// a shared-store caller from learning neighbouring namespaces through
+/// extractor suggestions.
+pub fn extract_candidates_scoped(
+    text: &str,
+    store: &(impl StoreBackend + ?Sized),
+    max_candidates: usize,
+    source_id: Option<&str>,
+) -> Result<Vec<ExtractCandidate>> {
     if text.trim().is_empty() {
         return Ok(Vec::new());
     }
@@ -70,14 +83,7 @@ pub fn extract_candidates(
     // we settle for matching on canonical names only; agents can
     // afterwards `aidememo_entity_alias_add` if they want fuzzy aliases.
     // Worst-case 5000 names × M sentences is well under a millisecond.
-    let entities = store.entity_list(ListOpts {
-        entity_type: None,
-        min_facts: None,
-        sort_by: EntitySort::Name,
-        limit: Some(5000),
-        offset: 0,
-    })?;
-    let entity_names: Vec<String> = entities.iter().map(|e| e.name.clone()).collect();
+    let entity_names = scoped_entity_names(store, source_id)?;
 
     let mut candidates = Vec::new();
     for sentence in split_sentences(text) {
@@ -93,6 +99,26 @@ pub fn extract_candidates(
     });
     candidates.truncate(max_candidates);
     Ok(candidates)
+}
+
+fn scoped_entity_names(
+    store: &(impl StoreBackend + ?Sized),
+    source_id: Option<&str>,
+) -> Result<Vec<String>> {
+    let entities = store.entity_list(ListOpts {
+        entity_type: None,
+        min_facts: None,
+        sort_by: EntitySort::Name,
+        limit: Some(5000),
+        offset: 0,
+    })?;
+    let mut names = Vec::with_capacity(entities.len());
+    for entity in entities {
+        if source_id.is_none() || store.count_entity_facts_scoped(&entity.id, source_id)? > 0 {
+            names.push(entity.name);
+        }
+    }
+    Ok(names)
 }
 
 /// Sentence segmentation. Greedy and regex-free — splits on `.`, `!`,
@@ -330,6 +356,19 @@ pub fn extract_candidates_llm(
     cfg: &crate::config::ExtractConfig,
     max_candidates: usize,
 ) -> Result<Vec<ExtractCandidate>> {
+    extract_candidates_llm_scoped(text, store, cfg, max_candidates, None)
+}
+
+/// Source-scoped LLM extractor. Only source-visible entity names are included
+/// in the remote model prompt and accepted as existing canonical entities.
+#[cfg(feature = "semantic")]
+pub fn extract_candidates_llm_scoped(
+    text: &str,
+    store: &(impl StoreBackend + ?Sized),
+    cfg: &crate::config::ExtractConfig,
+    max_candidates: usize,
+    source_id: Option<&str>,
+) -> Result<Vec<ExtractCandidate>> {
     if text.trim().is_empty() {
         return Ok(Vec::new());
     }
@@ -339,14 +378,7 @@ pub fn extract_candidates_llm(
         ));
     }
 
-    let entities = store.entity_list(ListOpts {
-        entity_type: None,
-        min_facts: None,
-        sort_by: EntitySort::Name,
-        limit: Some(5000),
-        offset: 0,
-    })?;
-    let entity_names: Vec<String> = entities.iter().map(|e| e.name.clone()).collect();
+    let entity_names = scoped_entity_names(store, source_id)?;
 
     let api_key = if cfg.api_key_env.is_empty() {
         String::new()
@@ -631,7 +663,7 @@ mod tests {
         // mentioning the entity.
         use crate::backend::{StoreBackend, StoreKind};
         use crate::config::Config;
-        use crate::types::{EntityInput, EntityType};
+        use crate::types::{EntityInput, EntityType, FactInput};
         use tempfile::TempDir;
 
         let dir = TempDir::new().unwrap();
@@ -651,10 +683,33 @@ mod tests {
             .into_owned();
         let path: std::path::PathBuf = (&config.store.path).into();
         let mut store = StoreKind::open(&path, config).unwrap();
-        store
+        let postgres_id = store
             .entity_add(EntityInput {
                 name: "Postgres".into(),
                 entity_type: Some(EntityType::Technology),
+                ..Default::default()
+            })
+            .unwrap();
+        let redis_id = store
+            .entity_add(EntityInput {
+                name: "Redis".into(),
+                entity_type: Some(EntityType::Technology),
+                ..Default::default()
+            })
+            .unwrap();
+        store
+            .fact_add(FactInput {
+                content: "Postgres belongs to alpha".into(),
+                entity_ids: Some(vec![postgres_id]),
+                source_id: Some("alpha".into()),
+                ..Default::default()
+            })
+            .unwrap();
+        store
+            .fact_add(FactInput {
+                content: "Redis belongs to beta".into(),
+                entity_ids: Some(vec![redis_id]),
+                source_id: Some("beta".into()),
                 ..Default::default()
             })
             .unwrap();
@@ -668,5 +723,14 @@ mod tests {
         let top = &candidates[0];
         assert!(top.suggested_entities.contains(&"Postgres".to_string()));
         assert_eq!(top.suggested_fact_type, FactType::Decision);
+
+        let scoped = extract_candidates_scoped(
+            "We decided Postgres and Redis need separate source policies.",
+            &store,
+            5,
+            Some("alpha"),
+        )
+        .unwrap();
+        assert_eq!(scoped[0].suggested_entities, vec!["Postgres"]);
     }
 }

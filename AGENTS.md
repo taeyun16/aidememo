@@ -83,7 +83,8 @@ aidememo init <wiki-root> [--no-ingest]                  create store + ingest m
 aidememo init --agent codex <wiki-root>                  init + register aidememo MCP for an agent
 aidememo init --agent claude --agent-force <wiki-root>   overwrite existing agent MCP config
 aidememo --store <PATH> mcp-install --target codex       pin the resolved store in Codex MCP config
-         [--codex-home PATH --actor-id ID]...            install isolated Codex profiles with writer provenance
+         [--source-id ID] [--codex-home PATH --actor-id ID]...
+                                                          install isolated Codex profiles with source scope + writer provenance
 ```
 
 ### Read / search
@@ -108,11 +109,15 @@ aidememo query <topic> [-l N] [-d N] [--recent-limit N] [--bm25-only] [-m naive|
                                                    embedding lookup for
                                                    deterministic demos/hooks.
 aidememo recent [-n N] [--type T] [--last 30d]          last 7d facts (default)
-aidememo traverse <entity> [-d N]                        forward graph walk
-aidememo path <from> <to>                                shortest path
-aidememo graph [--from E] [--depth N] [--format mermaid|dot]
-aidememo entity get|list|show <NAME>                     show: compiled view (summary + recent)
-aidememo fact get|list
+aidememo traverse <entity> [-d N] [--source-id ID]       forward graph walk
+aidememo path <from> <to> [--source-id ID]               shortest path
+aidememo graph [--from E] [--depth N] [--format mermaid|dot] [--source-id ID]
+aidememo entity get <NAME> [--source-id ID]
+aidememo entity list [--type T] [--limit N] [--source-id ID]
+aidememo entity show <NAME> [--recent N] [--source-id ID]
+aidememo fact get <ID> [--source-id ID]
+aidememo fact list [--type T] [--entity E] [--source-id ID]
+aidememo fact pinned [--limit N] [--source-id ID]
 aidememo stats                                           counts + size
 ```
 
@@ -120,16 +125,19 @@ aidememo stats                                           counts + size
 ```
 aidememo fact add <content> --entities A,B [--type T] [--source-id ID] [--actor-id ID]
                                                    auto-creates missing entities; optional
-                                                   source_id scopes shared-store retrieval.
-aidememo fact supersede <OLD_ID> <NEW_ID>                 validity-window invalidate
-aidememo fact archive --ids <ID,…>                        move to backend-specific cold tier
+                                                   source_id owns dedup + scoped retrieval.
+aidememo fact delete <ID> [--source-id ID]                source-checked destructive delete
+aidememo fact feedback <ID> [--helpful] [--source-id ID]  source-checked direct feedback
+aidememo fact supersede <OLD_ID> <NEW_ID> [--source-id ID] validity-window invalidate
+aidememo fact pin|unpin <ID> [--source-id ID]             source-checked always-loaded tier
+aidememo fact archive --ids <ID,…> [--source-id ID]       move to backend-specific cold tier
                                                    (`<store>.cold.redb` or `<store>.cold.sqlite`;
                                                    preserves FactId)
-aidememo fact archive --older-than 30d [--type note]      bulk move by age (+ optional type filter)
+aidememo fact archive --older-than 30d [--type note] [--source-id ID]
+                                                   bulk move by age (+ optional type/source filter)
 aidememo edit fact <ID> --append/--prepend/--find+--replace/--content
 aidememo entity add <name> [--type service]               custom types accepted
 aidememo entity describe <name> "..." | --from-stdin | --clear   compiled-truth summary
-aidememo relation add <src> <tgt> <rel_type>
 ```
 
 ### Maintenance
@@ -141,15 +149,16 @@ aidememo bench <golden.jsonl> [--k 5] [--limit N]
                                           P@K / R@K / latency benchmark
 aidememo skill check <path> [--json]            validate SKILL.md files
 aidememo backup create <DIR|s3://bucket/prefix> [--json]
-                                          consistent SQLite snapshot backup +
-                                          manifest with byte counts and SHA-256.
+                                          consistent hot + existing cold-tier
+                                          SQLite snapshots with byte counts and
+                                          SHA-256 in one manifest.
                                           S3 targets require a CLI built with
                                           `--features s3`.
 aidememo backup restore <DIR|s3://bucket/prefix> --force [--json]
-                                          verify manifest + SQLite
-                                          integrity_check, replace selected
-                                          --store, and remove stale WAL/SHM/HNSW
-                                          sidecars. SQLite backend only.
+                                          verify all manifested payloads + SQLite
+                                          integrity_check, replace selected hot/
+                                          cold stores, and remove stale WAL/SHM/
+                                          HNSW sidecars. SQLite backend only.
 aidememo branch push --branch ID [--base DIR|s3://bucket/prefix] <DIR|s3://bucket/prefix> [--json]
                                           export this store's append-only branch
                                           segment. With --base, emits changes
@@ -197,16 +206,21 @@ aidememo consolidate --gac [--gac-theta 0.85] [--gac-spread-budget N] [--gac-col
                                             Pair with `aidememo vector-rebuild --current-only` to
                                             shrink the HNSW index proportionally — supersede
                                             alone leaves losers in the sidecar.
-aidememo session new <topic>                      tracked session entity + shell-evaluable
+aidememo session new <topic> [--source-id ID]     tracked session entity + shell-evaluable
                                             'export AIDEMEMO_SESSION_ID=…'. Auto-attaches to every
                                             subsequent fact_add while the env var is set.
-aidememo session current / list                   current/recent tracked sessions.
+aidememo session start [--source-id ID]           scoped warmup envelope.
+aidememo session current|list [--source-id ID]    current/recent tracked sessions.
+aidememo session canvas [SESSION] [--source-id ID]
+                                            auditable Markdown + Mermaid session artifact.
 aidememo workflow start <TITLE> [--body-file issue.md] [--source github:org/repo#123]
-                                            [--actor-id ID] [--parent-session SESSION]
+                                            [--source-id ID] [--actor-id ID]
+                                            [--parent-session SESSION]
                                             sparse issue/ticket entry point: create session,
                                             store trigger, return project context pack.
                                             Use --bm25-only for deterministic demos/hooks
                                             that should skip embedding-model load.
+aidememo profile export [--source-id ID]          read-only typed-fact profile artifact.
 aidememo export [--scope all|...] / aidememo import
 aidememo config get/set/list
 
@@ -310,6 +324,7 @@ aidememo --backend libsqlite --store PATH ...   one-off storage backend override
 ```
 aidememo mcp                                    stdio JSON-RPC (preferred)
 aidememo mcp-serve --port 3000                  HTTP + SSE; /health + /admin/status
+         [--auth-bindings-file PATH]            bind tokens to source_id + actor_id
 ```
 
 ### Daemon (background mcp-serve, opportunistic discovery)
@@ -668,7 +683,7 @@ another process holds that lock. Two ways to handle shared writes:
    URL. Each agent's MCP client sees the same tools, the same store,
    no lock contention.
    ```bash
-   aidememo mcp-serve --port 3000 --store ~/.aidememo/team.sqlite &
+   aidememo --store ~/.aidememo/team.sqlite mcp-serve --port 3000 &
    # In each agent's MCP config: type=http, url=http://localhost:3000/mcp
    ```
 2. **Brief opportunistic contention** is fine: set
@@ -692,23 +707,25 @@ same optional-redb path — one process owns the redb file lock and the others
 will fail to open or return explicit lock errors. For default SQLite stores,
 HTTP `mcp-serve` is still the simplest shared warm process.
 
-### Hardened mcp-serve (Phase 1)
+### Hardened mcp-serve
 
-`aidememo mcp-serve` defaults to `127.0.0.1` since the network-hardening
-pass landed (commit 8aa3f68). Three flags govern exposure:
+`aidememo mcp-serve` defaults to `127.0.0.1`. The following options govern
+exposure and caller identity:
 
 | Flag | Default | Effect |
 |---|---|---|
 | `--bind ADDR` | `127.0.0.1` | Loopback only. Pass `0.0.0.0` to expose on the LAN |
 | `--auth-token TOKEN` | unset | Bearer token literal — exposed in shell history / `ps aux`, only use for ad-hoc tests |
 | `--auth-token-file PATH` | unset | Read the token from a file (mode 0600 recommended). Production-friendly |
-| `AIDEMEMO_MCP_AUTH_TOKEN` env | unset | Final fallback when neither flag is set |
+| `--auth-bindings-file PATH` | unset | JSON token bindings with fixed `source_id` + `actor_id`; caller overrides are rejected |
+| `AIDEMEMO_MCP_AUTH_TOKEN` env | unset | Single unscoped-token fallback |
+| `AIDEMEMO_MCP_AUTH_BINDINGS_FILE` env | unset | Token-bindings file fallback when no explicit single-token option is set |
 
 Non-loopback bind without an auth token is **refused at startup** —
 the server won't expose an unauthenticated store on the network.
-Loopback + no token is fine for single-host multi-agent. TLS / rate
-limiting / per-method auth are deliberately out of scope; put a
-reverse proxy (caddy / nginx) in front if you need them.
+Loopback + no token is fine for single-host multi-agent. TLS / rate limiting
+are deliberately out of scope; put a reverse proxy (caddy / nginx) in front if
+you need them.
 
 ```bash
 # Same-host: agents go through loopback, no token needed
@@ -720,9 +737,23 @@ curl http://127.0.0.1:3000/admin/status   # request counts, auth mode,
 aidememo auth generate > /etc/aidememo/team-token   # one-time: emit 64-char hex
 chmod 600 /etc/aidememo/team-token
 aidememo mcp-serve --port 3000 --bind 0.0.0.0 --auth-token-file /etc/aidememo/team-token
+
+# Multi-source server: each token is pinned to one retrieval/writer identity.
+# File shape: {"tokens":[{"token":"...","source_id":"team-a","actor_id":"codex:a"}]}
+chmod 600 /etc/aidememo/token-bindings.json
+aidememo mcp-serve --port 3000 --bind 0.0.0.0 \
+  --auth-bindings-file /etc/aidememo/token-bindings.json
 ```
 
-### Token UX — `aidememo auth` (commit will land alongside this section)
+Bound credentials inject their configured identity into every MCP tool call,
+including each `aidememo_fact_add_many` item, and reject mismatches. They cannot
+call the unscoped `/sync/since` or `/admin/status` routes; `/health` returns only
+health and semantic-prewarm state. Use a single-token credential only for a
+trusted unscoped administrator. Semantic prewarm starts in a blocking-worker
+task after the listener binds, so `/health` does not wait for model cold load;
+`/admin/status.semantic_prewarm` reports `warming|ready|failed|disabled`.
+
+### Token UX — `aidememo auth`
 
 Operators rarely want to type bearer tokens. `aidememo auth` ships four
 small commands so the secret never has to live in shell history:
@@ -779,12 +810,27 @@ downstream knows where to resume.
 What's transferred: entities, facts, relations — all with original
 ULIDs preserved. As of Phase 2.5, **in-place mutations** also
 propagate: `fact_supersede`, `fact_pin/unpin`, `entity_describe`,
-and any other write that bumps `updated_at`. The cursor file gains
-two `*_updated_at` watermarks alongside the ULID watermarks; pull
-runs a 2-pass export (new ULIDs + records whose `updated_at`
-moved) and the receiving `*_upsert_record` paths LWW by
-`updated_at`. Existing Phase 2 cursor files keep loading
+and any other write that bumps `updated_at`. Each update watermark is a stable
+`(updated_at, *_updated_id)` pair, so same-millisecond mutations paginate
+without omission. Pull runs a 2-pass export (new ULIDs + records whose update
+tuple moved); insert-pass records do not advance update watermarks. The
+receiving `*_upsert_record` paths LWW by `updated_at`. Existing Phase 2 cursor
+files keep loading and timestamp-only cursors replay their boundary once
 (`#[serde(default)]` on the new fields).
+
+Relations use a digest of the complete sorted snapshot
+(`relation_generation`) plus an in-snapshot `relation_scan_key`. Additions at
+old timestamps and weight/evidence/scope changes alter the generation and
+restart an idempotent full scan. Legacy `(created_at, relation_key)` clients
+retain their fallback. The complete envelope is validated before writes;
+malformed or unsupported batches apply zero records. Store-level failures
+withhold the cursor and idempotent upserts make retry safe. CLI pull holds a
+same-directory file lock across the full operation and atomically persists a
+unique temporary cursor file.
+
+This is canonical-writer, pull-only replication. Relation records replicate as
+append/upsert; relation deletions do not propagate. Send writes and deletions to
+the canonical shared server and treat pulled stores as read caches.
 
 What's intentionally not in this pipeline: push from agent → shared.
 For that, use the regular MCP tool calls against `mcp-serve` (every
@@ -833,7 +879,9 @@ aidememo sync status --json                   # script-friendly
     {
       "url": "http://team-host:3000",
       "entity": "01ABC...", "fact": "01DEF...",
-      "entity_updated_at": 1778..., "fact_updated_at": 1778...,
+      "entity_updated_at": 1778..., "entity_updated_id": "01ABC...",
+      "fact_updated_at": 1778..., "fact_updated_id": "01DEF...",
+      "relation_generation": "ab12...", "relation_scan_key": null,
       "last_pulled_at": 1778..., "age_ms": 432
     }
   ]

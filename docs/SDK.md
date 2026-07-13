@@ -52,11 +52,49 @@ artifacts through already-open handles. C ABI callers should use the CLI
 ```python
 from aidememo_agent import Memory
 
-mem = Memory.open(source_id="team-a", storage_backend="libsqlite")
+mem = Memory.open(
+    source_id="team-a",
+    actor_id="codex:account-a",
+    storage_backend="libsqlite",
+)
 ```
 
-Use `source_id` to isolate one team, agent, tenant, or project inside a shared
-store.
+Use `source_id` to partition one team, agent, or project inside a trusted
+shared store. `Memory.open(...)` also inherits `AIDEMEMO_SOURCE_ID` and
+`AIDEMEMO_ACTOR_ID` when the corresponding argument is omitted. The source
+default is forwarded through fanout search/query/aggregate, context and recent
+reads, entity listing and traversal, workflow/session/project context, and fact
+writes. The actor default records writer provenance on workflow and fact
+writes; it does not partition retrieval. Exact-content dedup applies within a
+source, so the same text can exist independently in two sources.
+
+These are convenience defaults, not immutable credentials. An explicit
+per-call value wins over `Memory.open(...)`, and a `remember(...)` batch item
+can override the method and open-time defaults. When assignment must be
+enforced, expose AideMemo through HTTP bearer identity bindings instead of
+giving the caller a native store handle or stdio/CLI access.
+
+The composition SDK deliberately refuses `mem.client.doctor()`, `lint()`, and
+`stats()` when a default source is set because those methods expose global
+store metadata. Run diagnostics from an unscoped administrator process.
+
+### Source scope by binding
+
+Native bindings do not inherit the composition SDK defaults. Pass identity on
+each operation that needs it:
+
+| Surface | Source selector | Actor selector |
+|---|---|---|
+| `aidememo-agent-sdk` | `Memory.open(source_id=...)`, with per-call or per-item override | `Memory.open(actor_id=...)`, applied to workflow/fact writes |
+| `aidememo-python` | `source_id=` on source-aware reads, relations, workflow, and fact writes | `actor_id=` on workflow/fact writes or per `fact_add_many` item |
+| `aidememo-napi` | `sourceId` in options or the positional source argument documented by the method | `actorId` on workflow/fact writes or per batch item |
+| `aidememo_nif` | `source_id:` in operation options | `actor_id:` on fact writes or per batch item |
+| `aidememo-ffi` | `_scoped` functions, plus `source_id` in each batch item | `aidememo_fact_add_scoped` or `actor_id` in each batch item |
+
+This is not a hostile multi-tenant security boundary. Native SDK callers can
+choose another source, and entity names/types form a shared ontology. Use
+separate stores for mutually untrusted tenants; use HTTP bearer identity
+bindings when authenticated agents must not override their assigned source.
 
 `storage_backend` is optional. It uses the same values as the CLI/native
 binding selector: omit it or pass an empty string for the compiled default,

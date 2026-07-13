@@ -21,7 +21,13 @@ use crate::types::{
     EntityId, EntityInput, EntityRecord, EntitySort, EntitySummary, EntityType, EntityUpdate,
     FactId, FactInput, FactListOpts, FactRecord, FactType, FactUpdate, ListOpts, RelationInput,
     RelationRecord, SearchFeedback, SearchSession, StoreStats, TraverseDirection,
+    normalize_source_id,
 };
+
+const FACT_DEDUP_SCOPE_VERSION_KEY: &str = "fact_dedup_scope_version";
+const FACT_DEDUP_SCOPE_VERSION: &[u8] = b"2";
+const RELATION_SCOPE_VERSION_KEY: &str = "relation_scope_version";
+const RELATION_SCOPE_VERSION: &[u8] = b"1";
 
 /// SQLite-backed store.
 pub struct SqliteStore {
@@ -70,7 +76,7 @@ impl SqliteStore {
             "eventual" => "NORMAL",
             _ => "FULL",
         };
-        let conn = self.conn.lock();
+        let mut conn = self.conn.lock();
         conn.pragma_update(None, "journal_mode", "WAL")
             .map_err(|source| sqlite_write("pragma", "journal_mode", source))?;
         conn.pragma_update(None, "synchronous", synchronous)
@@ -101,7 +107,7 @@ impl SqliteStore {
 
                 CREATE TABLE IF NOT EXISTS facts (
                     id TEXT PRIMARY KEY,
-                    content_hash TEXT NOT NULL UNIQUE,
+                    content_hash TEXT NOT NULL,
                     content TEXT NOT NULL,
                     fact_type TEXT NOT NULL,
                     source_confidence REAL NOT NULL,
@@ -124,9 +130,10 @@ impl SqliteStore {
                     source_id TEXT NOT NULL,
                     relation_type TEXT NOT NULL,
                     target_id TEXT NOT NULL,
+                    scope_source_id TEXT NOT NULL DEFAULT '',
                     created_at INTEGER NOT NULL,
                     record_json BLOB NOT NULL,
-                    PRIMARY KEY (source_id, relation_type, target_id)
+                    PRIMARY KEY (source_id, relation_type, target_id, scope_source_id)
                 );
 
                 CREATE TABLE IF NOT EXISTS search_sessions (
@@ -143,6 +150,17 @@ impl SqliteStore {
                     record_json BLOB NOT NULL
                 );
 
+                CREATE VIRTUAL TABLE IF NOT EXISTS facts_fts
+                    USING fts5(fact_id UNINDEXED, content);
+                "#,
+        )
+        .map_err(|source| sqlite_write("schema", "<batch>", source))?;
+
+        Self::migrate_fact_dedup_scope(&mut conn)?;
+        Self::migrate_relation_scope(&mut conn)?;
+
+        conn.execute_batch(
+            r#"
                 CREATE INDEX IF NOT EXISTS idx_fact_entities_fact
                     ON fact_entities(fact_id);
                 CREATE INDEX IF NOT EXISTS idx_relations_target
@@ -157,12 +175,228 @@ impl SqliteStore {
                     ON facts(source_id);
                 CREATE INDEX IF NOT EXISTS idx_facts_created_at
                     ON facts(created_at);
-
-                CREATE VIRTUAL TABLE IF NOT EXISTS facts_fts
-                    USING fts5(fact_id UNINDEXED, content);
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_facts_source_content_hash
+                    ON facts(COALESCE(source_id, ''), content_hash);
                 "#,
         )
-        .map_err(|source| sqlite_write("schema", "<batch>", source))?;
+        .map_err(|source| sqlite_write("schema", "<indexes>", source))?;
+        Ok(())
+    }
+
+    /// Add relation provenance to legacy SQLite stores and make it part of
+    /// edge uniqueness. Existing relations remain in the unscoped namespace.
+    fn migrate_relation_scope(conn: &mut Connection) -> Result<()> {
+        let current: Option<Vec<u8>> = conn
+            .query_row(
+                "SELECT value FROM meta WHERE key = ?1",
+                params![RELATION_SCOPE_VERSION_KEY],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|source| sqlite_read("meta", RELATION_SCOPE_VERSION_KEY, source))?;
+        let table_sql: String = conn
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'relations'",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|source| sqlite_read("schema", "relations", source))?;
+        let has_scope_column = table_sql.contains("scope_source_id");
+        if current.as_deref() == Some(RELATION_SCOPE_VERSION) && has_scope_column {
+            return Ok(());
+        }
+
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|source| sqlite_write("schema", "relation scope migration begin", source))?;
+        if !has_scope_column {
+            tx.execute_batch(
+                r#"
+                    DROP INDEX IF EXISTS idx_relations_target;
+                    ALTER TABLE relations RENAME TO relations_unscoped;
+                    CREATE TABLE relations (
+                        source_id TEXT NOT NULL,
+                        relation_type TEXT NOT NULL,
+                        target_id TEXT NOT NULL,
+                        scope_source_id TEXT NOT NULL DEFAULT '',
+                        created_at INTEGER NOT NULL,
+                        record_json BLOB NOT NULL,
+                        PRIMARY KEY (
+                            source_id, relation_type, target_id, scope_source_id
+                        )
+                    );
+                    INSERT INTO relations (
+                        source_id, relation_type, target_id, scope_source_id,
+                        created_at, record_json
+                    )
+                    SELECT source_id, relation_type, target_id, '', created_at, record_json
+                    FROM relations_unscoped;
+                    DROP TABLE relations_unscoped;
+                    "#,
+            )
+            .map_err(|source| sqlite_write("schema", "rebuild relations", source))?;
+        }
+
+        let records = {
+            let mut stmt = tx
+                .prepare("SELECT record_json FROM relations ORDER BY created_at ASC")
+                .map_err(|source| sqlite_read("relations", "<migration prepare>", source))?;
+            let rows = stmt
+                .query_map([], |row| row.get::<_, Vec<u8>>(0))
+                .map_err(|source| sqlite_read("relations", "<migration iter>", source))?;
+            let mut records = Vec::new();
+            for row in rows {
+                let bytes =
+                    row.map_err(|source| sqlite_read("relations", "<migration row>", source))?;
+                records.push(serde_json::from_slice::<RelationRecord>(&bytes).map_err(
+                    |source| AideMemoError::Deserialize {
+                        context: "relation scope migration".to_string(),
+                        source,
+                    },
+                )?);
+            }
+            records
+        };
+        tx.execute("DELETE FROM relations", [])
+            .map_err(|source| sqlite_write("relations", "<migration clear>", source))?;
+        for mut record in records {
+            record.scope_source_id = normalize_source_id(record.scope_source_id.as_deref());
+            Self::insert_relation_record(&tx, &record)?;
+        }
+        tx.execute(
+            "INSERT INTO meta (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![RELATION_SCOPE_VERSION_KEY, RELATION_SCOPE_VERSION],
+        )
+        .map_err(|source| sqlite_write("meta", RELATION_SCOPE_VERSION_KEY, source))?;
+        tx.commit()
+            .map_err(|source| sqlite_write("schema", "relation scope migration commit", source))?;
+        Ok(())
+    }
+
+    /// Upgrade the original global `UNIQUE(content_hash)` schema to a
+    /// source-aware exact-dedup index. SQLite cannot drop an inline UNIQUE
+    /// constraint, so legacy stores need a one-time table rebuild. Existing
+    /// records are also normalised and re-hashed while the unique index is
+    /// offline, keeping the scalar columns and JSON payload in lockstep.
+    fn migrate_fact_dedup_scope(conn: &mut Connection) -> Result<()> {
+        let current: Option<Vec<u8>> = conn
+            .query_row(
+                "SELECT value FROM meta WHERE key = ?1",
+                params![FACT_DEDUP_SCOPE_VERSION_KEY],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|source| sqlite_read("meta", FACT_DEDUP_SCOPE_VERSION_KEY, source))?;
+
+        let table_sql: String = conn
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'facts'",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|source| sqlite_read("schema", "facts", source))?;
+        let has_global_unique = table_sql
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_ascii_uppercase()
+            .contains("CONTENT_HASH TEXT NOT NULL UNIQUE");
+
+        if current.as_deref() == Some(FACT_DEDUP_SCOPE_VERSION) && !has_global_unique {
+            return Ok(());
+        }
+
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|source| sqlite_write("schema", "fact dedup migration begin", source))?;
+
+        if has_global_unique {
+            tx.execute_batch(
+                r#"
+                    DROP INDEX IF EXISTS idx_facts_source_content_hash;
+                    ALTER TABLE facts RENAME TO facts_global_dedup;
+                    CREATE TABLE facts (
+                        id TEXT PRIMARY KEY,
+                        content_hash TEXT NOT NULL,
+                        content TEXT NOT NULL,
+                        fact_type TEXT NOT NULL,
+                        source_confidence REAL NOT NULL,
+                        source_id TEXT,
+                        created_at INTEGER NOT NULL,
+                        updated_at INTEGER NOT NULL,
+                        observed_at INTEGER,
+                        superseded_at INTEGER,
+                        pinned INTEGER NOT NULL DEFAULT 0,
+                        record_json BLOB NOT NULL
+                    );
+                    INSERT INTO facts (
+                        id, content_hash, content, fact_type, source_confidence,
+                        source_id, created_at, updated_at, observed_at,
+                        superseded_at, pinned, record_json
+                    )
+                    SELECT
+                        id, content_hash, content, fact_type, source_confidence,
+                        source_id, created_at, updated_at, observed_at,
+                        superseded_at, pinned, record_json
+                    FROM facts_global_dedup;
+                    DROP TABLE facts_global_dedup;
+                    "#,
+            )
+            .map_err(|source| sqlite_write("schema", "rebuild facts", source))?;
+        }
+
+        let records = {
+            let mut stmt = tx
+                .prepare("SELECT id, record_json FROM facts ORDER BY id ASC")
+                .map_err(|source| sqlite_read("facts", "<migration prepare>", source))?;
+            let rows = stmt
+                .query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?))
+                })
+                .map_err(|source| sqlite_read("facts", "<migration iter>", source))?;
+            let mut records = Vec::new();
+            for row in rows {
+                records
+                    .push(row.map_err(|source| sqlite_read("facts", "<migration row>", source))?);
+            }
+            records
+        };
+
+        for (id, bytes) in records {
+            let mut record: FactRecord =
+                serde_json::from_slice(&bytes).map_err(|source| AideMemoError::Deserialize {
+                    context: format!("fact dedup migration {id}"),
+                    source,
+                })?;
+            record.source_id = normalize_source_id(record.source_id.as_deref());
+            let record_json =
+                serde_json::to_vec(&record).map_err(|source| AideMemoError::Serialize {
+                    context: format!("fact dedup migration {id}"),
+                    source,
+                })?;
+            tx.execute(
+                "UPDATE facts
+                 SET source_id = ?2, content_hash = ?3, record_json = ?4
+                 WHERE id = ?1",
+                params![
+                    id,
+                    record.source_id,
+                    sha256_hex(&record.content),
+                    record_json
+                ],
+            )
+            .map_err(|source| sqlite_write("facts", &record.id.to_string(), source))?;
+        }
+
+        tx.execute(
+            "INSERT INTO meta (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![FACT_DEDUP_SCOPE_VERSION_KEY, FACT_DEDUP_SCOPE_VERSION],
+        )
+        .map_err(|source| sqlite_write("meta", FACT_DEDUP_SCOPE_VERSION_KEY, source))?;
+        tx.commit()
+            .map_err(|source| sqlite_write("schema", "fact dedup migration commit", source))?;
         Ok(())
     }
 
@@ -368,13 +602,15 @@ impl SqliteStore {
         })?;
         conn.execute(
             "INSERT OR REPLACE INTO relations (
-                source_id, relation_type, target_id, created_at, record_json
+                source_id, relation_type, target_id, scope_source_id,
+                created_at, record_json
              )
-             VALUES (?1, ?2, ?3, ?4, ?5)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
                 record.source_id.to_string(),
                 record.relation_type.to_string(),
                 record.target_id.to_string(),
+                record.scope_source_id.as_deref().unwrap_or(""),
                 record.created_at as i64,
                 bytes
             ],
@@ -449,15 +685,24 @@ impl SqliteStore {
         true
     }
 
-    fn fact_id_by_hash(conn: &Connection, content_hash: &str) -> Result<Option<FactId>> {
+    fn fact_id_by_hash(
+        conn: &Connection,
+        source_id: Option<&str>,
+        content_hash: &str,
+    ) -> Result<Option<FactId>> {
+        let normalized_source_id = normalize_source_id(source_id);
+        let source_key = normalized_source_id.as_deref().unwrap_or("");
         let raw: Option<String> = conn
             .query_row(
-                "SELECT id FROM facts WHERE content_hash = ?1",
-                params![content_hash],
+                "SELECT id FROM facts
+                 WHERE COALESCE(source_id, '') = ?1 AND content_hash = ?2",
+                params![source_key, content_hash],
                 |row| row.get(0),
             )
             .optional()
-            .map_err(|source| sqlite_read("facts", content_hash, source))?;
+            .map_err(|source| {
+                sqlite_read("facts", &format!("{source_key}:{content_hash}"), source)
+            })?;
         Ok(raw.and_then(|id| Ulid::from_string(&id).ok()).map(FactId))
     }
 
@@ -871,6 +1116,16 @@ impl StoreBackend for SqliteStore {
                 .map_err(|source| sqlite_write("facts", "begin", source))?;
             let mut record = Self::get_fact_record(&tx, &id)?;
             record.update(input.clone());
+            record.source_id = normalize_source_id(record.source_id.as_deref());
+            let content_hash = sha256_hex(&record.content);
+            if let Some(existing_id) =
+                Self::fact_id_by_hash(&tx, record.source_id.as_deref(), &content_hash)?
+                && existing_id != id
+            {
+                return Err(AideMemoError::InvalidInput(format!(
+                    "fact content already exists in source namespace as {existing_id}"
+                )));
+            }
             Self::update_fact_record(&tx, &record)?;
             tx.commit()
                 .map_err(|source| sqlite_write("facts", "commit", source))?;
@@ -909,7 +1164,8 @@ impl StoreBackend for SqliteStore {
     fn fact_upsert_record(&mut self, record: FactRecord) -> Result<bool> {
         let lock_retry_ms = self.config.store.lock_retry_ms;
         sqlite_lock_retry(lock_retry_ms, || {
-            let record = record.clone();
+            let mut record = record.clone();
+            record.source_id = normalize_source_id(record.source_id.as_deref());
             let content_hash = sha256_hex(&record.content);
             let mut conn = self.conn.lock();
             let tx = conn
@@ -921,7 +1177,8 @@ impl StoreBackend for SqliteStore {
             {
                 return Ok(false);
             }
-            if let Some(existing_id) = Self::fact_id_by_hash(&tx, &content_hash)?
+            if let Some(existing_id) =
+                Self::fact_id_by_hash(&tx, record.source_id.as_deref(), &content_hash)?
                 && existing_id != record.id
             {
                 return Ok(false);
@@ -1070,6 +1327,7 @@ impl StoreBackend for SqliteStore {
         let record = RelationRecord {
             source_id,
             target_id,
+            scope_source_id: normalize_source_id(input.scope_source_id.as_deref()),
             relation_type: input.relation_type,
             weight: input.weight.unwrap_or(1.0),
             evidence: input.evidence.unwrap_or_default(),
@@ -1082,10 +1340,16 @@ impl StoreBackend for SqliteStore {
         })
     }
 
-    fn relation_upsert_record(&mut self, record: RelationRecord) -> Result<bool> {
+    fn relation_upsert_record(&mut self, mut record: RelationRecord) -> Result<bool> {
+        record.scope_source_id = normalize_source_id(record.scope_source_id.as_deref());
         let lock_retry_ms = self.config.store.lock_retry_ms;
         sqlite_lock_retry(lock_retry_ms, || {
             let record = record.clone();
+            let record_bytes =
+                serde_json::to_vec(&record).map_err(|source| AideMemoError::Serialize {
+                    context: "relation sync upsert".to_string(),
+                    source,
+                })?;
             let mut conn = self.conn.lock();
             let tx = conn
                 .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -1093,17 +1357,19 @@ impl StoreBackend for SqliteStore {
             let exists: Option<Vec<u8>> = tx
                 .query_row(
                     "SELECT record_json FROM relations
-                     WHERE source_id = ?1 AND relation_type = ?2 AND target_id = ?3",
+                     WHERE source_id = ?1 AND relation_type = ?2 AND target_id = ?3
+                       AND scope_source_id = ?4",
                     params![
                         record.source_id.to_string(),
                         record.relation_type.to_string(),
-                        record.target_id.to_string()
+                        record.target_id.to_string(),
+                        record.scope_source_id.as_deref().unwrap_or("")
                     ],
                     |row| row.get(0),
                 )
                 .optional()
                 .map_err(|source| sqlite_read("relations", &relation_key(&record), source))?;
-            if exists.is_some() {
+            if exists.as_deref() == Some(record_bytes.as_slice()) {
                 return Ok(false);
             }
             Self::insert_relation_record(&tx, &record)?;
@@ -1125,7 +1391,8 @@ impl StoreBackend for SqliteStore {
             let removed = conn
                 .execute(
                     "DELETE FROM relations
-                     WHERE source_id = ?1 AND relation_type = ?2 AND target_id = ?3",
+                     WHERE source_id = ?1 AND relation_type = ?2 AND target_id = ?3
+                       AND scope_source_id = ''",
                     params![source_id.to_string(), rel_type, target_id.to_string()],
                 )
                 .map_err(|source| sqlite_write("relations", &rel_type, source))?;
@@ -1266,8 +1533,11 @@ fn count_entity_facts(conn: &Connection, entity_id: &EntityId) -> Result<u32> {
 
 fn relation_key(record: &RelationRecord) -> String {
     format!(
-        "{}\0{}\0{}",
-        record.source_id, record.relation_type, record.target_id
+        "{}\0{}\0{}\0{}",
+        record.source_id,
+        record.scope_source_id.as_deref().unwrap_or(""),
+        record.relation_type,
+        record.target_id
     )
 }
 
@@ -1316,7 +1586,10 @@ fn sqlite_fact_add_many_once(
 
     for input in inputs {
         let content_hash = sha256_hex(&input.content);
-        if let Some(existing_id) = SqliteStore::fact_id_by_hash(&tx, &content_hash)? {
+        let source_id = normalize_source_id(input.source_id.as_deref());
+        if let Some(existing_id) =
+            SqliteStore::fact_id_by_hash(&tx, source_id.as_deref(), &content_hash)?
+        {
             if let Some(entity_ids) = input.entity_ids {
                 SqliteStore::merge_fact_entities(&tx, existing_id, entity_ids)?;
             }
@@ -1335,9 +1608,7 @@ fn sqlite_fact_add_many_once(
         if let Some(source) = input.source {
             record.source = Some(source);
         }
-        if let Some(source_id) = input.source_id {
-            record.source_id = Some(source_id);
-        }
+        record.source_id = source_id;
         if let Some(actor_id) = input.actor_id {
             record.actor_id = Some(actor_id);
         }
@@ -1421,6 +1692,160 @@ mod tests {
     }
 
     #[test]
+    fn sqlite_exact_dedup_is_scoped_by_normalized_source_id() {
+        let (_dir, mut store) = open_store();
+        let content = "shared release decision";
+
+        let alpha = store
+            .fact_add(FactInput {
+                content: content.to_string(),
+                source_id: Some("  alpha  ".to_string()),
+                actor_id: Some("codex:alpha".to_string()),
+                ..Default::default()
+            })
+            .expect("alpha fact");
+        let beta = store
+            .fact_add(FactInput {
+                content: content.to_string(),
+                source_id: Some("beta".to_string()),
+                actor_id: Some("codex:beta".to_string()),
+                ..Default::default()
+            })
+            .expect("beta fact");
+        let alpha_again = store
+            .fact_add(FactInput {
+                content: content.to_string(),
+                source_id: Some("alpha".to_string()),
+                actor_id: Some("other-writer".to_string()),
+                ..Default::default()
+            })
+            .expect("alpha duplicate");
+
+        assert_ne!(alpha, beta, "different sources retain independent ids");
+        assert_eq!(alpha_again, alpha, "same normalized source still dedups");
+        let alpha_record = store.fact_get(&alpha).expect("alpha record");
+        let beta_record = store.fact_get(&beta).expect("beta record");
+        assert_eq!(alpha_record.source_id.as_deref(), Some("alpha"));
+        assert_eq!(alpha_record.actor_id.as_deref(), Some("codex:alpha"));
+        assert_eq!(beta_record.source_id.as_deref(), Some("beta"));
+        assert_eq!(beta_record.actor_id.as_deref(), Some("codex:beta"));
+        assert_eq!(store.stats().expect("stats").fact_count, 2);
+    }
+
+    #[test]
+    fn sqlite_sync_upsert_keeps_same_content_from_different_sources() {
+        let (_dir, mut store) = open_store();
+        let mut alpha = FactRecord::new(
+            "synced decision".to_string(),
+            FactType::Decision,
+            Vec::new(),
+        );
+        alpha.source_id = Some("alpha".to_string());
+        alpha.actor_id = Some("agent-a".to_string());
+        let mut beta = FactRecord::new(
+            "synced decision".to_string(),
+            FactType::Decision,
+            Vec::new(),
+        );
+        beta.source_id = Some("beta".to_string());
+        beta.actor_id = Some("agent-b".to_string());
+
+        assert!(
+            store
+                .fact_upsert_record(alpha.clone())
+                .expect("upsert alpha")
+        );
+        assert!(store.fact_upsert_record(beta.clone()).expect("upsert beta"));
+        assert_eq!(
+            store.fact_get(&alpha.id).expect("alpha").actor_id,
+            alpha.actor_id
+        );
+        assert_eq!(
+            store.fact_get(&beta.id).expect("beta").actor_id,
+            beta.actor_id
+        );
+        assert_eq!(store.stats().expect("stats").fact_count, 2);
+    }
+
+    #[test]
+    fn sqlite_open_migrates_global_content_hash_unique_index() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("legacy.sqlite");
+        let mut legacy = FactRecord::new(
+            "legacy shared content".to_string(),
+            FactType::Note,
+            Vec::new(),
+        );
+        legacy.source_id = Some("  alpha  ".to_string());
+        legacy.actor_id = Some("legacy-agent".to_string());
+        let bytes = serde_json::to_vec(&legacy).expect("legacy json");
+
+        let conn = Connection::open(&path).expect("legacy sqlite");
+        conn.execute_batch(
+            r#"
+                CREATE TABLE facts (
+                    id TEXT PRIMARY KEY,
+                    content_hash TEXT NOT NULL UNIQUE,
+                    content TEXT NOT NULL,
+                    fact_type TEXT NOT NULL,
+                    source_confidence REAL NOT NULL,
+                    source_id TEXT,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL,
+                    observed_at INTEGER,
+                    superseded_at INTEGER,
+                    pinned INTEGER NOT NULL DEFAULT 0,
+                    record_json BLOB NOT NULL
+                );
+                "#,
+        )
+        .expect("legacy schema");
+        conn.execute(
+            "INSERT INTO facts (
+                id, content_hash, content, fact_type, source_confidence,
+                source_id, created_at, updated_at, observed_at,
+                superseded_at, pinned, record_json
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, NULL, NULL, 0, ?9)",
+            params![
+                legacy.id.to_string(),
+                sha256_hex(&legacy.content),
+                legacy.content,
+                legacy.fact_type.to_string(),
+                legacy.source_confidence,
+                legacy.source_id,
+                legacy.created_at as i64,
+                legacy.updated_at as i64,
+                bytes
+            ],
+        )
+        .expect("legacy fact");
+        drop(conn);
+
+        let mut store = SqliteStore::open(&path, Config::default()).expect("migrated store");
+        let migrated = store.fact_get(&legacy.id).expect("migrated fact");
+        assert_eq!(migrated.source_id.as_deref(), Some("alpha"));
+        assert_eq!(migrated.actor_id.as_deref(), Some("legacy-agent"));
+
+        let alpha = store
+            .fact_add(FactInput {
+                content: migrated.content.clone(),
+                source_id: Some("alpha".to_string()),
+                ..Default::default()
+            })
+            .expect("same-source dedup");
+        let beta = store
+            .fact_add(FactInput {
+                content: migrated.content,
+                source_id: Some("beta".to_string()),
+                ..Default::default()
+            })
+            .expect("cross-source insert");
+        assert_eq!(alpha, legacy.id);
+        assert_ne!(beta, legacy.id);
+        assert_eq!(store.stats().expect("stats").fact_count, 2);
+    }
+
+    #[test]
     fn sqlite_store_applies_lock_retry_as_busy_timeout() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("wiki.sqlite");
@@ -1433,6 +1858,79 @@ mod tests {
             .query_row("PRAGMA busy_timeout", [], |row| row.get(0))
             .expect("busy timeout");
         assert_eq!(busy_timeout, 1000);
+    }
+
+    #[test]
+    fn sqlite_open_migrates_relation_scope_primary_key() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("legacy-relations.sqlite");
+        {
+            let mut store = SqliteStore::open(&path, Config::default()).expect("open store");
+            for name in ["SharedSource", "SharedTarget"] {
+                store
+                    .entity_add(EntityInput {
+                        name: name.to_string(),
+                        ..Default::default()
+                    })
+                    .expect("entity");
+            }
+            store
+                .relation_add(RelationInput {
+                    source: "SharedSource".to_string(),
+                    target: "SharedTarget".to_string(),
+                    scope_source_id: None,
+                    relation_type: RelationType::new("links"),
+                    weight: Some(1.0),
+                    evidence: Some(vec!["legacy proof".to_string()]),
+                })
+                .expect("legacy relation");
+        }
+
+        let conn = Connection::open(&path).expect("legacy sqlite");
+        conn.execute_batch(
+            r#"
+                DROP INDEX IF EXISTS idx_relations_target;
+                ALTER TABLE relations RENAME TO relations_scoped;
+                CREATE TABLE relations (
+                    source_id TEXT NOT NULL,
+                    relation_type TEXT NOT NULL,
+                    target_id TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    record_json BLOB NOT NULL,
+                    PRIMARY KEY (source_id, relation_type, target_id)
+                );
+                INSERT INTO relations (
+                    source_id, relation_type, target_id, created_at, record_json
+                )
+                SELECT source_id, relation_type, target_id, created_at, record_json
+                FROM relations_scoped;
+                DROP TABLE relations_scoped;
+                DELETE FROM meta WHERE key = 'relation_scope_version';
+                "#,
+        )
+        .expect("downgrade relation schema");
+        drop(conn);
+
+        let mut store = SqliteStore::open(&path, Config::default()).expect("migrate relation");
+        for (scope, proof) in [("alpha", "alpha proof"), ("beta", "beta proof")] {
+            store
+                .relation_add(RelationInput {
+                    source: "SharedSource".to_string(),
+                    target: "SharedTarget".to_string(),
+                    scope_source_id: Some(scope.to_string()),
+                    relation_type: RelationType::new("links"),
+                    weight: Some(1.0),
+                    evidence: Some(vec![proof.to_string()]),
+                })
+                .expect("scoped relation");
+        }
+        let all = store
+            .relations_get("SharedSource", TraverseDirection::Forward)
+            .expect("relations");
+        assert_eq!(all.len(), 3);
+        assert!(all.iter().any(|relation| {
+            relation.scope_source_id.is_none() && relation.evidence == ["legacy proof"]
+        }));
     }
 
     #[test]
@@ -1570,6 +2068,7 @@ mod tests {
             .relation_add(RelationInput {
                 source: "Sentinel".to_string(),
                 target: "Redis".to_string(),
+                scope_source_id: None,
                 relation_type: RelationType::new("monitors"),
                 weight: Some(1.0),
                 evidence: Some(vec!["fixture".to_string()]),

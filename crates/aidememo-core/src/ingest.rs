@@ -190,6 +190,7 @@ fn ingest_wiki_inner<B: StoreBackend>(
                     let rel = RelationInput {
                         source: tr.source.clone(),
                         target: tr.target.clone(),
+                        scope_source_id: None,
                         relation_type: RelationType::new(tr.relation_type.clone()),
                         weight: None,
                         evidence: Some(vec![format!("{}:{}", parsed.rel_path, tr.evidence)]),
@@ -209,6 +210,7 @@ fn ingest_wiki_inner<B: StoreBackend>(
                     let rel = RelationInput {
                         source: entity_name.clone(),
                         target: wl.target.clone(),
+                        scope_source_id: None,
                         relation_type: RelationType::new("references"),
                         weight: None,
                         evidence: Some(vec![format!("{}:{}", parsed.rel_path, wl.line)]),

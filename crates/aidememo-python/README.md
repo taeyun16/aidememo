@@ -112,6 +112,7 @@ pack = g.workflow_start(
     body="Worker jobs intermittently time out. The issue has no more detail.",
     source="github:org/app#123",
     source_id="team-a",
+    actor_id="codex:account-a",
     limit=8,
     depth=2,
     recent_limit=5,
@@ -129,12 +130,48 @@ g.fact_add(
     source_id="team-a",
     session_id=pack["session_id"],
 )
-thread = g.fact_list(entity=pack["session_id"], limit=20)
+thread = g.fact_list(entity=pack["session_id"], source_id="team-a", limit=20)
 ```
 
-For a multi-agent shared store, pass `source_id` on writes and reads. The same
-field flows through `search`, `query`, `fact_list`, `fact_add`, `fact_add_many`,
-and `workflow_start`.
+## Shared source namespaces
+
+For a multi-agent shared store, pass the same `source_id` on writes and reads.
+It scopes `search`, `query`, `workflow_start`, `traverse`, `path_find`,
+`entity_get` / `entity_list`, `fact_get` / `fact_list`, `fact_pin` /
+`pinned_facts`, and `relation_add` / `relations_get`. `workflow_start` carries
+the namespace into its ticket fact, optional parent-session relation, and all
+returned retrieval context. Omitting `source_id` preserves the legacy
+store-wide view.
+
+```python
+worker = g.entity_add("Worker", entity_type="service")
+g.fact_add("Worker uses Redis", entity_ids=[worker], source_id="team-a")
+g.relation_add("Redis", "Worker", "used_by", source_id="team-a")
+
+entity = g.entity_get("Redis", source_id="team-a")
+facts = g.fact_list(entity="Redis", source_id="team-a")
+edges = g.relations_get("Redis", direction="forward", source_id="team-a")
+path = g.path_find("Redis", "Worker", source_id="team-a")
+g.fact_pin(facts[0]["id"], True, source_id="team-a")
+always_on = g.pinned_facts(limit=10, source_id="team-a")
+```
+
+Exact-content deduplication is local to a source namespace, so two sources can
+store the same text as independent facts with distinct provenance.
+Entities are a shared ontology: names, IDs, and types can be reused by several
+sources. A scoped entity read only exposes entities backed by facts in that
+source and omits globally-authored descriptive metadata; scoped relation reads
+return only edges added with that exact `source_id`. The native binding does
+not authenticate callers or prevent them from choosing another `source_id`,
+and global mutation methods remain available. Treat this as a trusted-team
+boundary. Use separate stores/processes for untrusted tenants, or expose the
+store through the MCP server's token-to-source bindings described in
+[`docs/MCP.md`](../../docs/MCP.md).
+
+There is no handle-level source or actor default in `aidememo-python`: pass
+`source_id` on every scoped operation and `actor_id` on `workflow_start`,
+`fact_add`, or each `fact_add_many` item. `lint()` and `stats()` are always
+store-wide diagnostics; do not expose them to source-restricted callers.
 
 ## Branch logs
 
@@ -186,16 +223,17 @@ Exception classes:
 | Method | Returns |
 |---|---|
 | `AideMemo(path, backend?, durability?, model?, semantic_index?)` | constructor |
-| `search(query, limit?, min_confidence?)` | `list[dict]` |
-| `query(topic, limit?, depth?, recent_limit?)` | `dict` |
-| `workflow_start(title, body?, source?, source_id?, limit?, depth?, recent_limit?, bm25_only?)` | `dict` |
-| `traverse(entity, depth?, direction?)` | `dict` |
-| `path_find(from, to)` | `list[dict] \| None` |
-| `entity_add(name, ...)` / `entity_get(name)` / `entity_list(...)` / `entity_delete(name)` | … |
+| `search(query, ..., source_id?)` | `list[dict]` |
+| `query(topic, ..., source_id?)` | `dict` |
+| `workflow_start(title, body?, source?, source_id?, actor_id?, parent_session_id?, ...)` | `dict` |
+| `traverse(entity, depth?, direction?, source_id?)` | `dict` |
+| `path_find(from, to, source_id?)` | `list[dict] \| None` |
+| `entity_add(name, ...)` / `entity_get(name, source_id?)` / `entity_list(..., source_id?)` / `entity_delete(name)` | … |
 | `resolve_entity(name)` | ULID string |
-| `fact_add(content, ..., session_id?)` / `fact_add_many(items, session_id?)` / `fact_get(id)` / `fact_list(...)` / `fact_delete(id)` | … |
-| `fact_pin(id, pinned)` / `pinned_facts(limit?)` | always-loaded facts |
-| `relation_add/remove/get` | … |
+| `fact_add(content, ..., source_id?, actor_id?, session_id?)` / `fact_add_many(items, session_id?)` | ULID(s); each batch item may carry its own `source_id` and `actor_id` |
+| `fact_get(id, source_id?)` / `fact_list(..., source_id?)` / `fact_delete(id)` | … |
+| `fact_pin(id, pinned, source_id?)` / `pinned_facts(limit?, source_id?)` | always-loaded facts |
+| `relation_add(source, target, type, source_id?)` / `relations_get(entity, direction?, source_id?)` / `relation_remove(...)` | … |
 | `ingest(wiki_root, incremental?)` | `dict` |
 | `lint()` | `list[dict]` |
 | `stats()` | `dict` |

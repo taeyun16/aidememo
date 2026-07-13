@@ -52,11 +52,50 @@ Cargo `redb` 기능으로 빌드합니다.
 ```python
 from aidememo_agent import Memory
 
-mem = Memory.open(source_id="team-a", storage_backend="libsqlite")
+mem = Memory.open(
+    source_id="team-a",
+    actor_id="codex:account-a",
+    storage_backend="libsqlite",
+)
 ```
 
-공유 저장소 안에서 한 팀, 에이전트, tenant, 프로젝트를 분리하려면
-`source_id`를 사용합니다.
+신뢰된 공유 저장소 안에서 한 팀, 에이전트, 프로젝트를 partition하려면
+`source_id`를 사용합니다. 해당 인자를 생략하면 `Memory.open(...)`은
+`AIDEMEMO_SOURCE_ID`와 `AIDEMEMO_ACTOR_ID`도 상속합니다. source 기본값은
+fanout search/query/aggregate, context와 recent read, entity list와 traverse,
+workflow/session/project context, fact write에 전달됩니다. actor 기본값은
+workflow와 fact write의 작성자 provenance를 기록하며 retrieval을 partition하지
+않습니다. 정확한 content dedup은 source 안에서 적용되므로 같은 텍스트가 서로
+다른 두 source에 독립적으로 존재할 수 있습니다.
+
+이 값은 편의 기본값이지 변경 불가능한 credential이 아닙니다. 명시적인 per-call
+값이 `Memory.open(...)`보다 우선하고, `remember(...)` batch item은 method 및
+open-time 기본값을 덮어쓸 수 있습니다. 할당을 강제해야 한다면 호출자에게 native
+store handle이나 stdio/CLI 접근을 주지 말고 HTTP bearer identity binding을 통해
+AideMemo를 노출하세요.
+
+기본 source가 설정되면 composition SDK는 `mem.client.doctor()`, `lint()`,
+`stats()`를 의도적으로 거부합니다. 이 메서드는 global store metadata를
+노출하기 때문입니다. 진단은 scope가 없는 관리자 process에서 실행하세요.
+
+### 바인딩별 source scope
+
+네이티브 바인딩은 composition SDK 기본값을 상속하지 않습니다. identity가
+필요한 operation마다 다음 값을 전달하세요.
+
+| 표면 | Source selector | Actor selector |
+|---|---|---|
+| `aidememo-agent-sdk` | `Memory.open(source_id=...)`, per-call 또는 per-item override 가능 | `Memory.open(actor_id=...)`, workflow/fact write에 적용 |
+| `aidememo-python` | source-aware read, relation, workflow, fact write의 `source_id=` | workflow/fact write 또는 `fact_add_many` item의 `actor_id=` |
+| `aidememo-napi` | option 또는 method에 문서화된 positional source argument의 `sourceId` | workflow/fact write 또는 batch item의 `actorId` |
+| `aidememo_nif` | operation option의 `source_id:` | fact write 또는 batch item의 `actor_id:` |
+| `aidememo-ffi` | `_scoped` 함수와 각 batch item의 `source_id` | `aidememo_fact_add_scoped` 또는 각 batch item의 `actor_id` |
+
+이는 상호 적대적인 multi-tenant security boundary가 아닙니다. Native SDK
+호출자는 다른 source를 선택할 수 있고 entity name/type은 공유 ontology를
+구성합니다. 상호 신뢰하지 않는 tenant는 별도 store를 사용하고, 인증된
+에이전트가 할당된 source를 재정의하면 안 될 때는 HTTP bearer identity
+binding을 사용하세요.
 
 `storage_backend`는 선택 사항이며 CLI와 네이티브 바인딩 선택자와 같은 값을
 사용합니다. 컴파일된 기본값은 생략하거나 빈 문자열을 전달하고, 기본 로컬

@@ -35,7 +35,7 @@ python3 scripts/docs-site-e2e.py
 | `aidememo project` | 이름 있는 프로젝트와 저장소 경로 관리 |
 | `aidememo bench` | golden JSONL 세트에 대해 검색 품질 벤치마크 |
 | `aidememo skill` | 에이전트 skill 파일 검증 또는 설치 |
-| `aidememo backup` | manifest 검증을 포함한 SQLite snapshot 백업 생성 또는 복원 |
+| `aidememo backup` | manifest 검증을 포함한 hot + optional cold-tier SQLite snapshot 백업 생성 또는 복원 |
 | `aidememo branch` | 클라우드 에이전트와 추측성 실험을 위한 append-only 메모리 브랜치 로그 push 또는 merge |
 | `aidememo export` | 엔티티, 관계, 팩트를 JSONL로 내보내기 |
 | `aidememo import` | JSONL 데이터 가져오기 |

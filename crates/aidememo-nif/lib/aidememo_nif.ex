@@ -43,7 +43,16 @@ defmodule AideMemoNif do
   def search(handle, query, opts \\ []) do
     limit = Keyword.get(opts, :limit, 10)
     current_only = Keyword.get(opts, :current_only, false)
-    handle |> Native.search(query, limit, current_only) |> Jason.decode!()
+    source_id = Keyword.get(opts, :source_id, "")
+
+    result =
+      if source_id in ["", nil] do
+        Native.search(handle, query, limit, current_only)
+      else
+        Native.search_scoped(handle, query, limit, current_only, to_string(source_id))
+      end
+
+    Jason.decode!(result)
   end
 
   @doc """
@@ -56,10 +65,25 @@ defmodule AideMemoNif do
     recent_limit = Keyword.get(opts, :recent_limit, 10)
     current_only = Keyword.get(opts, :current_only, false)
     mode = Keyword.get(opts, :mode, "hybrid")
+    source_id = Keyword.get(opts, :source_id, "")
 
-    handle
-    |> Native.query(topic, limit, depth, recent_limit, current_only, mode)
-    |> Jason.decode!()
+    result =
+      if source_id in ["", nil] do
+        Native.query(handle, topic, limit, depth, recent_limit, current_only, mode)
+      else
+        Native.query_scoped(
+          handle,
+          topic,
+          limit,
+          depth,
+          recent_limit,
+          current_only,
+          mode,
+          to_string(source_id)
+        )
+      end
+
+    Jason.decode!(result)
   end
 
   # === Graph ===============================================================
@@ -67,11 +91,29 @@ defmodule AideMemoNif do
   def traverse(handle, entity, opts \\ []) do
     depth = Keyword.get(opts, :depth, 2)
     direction = Keyword.get(opts, :direction, "both")
-    handle |> Native.traverse(entity, depth, direction) |> Jason.decode!()
+    source_id = Keyword.get(opts, :source_id, "")
+
+    result =
+      if source_id in ["", nil] do
+        Native.traverse(handle, entity, depth, direction)
+      else
+        Native.traverse_scoped(handle, entity, depth, direction, to_string(source_id))
+      end
+
+    Jason.decode!(result)
   end
 
-  def path_find(handle, from, to) do
-    handle |> Native.path_find(from, to) |> Jason.decode!()
+  def path_find(handle, from, to, opts \\ []) do
+    source_id = Keyword.get(opts, :source_id, "")
+
+    result =
+      if source_id in ["", nil] do
+        Native.path_find(handle, from, to)
+      else
+        Native.path_find_scoped(handle, from, to, to_string(source_id))
+      end
+
+    Jason.decode!(result)
   end
 
   # === Entity CRUD =========================================================
@@ -87,12 +129,32 @@ defmodule AideMemoNif do
     )
   end
 
-  def entity_get(handle, name), do: Native.entity_get(handle, name) |> Jason.decode!()
+  def entity_get(handle, name, opts \\ []) do
+    source_id = Keyword.get(opts, :source_id, "")
+
+    result =
+      if source_id in ["", nil] do
+        Native.entity_get(handle, name)
+      else
+        Native.entity_get_scoped(handle, name, to_string(source_id))
+      end
+
+    Jason.decode!(result)
+  end
 
   def entity_list(handle, opts \\ []) do
     limit = Keyword.get(opts, :limit, 0)
     type = Keyword.get(opts, :entity_type, "")
-    handle |> Native.entity_list(limit, type) |> Jason.decode!()
+    source_id = Keyword.get(opts, :source_id, "")
+
+    result =
+      if source_id in ["", nil] do
+        Native.entity_list(handle, limit, type)
+      else
+        Native.entity_list_scoped(handle, limit, type, to_string(source_id))
+      end
+
+    Jason.decode!(result)
   end
 
   def entity_delete(handle, name), do: Native.entity_delete(handle, name)
@@ -105,7 +167,10 @@ defmodule AideMemoNif do
   # === Fact CRUD ===========================================================
 
   def fact_add(handle, content, opts \\ []) do
-    Native.fact_add(
+    source_id = Keyword.get(opts, :source_id, "")
+    actor_id = Keyword.get(opts, :actor_id, "")
+
+    args = [
       handle,
       content,
       Keyword.get(opts, :entity_ids, []),
@@ -113,7 +178,13 @@ defmodule AideMemoNif do
       Keyword.get(opts, :tags, []),
       Keyword.get(opts, :source, ""),
       :erlang.float(Keyword.get(opts, :confidence, 0.0))
-    )
+    ]
+
+    if source_id in ["", nil] and actor_id in ["", nil] do
+      apply(Native, :fact_add, args)
+    else
+      apply(Native, :fact_add_scoped, args ++ [maybe_string(source_id), maybe_string(actor_id)])
+    end
   end
 
   @doc """
@@ -133,8 +204,12 @@ defmodule AideMemoNif do
   Returns the new fact ULIDs in input order. All-or-nothing.
   """
   def fact_add_many(handle, items) do
-    Native.fact_add_many(
-      handle,
+    scoped =
+      Enum.any?(items, fn item ->
+        Map.get(item, :source_id) not in [nil, ""] or Map.get(item, :actor_id) not in [nil, ""]
+      end)
+
+    normalized =
       Enum.map(items, fn item ->
         %{
           content: Map.fetch!(item, :content),
@@ -142,20 +217,68 @@ defmodule AideMemoNif do
           fact_type: Map.get(item, :fact_type, ""),
           tags: Map.get(item, :tags, []),
           source: Map.get(item, :source, ""),
+          source_id: maybe_string(Map.get(item, :source_id, "")),
+          actor_id: maybe_string(Map.get(item, :actor_id, "")),
           confidence: :erlang.float(Map.get(item, :confidence, 0.0))
         }
       end)
-    )
+
+    if scoped do
+      Native.fact_add_many_scoped(handle, normalized)
+    else
+      Native.fact_add_many(handle, Enum.map(normalized, &Map.drop(&1, [:source_id, :actor_id])))
+    end
   end
 
-  def fact_get(handle, fact_id), do: Native.fact_get(handle, fact_id) |> Jason.decode!()
+  def fact_get(handle, fact_id, opts \\ []) do
+    source_id = Keyword.get(opts, :source_id, "")
+
+    result =
+      if source_id in ["", nil] do
+        Native.fact_get(handle, fact_id)
+      else
+        Native.fact_get_scoped(handle, fact_id, to_string(source_id))
+      end
+
+    Jason.decode!(result)
+  end
+
+  def pinned_facts(handle, opts \\ []) do
+    limit = Keyword.get(opts, :limit, 10)
+    source_id = Keyword.get(opts, :source_id, "")
+
+    result =
+      if source_id in ["", nil] do
+        Native.pinned_facts(handle, limit)
+      else
+        Native.pinned_facts_scoped(handle, limit, to_string(source_id))
+      end
+
+    Jason.decode!(result)
+  end
 
   def fact_list(handle, opts \\ []) do
     entity = Keyword.get(opts, :entity, "")
     type = Keyword.get(opts, :fact_type, "")
     limit = Keyword.get(opts, :limit, 0)
     current_only = Keyword.get(opts, :current_only, false)
-    handle |> Native.fact_list(entity, type, limit, current_only) |> Jason.decode!()
+    source_id = Keyword.get(opts, :source_id, "")
+
+    result =
+      if source_id in ["", nil] do
+        Native.fact_list(handle, entity, type, limit, current_only)
+      else
+        Native.fact_list_scoped(
+          handle,
+          entity,
+          type,
+          limit,
+          current_only,
+          to_string(source_id)
+        )
+      end
+
+    Jason.decode!(result)
   end
 
   def fact_delete(handle, fact_id), do: Native.fact_delete(handle, fact_id)
@@ -165,15 +288,31 @@ defmodule AideMemoNif do
 
   # === Relations ===========================================================
 
-  def relation_add(handle, source, target, rel_type),
-    do: Native.relation_add(handle, source, target, rel_type)
+  def relation_add(handle, source, target, rel_type, opts \\ []) do
+    source_id = Keyword.get(opts, :source_id, "")
+
+    if source_id in ["", nil] do
+      Native.relation_add(handle, source, target, rel_type)
+    else
+      Native.relation_add_scoped(handle, source, target, rel_type, to_string(source_id))
+    end
+  end
 
   def relation_remove(handle, source, target, rel_type),
     do: Native.relation_remove(handle, source, target, rel_type)
 
   def relations_get(handle, entity, opts \\ []) do
     direction = Keyword.get(opts, :direction, "both")
-    handle |> Native.relations_get(entity, direction) |> Jason.decode!()
+    source_id = Keyword.get(opts, :source_id, "")
+
+    result =
+      if source_id in ["", nil] do
+        Native.relations_get(handle, entity, direction)
+      else
+        Native.relations_get_scoped(handle, entity, direction, to_string(source_id))
+      end
+
+    Jason.decode!(result)
   end
 
   # === Ingest / Lint / Stats ==============================================

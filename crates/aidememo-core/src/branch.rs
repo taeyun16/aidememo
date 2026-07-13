@@ -4,11 +4,16 @@
 //! append-only delta (or full-state fallback) after that baseline. Merge applies
 //! those logs through the existing idempotent sync import path.
 
+use crate::backend::StoreBackend;
 use crate::backup::{BackupManifest, BackupSyncCursor};
 use crate::sync::{SyncExportOpts, SyncImportStats, cursor_from_jsonl};
-use crate::{AideMemo, AideMemoError, Config, Result};
+use crate::{
+    AideMemo, AideMemoError, Config, EntityId, EntityRecord, FactId, FactListOpts, FactRecord,
+    ListOpts, Result,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use ulid::Ulid;
 
@@ -133,6 +138,7 @@ pub fn merge_local_branches_for_wiki(
     source_dir: &Path,
     branch: Option<&str>,
 ) -> Result<BranchMergeReport> {
+    let before = MergeRecordSnapshot::capture(wiki)?;
     let branch = branch.map(validate_branch_id).transpose()?;
     let mut manifest_paths = local_manifest_paths(source_dir, branch.as_deref())?;
     manifest_paths.sort();
@@ -160,6 +166,7 @@ pub fn merge_local_branches_for_wiki(
         report.apply_stats(stats);
         report.segments_merged += 1;
     }
+    make_merged_records_sync_visible(wiki, &before)?;
     Ok(report)
 }
 
@@ -225,6 +232,7 @@ pub async fn merge_s3_branches(
     manifest_keys.sort();
 
     let wiki = AideMemo::open(store_path, config)?;
+    let before = MergeRecordSnapshot::capture(&wiki)?;
     let mut report = BranchMergeReport {
         source: source.to_string(),
         branch,
@@ -253,7 +261,115 @@ pub async fn merge_s3_branches(
         report.apply_stats(stats);
         report.segments_merged += 1;
     }
+    make_merged_records_sync_visible(&wiki, &before)?;
     Ok(report)
+}
+
+struct MergeRecordSnapshot {
+    entities: HashMap<EntityId, EntityRecord>,
+    facts: HashMap<FactId, FactRecord>,
+}
+
+impl MergeRecordSnapshot {
+    fn capture(wiki: &AideMemo) -> Result<Self> {
+        let entity_summaries = wiki.entity_list(ListOpts {
+            limit: Some(usize::MAX),
+            ..Default::default()
+        })?;
+        let mut entities = HashMap::with_capacity(entity_summaries.len());
+        for summary in entity_summaries {
+            let record = wiki.entity_get_by_id(summary.id)?;
+            entities.insert(record.id, record);
+        }
+
+        let facts = wiki
+            .fact_list(FactListOpts {
+                limit: None,
+                ..Default::default()
+            })?
+            .into_iter()
+            .map(|record| (record.id, record))
+            .collect();
+
+        Ok(Self { entities, facts })
+    }
+
+    fn max_updated_at(&self) -> Option<u64> {
+        self.entities
+            .values()
+            .map(|record| record.updated_at)
+            .chain(self.facts.values().map(|record| record.updated_at))
+            .max()
+    }
+}
+
+/// Make records brought in by a branch merge observable to downstreams whose
+/// insert and update cursors already passed the branch's historical IDs and
+/// timestamps. All segments are imported before this runs so coordinator-local
+/// timestamps cannot interfere with LWW ordering between segments.
+fn make_merged_records_sync_visible(wiki: &AideMemo, before: &MergeRecordSnapshot) -> Result<()> {
+    let after = MergeRecordSnapshot::capture(wiki)?;
+    let mut changed_entities = Vec::new();
+    for record in after.entities.values() {
+        if record_differs(
+            before.entities.get(&record.id),
+            record,
+            "branch merge entity",
+        )? {
+            changed_entities.push(record.clone());
+        }
+    }
+    let mut changed_facts = Vec::new();
+    for record in after.facts.values() {
+        if record_differs(before.facts.get(&record.id), record, "branch merge fact")? {
+            changed_facts.push(record.clone());
+        }
+    }
+
+    if changed_entities.is_empty() && changed_facts.is_empty() {
+        return Ok(());
+    }
+
+    let greatest_record_updated_at = before
+        .max_updated_at()
+        .into_iter()
+        .chain(after.max_updated_at())
+        .max()
+        .unwrap_or_default();
+    let next_record_timestamp = greatest_record_updated_at.checked_add(1).ok_or_else(|| {
+        AideMemoError::Internal(
+            "branch merge cannot advance the sync visibility timestamp past u64::MAX".to_string(),
+        )
+    })?;
+    let visibility_updated_at = next_record_timestamp.max(crate::time::current_epoch_ms());
+
+    let mut store = wiki.store_handle().write();
+    for mut record in changed_entities {
+        record.updated_at = visibility_updated_at;
+        // A concurrent update at or beyond this timestamp is already visible
+        // to the same downstream cursor, so an idempotent skip is acceptable.
+        let _ = store.entity_upsert_record(record)?;
+    }
+    for mut record in changed_facts {
+        record.updated_at = visibility_updated_at;
+        let _ = store.fact_upsert_record(record)?;
+    }
+    Ok(())
+}
+
+fn record_differs<T: Serialize>(before: Option<&T>, after: &T, context: &str) -> Result<bool> {
+    let Some(before) = before else {
+        return Ok(true);
+    };
+    let before = serde_json::to_vec(before).map_err(|source| AideMemoError::Serialize {
+        context: context.to_string(),
+        source,
+    })?;
+    let after = serde_json::to_vec(after).map_err(|source| AideMemoError::Serialize {
+        context: context.to_string(),
+        source,
+    })?;
+    Ok(before != after)
 }
 
 struct BranchExport {
@@ -667,13 +783,160 @@ async fn list_s3_manifest_keys(
     Ok(keys)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "sqlite"))]
 mod tests {
     use super::*;
-    use crate::{EntityInput, EntityType, FactInput, FactType};
+    use crate::{EntityInput, EntityType, FactInput, FactType, FactUpdate};
 
     #[test]
-    #[cfg(feature = "sqlite")]
+    fn branch_merge_republishes_historical_records_after_downstream_cursor() {
+        let dir = tempfile::tempdir().unwrap();
+        let branch_store = dir.path().join("branch.sqlite");
+        let coordinator_store = dir.path().join("coordinator.sqlite");
+        let downstream_store = dir.path().join("downstream.sqlite");
+        let branches = dir.path().join("branches");
+
+        let mut config = Config::default();
+        config.store.backend = "sqlite".to_string();
+
+        // Create the branch records first so both their ULIDs and original
+        // update timestamps sit behind the coordinator's downstream cursor.
+        let branch = AideMemo::open(&branch_store, config.clone()).unwrap();
+        let branch_entity = branch
+            .entity_add(EntityInput {
+                name: "HistoricalBranch".to_string(),
+                entity_type: Some(EntityType::Concept),
+                ..Default::default()
+            })
+            .unwrap();
+        let branch_fact = branch
+            .fact_add(FactInput {
+                content: "historical branch draft".to_string(),
+                entity_ids: Some(vec![branch_entity]),
+                fact_type: Some(FactType::Lesson),
+                ..Default::default()
+            })
+            .unwrap();
+        push_local_branch(&branch_store, config.clone(), "agent-a", None, &branches).unwrap();
+
+        // A second segment updates the same IDs. The coordinator must apply
+        // both segments under their original LWW timestamps before it assigns
+        // the final relay timestamp.
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        branch
+            .entity_describe("HistoricalBranch", "final branch summary")
+            .unwrap();
+        branch
+            .fact_update(
+                &branch_fact,
+                FactUpdate {
+                    content: Some("historical branch final".to_string()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        push_local_branch(&branch_store, config.clone(), "agent-a", None, &branches).unwrap();
+        let final_branch_entity = branch.entity_get_by_id(branch_entity).unwrap();
+        let final_branch_fact = branch.fact_get(&branch_fact).unwrap();
+
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        let coordinator = AideMemo::open(&coordinator_store, config.clone()).unwrap();
+        let coordinator_entity = coordinator
+            .entity_add(EntityInput {
+                name: "Coordinator".to_string(),
+                entity_type: Some(EntityType::Concept),
+                ..Default::default()
+            })
+            .unwrap();
+        coordinator
+            .fact_add(FactInput {
+                content: "coordinator baseline".to_string(),
+                entity_ids: Some(vec![coordinator_entity]),
+                fact_type: Some(FactType::Claim),
+                ..Default::default()
+            })
+            .unwrap();
+        let downstream = AideMemo::open(&downstream_store, config.clone()).unwrap();
+
+        // The first pass advances insert cursors; the second drains the update
+        // pass and advances both update cursors past the historical branch.
+        let mut cursor = Default::default();
+        for _ in 0..2 {
+            let mut page = Vec::new();
+            coordinator
+                .sync_export(
+                    SyncExportOpts {
+                        since: cursor,
+                        ..Default::default()
+                    },
+                    &mut page,
+                )
+                .unwrap();
+            let stats = downstream
+                .sync_import(std::str::from_utf8(&page).unwrap())
+                .unwrap();
+            cursor = stats.new_cursor;
+        }
+        assert!(cursor.entity.is_some_and(|id| id.0 > branch_entity.0));
+        assert!(cursor.fact.is_some_and(|id| id.0 > branch_fact.0));
+        assert!(
+            cursor
+                .entity_updated_at
+                .is_some_and(|at| at >= final_branch_entity.updated_at)
+        );
+        assert!(
+            cursor
+                .fact_updated_at
+                .is_some_and(|at| at >= final_branch_fact.updated_at)
+        );
+
+        let merge =
+            merge_local_branches(&coordinator_store, config, &branches, Some("agent-a")).unwrap();
+        assert_eq!(merge.segments_merged, 2);
+
+        let merged_entity = coordinator.entity_get_by_id(branch_entity).unwrap();
+        let merged_fact = coordinator.fact_get(&branch_fact).unwrap();
+        assert_eq!(merged_entity.id, branch_entity);
+        assert_eq!(
+            merged_entity.summary.as_deref(),
+            Some("final branch summary")
+        );
+        assert_eq!(merged_fact.id, branch_fact);
+        assert_eq!(merged_fact.content, "historical branch final");
+        assert!(merged_entity.updated_at > cursor.entity_updated_at.unwrap());
+        assert!(merged_fact.updated_at > cursor.fact_updated_at.unwrap());
+
+        let mut delta = Vec::new();
+        let exported = coordinator
+            .sync_export(
+                SyncExportOpts {
+                    since: cursor,
+                    ..Default::default()
+                },
+                &mut delta,
+            )
+            .unwrap();
+        assert_eq!(exported, 2);
+        let stats = downstream
+            .sync_import(std::str::from_utf8(&delta).unwrap())
+            .unwrap();
+        assert_eq!(stats.entities_inserted, 1);
+        assert_eq!(stats.facts_inserted, 1);
+        assert_eq!(
+            downstream
+                .entity_get_by_id(branch_entity)
+                .unwrap()
+                .summary
+                .as_deref(),
+            Some("final branch summary")
+        );
+        assert_eq!(
+            downstream.fact_get(&branch_fact).unwrap().content,
+            "historical branch final"
+        );
+    }
+
+    #[test]
     fn local_branch_push_merge_applies_delta_from_backup_cursor() {
         let dir = tempfile::tempdir().unwrap();
         let base_store = dir.path().join("base.sqlite");
@@ -738,7 +1001,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "sqlite")]
     fn local_branch_merge_can_select_winning_experiment_and_discard_others() {
         let dir = tempfile::tempdir().unwrap();
         let base_store = dir.path().join("base.sqlite");

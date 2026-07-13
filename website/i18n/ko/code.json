@@ -39,6 +39,14 @@
     "message": "로컬 에이전트에 AideMemo를 등록하고 핵심 도구를 사용합니다.",
     "description": "Homepage link description for MCP setup."
   },
+  "homepage.card.sharedMemory.title": {
+    "message": "공용 메모리",
+    "description": "Homepage link title for the shared-memory deployment guide."
+  },
+  "homepage.card.sharedMemory.description": {
+    "message": "명시적인 source와 writer identity로 여러 에이전트가 하나의 지속성 있는 저장소를 공유합니다.",
+    "description": "Homepage link description for the shared-memory deployment guide."
+  },
   "homepage.card.workflows.title": {
     "message": "에이전트 워크플로",
     "description": "Homepage link title for agent workflows."

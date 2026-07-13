@@ -80,6 +80,19 @@ privacy 모델은 정책이 활성화된 경우 저장 전에 실행됩니다.
 | Shadow 팩트 분류 | `LiquidAI/LFM2.5-1.2B-Instruct-MLX-4bit` + LoRA, 리뷰 hint 전용 |
 | 쓰기 시점 privacy | OpenAI Privacy Filter MLX `mxfp4`, 정책 선택형 |
 
+## 공용 메모리 경계
+
+하나의 저장소를 stdio MCP, 로컬 daemon, HTTP MCP를 통해 여러 에이전트에
+제공할 수 있습니다. `source_id`는 팩트와 relation namespace를 선택하고
+`actor_id`는 writer provenance를 기록합니다. 인증된 HTTP client에는
+token-binding file이 두 값을 server 경계에서 고정하고 MCP tool dispatch 전에
+호출자 override를 거부합니다. 범위가 지정된 읽기는 limit을 적용하기 전에
+팩트, pinned context, entity 가시성, graph relation을 필터링합니다.
+
+Entity name과 type은 공용 ontology로 유지되므로 이는 적대적인 tenant 격리가
+아니라 협력하는 에이전트를 위한 partition입니다. 배포 패턴과 trust boundary는
+[`공용 메모리 레이어`](SHARED_MEMORY.md)를 참고하세요.
+
 ## 검색 흐름
 
 ```mermaid
@@ -217,6 +230,7 @@ sequenceDiagram
 |---|---|---|
 | CLI 명령과 파서 | `crates/aidememo-cli/src/cmd/mod.rs`, `crates/aidememo-cli/src/main.rs` | [`CLI 사용법`](CLI.md), [`기능 목록`](FEATURES.md) |
 | MCP 도구와 스키마 | `crates/aidememo-cli/src/cmd/mcp_tools.rs` | [`MCP 설정`](MCP.md), [`에이전트 워크플로`](AGENT_WORKFLOWS.md) |
+| 공용 메모리 identity 경계 | `crates/aidememo-cli/src/cmd/mcp_serve.rs`, `crates/aidememo-core/src/backend.rs` | [`공용 메모리 레이어`](SHARED_MEMORY.md), [`MCP 설정`](MCP.md) |
 | 코어 API와 검색 | `crates/aidememo-core/src/lib.rs`, `search.rs`, `graph.rs` | [`아키텍처`](ARCHITECTURE.md), [`운영`](OPERATIONS.md) |
 | 저장소 디스패치 | `crates/aidememo-core/src/backend.rs`, `sqlite_store.rs`, `store.rs` | [`운영`](OPERATIONS.md), [`기능 목록`](FEATURES.md) |
 | Python 에이전트 SDK | `packages/aidememo-agent-sdk/src/aidememo_agent/sdk.py` | [`Python SDK`](SDK.md), [`에이전트 워크플로`](AGENT_WORKFLOWS.md) |

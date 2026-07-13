@@ -148,8 +148,9 @@ local development versions are pinned in [`mise.toml`](mise.toml); run
 Elixir/Erlang versions. The workspace MSRV is `1.95`.
 
 The public packages are available as `aidememo-cli` on
-[crates.io](https://crates.io/crates/aidememo-cli), `aidememo-agent-sdk` and
-`aidememo-python` on [PyPI](https://pypi.org/project/aidememo-agent-sdk/), and
+[crates.io](https://crates.io/crates/aidememo-cli),
+[`aidememo-agent-sdk`](https://pypi.org/project/aidememo-agent-sdk/) and
+[`aidememo-python`](https://pypi.org/project/aidememo-python/) on PyPI, and
 `aidememo-napi` on [npm](https://www.npmjs.com/package/aidememo-napi). See the
 [v0.1.0 release](https://github.com/taeyun16/aidememo/releases/tag/v0.1.0) for
 release notes and prebuilt standalone CLI archives for macOS and Linux on x64
@@ -302,7 +303,7 @@ aidememo fact add "Use LRU for Redis edge caches" \
   --type convention \
   --entities Redis,Cache
 
-aidememo fact supersede <OLD_ID> <NEW_ID>
+aidememo fact supersede <OLD_ID> <NEW_ID> [--source-id ID]
 aidememo edit fact <ID> --append "Confirmed in load test"
 ```
 
@@ -329,6 +330,32 @@ override it.
 ```bash
 aidememo --backend libsqlite mcp-install --target codex --source-id agent-a
 ```
+
+`AIDEMEMO_SOURCE_ID` is a trusted-process default, not an authentication
+boundary: a caller can still send another `source_id`. For an HTTP server shared
+by independently authenticated agents, bind each bearer token to a fixed
+`source_id` and `actor_id` instead. Bound callers cannot override either value,
+export the global sync stream, or inspect global admin status.
+
+```json
+{"tokens":[{"token":"replace-me","source_id":"agent-a","actor_id":"codex-a"}]}
+```
+
+```bash
+aidememo mcp-serve --port 3000 --auth-bindings-file ./token-bindings.json
+```
+
+Exact-content dedup is source-aware, and scoped entity, fact, pinned-context,
+and graph reads stay within the same source namespace. Scoped graph edges also
+require an exact relation namespace match; legacy unscoped edges are hidden. See
+[MCP setup](docs/MCP.md#http-mcp-server) for the full boundary and admin-token
+guidance. Non-loopback deployments also need a TLS reverse proxy or encrypted
+private tunnel because `mcp-serve` itself uses plain HTTP. Source partitions
+share the entity-name/type ontology; mutually untrusted tenants should use
+separate stores.
+
+See the [shared-memory deployment guide](docs/SHARED_MEMORY.md) for choosing
+between one trusted store, token-bound source partitions, and separate stores.
 
 ### Compose memory in Python when the agent can run code
 
@@ -477,7 +504,7 @@ and temporal memory semantics, not a SOTA benchmark claim.
 |---|---|
 | Setup | `aidememo init`, `aidememo init --agent codex`, `aidememo project create/use/list` |
 | Read | `aidememo search`, `aidememo query`, `aidememo recent`, `aidememo overview`, `aidememo traverse`, `aidememo path`, `aidememo graph` |
-| Write | `aidememo fact add`, `aidememo fact supersede`, `aidememo fact archive`, `aidememo edit fact`, `aidememo entity describe`, `aidememo relation add` |
+| Write | `aidememo fact add`, `aidememo fact supersede`, `aidememo fact pin`, `aidememo fact archive`, `aidememo fact delete`, `aidememo edit fact`, `aidememo entity describe` |
 | Maintenance | `aidememo doctor`, `aidememo lint`, `aidememo bench`, `aidememo backup`, `aidememo branch`, `aidememo pending`, `aidememo workflow`, `aidememo ingest`, `aidememo watch`, `aidememo vector-rebuild`, `aidememo consolidate` |
 | Server | `aidememo mcp`, `aidememo mcp-serve`, `aidememo daemon start/status/stop`, `aidememo mcp-install` |
 | Config | `aidememo config get/set/list`, `aidememo auth generate/login/list/logout` |
@@ -490,7 +517,7 @@ aidememo config set store.lock_retry_ms 5000     # smooth short write contention
 aidememo doctor --json                           # includes sharing.mode and daemon guidance
 aidememo config set model.provider fastembed
 aidememo config set model.name bge-small-en-v1.5
-aidememo backup create ~/backups/aidememo       # consistent SQLite snapshot + manifest
+aidememo backup create ~/backups/aidememo       # hot + existing cold-tier SQLite snapshots + manifest
 aidememo backup restore ~/backups/aidememo/backup-01... --force
 aidememo branch push --branch agent-a --base ~/backups/aidememo/backup-01... ~/backups/aidememo
 aidememo branch merge --branch agent-a ~/backups/aidememo

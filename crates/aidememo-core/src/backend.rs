@@ -94,11 +94,58 @@ pub trait StoreBackend {
     /// Fetch an entity by name or alias.
     fn entity_get(&self, name: &str) -> Result<EntityRecord>;
 
+    /// Fetch an entity only when it is attached to at least one fact in the
+    /// requested source namespace. `None` preserves the unscoped lookup.
+    ///
+    /// Entities and relations are shared graph records, while `source_id`
+    /// lives on facts. Fact attachment is therefore the narrowest compatible
+    /// visibility rule for source-scoped reads without changing the persisted
+    /// entity schema.
+    fn entity_get_scoped(&self, name: &str, source_id: Option<&str>) -> Result<EntityRecord> {
+        let record = match self.entity_get(name) {
+            Ok(record) => record,
+            Err(AideMemoError::EntityNotFound { .. }) if source_id.is_some() => {
+                return Err(AideMemoError::EntityNotFound {
+                    name: name.to_string(),
+                    suggestions: Vec::new(),
+                });
+            }
+            Err(error) => return Err(error),
+        };
+        if source_id.is_none() {
+            return Ok(record);
+        }
+        if self.count_entity_facts_scoped(&record.id, source_id)? == 0 {
+            return Err(AideMemoError::EntityNotFound {
+                name: name.to_string(),
+                suggestions: Vec::new(),
+            });
+        }
+        Ok(redact_unscoped_entity_metadata(record))
+    }
+
     /// Resolve an entity name or alias to an id.
     fn resolve_entity(&self, name: &str) -> Result<EntityId>;
 
     /// Fetch an entity by id.
     fn entity_get_by_id(&self, id: EntityId) -> Result<EntityRecord>;
+
+    /// Fetch an entity by id only when it is visible in `source_id`.
+    /// `None` preserves the unscoped lookup.
+    fn entity_get_by_id_scoped(
+        &self,
+        id: EntityId,
+        source_id: Option<&str>,
+    ) -> Result<EntityRecord> {
+        let record = self.entity_get_by_id(id)?;
+        if source_id.is_none() {
+            return Ok(record);
+        }
+        if self.count_entity_facts_scoped(&record.id, source_id)? == 0 {
+            return Err(AideMemoError::EntityIdNotFound(id.to_string()));
+        }
+        Ok(redact_unscoped_entity_metadata(record))
+    }
 
     /// Update one entity.
     fn entity_update(&mut self, name: &str, input: EntityUpdate) -> Result<()>;
@@ -117,6 +164,26 @@ pub trait StoreBackend {
 
     /// Count facts attached to one entity.
     fn count_entity_facts(&self, entity_id: &EntityId) -> Result<u32>;
+
+    /// Count facts attached to one entity in an optional source namespace.
+    /// Backends keep their indexed fast path for unscoped reads; scoped reads
+    /// reuse `fact_list`, which already applies the persisted source filter.
+    fn count_entity_facts_scoped(
+        &self,
+        entity_id: &EntityId,
+        source_id: Option<&str>,
+    ) -> Result<u32> {
+        let Some(source_id) = source_id else {
+            return self.count_entity_facts(entity_id);
+        };
+        let facts = self.fact_list(FactListOpts {
+            entity_id: Some(*entity_id),
+            source_id: Some(source_id.to_string()),
+            limit: None,
+            ..Default::default()
+        })?;
+        Ok(u32::try_from(facts.len()).unwrap_or(u32::MAX))
+    }
 
     /// Insert one fact.
     fn fact_add(&mut self, input: FactInput) -> Result<FactId>;
@@ -207,6 +274,29 @@ pub trait StoreBackend {
     /// Return currently pinned facts.
     fn pinned_facts(&self, limit: usize) -> Result<Vec<FactRecord>>;
 
+    /// Return currently pinned facts in an optional source namespace.
+    /// Filtering happens before truncation so a busy neighbouring source
+    /// cannot crowd requested facts out of the bounded result.
+    fn pinned_facts_scoped(
+        &self,
+        limit: usize,
+        source_id: Option<&str>,
+    ) -> Result<Vec<FactRecord>> {
+        let Some(source_id) = source_id else {
+            return self.pinned_facts(limit);
+        };
+        let mut facts = self.fact_list(FactListOpts {
+            source_id: Some(source_id.to_string()),
+            current_only: true,
+            limit: None,
+            ..Default::default()
+        })?;
+        facts.retain(|fact| fact.pinned);
+        facts.sort_by_key(|fact| std::cmp::Reverse(fact.last_accessed_at));
+        facts.truncate(limit);
+        Ok(facts)
+    }
+
     /// Record direct feedback on a fact.
     fn fact_feedback(&mut self, id: &FactId, helpful: bool) -> Result<()>;
 
@@ -251,6 +341,26 @@ pub trait StoreBackend {
         direction: TraverseDirection,
     ) -> Result<Vec<RelationRecord>>;
 
+    /// Get relations for an entity name in an optional source namespace.
+    /// `None` preserves the legacy unscoped view. A scoped view is exact:
+    /// legacy unowned relations are not inherited by every source.
+    fn relations_get_scoped(
+        &self,
+        entity_name: &str,
+        direction: TraverseDirection,
+        scope_source_id: Option<&str>,
+    ) -> Result<Vec<RelationRecord>> {
+        let relations = self.relations_get(entity_name, direction)?;
+        let Some(scope_source_id) = scope_source_id else {
+            return Ok(relations);
+        };
+        let scope_source_id = scope_source_id.trim();
+        Ok(relations
+            .into_iter()
+            .filter(|relation| relation.scope_source_id.as_deref() == Some(scope_source_id))
+            .collect())
+    }
+
     /// Get relations for an entity id.
     fn relations_get_by_id(
         &self,
@@ -261,8 +371,41 @@ pub trait StoreBackend {
         self.relations_get(&entity.name, direction)
     }
 
+    /// Get relations for an entity id in an optional source namespace.
+    fn relations_get_by_id_scoped(
+        &self,
+        entity_id: &EntityId,
+        direction: TraverseDirection,
+        scope_source_id: Option<&str>,
+    ) -> Result<Vec<RelationRecord>> {
+        let relations = self.relations_get_by_id(entity_id, direction)?;
+        let Some(scope_source_id) = scope_source_id else {
+            return Ok(relations);
+        };
+        let scope_source_id = scope_source_id.trim();
+        Ok(relations
+            .into_iter()
+            .filter(|relation| relation.scope_source_id.as_deref() == Some(scope_source_id))
+            .collect())
+    }
+
     /// Return every forward relation once.
     fn relations_list_all(&self) -> Result<Vec<RelationRecord>>;
+}
+
+/// Entity metadata predates source namespaces and has no provenance field.
+/// A scoped reader may use the shared entity identity and type for graph
+/// navigation, but must not receive compiled prose or other globally-authored
+/// descriptive fields that cannot be attributed to its source.
+fn redact_unscoped_entity_metadata(mut record: EntityRecord) -> EntityRecord {
+    record.aliases.clear();
+    record.tags.clear();
+    record.source_page = None;
+    record.summary = None;
+    record.summary_updated_at = None;
+    record.created_at = 0;
+    record.updated_at = 0;
+    record
 }
 
 #[cfg(feature = "redb")]

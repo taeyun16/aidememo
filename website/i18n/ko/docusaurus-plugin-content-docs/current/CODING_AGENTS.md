@@ -30,9 +30,11 @@ mkdir -p ./_meta
 aidememo --store "$(pwd)/_meta/wiki.sqlite" stats
 ```
 
-에이전트 등록에는 절대 store 경로를 사용하세요. 한 store에 여러 프로젝트나
-tenant가 있으면 `source_id`를, 어느 에이전트 프로필이 썼는지 남겨야 하면
-`actor_id`를 추가합니다.
+에이전트 등록에는 절대 store 경로를 사용하세요. 하나의 신뢰된 store에 여러
+프로젝트나 에이전트 namespace가 있으면 `source_id`를, 어느 에이전트 프로필이
+썼는지 남겨야 하면 `actor_id`를 추가합니다. MCP install은 호출자가 덮어쓸 수
+있는 환경 기본값을 설정하므로 source 할당을 강제해야 하면 HTTP token binding을
+사용합니다.
 
 ## Claude Code
 
@@ -149,15 +151,18 @@ AideMemo를 업데이트해야 합니다. pi는 upstream에서 MCP를 받지 않
 
 ```bash
 # Cursor: ~/.cursor/mcp.json의 mcpServers.aidememo에 기록
-aidememo --store "$(pwd)/_meta/wiki.sqlite" mcp-install --target cursor
+aidememo --store "$(pwd)/_meta/wiki.sqlite" mcp-install --target cursor \
+  --source-id project:my-app --actor-id cursor:local
 
 # OpenClaw: 네이티브 스킬과 MCP 등록
 aidememo skill install --target openclaw
-aidememo --store "$(pwd)/_meta/wiki.sqlite" mcp-install --target openclaw
+aidememo --store "$(pwd)/_meta/wiki.sqlite" mcp-install --target openclaw \
+  --source-id project:my-app --actor-id openclaw:local
 
 # OpenCode: 관리되는 지침을 추가하고 mcp.aidememo에 기록
 aidememo skill install --target opencode
-aidememo --store "$(pwd)/_meta/wiki.sqlite" mcp-install --target opencode
+aidememo --store "$(pwd)/_meta/wiki.sqlite" mcp-install --target opencode \
+  --source-id project:my-app --actor-id opencode:local
 ```
 
 각 설치기에 `--list-targets`를 사용하면 지원 대상과 설치 위치를 확인할 수
@@ -176,6 +181,11 @@ MCP 에이전트에서는 `aidememo` 연결을 확인한 다음 일반 턴은
 `aidememo_context`, 티켓은 `aidememo_workflow_start`로 시작합니다. 더 좁은
 후속 조회에는 `aidememo_query`를 사용하고, 오래 유지할 decision, convention,
 preference, lesson, 반복 error만 기록합니다.
+
+위 `aidememo doctor`는 관리자 측 CLI 점검입니다. Source-scoped MCP identity는
+global store metadata를 반환하는 `aidememo_doctor`와 `aidememo_overview`를 호출할
+수 없습니다. 해당 진단은 scoped agent 밖에서 실행하고 agent 안에서는
+`aidememo_context`, `aidememo_query`, scoped entity/fact tool을 사용하세요.
 
 | 증상 | 해결 방법 |
 |---|---|

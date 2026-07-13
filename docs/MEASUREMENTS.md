@@ -1210,9 +1210,17 @@ and SQLite payload. `aidememo backup restore <DIR> --force` verifies the
 manifest, runs SQLite `integrity_check`, replaces the selected `--store`, and
 removes stale SQLite WAL/SHM plus HNSW sidecar files.
 
+If the store has a `<store>.cold.sqlite` archive, backup also snapshots it as
+`wiki.cold.sqlite` with its own manifest size and SHA-256 fields. Restore
+verifies both databases before replacement. Restoring an older hot-only
+manifest with `--force` moves any existing target cold tier to
+`<store>.restore-prev.cold.sqlite`, so facts absent from the backup cannot leak
+back into the restored view.
+
 S3 backup / restore is intentionally an optional build surface:
 `cargo build -p aidememo-cli --features s3` enables `s3://bucket/prefix`
-targets. S3 stores a zstd-compressed `wiki.sqlite.zst` plus the same manifest.
+targets. S3 stores a zstd-compressed `wiki.sqlite.zst` and, when present,
+`wiki.cold.sqlite.zst` plus the same manifest.
 S3 remains backup storage, not the live database backend.
 
 Validation added with the backup command:

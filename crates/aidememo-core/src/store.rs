@@ -22,10 +22,10 @@ pub(crate) const RELATIONS_REV_TABLE: TableDefinition<&[u8], &[u8]> =
 pub(crate) const FACTS_TABLE: TableDefinition<&[u8], &[u8]> = TableDefinition::new("facts");
 pub(crate) const FACT_BY_ENTITY_TABLE: TableDefinition<&str, &[u8]> =
     TableDefinition::new("fact_by_entity");
-/// Index from `sha256(content)` (hex string) → first FactId that
-/// committed that exact content. Powers exact-dedup at write time:
-/// when two facts have byte-identical `content`, the second insert
-/// returns the first one's id instead of creating a new record.
+/// Index from `normalized_source_id + NUL + sha256(content)` → first FactId
+/// that committed that exact content in the source namespace. Powers
+/// source-aware exact-dedup at write time: byte-identical facts in one source
+/// collapse, while independent sources retain separate provenance and ids.
 /// Modeled after OMEGA's SHA-256 dedup pass — see
 /// `docs/MEASUREMENTS.md`.
 pub(crate) const FACT_CONTENT_HASH_TABLE: TableDefinition<&str, &[u8]> =
@@ -36,7 +36,7 @@ pub(crate) const SEARCH_FEEDBACK_TABLE: TableDefinition<&str, &[u8]> =
     TableDefinition::new("search_feedback");
 
 // Schema version
-const CURRENT_SCHEMA_VERSION: u32 = 1;
+const CURRENT_SCHEMA_VERSION: u32 = 3;
 
 /// Shared database state.
 pub struct Store {
@@ -203,6 +203,282 @@ impl Store {
             source: Box::new(e),
         })?;
 
+        self.migrate_schema()
+    }
+
+    fn migrate_schema(&self) -> Result<()> {
+        match self.schema_version()? {
+            CURRENT_SCHEMA_VERSION => Ok(()),
+            1 => {
+                self.migrate_fact_dedup_scope_v2()?;
+                self.migrate_relation_scope_v3()
+            }
+            2 => self.migrate_relation_scope_v3(),
+            version => Err(AideMemoError::UnsupportedSchemaVersion(version)),
+        }
+    }
+
+    /// Rebuild the legacy global hash index as a source-aware index. The facts
+    /// table is authoritative: rebuilding also repairs stale entries left by
+    /// older update/delete paths and canonicalises SDK-provided source ids.
+    fn migrate_fact_dedup_scope_v2(&self) -> Result<()> {
+        let mut records = {
+            let read_txn = self
+                .db
+                .begin_read()
+                .map_err(|e| AideMemoError::TransactionBegin {
+                    source: Box::new(e),
+                })?;
+            let facts = read_txn
+                .open_table(FACTS_TABLE)
+                .map_err(|e| AideMemoError::StoreRead {
+                    table: "facts",
+                    key: "<dedup migration>".to_string(),
+                    source: Box::new(e),
+                })?;
+            let mut records = Vec::new();
+            for entry in facts.iter().map_err(|e| AideMemoError::StoreRead {
+                table: "facts",
+                key: "<dedup migration iter>".to_string(),
+                source: Box::new(e),
+            })? {
+                let (_key, value) = entry.map_err(|e| AideMemoError::StoreRead {
+                    table: "facts",
+                    key: "<dedup migration entry>".to_string(),
+                    source: Box::new(e),
+                })?;
+                let record = serde_json::from_slice::<FactRecord>(value.value()).map_err(|e| {
+                    AideMemoError::Deserialize {
+                        context: "fact dedup migration".to_string(),
+                        source: e,
+                    }
+                })?;
+                records.push(record);
+            }
+            records
+        };
+
+        let mut canonical_by_key = std::collections::HashMap::new();
+        for record in &mut records {
+            record.source_id = normalize_source_id(record.source_id.as_deref());
+            let key = fact_dedup_key(record.source_id.as_deref(), &record.content);
+            canonical_by_key.entry(key).or_insert(record.id);
+        }
+
+        let write_txn = self.begin_write()?;
+        {
+            let mut facts =
+                write_txn
+                    .open_table(FACTS_TABLE)
+                    .map_err(|e| AideMemoError::StoreWrite {
+                        table: "facts",
+                        key: "<dedup migration>".to_string(),
+                        source: Box::new(e),
+                    })?;
+            for record in &records {
+                let bytes = serde_json::to_vec(record).map_err(|e| AideMemoError::Serialize {
+                    context: format!("fact dedup migration {}", record.id),
+                    source: e,
+                })?;
+                facts
+                    .insert(record.id.as_bytes().as_slice(), bytes.as_slice())
+                    .map_err(|e| AideMemoError::StoreWrite {
+                        table: "facts",
+                        key: record.id.to_string(),
+                        source: Box::new(e),
+                    })?;
+            }
+        }
+        {
+            let mut index = write_txn.open_table(FACT_CONTENT_HASH_TABLE).map_err(|e| {
+                AideMemoError::StoreWrite {
+                    table: "fact_content_hash",
+                    key: "<dedup migration>".to_string(),
+                    source: Box::new(e),
+                }
+            })?;
+            index
+                .retain(|_, _| false)
+                .map_err(|e| AideMemoError::StoreWrite {
+                    table: "fact_content_hash",
+                    key: "<dedup migration clear>".to_string(),
+                    source: Box::new(e),
+                })?;
+            for (key, id) in canonical_by_key {
+                index
+                    .insert(key.as_str(), id.as_bytes().as_slice())
+                    .map_err(|e| AideMemoError::StoreWrite {
+                        table: "fact_content_hash",
+                        key,
+                        source: Box::new(e),
+                    })?;
+            }
+        }
+        {
+            let mut meta =
+                write_txn
+                    .open_table(META_TABLE)
+                    .map_err(|e| AideMemoError::StoreWrite {
+                        table: "meta",
+                        key: "schema_version".to_string(),
+                        source: Box::new(e),
+                    })?;
+            meta.insert("schema_version", 2_u32.to_le_bytes().as_slice())
+                .map_err(|e| AideMemoError::StoreWrite {
+                    table: "meta",
+                    key: "schema_version".to_string(),
+                    source: Box::new(e),
+                })?;
+        }
+        write_txn.commit().map_err(|e| AideMemoError::StoreWrite {
+            table: "meta",
+            key: "dedup migration commit".to_string(),
+            source: Box::new(e),
+        })?;
+        Ok(())
+    }
+
+    /// Rebuild relation indexes so the owning source namespace participates
+    /// in edge identity. Legacy v1/v2 records deserialize with `None` and stay
+    /// in the unscoped namespace.
+    fn migrate_relation_scope_v3(&self) -> Result<()> {
+        let mut records = {
+            let read_txn = self
+                .db
+                .begin_read()
+                .map_err(|e| AideMemoError::TransactionBegin {
+                    source: Box::new(e),
+                })?;
+            let relations =
+                read_txn
+                    .open_table(RELATIONS_TABLE)
+                    .map_err(|e| AideMemoError::StoreRead {
+                        table: "relations",
+                        key: "<scope migration>".to_string(),
+                        source: Box::new(e),
+                    })?;
+            let mut records = Vec::new();
+            for entry in relations.iter().map_err(|e| AideMemoError::StoreRead {
+                table: "relations",
+                key: "<scope migration iter>".to_string(),
+                source: Box::new(e),
+            })? {
+                let (_key, value) = entry.map_err(|e| AideMemoError::StoreRead {
+                    table: "relations",
+                    key: "<scope migration entry>".to_string(),
+                    source: Box::new(e),
+                })?;
+                records.push(
+                    serde_json::from_slice::<RelationRecord>(value.value()).map_err(|e| {
+                        AideMemoError::Deserialize {
+                            context: "relation scope migration".to_string(),
+                            source: e,
+                        }
+                    })?,
+                );
+            }
+            records
+        };
+        for record in &mut records {
+            record.scope_source_id = normalize_source_id(record.scope_source_id.as_deref());
+        }
+
+        let write_txn = self.begin_write()?;
+        {
+            let mut relations =
+                write_txn
+                    .open_table(RELATIONS_TABLE)
+                    .map_err(|e| AideMemoError::StoreWrite {
+                        table: "relations",
+                        key: "<scope migration>".to_string(),
+                        source: Box::new(e),
+                    })?;
+            relations
+                .retain(|_, _| false)
+                .map_err(|e| AideMemoError::StoreWrite {
+                    table: "relations",
+                    key: "<scope migration clear>".to_string(),
+                    source: Box::new(e),
+                })?;
+            for record in &records {
+                let key = Self::relation_key(
+                    &record.source_id,
+                    &record.relation_type,
+                    &record.target_id,
+                    record.scope_source_id.as_deref(),
+                );
+                let bytes = serde_json::to_vec(record).map_err(|e| AideMemoError::Serialize {
+                    context: "relation scope migration".to_string(),
+                    source: e,
+                })?;
+                relations
+                    .insert(key.as_slice(), bytes.as_slice())
+                    .map_err(|e| AideMemoError::StoreWrite {
+                        table: "relations",
+                        key: String::from_utf8_lossy(&key).to_string(),
+                        source: Box::new(e),
+                    })?;
+            }
+        }
+        {
+            let mut reverse = write_txn.open_table(RELATIONS_REV_TABLE).map_err(|e| {
+                AideMemoError::StoreWrite {
+                    table: "relations_rev",
+                    key: "<scope migration>".to_string(),
+                    source: Box::new(e),
+                }
+            })?;
+            reverse
+                .retain(|_, _| false)
+                .map_err(|e| AideMemoError::StoreWrite {
+                    table: "relations_rev",
+                    key: "<scope migration clear>".to_string(),
+                    source: Box::new(e),
+                })?;
+            for record in &records {
+                let key = Self::relation_key(
+                    &record.target_id,
+                    &record.relation_type,
+                    &record.source_id,
+                    record.scope_source_id.as_deref(),
+                );
+                let bytes = serde_json::to_vec(record).map_err(|e| AideMemoError::Serialize {
+                    context: "relation scope migration reverse".to_string(),
+                    source: e,
+                })?;
+                reverse
+                    .insert(key.as_slice(), bytes.as_slice())
+                    .map_err(|e| AideMemoError::StoreWrite {
+                        table: "relations_rev",
+                        key: String::from_utf8_lossy(&key).to_string(),
+                        source: Box::new(e),
+                    })?;
+            }
+        }
+        {
+            let mut meta =
+                write_txn
+                    .open_table(META_TABLE)
+                    .map_err(|e| AideMemoError::StoreWrite {
+                        table: "meta",
+                        key: "schema_version".to_string(),
+                        source: Box::new(e),
+                    })?;
+            meta.insert(
+                "schema_version",
+                CURRENT_SCHEMA_VERSION.to_le_bytes().as_slice(),
+            )
+            .map_err(|e| AideMemoError::StoreWrite {
+                table: "meta",
+                key: "schema_version".to_string(),
+                source: Box::new(e),
+            })?;
+        }
+        write_txn.commit().map_err(|e| AideMemoError::StoreWrite {
+            table: "meta",
+            key: "relation scope migration commit".to_string(),
+            source: Box::new(e),
+        })?;
         Ok(())
     }
 
@@ -1003,13 +1279,11 @@ impl Store {
     /// one-by-one `fact_add` pays ~3-5 ms per fsync on macOS APFS;
     /// `fact_add_many` pays it once for the whole vec.
     ///
-    /// **Exact-content dedup**: each input's `content` is SHA-256
-    /// hashed and compared against the `fact_content_hash` index. If
-    /// an existing fact has the same content, its ID is returned in
-    /// place — no new record is written. Same-content inputs inside
-    /// the same batch also dedupe to a single insert. This matches
-    /// OMEGA's write-time dedup pass and protects retrieval from
-    /// near-zero-signal duplicate spam (re-ingest, log replays, etc).
+    /// **Exact-content dedup**: each input's normalized `source_id` and
+    /// SHA-256 content hash are compared against the `fact_content_hash`
+    /// index. Same-source duplicates return the existing ID, including
+    /// duplicates inside one batch. Identical content from another source
+    /// remains independent so its provenance is not lost.
     ///
     /// All-or-nothing for the inserts that DO need to land: a
     /// serialization or write failure aborts the transaction and no
@@ -1020,11 +1294,14 @@ impl Store {
             return Ok(Vec::new());
         }
 
-        // Phase 1: hash every input content, look up existing matches in
+        // Phase 1: build every input's source-aware dedup key, look up matches in
         // a single read transaction, and resolve each input slot to either
         // (a) a `Pending` new record or (b) an `Existing` fact id.
-        let hashes: Vec<String> = inputs.iter().map(|i| sha256_hex(&i.content)).collect();
-        let mut existing_by_hash: std::collections::HashMap<String, FactId> =
+        let dedup_keys: Vec<String> = inputs
+            .iter()
+            .map(|input| fact_dedup_key(input.source_id.as_deref(), &input.content))
+            .collect();
+        let mut existing_by_key: std::collections::HashMap<String, FactId> =
             std::collections::HashMap::new();
         {
             let read_txn = self
@@ -1037,17 +1314,17 @@ impl Store {
             // "table not found" the same as "no hits" so we never crash
             // on a legacy store.
             if let Ok(table) = read_txn.open_table(FACT_CONTENT_HASH_TABLE) {
-                for h in &hashes {
-                    if existing_by_hash.contains_key(h.as_str()) {
+                for key in &dedup_keys {
+                    if existing_by_key.contains_key(key.as_str()) {
                         continue;
                     }
-                    if let Ok(Some(v)) = table.get(h.as_str()) {
+                    if let Ok(Some(v)) = table.get(key.as_str()) {
                         let bytes = v.value();
                         if bytes.len() == 16 {
                             let mut arr = [0u8; 16];
                             arr.copy_from_slice(bytes);
                             let id = FactId(ulid::Ulid::from_bytes(arr));
-                            existing_by_hash.insert(h.clone(), id);
+                            existing_by_key.insert(key.clone(), id);
                         }
                     }
                 }
@@ -1062,17 +1339,17 @@ impl Store {
         // re-ingest silently drops the new entity link).
         let mut resolved_ids: Vec<FactId> = Vec::with_capacity(inputs.len());
         let mut records: Vec<FactRecord> = Vec::new();
-        let mut record_hashes: Vec<String> = Vec::new();
+        let mut record_dedup_keys: Vec<String> = Vec::new();
         let mut batch_seen: std::collections::HashMap<String, FactId> =
             std::collections::HashMap::new();
         // existing_id -> set of new entity_ids to merge in
         let mut entity_merges: std::collections::HashMap<FactId, Vec<EntityId>> =
             std::collections::HashMap::new();
 
-        for (input, hash) in inputs.into_iter().zip(hashes.iter()) {
+        for (input, dedup_key) in inputs.into_iter().zip(dedup_keys.iter()) {
             // Pre-existing in store? Reuse the id, skip the insert,
             // but queue any new entity_ids for merge.
-            if let Some(id) = existing_by_hash.get(hash.as_str()) {
+            if let Some(id) = existing_by_key.get(dedup_key.as_str()) {
                 resolved_ids.push(*id);
                 if let Some(eids) = input.entity_ids
                     && !eids.is_empty()
@@ -1082,7 +1359,7 @@ impl Store {
                 continue;
             }
             // Already queued earlier in this batch? Reuse that id.
-            if let Some(id) = batch_seen.get(hash) {
+            if let Some(id) = batch_seen.get(dedup_key) {
                 resolved_ids.push(*id);
                 if let Some(eids) = input.entity_ids
                     && !eids.is_empty()
@@ -1105,9 +1382,7 @@ impl Store {
             if let Some(source) = input.source {
                 record.source = Some(source);
             }
-            if let Some(source_id) = input.source_id {
-                record.source_id = Some(source_id);
-            }
+            record.source_id = normalize_source_id(input.source_id.as_deref());
             if let Some(actor_id) = input.actor_id {
                 record.actor_id = Some(actor_id);
             }
@@ -1117,9 +1392,9 @@ impl Store {
             if let Some(observed_at) = input.observed_at {
                 record.observed_at = Some(observed_at);
             }
-            batch_seen.insert(hash.clone(), id);
+            batch_seen.insert(dedup_key.clone(), id);
             records.push(record);
-            record_hashes.push(hash.clone());
+            record_dedup_keys.push(dedup_key.clone());
             resolved_ids.push(id);
         }
 
@@ -1157,7 +1432,7 @@ impl Store {
                     }
                 })?;
 
-            for (record, hash) in records.iter().zip(record_hashes.iter()) {
+            for (record, dedup_key) in records.iter().zip(record_dedup_keys.iter()) {
                 let id = record.id;
                 let record_bytes =
                     serde_json::to_vec(record).map_err(|e| AideMemoError::Serialize {
@@ -1174,10 +1449,10 @@ impl Store {
                     })?;
 
                 content_hash_index
-                    .insert(hash.as_str(), id.as_bytes().as_slice())
+                    .insert(dedup_key.as_str(), id.as_bytes().as_slice())
                     .map_err(|e| AideMemoError::StoreWrite {
                         table: "fact_content_hash",
-                        key: hash.clone(),
+                        key: dedup_key.clone(),
                         source: Box::new(e),
                     })?;
 
@@ -1427,7 +1702,14 @@ impl Store {
             }
         })?;
 
+        let old_dedup_key = fact_dedup_key(record.source_id.as_deref(), &record.content);
         record.update(input);
+        record.source_id = normalize_source_id(record.source_id.as_deref());
+        let new_dedup_key = fact_dedup_key(record.source_id.as_deref(), &record.content);
+
+        drop(record_bytes);
+        drop(facts);
+        drop(read_txn);
 
         let write_txn = self.begin_write()?;
 
@@ -1435,6 +1717,58 @@ impl Store {
             context: format!("fact update {:?}", id),
             source: e,
         })?;
+
+        {
+            let mut index = write_txn.open_table(FACT_CONTENT_HASH_TABLE).map_err(|e| {
+                AideMemoError::StoreWrite {
+                    table: "fact_content_hash",
+                    key: new_dedup_key.clone(),
+                    source: Box::new(e),
+                }
+            })?;
+            let indexed_id = index
+                .get(new_dedup_key.as_str())
+                .map_err(|e| AideMemoError::StoreRead {
+                    table: "fact_content_hash",
+                    key: new_dedup_key.clone(),
+                    source: Box::new(e),
+                })?
+                .map(|value| value.value().to_vec());
+            if indexed_id
+                .as_deref()
+                .is_some_and(|bytes| bytes != id.as_bytes().as_slice())
+            {
+                return Err(AideMemoError::InvalidInput(format!(
+                    "fact content already exists in source namespace for {id}"
+                )));
+            }
+            if old_dedup_key != new_dedup_key {
+                let old_indexed_id = index
+                    .get(old_dedup_key.as_str())
+                    .map_err(|e| AideMemoError::StoreRead {
+                        table: "fact_content_hash",
+                        key: old_dedup_key.clone(),
+                        source: Box::new(e),
+                    })?
+                    .map(|value| value.value().to_vec());
+                if old_indexed_id.as_deref() == Some(id.as_bytes().as_slice()) {
+                    index.remove(old_dedup_key.as_str()).map_err(|e| {
+                        AideMemoError::StoreWrite {
+                            table: "fact_content_hash",
+                            key: old_dedup_key.clone(),
+                            source: Box::new(e),
+                        }
+                    })?;
+                }
+            }
+            index
+                .insert(new_dedup_key.as_str(), id.as_bytes().as_slice())
+                .map_err(|e| AideMemoError::StoreWrite {
+                    table: "fact_content_hash",
+                    key: new_dedup_key,
+                    source: Box::new(e),
+                })?;
+        }
 
         {
             let mut facts =
@@ -1533,6 +1867,38 @@ impl Store {
                     .map_err(|e| AideMemoError::StoreWrite {
                         table: "fact_by_entity",
                         key,
+                        source: Box::new(e),
+                    })?;
+            }
+        }
+
+        // Remove the source-aware exact-dedup entry so a later re-add does
+        // not resolve to the deleted FactId. Only remove when this record is
+        // still the index's canonical target (legacy sync data may contain
+        // another same-key record).
+        {
+            let dedup_key = fact_dedup_key(record.source_id.as_deref(), &record.content);
+            let mut index = write_txn.open_table(FACT_CONTENT_HASH_TABLE).map_err(|e| {
+                AideMemoError::StoreWrite {
+                    table: "fact_content_hash",
+                    key: dedup_key.clone(),
+                    source: Box::new(e),
+                }
+            })?;
+            let indexed_id = index
+                .get(dedup_key.as_str())
+                .map_err(|e| AideMemoError::StoreRead {
+                    table: "fact_content_hash",
+                    key: dedup_key.clone(),
+                    source: Box::new(e),
+                })?
+                .map(|value| value.value().to_vec());
+            if indexed_id.as_deref() == Some(id.as_bytes().as_slice()) {
+                index
+                    .remove(dedup_key.as_str())
+                    .map_err(|e| AideMemoError::StoreWrite {
+                        table: "fact_content_hash",
+                        key: dedup_key,
                         source: Box::new(e),
                     })?;
             }
@@ -1820,8 +2186,16 @@ impl Store {
         source_id: &EntityId,
         rel_type: &RelationType,
         target_id: &EntityId,
+        scope_source_id: Option<&str>,
     ) -> Vec<u8> {
-        format!("{}\0{}\0{}", source_id, rel_type.0, target_id).into_bytes()
+        format!(
+            "{}\0{}\0{}\0{}",
+            source_id,
+            scope_source_id.unwrap_or(""),
+            rel_type.0,
+            target_id
+        )
+        .into_bytes()
     }
 
     // === Sync helpers (Phase 2) ===
@@ -1960,23 +2334,81 @@ impl Store {
     /// Insert a `FactRecord` preserving its ULID. Returns `Ok(true)`
     /// when the local copy ends up reflecting the incoming record
     /// (fresh insert OR LWW overwrite), `Ok(false)` when the local
-    /// copy was already at-or-after the incoming `updated_at`. Skips
-    /// the content-hash dedup path — the donor owns that decision.
-    pub fn fact_upsert_record(&mut self, record: FactRecord) -> Result<bool> {
+    /// copy was already at-or-after the incoming `updated_at`. A same-source
+    /// exact duplicate with another id is skipped, while matching content in
+    /// another source remains independent.
+    pub fn fact_upsert_record(&mut self, mut record: FactRecord) -> Result<bool> {
+        record.source_id = normalize_source_id(record.source_id.as_deref());
         let id = record.id;
-        if let Ok(local) = self.fact_get(&id)
-            && local.updated_at >= record.updated_at
+        let local = self.fact_get(&id).ok();
+        if local
+            .as_ref()
+            .is_some_and(|local| local.updated_at >= record.updated_at)
         {
             return Ok(false);
         }
 
-        let hash = sha256_hex(&record.content);
+        let dedup_key = fact_dedup_key(record.source_id.as_deref(), &record.content);
         let record_bytes = serde_json::to_vec(&record).map_err(|e| AideMemoError::Serialize {
             context: format!("fact {:?}", id),
             source: e,
         })?;
 
         let write_txn = self.begin_write()?;
+        {
+            let mut content_hash_index =
+                write_txn.open_table(FACT_CONTENT_HASH_TABLE).map_err(|e| {
+                    AideMemoError::StoreWrite {
+                        table: "fact_content_hash",
+                        key: dedup_key.clone(),
+                        source: Box::new(e),
+                    }
+                })?;
+            let indexed_id = content_hash_index
+                .get(dedup_key.as_str())
+                .map_err(|e| AideMemoError::StoreRead {
+                    table: "fact_content_hash",
+                    key: dedup_key.clone(),
+                    source: Box::new(e),
+                })?
+                .map(|value| value.value().to_vec());
+            if indexed_id
+                .as_deref()
+                .is_some_and(|bytes| bytes != id.as_bytes().as_slice())
+            {
+                return Ok(false);
+            }
+
+            if let Some(local) = &local {
+                let old_key = fact_dedup_key(local.source_id.as_deref(), &local.content);
+                if old_key != dedup_key {
+                    let old_indexed_id = content_hash_index
+                        .get(old_key.as_str())
+                        .map_err(|e| AideMemoError::StoreRead {
+                            table: "fact_content_hash",
+                            key: old_key.clone(),
+                            source: Box::new(e),
+                        })?
+                        .map(|value| value.value().to_vec());
+                    if old_indexed_id.as_deref() == Some(id.as_bytes().as_slice()) {
+                        content_hash_index.remove(old_key.as_str()).map_err(|e| {
+                            AideMemoError::StoreWrite {
+                                table: "fact_content_hash",
+                                key: old_key,
+                                source: Box::new(e),
+                            }
+                        })?;
+                    }
+                }
+            }
+            content_hash_index
+                .insert(dedup_key.as_str(), id.as_bytes().as_slice())
+                .map_err(|e| AideMemoError::StoreWrite {
+                    table: "fact_content_hash",
+                    key: dedup_key.clone(),
+                    source: Box::new(e),
+                })?;
+        }
         {
             let mut facts =
                 write_txn
@@ -1991,27 +2423,6 @@ impl Store {
                 .map_err(|e| AideMemoError::StoreWrite {
                     table: "facts",
                     key: id.to_string(),
-                    source: Box::new(e),
-                })?;
-        }
-        {
-            let mut content_hash_index =
-                write_txn.open_table(FACT_CONTENT_HASH_TABLE).map_err(|e| {
-                    AideMemoError::StoreWrite {
-                        table: "fact_content_hash",
-                        key: hash.clone(),
-                        source: Box::new(e),
-                    }
-                })?;
-            // Last-writer-wins on the hash index: if the donor's content
-            // happens to match a local fact, the local fact_add path will
-            // pick the local id on subsequent dedup lookups. This is the
-            // desired behavior — local-origin ids stay canonical.
-            content_hash_index
-                .insert(hash.as_str(), id.as_bytes().as_slice())
-                .map_err(|e| AideMemoError::StoreWrite {
-                    table: "fact_content_hash",
-                    key: hash.clone(),
                     source: Box::new(e),
                 })?;
         }
@@ -2047,10 +2458,22 @@ impl Store {
     /// `Ok(false)` if the (source, type, target) tuple is already
     /// present locally. Relations are key-shaped (no ULID), so
     /// idempotency is by tuple, not by ID.
-    pub fn relation_upsert_record(&mut self, record: RelationRecord) -> Result<bool> {
-        let key = Self::relation_key(&record.source_id, &record.relation_type, &record.target_id);
+    pub fn relation_upsert_record(&mut self, mut record: RelationRecord) -> Result<bool> {
+        record.scope_source_id = normalize_source_id(record.scope_source_id.as_deref());
+        let key = Self::relation_key(
+            &record.source_id,
+            &record.relation_type,
+            &record.target_id,
+            record.scope_source_id.as_deref(),
+        );
 
-        // Skip-if-exists check via a read txn.
+        let record_bytes = serde_json::to_vec(&record).map_err(|e| AideMemoError::Serialize {
+            context: "relation".to_string(),
+            source: e,
+        })?;
+
+        // Identical replays are idempotent. A differing canonical upstream
+        // record replaces both indexes so weight/evidence changes propagate.
         {
             let read_txn = self
                 .db
@@ -2059,25 +2482,26 @@ impl Store {
                     source: Box::new(e),
                 })?;
             if let Ok(table) = read_txn.open_table(RELATIONS_TABLE)
-                && table
-                    .get(key.as_slice())
-                    .map_err(|e| AideMemoError::StoreRead {
-                        table: "relations",
-                        key: String::from_utf8_lossy(&key).to_string(),
-                        source: Box::new(e),
-                    })?
-                    .is_some()
+                && let Some(existing) =
+                    table
+                        .get(key.as_slice())
+                        .map_err(|e| AideMemoError::StoreRead {
+                            table: "relations",
+                            key: String::from_utf8_lossy(&key).to_string(),
+                            source: Box::new(e),
+                        })?
+                && existing.value() == record_bytes.as_slice()
             {
                 return Ok(false);
             }
         }
 
-        let record_bytes = serde_json::to_vec(&record).map_err(|e| AideMemoError::Serialize {
-            context: "relation".to_string(),
-            source: e,
-        })?;
-        let rev_key =
-            Self::relation_key(&record.target_id, &record.relation_type, &record.source_id);
+        let rev_key = Self::relation_key(
+            &record.target_id,
+            &record.relation_type,
+            &record.source_id,
+            record.scope_source_id.as_deref(),
+        );
         let write_txn = self.begin_write()?;
         {
             let mut relations =
@@ -2130,6 +2554,7 @@ impl Store {
         let record = RelationRecord {
             source_id,
             target_id,
+            scope_source_id: normalize_source_id(input.scope_source_id.as_deref()),
             relation_type: rel_type.clone(),
             weight,
             evidence: input.evidence.unwrap_or_default(),
@@ -2145,7 +2570,12 @@ impl Store {
         })?;
 
         // Insert into relations table
-        let key = Self::relation_key(&source_id, &rel_type, &target_id);
+        let key = Self::relation_key(
+            &source_id,
+            &rel_type,
+            &target_id,
+            record.scope_source_id.as_deref(),
+        );
         {
             let mut relations =
                 write_txn
@@ -2166,7 +2596,12 @@ impl Store {
         }
 
         // Insert into relations_rev table (reverse key)
-        let rev_key = Self::relation_key(&target_id, &rel_type, &source_id);
+        let rev_key = Self::relation_key(
+            &target_id,
+            &rel_type,
+            &source_id,
+            record.scope_source_id.as_deref(),
+        );
         {
             let mut relations_rev = write_txn.open_table(RELATIONS_REV_TABLE).map_err(|e| {
                 AideMemoError::StoreWrite {
@@ -2202,8 +2637,8 @@ impl Store {
 
         let write_txn = self.begin_write()?;
 
-        let key = Self::relation_key(&source_id, &rel_type, &target_id);
-        let rev_key = Self::relation_key(&target_id, &rel_type, &source_id);
+        let key = Self::relation_key(&source_id, &rel_type, &target_id, None);
+        let rev_key = Self::relation_key(&target_id, &rel_type, &source_id, None);
 
         {
             let mut relations =
@@ -2391,11 +2826,9 @@ impl Store {
     }
 }
 
-/// SHA-256 hex digest of the input. Used as the dedup key in
-/// `FACT_CONTENT_HASH_TABLE`. We hash the raw bytes (no
-/// normalisation, no lowercasing) so semantically-equivalent but
-/// punctuation-different content does NOT collide — that's the
-/// semantic-dedup pass's job, not exact-dedup's.
+/// SHA-256 hex digest of the content portion of the dedup key. We hash raw
+/// bytes (no content normalisation or lowercasing), so punctuation-different
+/// content does not collide; that belongs to the semantic-dedup pass.
 fn sha256_hex(s: &str) -> String {
     use sha2::Digest;
     let mut hasher = sha2::Sha256::new();
@@ -2409,6 +2842,14 @@ fn sha256_hex(s: &str) -> String {
     out
 }
 
+/// Source-aware exact-dedup key. A NUL separator is unambiguous because the
+/// content digest is fixed-width lowercase hex; the source namespace itself
+/// remains case-sensitive.
+fn fact_dedup_key(source_id: Option<&str>, content: &str) -> String {
+    let source_id = normalize_source_id(source_id).unwrap_or_default();
+    format!("{source_id}\0{}", sha256_hex(content))
+}
+
 #[cfg(test)]
 #[allow(clippy::items_after_test_module)]
 mod tests {
@@ -2420,6 +2861,242 @@ mod tests {
         let path = dir.path().join("test.redb");
         let config = Config::default();
         Store::open(&path, config).unwrap()
+    }
+
+    #[test]
+    fn fact_exact_dedup_is_scoped_by_normalized_source_id() {
+        let mut store = create_test_store();
+        let content = "shared release decision";
+
+        let alpha = store
+            .fact_add(FactInput {
+                content: content.to_string(),
+                source_id: Some("  alpha  ".to_string()),
+                actor_id: Some("codex:alpha".to_string()),
+                ..Default::default()
+            })
+            .unwrap();
+        let beta = store
+            .fact_add(FactInput {
+                content: content.to_string(),
+                source_id: Some("beta".to_string()),
+                actor_id: Some("codex:beta".to_string()),
+                ..Default::default()
+            })
+            .unwrap();
+        let alpha_again = store
+            .fact_add(FactInput {
+                content: content.to_string(),
+                source_id: Some("alpha".to_string()),
+                actor_id: Some("other-writer".to_string()),
+                ..Default::default()
+            })
+            .unwrap();
+
+        assert_ne!(alpha, beta, "different sources retain independent ids");
+        assert_eq!(alpha_again, alpha, "same normalized source still dedups");
+        let alpha_record = store.fact_get(&alpha).unwrap();
+        let beta_record = store.fact_get(&beta).unwrap();
+        assert_eq!(alpha_record.source_id.as_deref(), Some("alpha"));
+        assert_eq!(alpha_record.actor_id.as_deref(), Some("codex:alpha"));
+        assert_eq!(beta_record.source_id.as_deref(), Some("beta"));
+        assert_eq!(beta_record.actor_id.as_deref(), Some("codex:beta"));
+        assert_eq!(store.stats().unwrap().fact_count, 2);
+    }
+
+    #[test]
+    fn sync_upsert_keeps_same_content_from_different_sources() {
+        let mut store = create_test_store();
+        let mut alpha = FactRecord::new(
+            "synced decision".to_string(),
+            FactType::Decision,
+            Vec::new(),
+        );
+        alpha.source_id = Some("alpha".to_string());
+        alpha.actor_id = Some("agent-a".to_string());
+        let mut beta = FactRecord::new(
+            "synced decision".to_string(),
+            FactType::Decision,
+            Vec::new(),
+        );
+        beta.source_id = Some("beta".to_string());
+        beta.actor_id = Some("agent-b".to_string());
+
+        assert!(store.fact_upsert_record(alpha.clone()).unwrap());
+        assert!(store.fact_upsert_record(beta.clone()).unwrap());
+        assert_eq!(store.fact_get(&alpha.id).unwrap().actor_id, alpha.actor_id);
+        assert_eq!(store.fact_get(&beta.id).unwrap().actor_id, beta.actor_id);
+        assert_eq!(store.stats().unwrap().fact_count, 2);
+    }
+
+    #[test]
+    fn fact_delete_releases_source_aware_dedup_key() {
+        let mut store = create_test_store();
+        let input = || FactInput {
+            content: "archivable fact".to_string(),
+            source_id: Some("alpha".to_string()),
+            ..Default::default()
+        };
+        let original = store.fact_add(input()).unwrap();
+        store.fact_delete(&original).unwrap();
+        let replacement = store.fact_add(input()).unwrap();
+
+        assert_ne!(replacement, original);
+        assert_eq!(
+            store.fact_get(&replacement).unwrap().content,
+            "archivable fact"
+        );
+    }
+
+    #[test]
+    fn open_migrates_legacy_global_content_hash_index() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("legacy.redb");
+        let content = "legacy shared content";
+        let (alpha, beta) = {
+            let mut store = Store::open(&path, Config::default()).unwrap();
+            let alpha = store
+                .fact_add(FactInput {
+                    content: content.to_string(),
+                    source_id: Some("alpha".to_string()),
+                    actor_id: Some("legacy-a".to_string()),
+                    ..Default::default()
+                })
+                .unwrap();
+            let beta = store
+                .fact_add(FactInput {
+                    content: content.to_string(),
+                    source_id: Some("beta".to_string()),
+                    actor_id: Some("legacy-b".to_string()),
+                    ..Default::default()
+                })
+                .unwrap();
+            (alpha, beta)
+        };
+
+        // Recreate the v1 metadata/index shape: one global content-hash entry.
+        let db = Database::create(&path).unwrap();
+        let write_txn = db.begin_write().unwrap();
+        {
+            let mut meta = write_txn.open_table(META_TABLE).unwrap();
+            meta.insert("schema_version", 1_u32.to_le_bytes().as_slice())
+                .unwrap();
+        }
+        {
+            let mut index = write_txn.open_table(FACT_CONTENT_HASH_TABLE).unwrap();
+            index.retain(|_, _| false).unwrap();
+            index
+                .insert(sha256_hex(content).as_str(), alpha.as_bytes().as_slice())
+                .unwrap();
+        }
+        write_txn.commit().unwrap();
+        drop(db);
+
+        let mut store = Store::open(&path, Config::default()).unwrap();
+        assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
+        let alpha_again = store
+            .fact_add(FactInput {
+                content: content.to_string(),
+                source_id: Some("alpha".to_string()),
+                ..Default::default()
+            })
+            .unwrap();
+        let beta_again = store
+            .fact_add(FactInput {
+                content: content.to_string(),
+                source_id: Some("beta".to_string()),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(alpha_again, alpha);
+        assert_eq!(beta_again, beta);
+        assert_eq!(store.stats().unwrap().fact_count, 2);
+    }
+
+    #[test]
+    fn open_migrates_legacy_relation_keys_to_source_scope() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("legacy-relations.redb");
+        let (source_id, target_id) = {
+            let mut store = Store::open(&path, Config::default()).unwrap();
+            let source_id = store
+                .entity_add(EntityInput {
+                    name: "SharedSource".to_string(),
+                    ..Default::default()
+                })
+                .unwrap();
+            let target_id = store
+                .entity_add(EntityInput {
+                    name: "SharedTarget".to_string(),
+                    ..Default::default()
+                })
+                .unwrap();
+            (source_id, target_id)
+        };
+
+        let legacy_record = RelationRecord {
+            source_id,
+            target_id,
+            scope_source_id: None,
+            relation_type: RelationType::new("links"),
+            weight: 1.0,
+            evidence: vec!["legacy proof".to_string()],
+            created_at: 42,
+        };
+        let mut legacy_value = serde_json::to_value(&legacy_record).unwrap();
+        legacy_value
+            .as_object_mut()
+            .unwrap()
+            .remove("scope_source_id");
+        let legacy_bytes = serde_json::to_vec(&legacy_value).unwrap();
+        let forward_key = format!("{}\0{}\0{}", source_id, "links", target_id).into_bytes();
+        let reverse_key = format!("{}\0{}\0{}", target_id, "links", source_id).into_bytes();
+
+        let db = Database::create(&path).unwrap();
+        let write_txn = db.begin_write().unwrap();
+        {
+            let mut relations = write_txn.open_table(RELATIONS_TABLE).unwrap();
+            relations.retain(|_, _| false).unwrap();
+            relations
+                .insert(forward_key.as_slice(), legacy_bytes.as_slice())
+                .unwrap();
+        }
+        {
+            let mut reverse = write_txn.open_table(RELATIONS_REV_TABLE).unwrap();
+            reverse.retain(|_, _| false).unwrap();
+            reverse
+                .insert(reverse_key.as_slice(), legacy_bytes.as_slice())
+                .unwrap();
+        }
+        {
+            let mut meta = write_txn.open_table(META_TABLE).unwrap();
+            meta.insert("schema_version", 2_u32.to_le_bytes().as_slice())
+                .unwrap();
+        }
+        write_txn.commit().unwrap();
+        drop(db);
+
+        let mut store = Store::open(&path, Config::default()).unwrap();
+        assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
+        for (scope, evidence) in [("alpha", "alpha proof"), ("beta", "beta proof")] {
+            store
+                .relation_add(RelationInput {
+                    source: "SharedSource".to_string(),
+                    target: "SharedTarget".to_string(),
+                    scope_source_id: Some(scope.to_string()),
+                    relation_type: RelationType::new("links"),
+                    weight: Some(1.0),
+                    evidence: Some(vec![evidence.to_string()]),
+                })
+                .unwrap();
+        }
+        let relations = store
+            .relations_get("SharedSource", TraverseDirection::Forward)
+            .unwrap();
+        assert_eq!(relations.len(), 3);
+        assert!(relations.iter().any(|relation| {
+            relation.scope_source_id.is_none() && relation.evidence == ["legacy proof"]
+        }));
     }
 
     #[test]
@@ -2703,6 +3380,7 @@ mod tests {
             .relation_add(RelationInput {
                 source: "Sentinel".to_string(),
                 target: "Redis".to_string(),
+                scope_source_id: None,
                 relation_type: RelationType::new("monitors"),
                 weight: Some(1.0),
                 evidence: Some(vec!["entities/sentinel.md".to_string()]),

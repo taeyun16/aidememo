@@ -152,16 +152,16 @@ class AideMemoClient:
         if self._py is None:
             return self._mcp_tool("aidememo_context", args)
 
-        recent_fetch_limit = recent_limit * 4 if source_id else recent_limit
-        recent = self.recent(last=f"{recent_days}d", limit=recent_fetch_limit)
-        if source_id:
-            recent = [f for f in recent if _normalise_source_id(f.get("source_id")) == source_id]
-        recent = recent[:recent_limit]
+        recent = self.recent(
+            last=f"{recent_days}d",
+            limit=recent_limit,
+            source_id=source_id,
+        )
         pinned_fn = getattr(self._py, "pinned_facts", None)
-        pinned_fetch_limit = pinned_limit * 4 if source_id else pinned_limit
-        pinned = list(pinned_fn(limit=max(pinned_fetch_limit, 0))) if pinned_fn is not None else []
-        if source_id:
-            pinned = [f for f in pinned if _normalise_source_id(f.get("source_id")) == source_id]
+        pinned_kwargs: dict[str, Any] = {"limit": max(pinned_limit, 0)}
+        if source_id is not None:
+            pinned_kwargs["source_id"] = source_id
+        pinned = list(pinned_fn(**pinned_kwargs)) if pinned_fn is not None else []
         payload: dict[str, Any] = {
             "pinned": pinned[:pinned_limit],
             "personalisation": [
@@ -202,24 +202,63 @@ class AideMemoClient:
             args += ["--source-id", source_id]
         return self._cli_json(args)
 
-    def recent(self, last: str = "7d", limit: int = 10) -> list[dict]:
+    def recent(
+        self,
+        last: str = "7d",
+        limit: int = 10,
+        source_id: str | None = None,
+    ) -> list[dict]:
         # CLI: `aidememo recent --last 7d --limit N`. The PyO3 binding takes
         # an explicit `since_epoch_ms`, which we derive from the same
         # ``Nd / Nh / Nw / Ny`` mini-grammar aidememo's CLI uses so the two
         # paths agree to the second.
+        source_id = self._source_id(source_id)
         if self._py is not None:
             since_ms = _now_ms() - parse_window_ms(last)
-            return self._py.fact_list(limit=limit, since_epoch_ms=since_ms)
+            kwargs: dict[str, Any] = {"limit": limit, "since_epoch_ms": since_ms}
+            if source_id is not None:
+                kwargs["source_id"] = source_id
+            return self._py.fact_list(**kwargs)
+        if source_id is not None:
+            payload = self._mcp_tool(
+                "aidememo_recent",
+                {"last": last, "limit": limit, "source_id": source_id},
+            )
+            return list(payload.get("facts") or [])
         return self._cli_json(["recent", "--last", last, "-n", str(limit)])
 
-    def entity_list(self, limit: int = 50) -> list[dict]:
+    def entity_list(self, limit: int = 50, source_id: str | None = None) -> list[dict]:
+        source_id = self._source_id(source_id)
         if self._py is not None:
-            return self._py.entity_list(limit=limit)
+            kwargs: dict[str, Any] = {"limit": limit}
+            if source_id is not None:
+                kwargs["source_id"] = source_id
+            return self._py.entity_list(**kwargs)
+        if source_id is not None:
+            payload = self._mcp_tool(
+                "aidememo_entity_list",
+                {"limit": limit, "source_id": source_id},
+            )
+            return list(payload.get("entities") or [])
         return self._cli_json(["entity", "list", "--limit", str(limit)])
 
-    def traverse(self, entity: str, depth: int = 2) -> dict:
+    def traverse(
+        self,
+        entity: str,
+        depth: int = 2,
+        source_id: str | None = None,
+    ) -> dict:
+        source_id = self._source_id(source_id)
         if self._py is not None:
-            return self._py.traverse(entity, depth=depth, direction="both")
+            kwargs: dict[str, Any] = {"depth": depth, "direction": "both"}
+            if source_id is not None:
+                kwargs["source_id"] = source_id
+            return self._py.traverse(entity, **kwargs)
+        if source_id is not None:
+            return self._mcp_tool(
+                "aidememo_traverse",
+                {"entity": entity, "depth": depth, "direction": "forward", "source_id": source_id},
+            )
         return self._cli_json(["traverse", entity, "-d", str(depth)])
 
     def aggregate(
@@ -296,6 +335,7 @@ class AideMemoClient:
         }
 
     def doctor(self) -> dict:
+        self._ensure_global_diagnostics_allowed("doctor")
         if self._py is None:
             return self._mcp_tool("aidememo_doctor", {})
         return {
@@ -311,11 +351,13 @@ class AideMemoClient:
         }
 
     def lint(self) -> list[dict]:
+        self._ensure_global_diagnostics_allowed("lint")
         if self._py is not None:
             return self._py.lint()
         return self._cli_json(["lint"])
 
     def stats(self) -> dict:
+        self._ensure_global_diagnostics_allowed("stats")
         if self._py is not None:
             return self._py.stats()
         return self._cli_json(["stats"])
@@ -396,6 +438,18 @@ class AideMemoClient:
         if self._py is None:
             raise AideMemoUnavailable("aidememo-python backend is not available")
 
+        if parent_session_id:
+            try:
+                parent_kwargs: dict[str, Any] = {}
+                if source_id is not None:
+                    parent_kwargs["source_id"] = source_id
+                self._py.entity_get(parent_session_id, **parent_kwargs)
+            except TypeError as exc:
+                raise AideMemoUnavailable(
+                    "installed aidememo-python does not support source-scoped parent session validation; "
+                    "rebuild/install the current aidememo-python package"
+                ) from exc
+
         session_id = f"session-{_new_ulid()}"
         session_entity_id = self._py.entity_add(
             session_id,
@@ -403,7 +457,15 @@ class AideMemoClient:
             source_page=source or title,
         )
         if parent_session_id:
-            self._py.relation_add(session_id, parent_session_id, "continued_from")
+            relation_kwargs: dict[str, Any] = {}
+            if source_id is not None:
+                relation_kwargs["source_id"] = source_id
+            self._py.relation_add(
+                session_id,
+                parent_session_id,
+                "continued_from",
+                **relation_kwargs,
+            )
 
         trimmed_body = body.strip() if isinstance(body, str) and body.strip() else None
         ticket_content = f"Workflow ticket: {title}"
@@ -475,6 +537,7 @@ class AideMemoClient:
         *,
         limit: int = 80,
         include_superseded: bool = False,
+        source_id: str | None = None,
     ) -> str:
         """Return the read-only Markdown + Mermaid canvas for a workflow session."""
 
@@ -482,6 +545,9 @@ class AideMemoClient:
             "limit": limit,
             "include_superseded": include_superseded,
         }
+        source_id = self._source_id(source_id)
+        if source_id:
+            args["source_id"] = source_id
         if session_id:
             args["session"] = session_id
         payload = self._mcp_tool("aidememo_session_canvas", args)
@@ -711,6 +777,12 @@ class AideMemoClient:
     def _actor_id(self, actor_id: str | None) -> str | None:
         return _normalise_source_id(actor_id) or getattr(self, "default_actor_id", None)
 
+    def _ensure_global_diagnostics_allowed(self, operation: str) -> None:
+        if getattr(self, "default_source_id", None) is not None:
+            raise AideMemoUnavailable(
+                f"{operation} is global store metadata and is unavailable when default_source_id is set"
+            )
+
     def _fact_add_legacy(self, args: list[str]) -> str:
         """Legacy fallback for `aidememo` binaries that pre-date the
         structured JSON output on `fact add`. Walks every line of
@@ -774,6 +846,13 @@ class AideMemoClient:
             ) from exc
 
     def _mcp_tool(self, name: str, arguments: dict[str, Any]) -> Any:
+        arguments = dict(arguments)
+        default_source_id = getattr(self, "default_source_id", None)
+        default_actor_id = getattr(self, "default_actor_id", None)
+        if default_source_id is not None:
+            arguments.setdefault("source_id", default_source_id)
+        if default_actor_id is not None:
+            arguments.setdefault("actor_id", default_actor_id)
         init = {
             "jsonrpc": "2.0",
             "id": 0,
