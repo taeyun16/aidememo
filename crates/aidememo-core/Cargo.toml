@@ -109,7 +109,7 @@ bincode = { version = "1.3", optional = true }
 
 # LRU cache for query embeddings (Tier 7-A). Repeated queries skip the
 # Model2Vec inference entirely. Tiny dep, well-maintained.
-lru = "0.16"
+lru = "0.18"
 
 # 병렬 처리 (선택)
 rayon = { version = "1.8", optional = true }
