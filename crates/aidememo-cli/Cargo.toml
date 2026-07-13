@@ -52,7 +52,7 @@ crossterm = "0.29"
 
 # Async runtime + HTTP (for MCP server)
 tokio = { version = "1.35", features = ["full"] }
-axum = "0.7"
+axum = "0.8"
 tokio-stream = "0.1"
 
 # HTTP client — only used by `aidememo search --via` to talk to a running
