@@ -109,7 +109,7 @@ dependencies = [
  "fundu",
  "instant-distance",
  "interim",
- "lru 0.16.4",
+ "lru 0.18.1",
  "memchr",
  "model2vec-rs",
  "once_cell",
