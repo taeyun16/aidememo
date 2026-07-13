@@ -10,7 +10,7 @@ version.workspace = true
 publish = false
 
 [dependencies]
-criterion = "0.5"
+criterion = "0.8"
 parking_lot = "0.12"
 redb = "2.6"
 rusqlite = { version = "0.40.1", default-features = false, features = ["bundled"] }
