@@ -72,42 +72,42 @@
     "description": "Homepage link description for the Codex multi-profile use case."
   },
   "homepage.profiles.kicker": {
-    "message": "대표 사용 사례"
+    "message": "하나의 프로젝트, 어떤 에이전트든"
   },
   "homepage.profiles.title": {
-    "message": "계정은 바꿔도 컨텍스트는 이어집니다."
+    "message": "대화가 끝나도 작업은 끝나지 않습니다."
   },
   "homepage.profiles.body": {
-    "message": "격리된 Codex 프로필이 자격 증명, 쿠키, 채팅 기록을 공유하지 않으면서 프로젝트의 결정과 교훈, 오류를 함께 사용합니다."
+    "message": "AideMemo는 도구 사이에서 채팅을 옮기지 않습니다. 대신 다음 에이전트가 이어서 작업하는 데 필요한 프로젝트 지식, 즉 무엇을 시도했고 왜 실패했으며 다음에 무엇을 하기로 했는지를 전달합니다."
   },
   "homepage.profiles.action": {
-    "message": "다중 프로필 설정 보기"
+    "message": "코딩 에이전트 연결하기"
   },
   "homepage.logo.alt": {
     "message": "AideMemo 로고",
     "description": "Alternative text for the AideMemo logo on the homepage."
   },
   "homepage.eyebrow": {
-    "message": "코딩 에이전트를 위한 로컬 메모리"
+    "message": "에이전트를 넘나드는 프로젝트 연속성"
   },
   "homepage.hero.title": {
-    "message": "코딩 에이전트에 친화적인 SDK 메모리."
+    "message": "코딩 에이전트를 바꿔도, 작업은 계속됩니다."
   },
   "homepage.hero.subtitle": {
-    "message": "세션과 편집기, 모델 제공자가 바뀌어도 이어지는 프로젝트 메모리입니다. 하나의 Rust 바이너리와 embedded store로 동작하며, 기본 로컬 메모리 루프는 외부 LLM 호출이 필요하지 않습니다."
+    "message": "Hermes, Codex, Claude Code와 다른 코딩 에이전트 사이에서 결정, 실패한 시도와 교훈을 이어갑니다. 채팅 동기화 없이, 처음부터 다시 시작하지 않고. 기본 로컬 메모리 루프는 외부 LLM 호출이 필요하지 않습니다."
   },
   "homepage.action.start": {
-    "message": "Git에서 설치"
+    "message": "에이전트에 메모리 연결하기"
   },
   "homepage.action.github": {
     "message": "GitHub 보기"
   },
   "homepage.meta.title": {
-    "message": "코딩 에이전트를 위한 로컬 메모리",
+    "message": "에이전트를 넘나드는 프로젝트 연속성",
     "description": "Browser title for the AideMemo product homepage."
   },
   "homepage.meta.description": {
-    "message": "AideMemo는 에이전트 SDK, MCP, CLI, 네이티브 바인딩으로 사용할 수 있는 코딩 에이전트용 로컬 메모리 레이어입니다.",
+    "message": "Hermes, Codex, Claude Code와 다른 코딩 에이전트를 전환해도 처음부터 다시 시작하지 마세요. AideMemo는 프로젝트의 결정, 실패와 교훈을 로컬에 보존합니다.",
     "description": "Meta description for the AideMemo product homepage."
   },
   "theme.ErrorPageContent.title": {
@@ -483,13 +483,13 @@
     "message": "복사"
   },
   "homepage.graph.alt": {
-    "message": "AideMemo가 에이전트와 typed fact, 하나의 embedded store를 연결합니다."
+    "message": "Hermes, Codex, Claude Code가 하나의 프로젝트 메모리에서 이어서 작업합니다."
   },
   "homepage.action.docs": {
-    "message": "문서 읽기"
+    "message": "작업이 이어지는 방식 보기"
   },
   "homepage.install.label": {
-    "message": "소스에서 설치"
+    "message": "AideMemo 설치"
   },
   "homepage.proof.kicker": {
     "message": "경계가 명확한 측정"
@@ -540,10 +540,10 @@
     "message": "영문과 한국어 가이드는 검증된 동일 경로와 예제, 릴리스 게이트를 공유합니다."
   },
   "homepage.final.title": {
-    "message": "다음 세션에 더 나은 출발점을 남겨주세요."
+    "message": "프로젝트 메모리는 에이전트가 아니라 프로젝트의 것입니다."
   },
   "homepage.final.quickstart": {
-    "message": "빠른 시작 실행"
+    "message": "에이전트에 메모리 연결하기"
   },
   "search.placeholder": {
     "message": "문서 검색",

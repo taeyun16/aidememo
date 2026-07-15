@@ -693,7 +693,16 @@ def check_onboarding_contract(binary: Path) -> list[str]:
     errors.extend(
         require_tokens(
             INSTALL_SCRIPT,
-            ["cargo install --git", "--bin \"$BIN_NAME\" aidememo-cli"],
+            [
+                "AIDEMEMO_VERSION",
+                "releases/latest",
+                "SHA256SUMS",
+                "sha256sum",
+                "shasum -a 256",
+                "checksum verification failed",
+                'install -m 755 "$binary" "$INSTALL_DIR/aidememo"',
+                "cargo install aidememo-cli",
+            ],
             "installer",
         )
     )
@@ -949,7 +958,7 @@ def check_docusaurus_contract() -> list[str]:
             KO_CODE_JSON,
             [
                 '"homepage.hero.title"',
-                "코딩 에이전트에 친화적인 SDK 메모리.",
+                "코딩 에이전트를 바꿔도, 작업은 계속됩니다.",
                 "기본 로컬 메모리 루프는 외부 LLM 호출이 필요하지 않습니다.",
                 '"search.placeholder"',
                 "문서 검색",

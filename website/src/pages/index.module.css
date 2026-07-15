@@ -188,96 +188,134 @@
 
 .graphVisual {
   position: relative;
-  width: min(52vw, 720px);
+  display: grid;
+  width: min(48vw, 680px);
+  min-height: 540px;
+  align-content: center;
+  gap: 0;
   justify-self: end;
   animation: graphArrive 900ms 160ms both cubic-bezier(0.2, 0.72, 0.28, 1);
 }
 
-.graphVisual svg {
-  display: block;
-  width: 100%;
-  height: auto;
-  filter: drop-shadow(0 30px 60px rgb(0 0 0 / 0.24));
-}
-
-.orbitOuter,
-.orbitInner {
-  fill: none;
-  stroke: rgb(130 231 214 / 0.16);
-  stroke-width: 1;
-}
-
-.orbitOuter {
-  stroke-dasharray: 4 15;
-}
-
-.signalPath {
-  fill: none;
-  stroke: rgb(75 225 204 / 0.72);
-  stroke-dasharray: 8 13;
-  stroke-linecap: round;
-  stroke-width: 1.5;
-  animation: signalFlow 8s linear infinite;
-}
-
-.graphNode text {
-  fill: rgb(221 245 239 / 0.66);
-  font-family: var(--ifm-font-family-monospace);
-  font-size: 12px;
-  letter-spacing: 0.18em;
-}
-
-.nodeHalo {
-  fill: rgb(54 216 194 / 0.035);
-  stroke: rgb(73 224 204 / 0.32);
-}
-
-.nodeCore {
-  fill: var(--landing-mint);
-  filter: drop-shadow(0 0 8px rgb(54 216 194 / 0.8));
-  transform-box: fill-box;
-  transform-origin: center;
-  animation: nodePulse 3.2s ease-in-out infinite;
-}
-
-.graphNode:nth-of-type(2) .nodeCore {
-  animation-delay: -0.6s;
-}
-
-.graphNode:nth-of-type(3) .nodeCore {
-  animation-delay: -1.2s;
-}
-
-.graphNode:nth-of-type(4) .nodeCore {
-  animation-delay: -1.8s;
-}
-
-.graphNode:nth-of-type(5) .nodeCore {
-  animation-delay: -2.4s;
-}
-
-.centerHalo {
-  fill: rgb(54 216 194 / 0.025);
-  stroke: rgb(54 216 194 / 0.12);
-}
-
-.centerCore {
-  fill: #0b2021;
-  stroke: rgb(125 244 226 / 0.4);
-  stroke-width: 1.5;
-}
-
-.graphCaption {
-  position: absolute;
-  right: 3%;
-  bottom: 9%;
+.relayAgents {
   display: flex;
-  gap: 18px;
-  margin: 0;
-  color: rgb(225 247 242 / 0.48);
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.relayAgent {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 0;
+  border-top: 1px solid rgb(112 235 216 / 0.42);
+  color: #eaf8f5;
+}
+
+.relayAgent span,
+.memoryCore span,
+.recoveredContext > span {
+  color: rgb(121 225 208 / 0.62);
   font-family: var(--ifm-font-family-monospace);
   font-size: 0.65rem;
   letter-spacing: 0.12em;
+}
+
+.relayAgent strong {
+  font-size: clamp(0.72rem, 1vw, 0.9rem);
+  letter-spacing: 0.03em;
+}
+
+.relayLine {
+  position: relative;
+  height: 82px;
+  margin: 0 8%;
+  border-right: 1px solid rgb(89 231 208 / 0.42);
+  border-left: 1px solid rgb(89 231 208 / 0.42);
+}
+
+.relayLine::before,
+.relayLine::after {
+  position: absolute;
+  width: 42%;
+  height: 1px;
+  top: 0;
+  background: rgb(89 231 208 / 0.42);
+  content: '';
+}
+
+.relayLine::before {
+  left: 0;
+  transform: rotate(8deg);
+  transform-origin: left;
+}
+
+.relayLine::after {
+  right: 0;
+  transform: rotate(-8deg);
+  transform-origin: right;
+}
+
+.relayLine span {
+  position: absolute;
+  left: 50%;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--landing-mint);
+  box-shadow: 0 0 18px rgb(54 216 194 / 0.9);
+  animation: relayMove 2.8s ease-in-out infinite;
+}
+
+.memoryCore {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 22px;
+  padding: 24px;
+  border: 1px solid rgb(99 235 208 / 0.5);
+  background: rgb(53 207 181 / 0.1);
+  box-shadow: 0 30px 80px rgb(0 0 0 / 0.2);
+}
+
+.memoryCore img {
+  width: 62px;
+  height: 62px;
+}
+
+.memoryCore div {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.memoryCore strong {
+  color: #f4fffc;
+  font-size: clamp(1rem, 1.7vw, 1.35rem);
+  letter-spacing: -0.025em;
+}
+
+.recoveredContext {
+  margin: 16px 0 0 12%;
+  padding: 22px 0 0 24px;
+  border-left: 1px solid rgb(255 255 255 / 0.18);
+}
+
+.recoveredContext p {
+  margin: 11px 0 0;
+  color: rgb(226 242 237 / 0.74);
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.72rem;
+  line-height: 1.5;
+}
+
+.recoveredContext b {
+  display: inline-block;
+  min-width: 72px;
+  color: var(--landing-mint);
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
 }
 
 .installRail {
@@ -782,6 +820,18 @@
   }
 }
 
+@keyframes relayMove {
+  0%,
+  100% {
+    top: -4px;
+    opacity: 0.45;
+  }
+  50% {
+    top: calc(100% - 4px);
+    opacity: 1;
+  }
+}
+
 @keyframes nodePulse {
   0%,
   100% {
@@ -838,10 +888,6 @@
     opacity: 0.38;
   }
 
-  .graphCaption {
-    display: none;
-  }
-
   .proofSection .sectionShell,
   .profileSection .sectionShell,
   .workflowSection .sectionShell,
@@ -884,6 +930,10 @@
 
   .heroSubtitle {
     font-size: 0.96rem;
+  }
+
+  .graphVisual {
+    display: none;
   }
 
   .heroActions,
@@ -960,8 +1010,7 @@
 @media (prefers-reduced-motion: reduce) {
   .heroCopy > *,
   .graphVisual,
-  .nodeCore,
-  .signalPath {
+  .relayLine span {
     animation: none;
   }
 

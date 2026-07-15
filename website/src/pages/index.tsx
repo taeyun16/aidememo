@@ -8,8 +8,9 @@ import Layout from '@theme/Layout';
 
 import styles from './index.module.css';
 
-const INSTALL_COMMAND =
-  'cargo install --git https://github.com/taeyun16/aidememo aidememo-cli';
+const INSTALL_COMMAND = 'curl -fsSL https://raw.githubusercontent.com/taeyun16/aidememo/main/scripts/install.sh | bash';
+
+const agents = ['HERMES', 'CODEX', 'CLAUDE CODE'];
 
 type WorkflowStep = {
   number: string;
@@ -265,53 +266,33 @@ function MemoryGraph({logoSrc}: {logoSrc: string}): JSX.Element {
       role="img"
       aria-label={translate({
         id: 'homepage.graph.alt',
-        message: 'AideMemo connects agents to typed facts and one embedded store.',
+        message: 'Hermes, Codex, and Claude Code continue from one shared project memory.',
       })}
     >
-      <svg viewBox="0 0 720 720" aria-hidden="true">
-        <circle className={styles.orbitOuter} cx="360" cy="360" r="276" />
-        <circle className={styles.orbitInner} cx="360" cy="360" r="176" />
-        <path className={styles.signalPath} d="M360 360 L154 182" />
-        <path className={styles.signalPath} d="M360 360 L568 174" />
-        <path className={styles.signalPath} d="M360 360 L604 426" />
-        <path className={styles.signalPath} d="M360 360 L468 612" />
-        <path className={styles.signalPath} d="M360 360 L122 502" />
-
-        <g className={styles.graphNode} transform="translate(154 182)">
-          <circle className={styles.nodeHalo} r="38" />
-          <circle className={styles.nodeCore} r="8" />
-          <text x="-4" y="-56" textAnchor="middle">AGENT</text>
-        </g>
-        <g className={styles.graphNode} transform="translate(568 174)">
-          <circle className={styles.nodeHalo} r="30" />
-          <circle className={styles.nodeCore} r="7" />
-          <text x="4" y="-48" textAnchor="middle">DECISION</text>
-        </g>
-        <g className={styles.graphNode} transform="translate(604 426)">
-          <circle className={styles.nodeHalo} r="30" />
-          <circle className={styles.nodeCore} r="7" />
-          <text x="6" y="54" textAnchor="middle">LESSON</text>
-        </g>
-        <g className={styles.graphNode} transform="translate(468 612)">
-          <circle className={styles.nodeHalo} r="30" />
-          <circle className={styles.nodeCore} r="7" />
-          <text x="0" y="54" textAnchor="middle">ERROR</text>
-        </g>
-        <g className={styles.graphNode} transform="translate(122 502)">
-          <circle className={styles.nodeHalo} r="38" />
-          <circle className={styles.nodeCore} r="8" />
-          <text x="0" y="58" textAnchor="middle">SQLITE</text>
-        </g>
-
-        <circle className={styles.centerHalo} cx="360" cy="360" r="112" />
-        <circle className={styles.centerCore} cx="360" cy="360" r="76" />
-        <image href={logoSrc} x="301" y="301" width="118" height="118" />
-      </svg>
-      <p className={styles.graphCaption}>
-        <span>FACTS</span>
-        <span>RELATIONS</span>
-        <span>HISTORY</span>
-      </p>
+      <div className={styles.relayAgents}>
+        {agents.map((agent, index) => (
+          <div className={styles.relayAgent} key={agent}>
+            <span>{String(index + 1).padStart(2, '0')}</span>
+            <strong>{agent}</strong>
+          </div>
+        ))}
+      </div>
+      <div className={styles.relayLine} aria-hidden="true">
+        <span />
+      </div>
+      <div className={styles.memoryCore}>
+        <img src={logoSrc} alt="" />
+        <div>
+          <span>SHARED PROJECT MEMORY</span>
+          <strong>What failed. Why. What comes next.</strong>
+        </div>
+      </div>
+      <div className={styles.recoveredContext}>
+        <span>RECOVERED BY THE NEXT AGENT</span>
+        <p><b>ERROR</b> Old refresh token was reused.</p>
+        <p><b>LESSON</b> Tokens rotate after every refresh.</p>
+        <p><b>DECISION</b> Persist the new token atomically.</p>
+      </div>
     </div>
   );
 }
@@ -335,7 +316,7 @@ function HomepageHero(): JSX.Element {
               })}
             />
             <span>
-              <Translate id="homepage.eyebrow">Local memory for coding agents</Translate>
+              <Translate id="homepage.eyebrow">Cross-agent project continuity</Translate>
             </span>
           </div>
           <Heading as="h1" className={styles.productName}>
@@ -343,23 +324,23 @@ function HomepageHero(): JSX.Element {
           </Heading>
           <p className={styles.heroTitle}>
             <Translate id="homepage.hero.title">
-              Agent-friendly SDK memory for coding agents.
+              Switch coding agents. Keep the work moving.
             </Translate>
           </p>
           <p className={styles.heroSubtitle}>
             <Translate id="homepage.hero.subtitle">
-              Project memory that survives sessions, editors, and model providers. One Rust binary,
-              one embedded store, and a default local loop that does not require an external LLM
-              call.
+              Carry decisions, failed attempts, and lessons across Hermes, Codex, Claude Code, and
+              other coding agents. No chat sync. No restart from zero. The default local memory
+              loop does not require an external LLM call.
             </Translate>
           </p>
           <div className={styles.heroActions}>
             <Link className={styles.primaryAction} to="/docs/INSTALLATION">
-              <Translate id="homepage.action.start">Install from Git</Translate>
+              <Translate id="homepage.action.start">Give my agents memory</Translate>
               <span aria-hidden="true">↓</span>
             </Link>
             <Link className={styles.secondaryAction} to="/docs/INTRODUCTION">
-              <Translate id="homepage.action.docs">Read the docs</Translate>
+              <Translate id="homepage.action.docs">See how continuity works</Translate>
               <Arrow />
             </Link>
           </div>
@@ -369,7 +350,7 @@ function HomepageHero(): JSX.Element {
 
       <div className={styles.installRail} id="install">
         <span className={styles.installLabel}>
-          <Translate id="homepage.install.label">Install from source</Translate>
+          <Translate id="homepage.install.label">Install AideMemo</Translate>
         </span>
         <code>{INSTALL_COMMAND}</code>
         <CopyCommand />
@@ -477,39 +458,40 @@ function ProfileContinuitySection(): JSX.Element {
       <div className={styles.sectionShell}>
         <div className={styles.profileCopy}>
           <p className={styles.sectionKicker}>
-            <Translate id="homepage.profiles.kicker">Featured use case</Translate>
+            <Translate id="homepage.profiles.kicker">One project. Any agent.</Translate>
           </p>
           <Heading as="h2" id="profile-continuity-title" className={styles.sectionTitle}>
-            <Translate id="homepage.profiles.title">Switch accounts, not context.</Translate>
+            <Translate id="homepage.profiles.title">The conversation ends. The work does not.</Translate>
           </Heading>
           <p className={styles.sectionBody}>
             <Translate id="homepage.profiles.body">
-              Let isolated Codex profiles share project decisions, lessons, and errors without
-              sharing credentials, cookies, or chat history.
+              AideMemo does not move chats between tools. It gives the next agent the durable
+              project knowledge it needs to continue: what was tried, what failed, and what the
+              team decided next.
             </Translate>
           </p>
           <Link className={styles.textLink} to="/docs/CODEX_MULTI_PROFILE">
-            <Translate id="homepage.profiles.action">See the multi-profile setup</Translate>
+            <Translate id="homepage.profiles.action">Set up your coding agents</Translate>
             <Arrow />
           </Link>
         </div>
-        <div className={styles.profileFlow} aria-label="Two Codex profiles share one AideMemo store">
+        <div className={styles.profileFlow} aria-label="A failed attempt becomes useful context for the next coding agent">
           <div className={styles.profileNode}>
-            <span>CODEX</span>
-            <strong>Account A</strong>
-            <small>actor: codex:account-a</small>
+            <span>YESTERDAY · HERMES</span>
+            <strong>Found the failure</strong>
+            <small>Old refresh tokens trigger replay detection.</small>
           </div>
-          <div className={styles.profileConnector} aria-hidden="true">→</div>
+          <div className={styles.profileConnector} aria-hidden="true">↘</div>
           <div className={styles.sharedMemoryNode}>
-            <span>AIDEMEMO</span>
-            <strong>Project memory</strong>
-            <small>source: project:aidememo</small>
+            <span>AIDEMEMO · LOCAL</span>
+            <strong>Kept the lesson</strong>
+            <small>Error, root cause, and agreed fix stay with the project.</small>
           </div>
-          <div className={styles.profileConnector} aria-hidden="true">←</div>
+          <div className={styles.profileConnector} aria-hidden="true">↘</div>
           <div className={styles.profileNode}>
-            <span>CODEX</span>
-            <strong>Account B</strong>
-            <small>actor: codex:account-b</small>
+            <span>TODAY · CLAUDE CODE</span>
+            <strong>Continued the fix</strong>
+            <small>Started from the atomic token update—not the failed attempt.</small>
           </div>
         </div>
       </div>
@@ -585,11 +567,11 @@ function FinalCallToAction(): JSX.Element {
       <div className={styles.finalCtaInner}>
         <p className={styles.sectionKicker}>AIDEMEMO / 0.1</p>
         <Heading as="h2" id="final-title">
-          <Translate id="homepage.final.title">Give the next session a better starting point.</Translate>
+          <Translate id="homepage.final.title">Your project memory belongs to the project. Not the agent.</Translate>
         </Heading>
         <div className={styles.finalActions}>
           <Link className={styles.primaryAction} to="/docs/QUICKSTART">
-            <Translate id="homepage.final.quickstart">Run the quickstart</Translate>
+            <Translate id="homepage.final.quickstart">Give my agents memory</Translate>
             <Arrow />
           </Link>
           <Link className={styles.secondaryAction} to="https://github.com/taeyun16/aidememo">
@@ -607,13 +589,13 @@ export default function Home(): JSX.Element {
     <Layout
       title={translate({
         id: 'homepage.meta.title',
-        message: 'Local memory for coding agents',
+        message: 'Cross-agent project continuity',
         description: 'Browser title for the AideMemo product homepage.',
       })}
       description={translate({
         id: 'homepage.meta.description',
         message:
-          'AideMemo is a local memory layer for coding agents, available through an agent SDK, MCP, CLI, and native bindings.',
+          'Switch between Hermes, Codex, Claude Code, and other coding agents without restarting from zero. AideMemo keeps project decisions, failures, and lessons local.',
         description: 'Meta description for the AideMemo product homepage.',
       })}
     >
