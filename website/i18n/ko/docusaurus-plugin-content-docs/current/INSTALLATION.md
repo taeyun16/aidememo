@@ -7,23 +7,24 @@ description: AideMemo를 설치하고 CLI 동작을 확인합니다.
 
 기본 바이너리는 `aidememo`이며 CLI와 MCP 서버를 모두 포함합니다.
 
-## crates.io에서 설치
+## 사전 빌드 바이너리
 
-```bash
-cargo install aidememo-cli
-```
-
-## 한 줄 설치 프로그램 사용
+권장 설치 프로그램은 arm64 또는 x64용 최신 macOS/Linux 릴리스를 내려받고,
+릴리스 SHA-256 매니페스트로 검증한 뒤 기본적으로 `~/.local/bin`에 설치합니다.
+Rust 도구 체인은 필요하지 않습니다.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/taeyun16/aidememo/main/scripts/install.sh | bash
 ```
 
-설치 프로그램은 Rust 1.95+가 필요하며 `cargo install --git`으로 최신 main
-브랜치를 빌드합니다. 컴파일 없이 설치하려면
-[v0.1.0 릴리스](https://github.com/taeyun16/aidememo/releases/tag/v0.1.0)에서
-macOS 또는 Linux x64/arm64용 독립 실행형 압축 파일을 내려받고 함께 첨부된
-`SHA256SUMS`로 검증하세요.
+다른 경로에 설치하려면 `AIDEMEMO_INSTALL_DIR`을 설정하고, 특정 릴리스를
+고정하려면 `AIDEMEMO_VERSION=v0.1.0`을 설정합니다.
+
+## crates.io에서 설치
+
+```bash
+cargo install aidememo-cli
+```
 
 ## Git에서 설치
 
@@ -38,9 +39,11 @@ aidememo --help
 aidememo stats
 ```
 
-셸에서 명령을 찾지 못하면 Cargo 바이너리 디렉터리를 PATH에 추가합니다.
+셸에서 명령을 찾지 못하면 설치 대상 디렉터리 또는 Cargo 바이너리
+디렉터리를 PATH에 추가합니다.
 
 ```bash
+export PATH="$HOME/.local/bin:$PATH"
 export PATH="$HOME/.cargo/bin:$PATH"
 ```
 

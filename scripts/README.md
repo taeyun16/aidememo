@@ -57,7 +57,8 @@ adding scratch note files.
 
 | Script | Purpose |
 |---|---|
-| `install.sh` | One-line installer used by README. |
+| `install.sh` | One-line installer used by README. Downloads the matching macOS/Linux release archive, verifies `SHA256SUMS`, and installs the CLI without requiring Rust. |
+| `prepare-continuity-demo.sh` | Recreate the deterministic Hermes to Codex to Claude Code project-memory handoff used by the cross-agent continuity recording guide. |
 | `setup-hermes-test-env.sh` | Create an isolated Hermes profile for plugin smoke tests. |
 | `test-hermes-e2e.sh` | Verify Hermes plugin registration, tools, hooks, and slash commands. |
 

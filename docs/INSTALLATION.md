@@ -7,23 +7,24 @@ description: Install AideMemo and verify the CLI.
 
 The main binary is `aidememo`. It includes the CLI and MCP server.
 
-## From crates.io
+## Prebuilt binary
 
-```bash
-cargo install aidememo-cli
-```
-
-## With the one-line installer
+The recommended installer downloads the latest macOS or Linux release for arm64
+or x64, verifies it against the release SHA-256 manifest, and installs it to
+`~/.local/bin` by default. It does not require a Rust toolchain.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/taeyun16/aidememo/main/scripts/install.sh | bash
 ```
 
-The installer requires Rust 1.95+ and builds the latest main branch with
-`cargo install --git`. To install without compiling, download a standalone
-macOS or Linux x64/arm64 archive from the
-[v0.1.0 release](https://github.com/taeyun16/aidememo/releases/tag/v0.1.0) and
-verify it with the attached `SHA256SUMS` file.
+Set `AIDEMEMO_INSTALL_DIR` to choose another destination or
+`AIDEMEMO_VERSION=v0.1.0` to pin a release.
+
+## From crates.io
+
+```bash
+cargo install aidememo-cli
+```
 
 ## From Git
 
@@ -38,9 +39,11 @@ aidememo --help
 aidememo stats
 ```
 
-If your shell cannot find the command, add Cargo's bin directory to your path:
+If your shell cannot find the command, add the installer destination or Cargo's
+bin directory to your path:
 
 ```bash
+export PATH="$HOME/.local/bin:$PATH"
 export PATH="$HOME/.cargo/bin:$PATH"
 ```
 

@@ -129,11 +129,11 @@ placement boundaries.
 Featured use case: [share one project memory across isolated Codex profiles](docs/CODEX_MULTI_PROFILE.md).
 
 ```bash
-# Install the CLI and MCP server from crates.io
-cargo install aidememo-cli
-
-# Or use the one-line installer
+# Install the prebuilt CLI and MCP server (macOS / Linux, arm64 / x64)
 curl -fsSL https://raw.githubusercontent.com/taeyun16/aidememo/main/scripts/install.sh | bash
+
+# Or build and install from crates.io
+cargo install aidememo-cli
 
 # Or install the latest main branch
 cargo install --git https://github.com/taeyun16/aidememo aidememo-cli

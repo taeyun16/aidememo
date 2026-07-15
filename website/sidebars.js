@@ -16,6 +16,7 @@ const sidebars = {
         'MCP',
         'SHARED_MEMORY',
         'CODING_AGENTS',
+        'CROSS_AGENT_DEMO',
         'CODEX_MULTI_PROFILE',
         'AGENT_WORKFLOWS',
         'SDK',
