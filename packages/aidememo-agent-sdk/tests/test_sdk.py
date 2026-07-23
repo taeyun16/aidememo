@@ -58,6 +58,49 @@ class FakeClient:
         self.artifact_calls.append(("session_canvas", session_id, limit, include_superseded))
         return "# AideMemo Session Canvas"
 
+    def handoff(self, session_id=None, **kwargs):
+        self.artifact_calls.append(("handoff", session_id, kwargs))
+        return "# AideMemo Agent Handoff"
+
+    def handoff_packet(self, session_id=None, **kwargs):
+        self.artifact_calls.append(("handoff_packet", session_id, kwargs))
+        return {
+            "artifact": "agent_handoff",
+            "session_id": session_id,
+            "resume": {"env": {"AIDEMEMO_SESSION_ID": session_id}},
+            "content": "# AideMemo Agent Handoff",
+        }
+
+    def handoff_inbox(self, **kwargs):
+        self.artifact_calls.append(("handoff_inbox", kwargs))
+        return [{"handoff_id": "handoff-1", "status": "pending"}]
+
+    def handoff_outbox(self, **kwargs):
+        self.artifact_calls.append(("handoff_outbox", kwargs))
+        return [{"handoff_id": "handoff-1", "status": "completed"}]
+
+    def handoff_show(self, handoff_id):
+        self.artifact_calls.append(("handoff_show", handoff_id))
+        return {"assignment": {"handoff_id": handoff_id, "status": "completed"}}
+
+    def handoff_status(self, handoff_id, **kwargs):
+        self.artifact_calls.append(("handoff_status", handoff_id, kwargs))
+        return {"assignment": {"handoff_id": handoff_id, "status": "completed"}}
+
+    def handoff_accept(self, handoff_id, **kwargs):
+        self.artifact_calls.append(("handoff_accept", handoff_id, kwargs))
+        return {"assignment": {"handoff_id": handoff_id, "status": "accepted"}}
+
+    def handoff_complete(self, handoff_id, **kwargs):
+        self.artifact_calls.append(("handoff_complete", handoff_id, kwargs))
+        return {"assignment": {"handoff_id": handoff_id, "status": "completed"}}
+
+    def handoff_return(self, handoff_id, result_fact_id, **kwargs):
+        self.artifact_calls.append(
+            ("handoff_return", handoff_id, result_fact_id, kwargs)
+        )
+        return {"assignment": {"handoff_id": handoff_id, "status": "completed"}}
+
     def project_profile(self, *, limit=80, source_id=None, include_sessions=False):
         self.artifact_calls.append(("project_profile", limit, source_id, include_sessions))
         return "# AideMemo Project Profile"
@@ -294,9 +337,103 @@ def test_artifact_helpers_forward_to_client() -> None:
     sdk = AideMemoMemorySDK(client)
 
     assert sdk.session_canvas("session-1", limit=12) == "# AideMemo Session Canvas"
+    assert sdk.handoff(
+        "session-1",
+        from_agent="codex",
+        to_agent="hermes",
+        to_profile="reviewer",
+        done_when="Package smoke and release preflight pass",
+        source_id="team-a",
+    ) == "# AideMemo Agent Handoff"
+    packet = sdk.handoff_packet(
+        "session-1",
+        from_route="codex/coding",
+        to_route="hermes/reviewer",
+        done_when="Package smoke and release preflight pass",
+        source_id="team-a",
+    )
+    assert packet["session_id"] == "session-1"
+    assert packet["resume"]["env"]["AIDEMEMO_SESSION_ID"] == "session-1"
+    assert sdk.handoff_inbox(actor_id="codex-two", source_id="team-a")[0]["handoff_id"] == "handoff-1"
+    assert sdk.handoff_outbox(actor_id="codex-one", source_id="team-a")[0]["status"] == "completed"
+    assert sdk.handoff_show("handoff-1")["assignment"]["status"] == "completed"
+    assert sdk.handoff_status("handoff-1", actor_id="codex-one")["assignment"]["status"] == "completed"
+    assert sdk.handoff_accept("handoff-1", actor_id="codex-two")["assignment"]["status"] == "accepted"
+    assert sdk.handoff_return(
+        "handoff-1", "fact-1", outcome="succeeded", actor_id="codex-two"
+    )["assignment"]["status"] == "completed"
+    assert sdk.handoff_complete("handoff-1", actor_id="codex-two")["assignment"]["status"] == "completed"
     assert sdk.project_profile(limit=20, source_id="team-a") == "# AideMemo Project Profile"
     assert client.artifact_calls == [
         ("session_canvas", "session-1", 12, False),
+        (
+            "handoff",
+            "session-1",
+            {
+                "from_actor": None,
+                "from_route": None,
+                "to_route": None,
+                "from_agent": "codex",
+                "from_profile": None,
+                "to_agent": "hermes",
+                "to_profile": "reviewer",
+                "to_actor": None,
+                "focus": None,
+                "done_when": "Package smoke and release preflight pass",
+                "dispatch": False,
+                "source_id": "team-a",
+                "limit": 40,
+                "include_superseded": False,
+            },
+        ),
+        (
+            "handoff_packet",
+            "session-1",
+            {
+                "from_actor": None,
+                "from_route": "codex/coding",
+                "to_route": "hermes/reviewer",
+                "from_agent": None,
+                "from_profile": None,
+                "to_agent": None,
+                "to_profile": None,
+                "to_actor": None,
+                "focus": None,
+                "done_when": "Package smoke and release preflight pass",
+                "dispatch": False,
+                "source_id": "team-a",
+                "limit": 40,
+                "include_superseded": False,
+            },
+        ),
+        (
+            "handoff_inbox",
+            {
+                "actor_id": "codex-two",
+                "source_id": "team-a",
+                "include_completed": False,
+                "limit": 20,
+            },
+        ),
+        (
+            "handoff_outbox",
+            {
+                "actor_id": "codex-one",
+                "source_id": "team-a",
+                "include_completed": True,
+                "limit": 20,
+            },
+        ),
+        ("handoff_show", "handoff-1"),
+        ("handoff_status", "handoff-1", {"actor_id": "codex-one"}),
+        ("handoff_accept", "handoff-1", {"actor_id": "codex-two"}),
+        (
+            "handoff_return",
+            "handoff-1",
+            "fact-1",
+            {"outcome": "succeeded", "actor_id": "codex-two"},
+        ),
+        ("handoff_complete", "handoff-1", {"actor_id": "codex-two"}),
         ("project_profile", 20, "team-a", False),
     ]
 
@@ -316,7 +453,11 @@ def test_client_artifact_methods_use_mcp_tools(monkeypatch) -> None:
         tool_call = next(line for line in lines if line["method"] == "tools/call")
         calls.append((cmd, tool_call["params"]))
         name = tool_call["params"]["name"]
-        content = "# AideMemo Session Canvas" if name == "aidememo_session_canvas" else "# AideMemo Project Profile"
+        content = {
+            "aidememo_session_canvas": "# AideMemo Session Canvas",
+            "aidememo_handoff": "# AideMemo Agent Handoff",
+            "aidememo_profile_export": "# AideMemo Project Profile",
+        }[name]
         stdout = "\n".join(
             [
                 json.dumps({"jsonrpc": "2.0", "id": 0, "result": {}}),
@@ -345,6 +486,21 @@ def test_client_artifact_methods_use_mcp_tools(monkeypatch) -> None:
     client._py = None
 
     assert client.session_canvas("session-1", limit=7) == "# AideMemo Session Canvas"
+    assert client.handoff(
+        "session-1",
+        from_agent="codex",
+        to_agent="hermes",
+        to_profile="reviewer",
+        focus="Run release checks",
+        done_when="All release checks pass",
+    ) == "# AideMemo Agent Handoff"
+    packet = client.handoff_packet(
+        "session-1",
+        from_route="codex/coding",
+        to_route="hermes/reviewer",
+        done_when="All release checks pass",
+    )
+    assert packet["content"] == "# AideMemo Agent Handoff"
     assert client.project_profile(limit=9) == "# AideMemo Project Profile"
     assert calls[0][0] == ["aidememo", "--backend", "libsqlite", "--store", "/tmp/wiki.sqlite", "mcp"]
     assert calls[0][1] == {
@@ -357,6 +513,32 @@ def test_client_artifact_methods_use_mcp_tools(monkeypatch) -> None:
         },
     }
     assert calls[1][1] == {
+        "name": "aidememo_handoff",
+        "arguments": {
+            "limit": 40,
+            "include_superseded": False,
+            "session": "session-1",
+            "from_agent": "codex",
+            "to_agent": "hermes",
+            "to_profile": "reviewer",
+            "focus": "Run release checks",
+            "done_when": "All release checks pass",
+            "source_id": "team-a",
+        },
+    }
+    assert calls[2][1] == {
+        "name": "aidememo_handoff",
+        "arguments": {
+            "limit": 40,
+            "include_superseded": False,
+            "session": "session-1",
+            "from": "codex/coding",
+            "to": "hermes/reviewer",
+            "done_when": "All release checks pass",
+            "source_id": "team-a",
+        },
+    }
+    assert calls[3][1] == {
         "name": "aidememo_profile_export",
         "arguments": {"limit": 9, "include_sessions": False, "source_id": "team-a"},
     }
@@ -416,6 +598,137 @@ def test_pyo3_workflow_validates_parent_in_source_before_child_creation() -> Non
     assert backend.calls[1][0] == "entity_add"
     assert backend.calls[2][0] == "relation_add"
     assert backend.calls[2][4] == {"source_id": "team-a"}
+
+
+def test_client_handoff_accepts_route_shorthand(monkeypatch) -> None:
+    calls = []
+
+    def fake_mcp(self, name, arguments):
+        calls.append((name, arguments))
+        return {"content": "# AideMemo Agent Handoff"}
+
+    monkeypatch.setattr(AideMemoClient, "_mcp_tool", fake_mcp)
+    client = AideMemoClient.__new__(AideMemoClient)
+    client.default_source_id = "team-a"
+
+    assert client.handoff(
+        "session-1",
+        from_route="codex/coding",
+        to_route="hermes/reviewer",
+        done_when="Reviewer signs off",
+    ) == "# AideMemo Agent Handoff"
+    assert calls == [
+        (
+            "aidememo_handoff",
+            {
+                "limit": 40,
+                "include_superseded": False,
+                "session": "session-1",
+                "from": "codex/coding",
+                "to": "hermes/reviewer",
+                "done_when": "Reviewer signs off",
+                "source_id": "team-a",
+            },
+        )
+    ]
+
+
+def test_client_handoff_dispatch_and_inbox_use_assignment_contract(monkeypatch) -> None:
+    calls = []
+
+    def fake_mcp(self, name, arguments):
+        calls.append((name, arguments))
+        if name == "aidememo_handoff":
+            return {
+                "handoff_id": "handoff-1",
+                "status": "pending",
+                "content": "# AideMemo Agent Handoff",
+            }
+        action = arguments["action"]
+        if action in {"list", "outbox"}:
+            return {"assignments": [{"handoff_id": "handoff-1", "status": "pending"}]}
+        return {"assignment": {"handoff_id": "handoff-1", "status": f"{action}ed"}}
+
+    monkeypatch.setattr(AideMemoClient, "_mcp_tool", fake_mcp)
+    client = AideMemoClient.__new__(AideMemoClient)
+    client.default_source_id = "team-a"
+
+    packet = client.handoff_packet(
+        "session-1",
+        from_actor="codex-one",
+        to_actor="codex-two",
+        from_route="codex/coding",
+        to_route="codex/reviewer",
+        dispatch=True,
+    )
+    assert packet["handoff_id"] == "handoff-1"
+    assert client.handoff_inbox(actor_id="codex-two")[0]["status"] == "pending"
+    assert client.handoff_outbox(actor_id="codex-one")[0]["handoff_id"] == "handoff-1"
+    client.handoff_show("handoff-1")
+    client.handoff_status("handoff-1", actor_id="codex-one")
+    client.handoff_accept("handoff-1", actor_id="codex-two")
+    client.handoff_return(
+        "handoff-1", "fact-1", outcome="succeeded", actor_id="codex-two"
+    )
+    client.handoff_complete("handoff-1", actor_id="codex-two")
+
+    assert calls[0] == (
+        "aidememo_handoff",
+        {
+            "limit": 40,
+            "include_superseded": False,
+            "dispatch": True,
+            "session": "session-1",
+            "from_actor": "codex-one",
+            "from": "codex/coding",
+            "to": "codex/reviewer",
+            "to_actor": "codex-two",
+            "source_id": "team-a",
+        },
+    )
+    assert calls[1] == (
+        "aidememo_handoff_inbox",
+        {
+            "action": "list",
+            "include_completed": False,
+            "limit": 20,
+            "actor_id": "codex-two",
+            "source_id": "team-a",
+        },
+    )
+    assert calls[2][1] == {
+        "action": "outbox",
+        "include_completed": True,
+        "limit": 20,
+        "actor_id": "codex-one",
+        "source_id": "team-a",
+    }
+    assert calls[3][1] == {
+        "action": "show",
+        "handoff_id": "handoff-1",
+    }
+    assert calls[4][1] == {
+        "action": "status",
+        "handoff_id": "handoff-1",
+        "actor_id": "codex-one",
+    }
+    assert calls[5][1] == {
+        "action": "accept",
+        "handoff_id": "handoff-1",
+        "actor_id": "codex-two",
+    }
+    assert calls[6][1] == {
+        "action": "return",
+        "handoff_id": "handoff-1",
+        "result_fact_id": "fact-1",
+        "outcome": "succeeded",
+        "actor_id": "codex-two",
+    }
+    assert calls[7][1] == {
+        "action": "complete",
+        "handoff_id": "handoff-1",
+        "actor_id": "codex-two",
+    }
 
 
 def test_pyo3_backend_preserves_session_and_context_scope() -> None:

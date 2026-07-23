@@ -103,6 +103,70 @@ Canvas는 파생된 Markdown 아티팩트입니다. 먼저 Mermaid 지도를 제
 MCP 에이전트는 `aidememo_session_canvas`로 같은 텍스트를 요청할 수 있고,
 Python 에이전트는 `Memory.session_canvas(...)`를 호출할 수 있습니다.
 
+## 다른 에이전트, 프로필, 계정으로 핸드오프
+
+현재 작업에서 오래 유지할 내용을 기록한 뒤 간결한 packet을 만듭니다.
+
+```bash
+aidememo session handoff \
+  --from-actor codex-one \
+  --to-actor codex-two \
+  --from codex/coding \
+  --to codex/reviewer \
+  --source-id team-a \
+  --focus "패치를 검증하고 릴리스 프리플라이트 실행" \
+  --done-when "집중 테스트와 릴리스 프리플라이트 통과" \
+  --dispatch \
+  "$AIDEMEMO_SESSION_ID"
+```
+
+`--dispatch`가 없으면 packet은 읽기 전용 미리보기입니다. 세션 ID를 유지하고 결정, 열린 질문, 교훈,
+오류를 그룹화하며 모든 항목을 원본 팩트 ID와 연결합니다. Agent/profile 값은
+라우팅 label이고 `source_id`는 포함할 공유 저장소 namespace를 제어합니다.
+MCP에서는 `aidememo_handoff`, Python에서는 `Memory.handoff(...)`로 같은
+아티팩트를 얻습니다.
+
+dispatch한 세션 포인터는 수신자가 pull하고 확인합니다.
+
+```bash
+aidememo handoff inbox --actor-id codex-two --source-id team-a
+aidememo handoff accept --actor-id codex-two handoff-...
+aidememo handoff return --actor-id codex-two --outcome succeeded \
+  --result-fact-id 01... handoff-...
+aidememo handoff outbox --actor-id codex-one
+aidememo handoff show handoff-...
+```
+
+여러 Codex/Claude 계정은 `agent add --type ... --home ...`으로 연결하고
+`handoff send ALIAS`, `handoff run ALIAS`로 실행할 수 있습니다. profile은 자격 증명 값을
+저장하지 않습니다. `config_home`은 Codex의 `CODEX_HOME` 또는 Claude의
+`CLAUDE_CONFIG_DIR`가 되며 기본 `core` 정책을 사용합니다. 추가 환경 변수는
+`--pass-env NAME`으로 허용합니다. `outcome=succeeded`는 완료 acknowledgement,
+`failed`는 accepted 유지이며 `return`은 결과 fact를 연결합니다.
+완료 결과는 outbox에 기본 포함되며 `--pending-only`로 숨길 수 있습니다.
+기존 `installation` 및 `handoff run --installation ALIAS --next` 표기도 계속
+지원합니다.
+
+`accept`는 최신 packet과 resume 환경을 반환합니다. `complete`는 장부 상태만
+바꾸며 테스트 통과를 증명하지 않습니다. `mcp-install --actor-id codex-two`로
+설치 기본값을 지정하거나 `AIDEMEMO_ACTOR_ID`를 설정할 수 있습니다. actor
+별칭은 인증 정보가 아닙니다.
+
+이 인터페이스에는 topic, offset, consumer group, lease, retry, payload 복제,
+exactly-once delivery가 없습니다. 모든 할당은 기존 추적 세션을 가리킵니다.
+
+packet에는 수신자 bootstrap 명령이 하나 포함됩니다. 이 명령은 세션 존재를
+검증하고 연속성과 검색 scope를 함께 활성화합니다.
+
+```bash
+eval "$(aidememo session resume --source-id team-a session-...)"
+```
+
+기존 통합이 분리된 필드를 생성한다면 `--from-agent`, `--from-profile`,
+`--to-agent`, `--to-profile` 옵션도 계속 사용할 수 있습니다.
+`--output`으로 packet 파일을 쓰면 stdout에도 검증된 수신자 resume 명령이
+표시되므로 파일을 다시 열지 않고 활성화할 수 있습니다.
+
 ## 프로젝트 프로필 내보내기
 
 현재 타입 지정 팩트에서 읽기 전용 프로필을 생성합니다.

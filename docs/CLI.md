@@ -104,6 +104,91 @@ drill-down lines that point back to `aidememo fact get <id>`.
 MCP agents can request the same text with `aidememo_session_canvas`; Python
 agents can call `Memory.session_canvas(...)`.
 
+## Hand off to another agent, profile, or account
+
+Create a compact packet after recording the current task's durable findings:
+
+```bash
+aidememo session handoff \
+  --from-actor codex-one \
+  --to-actor codex-two \
+  --from codex/coding \
+  --to codex/reviewer \
+  --source-id team-a \
+  --focus "Verify the patch and run release preflight" \
+  --done-when "Focused tests and release preflight pass" \
+  --dispatch \
+  "$AIDEMEMO_SESSION_ID"
+```
+
+The command remains read-only unless `--dispatch` is present. The preview
+preserves the session id, groups the session's
+decisions, open questions, lessons, and errors, and leaves every item linked to
+its fact id. Agent/profile values are routing labels; `source_id` controls which
+shared-store namespace is included. Use `aidememo_handoff` from MCP or
+`Memory.handoff(...)` from Python for the same artifact.
+
+With `--dispatch`, the receiver pulls and acknowledges the session pointer:
+
+```bash
+aidememo handoff inbox --actor-id codex-two --source-id team-a
+aidememo handoff accept --actor-id codex-two handoff-...
+aidememo handoff return --actor-id codex-two --outcome succeeded \
+  --result-fact-id 01... handoff-...
+aidememo handoff outbox --actor-id codex-one
+aidememo handoff show handoff-...
+```
+
+`accept` returns a fresh packet and resume environment. `return` links a
+persisted result/error fact. `outcome=succeeded` completes the acknowledgement;
+`failed` leaves it accepted so the caller can retry or block. Legacy `complete`
+still updates the ledger without result evidence and does not assert that tests
+passed. Configure a stable default per MCP installation with
+`mcp-install --actor-id codex-two`, or set
+`AIDEMEMO_ACTOR_ID`. The alias is non-secret routing metadata, not an
+authenticated vendor account id.
+
+For repeated local accounts, use the shorter agent-oriented surface:
+`agent add --type ... --home ...`, `handoff send ALIAS`, then
+`handoff run ALIAS`.
+
+```bash
+aidememo agent add codex-two --type codex \
+  --home /path/to/codex-two-home --workspace /path/to/repo \
+  --source-id team-a --env-policy core
+aidememo agent add claude-main --type claude \
+  --home /path/to/claude-home --workspace /path/to/repo
+aidememo agent list
+aidememo handoff send codex-two --focus "Review the patch"
+aidememo handoff run codex-two
+```
+
+`installation` and `handoff run --installation ALIAS --next` remain supported
+for existing scripts. Completed results are included in outbox by default;
+pass `--pending-only` to hide them.
+
+Profiles never store credentials or environment values. `config_home` maps to
+`CODEX_HOME` for Codex and `CLAUDE_CONFIG_DIR` for Claude. The default `core`
+policy passes a small process environment plus the AideMemo resume values;
+repeat `--pass-env NAME` when a worker needs another named variable.
+
+This interface deliberately stops short of queue semantics: no topics,
+offsets, consumer groups, leases, retries, copied payloads, or exactly-once
+delivery. Each assignment points to the existing tracked session.
+
+The packet includes a one-command receiver bootstrap. It validates that the
+session exists and activates both continuity and retrieval scope:
+
+```bash
+eval "$(aidememo session resume --source-id team-a session-...)"
+```
+
+The longer `--from-agent`, `--from-profile`, `--to-agent`, and `--to-profile`
+options remain available when an integration already emits separate fields.
+When a read-only `--output` writes a packet file, stdout also prints the
+validated receiver resume command, so an operator does not need to reopen the
+file to activate it.
+
 ## Export a project profile
 
 Generate a read-only profile from current typed facts:

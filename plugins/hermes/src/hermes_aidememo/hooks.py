@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -103,18 +104,46 @@ def _format_workflow_pack(pack: dict[str, Any]) -> str:
     return "\n".join(lines).strip()
 
 
-def _format_recent_block(facts: list[dict]) -> str:
+def _format_recent_block(
+    facts: list[dict],
+    *,
+    kanban_task: str | None = None,
+    kanban_board: str | None = None,
+) -> str:
     """Render a compact, model-friendly preamble."""
     lines = [
         "## AideMemo - workflow memory",
         "",
-        "Auto-loaded by the AideMemo Hermes plugin. When the user gives a "
-        "sparse issue, ticket, PR, or automation trigger, call "
-        "`aidememo_workflow_start` before making a plan. Pass any user-provided "
-        "`source_id` through to the tool so neighbouring project memory "
-        "does not leak in.",
+        "Auto-loaded by the AideMemo Hermes plugin.",
         "",
     ]
+    if kanban_task:
+        board = kanban_board or "<active board>"
+        lines.extend(
+            [
+                f"Hermes Kanban worker detected: board `{board}`, task `{kanban_task}`.",
+                "Kanban is the canonical owner of claim, dependency, retry, comment, "
+                "and completion state. Use `kanban_show` / `kanban_comment` / "
+                "`kanban_complete` for that lifecycle; do not create an AideMemo "
+                "dispatch/inbox assignment for an internal Hermes profile transition.",
+                "Use AideMemo for durable project decisions, lessons, errors, and "
+                "fact-linked evidence. If the card or parent handoff carries an "
+                "AideMemo session id, pass it to fact writes. Use AideMemo dispatch "
+                "only when work crosses to an external agent installation such as "
+                "Codex or Claude.",
+                "",
+            ]
+        )
+    else:
+        lines.extend(
+            [
+                "When the user gives a sparse issue, ticket, PR, or automation "
+                "trigger, call `aidememo_workflow_start` before making a plan. "
+                "Pass any user-provided `source_id` through to the tool so "
+                "neighbouring project memory does not leak in.",
+                "",
+            ]
+        )
     if not facts:
         return "\n".join(lines).strip()
 
@@ -146,7 +175,9 @@ def make_pre_llm_call(client: AideMemoClient, last: str = "7d", limit: int = 10)
 
     def pre_llm_call(**kwargs: Any) -> dict[str, str] | None:
         user_message = str(kwargs.get("user_message") or "")
-        if _looks_like_workflow_trigger(user_message):
+        kanban_task = (os.environ.get("HERMES_KANBAN_TASK") or "").strip() or None
+        kanban_board = (os.environ.get("HERMES_KANBAN_BOARD") or "").strip() or None
+        if _looks_like_workflow_trigger(user_message) and not kanban_task:
             try:
                 pack = client.workflow_start(
                     _extract_title(user_message),
@@ -166,7 +197,11 @@ def make_pre_llm_call(client: AideMemoClient, last: str = "7d", limit: int = 10)
         except CLIENT_ERRORS as exc:
             log.warning("aidememo recent failed at pre_llm_call: %s", exc)
             return None
-        block = _format_recent_block(facts)
+        block = _format_recent_block(
+            facts,
+            kanban_task=kanban_task,
+            kanban_board=kanban_board,
+        )
         return {"context": block}
 
     return pre_llm_call
@@ -215,17 +250,6 @@ def make_post_llm_call(
         )
 
     def post_llm_call(**kwargs: Any) -> None:
-        user_message = str(kwargs.get("user_message") or "")
-        if _looks_like_workflow_trigger(user_message):
-            try:
-                client.workflow_start(
-                    _extract_title(user_message),
-                    body=user_message,
-                    source_id=_extract_source_id(user_message),
-                )
-            except CLIENT_ERRORS as exc:
-                log.warning("aidememo workflow_start capture failed at post_llm_call: %s", exc)
-
         try:
             result = capture_adapter.capture_from_payload(client, kwargs, capture_config)
         except (OSError, RuntimeError) as exc:

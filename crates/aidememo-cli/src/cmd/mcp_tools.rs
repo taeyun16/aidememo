@@ -2615,7 +2615,7 @@ fn tool_session_canvas(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, 
     .map_err(|e| e.to_string())?;
     let payload = json!({
         "artifact": "session_canvas",
-        "session_id": artifact.session_id,
+        "session_id": artifact.session_id.clone(),
         "topic": artifact.topic,
         "fact_count": artifact.fact_count,
         "bytes": artifact.body.len(),
@@ -2625,6 +2625,309 @@ fn tool_session_canvas(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, 
         content: vec![ContentBlock::text(payload.to_string())],
         is_error: None,
     })
+}
+
+fn tool_agent_handoff(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, String> {
+    let session = args
+        .get("session")
+        .or_else(|| args.get("session_id"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(40) as usize;
+    let include_superseded = args
+        .get("include_superseded")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let source_id = mcp_source_id(args);
+    let string_arg = |name: &str| {
+        args.get(name)
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    };
+    let (from_agent, from_profile) = artifacts::resolve_agent_endpoint(
+        "from",
+        string_arg("from").or_else(|| string_arg("from_route")),
+        string_arg("from_agent"),
+        string_arg("from_profile"),
+    )
+    .map_err(|e| e.to_string())?;
+    let (to_agent, to_profile) = artifacts::resolve_agent_endpoint(
+        "to",
+        string_arg("to").or_else(|| string_arg("to_route")),
+        string_arg("to_agent"),
+        string_arg("to_profile"),
+    )
+    .map_err(|e| e.to_string())?;
+    let from_actor = crate::cmd::handoff::actor_id(string_arg("from_actor"));
+    let to_actor = string_arg("to_actor").map(str::to_string);
+    let dispatch = args
+        .get("dispatch")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+
+    let artifact = artifacts::agent_handoff(
+        wiki,
+        session,
+        limit,
+        include_superseded,
+        artifacts::AgentHandoffRoute {
+            from_actor: from_actor.as_deref(),
+            from_agent: from_agent.as_deref(),
+            from_profile: from_profile.as_deref(),
+            to_actor: to_actor.as_deref(),
+            to_agent: to_agent.as_deref(),
+            to_profile: to_profile.as_deref(),
+            focus: string_arg("focus"),
+            done_when: string_arg("done_when"),
+            source_id: source_id.as_deref(),
+        },
+    )
+    .map_err(|e| e.to_string())?;
+    let assignment = if dispatch {
+        let from_actor = from_actor
+            .clone()
+            .ok_or("dispatch requires from_actor or AIDEMEMO_ACTOR_ID")?;
+        let to_actor = to_actor.clone().ok_or("dispatch requires to_actor")?;
+        Some(
+            crate::cmd::handoff::dispatch(
+                wiki,
+                crate::cmd::handoff::NewHandoffAssignment {
+                    session_id: artifact.session_id.clone(),
+                    source_id: source_id.clone(),
+                    from_actor,
+                    to_actor,
+                    from_agent: from_agent.clone(),
+                    from_profile: from_profile.clone(),
+                    to_agent: to_agent.clone(),
+                    to_profile: to_profile.clone(),
+                    focus: string_arg("focus").map(str::to_string),
+                    done_when: string_arg("done_when").map(str::to_string),
+                },
+            )
+            .map_err(|e| e.to_string())?,
+        )
+    } else {
+        None
+    };
+    let payload = json!({
+        "artifact": "agent_handoff",
+        "handoff_id": assignment.as_ref().map(|record| record.handoff_id.clone()),
+        "status": assignment.as_ref().map(|record| record.status.as_str()),
+        "dispatched": assignment.is_some(),
+        "session_id": artifact.session_id,
+        "topic": artifact.topic,
+        "source_id": source_id.clone(),
+        "from_actor": from_actor,
+        "from_agent": from_agent,
+        "from_profile": from_profile,
+        "to_agent": to_agent,
+        "to_profile": to_profile,
+        "to_actor": to_actor,
+        "focus": string_arg("focus"),
+        "done_when": string_arg("done_when"),
+        "fact_count": artifact.fact_count,
+        "bytes": artifact.body.len(),
+        "resume": {
+            "command": artifacts::session_resume_command(
+                &artifact.session_id,
+                source_id.as_deref(),
+            ),
+            "env": {
+                "AIDEMEMO_SESSION_ID": artifact.session_id.clone(),
+                "AIDEMEMO_SOURCE_ID": source_id,
+            }
+        },
+        "content": artifact.body,
+    });
+    Ok(ToolCallResult {
+        content: vec![ContentBlock::text(payload.to_string())],
+        is_error: None,
+    })
+}
+
+fn tool_handoff_inbox(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, String> {
+    let explicit_actor = args.get("actor_id").and_then(|value| value.as_str());
+    let actor_id = crate::cmd::handoff::actor_id(explicit_actor);
+    let require_actor = || {
+        actor_id
+            .as_deref()
+            .ok_or("actor_id required (or set AIDEMEMO_ACTOR_ID)")
+    };
+    let action = args
+        .get("action")
+        .and_then(|value| value.as_str())
+        .unwrap_or("list");
+    let payload = match action {
+        "list" => {
+            let actor_id = require_actor()?;
+            let source_id = mcp_source_id(args);
+            let include_completed = args
+                .get("include_completed")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false);
+            let limit = args
+                .get("limit")
+                .and_then(|value| value.as_u64())
+                .unwrap_or(20) as usize;
+            let assignments = crate::cmd::handoff::inbox(
+                wiki,
+                &actor_id,
+                source_id.as_deref(),
+                include_completed,
+                limit,
+            )
+            .map_err(|e| e.to_string())?;
+            json!({
+                "actor_id": actor_id,
+                "source_id": source_id,
+                "assignments": assignments,
+            })
+        }
+        "outbox" => {
+            let actor_id = require_actor()?;
+            let source_id = mcp_source_id(args);
+            let include_completed = args
+                .get("include_completed")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(true);
+            let limit = args
+                .get("limit")
+                .and_then(|value| value.as_u64())
+                .unwrap_or(20) as usize;
+            let assignments = crate::cmd::handoff::outbox(
+                wiki,
+                &actor_id,
+                source_id.as_deref(),
+                include_completed,
+                limit,
+            )
+            .map_err(|e| e.to_string())?;
+            json!({
+                "actor_id": actor_id,
+                "source_id": source_id,
+                "assignments": assignments,
+            })
+        }
+        "show" => {
+            let handoff_id = args
+                .get("handoff_id")
+                .and_then(|value| value.as_str())
+                .ok_or("handoff_id required for action=show")?;
+            let record = crate::cmd::handoff::get(wiki, handoff_id).map_err(|e| e.to_string())?;
+            json!({"assignment": record})
+        }
+        "status" => {
+            let actor_id = require_actor()?;
+            let handoff_id = args
+                .get("handoff_id")
+                .and_then(|value| value.as_str())
+                .ok_or("handoff_id required for action=status")?;
+            let record = crate::cmd::handoff::status(wiki, handoff_id, &actor_id)
+                .map_err(|e| e.to_string())?;
+            json!({"assignment": record})
+        }
+        "accept" => {
+            let actor_id = require_actor()?;
+            let handoff_id = args
+                .get("handoff_id")
+                .and_then(|value| value.as_str())
+                .ok_or("handoff_id required for action=accept")?;
+            let record = crate::cmd::handoff::transition(
+                wiki,
+                handoff_id,
+                &actor_id,
+                crate::cmd::handoff::HandoffTransition::Accept,
+            )
+            .map_err(|e| e.to_string())?;
+            handoff_assignment_packet(wiki, &record)?
+        }
+        "complete" => {
+            let actor_id = require_actor()?;
+            let handoff_id = args
+                .get("handoff_id")
+                .and_then(|value| value.as_str())
+                .ok_or("handoff_id required for action=complete")?;
+            let record = crate::cmd::handoff::transition(
+                wiki,
+                handoff_id,
+                &actor_id,
+                crate::cmd::handoff::HandoffTransition::Complete,
+            )
+            .map_err(|e| e.to_string())?;
+            json!({"assignment": record})
+        }
+        "return" => {
+            let actor_id = require_actor()?;
+            let handoff_id = args
+                .get("handoff_id")
+                .and_then(|value| value.as_str())
+                .ok_or("handoff_id required for action=return")?;
+            let result_fact_id = args
+                .get("result_fact_id")
+                .and_then(|value| value.as_str())
+                .ok_or("result_fact_id required for action=return")?;
+            let outcome = args
+                .get("outcome")
+                .and_then(|value| value.as_str())
+                .ok_or("outcome required for action=return")?;
+            let record = crate::cmd::handoff::return_result(
+                wiki,
+                handoff_id,
+                &actor_id,
+                result_fact_id,
+                outcome,
+            )
+            .map_err(|e| e.to_string())?;
+            json!({"assignment": record})
+        }
+        other => {
+            return Err(format!(
+                "unknown handoff inbox action {other:?}; expected list, outbox, show, status, accept, return, or complete"
+            ));
+        }
+    };
+    Ok(ToolCallResult {
+        content: vec![ContentBlock::text(payload.to_string())],
+        is_error: None,
+    })
+}
+
+fn handoff_assignment_packet(
+    wiki: &AideMemo,
+    record: &crate::cmd::handoff::HandoffAssignment,
+) -> Result<Value, String> {
+    let artifact = artifacts::agent_handoff(
+        wiki,
+        Some(&record.session_id),
+        40,
+        false,
+        artifacts::AgentHandoffRoute {
+            from_actor: Some(&record.from_actor),
+            from_agent: record.from_agent.as_deref(),
+            from_profile: record.from_profile.as_deref(),
+            to_actor: Some(&record.to_actor),
+            to_agent: record.to_agent.as_deref(),
+            to_profile: record.to_profile.as_deref(),
+            focus: record.focus.as_deref(),
+            done_when: record.done_when.as_deref(),
+            source_id: record.source_id.as_deref(),
+        },
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(json!({
+        "assignment": record,
+        "resume": {
+            "command": artifacts::session_resume_command(&record.session_id, record.source_id.as_deref()),
+            "env": {
+                "AIDEMEMO_SESSION_ID": record.session_id,
+                "AIDEMEMO_SOURCE_ID": record.source_id,
+                "AIDEMEMO_ACTOR_ID": record.to_actor,
+            }
+        },
+        "content": artifact.body,
+    }))
 }
 
 fn tool_profile_export(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, String> {
@@ -3766,6 +4069,50 @@ pub fn list_tools() -> Vec<Tool> {
             }),
         },
         Tool {
+            name: "aidememo_handoff".into(),
+            description: "Create a bounded handoff packet for another coding agent or account alias. It preserves the workflow session id, routes by actor/agent/profile metadata, carries focus and an observable done_when condition, groups decisions/questions/risks, and keeps fact ids for verification. Default is a read-only preview. Set dispatch=true with from_actor/to_actor to persist a small pull-based assignment pointer; this is not a message queue."
+                .into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "session": {"type": "string", "description": "Tracked workflow session id/name. If omitted, falls back to AIDEMEMO_SESSION_ID."},
+                    "session_id": {"type": "string", "description": "Alias for session."},
+                    "from_actor": {"type": "string", "description": "Sending account/installation alias, e.g. codex-one. Falls back to AIDEMEMO_ACTOR_ID."},
+                    "from": {"type": "string", "description": "Producing route shorthand AGENT[/PROFILE], e.g. codex/coding. Do not combine with from_agent/from_profile."},
+                    "to": {"type": "string", "description": "Receiving route shorthand AGENT[/PROFILE], e.g. hermes/reviewer. Do not combine with to_agent/to_profile."},
+                    "from_agent": {"type": "string", "description": "Producing agent, e.g. codex, claude-code, or hermes."},
+                    "from_profile": {"type": "string", "description": "Producing profile, e.g. coding or researcher. Routing metadata only."},
+                    "to_agent": {"type": "string", "description": "Receiving agent, e.g. claude-code or hermes."},
+                    "to_profile": {"type": "string", "description": "Receiving profile, e.g. reviewer. Routing metadata only."},
+                    "to_actor": {"type": "string", "description": "Receiving account/installation alias, e.g. codex-two. Required when dispatch=true."},
+                    "focus": {"type": "string", "description": "Explicit next objective for the receiving agent."},
+                    "done_when": {"type": "string", "description": "Observable completion condition the receiver should satisfy before returning the workflow."},
+                    "dispatch": {"type": "boolean", "default": false, "description": "Persist an addressable assignment pointer. False keeps the existing read-only artifact behavior."},
+                    "source_id": {"type": "string", "description": "Restrict evidence to the shared memory namespace. Unlike profile names, this is the retrieval scope. If omitted, falls back to AIDEMEMO_SOURCE_ID."},
+                    "limit": {"type": "number", "default": 40, "description": "Max session facts included in the packet."},
+                    "include_superseded": {"type": "boolean", "default": false, "description": "Include superseded facts for historical/audit replay."}
+                }
+            }),
+        },
+        Tool {
+            name: "aidememo_handoff_inbox".into(),
+            description: "Pull assignments addressed to this account/installation alias, inspect sent assignments, or acknowledge and return a linked result fact. Records only point to tracked sessions; there are no topics, offsets, consumer groups, retries, or copied message payloads. actor_id falls back to AIDEMEMO_ACTOR_ID."
+                .into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["list", "outbox", "show", "status", "accept", "return", "complete"], "default": "list"},
+                    "actor_id": {"type": "string", "description": "Current account/installation alias, e.g. codex-two. Falls back to AIDEMEMO_ACTOR_ID."},
+                    "handoff_id": {"type": "string", "description": "Required for show, status, accept, return, or complete. show does not require actor_id."},
+                    "result_fact_id": {"type": "string", "description": "For return, the persisted fact containing worker result or failure evidence."},
+                    "outcome": {"type": "string", "enum": ["succeeded", "failed"], "description": "For return. succeeded completes the acknowledgement; failed preserves accepted state for orchestrator policy."},
+                    "source_id": {"type": "string", "description": "For list, restrict assignments to one shared memory namespace. Falls back to AIDEMEMO_SOURCE_ID."},
+                    "include_completed": {"type": "boolean", "description": "Defaults to true for outbox so returned results remain visible; false for receiver list."},
+                    "limit": {"type": "integer", "default": 20}
+                }
+            }),
+        },
+        Tool {
             name: "aidememo_profile_export".into(),
             description: "Return a read-only project_profile.md text artifact derived from current typed facts. Use to hydrate agent prompts with durable decisions, conventions, lessons, and errors while preserving fact ids for drill-down."
                 .into(),
@@ -4055,6 +4402,8 @@ fn call_tool(name: &str, args: &Value, wiki: &AideMemo) -> Result<ToolCallResult
         "aidememo_context" => tool_context(args, wiki),
         "aidememo_workflow_start" => tool_workflow_start(args, wiki),
         "aidememo_session_canvas" => tool_session_canvas(args, wiki),
+        "aidememo_handoff" => tool_agent_handoff(args, wiki),
+        "aidememo_handoff_inbox" => tool_handoff_inbox(args, wiki),
         "aidememo_profile_export" => tool_profile_export(args, wiki),
         "aidememo_entity_describe" => tool_entity_describe(args, wiki),
         "aidememo_fact_add" => tool_fact_add(args, wiki),
@@ -4299,7 +4648,166 @@ mod tests {
         assert!(names.contains(&"aidememo_fact_edit".to_string()));
         assert!(names.contains(&"aidememo_fact_add_many".to_string()));
         assert!(names.contains(&"aidememo_session_canvas".to_string()));
+        assert!(names.contains(&"aidememo_handoff".to_string()));
+        assert!(names.contains(&"aidememo_handoff_inbox".to_string()));
         assert!(names.contains(&"aidememo_profile_export".to_string()));
+    }
+
+    #[test]
+    fn handoff_assignment_routes_between_account_aliases_without_queue_payloads() {
+        let (_dir, wiki) = open_temp_wiki();
+        let workflow = tool_workflow_start(
+            &json!({
+                "title": "Review multi-account handoff",
+                "source_id": "alpha",
+                "bm25_only": true
+            }),
+            &wiki,
+        )
+        .unwrap();
+        let workflow_payload: Value =
+            serde_json::from_str(workflow.content[0].text.as_deref().unwrap()).unwrap();
+        let session_id = workflow_payload["session_id"].as_str().unwrap();
+        let sent = tool_agent_handoff(
+            &json!({
+                "session": session_id,
+                "source_id": "alpha",
+                "from_actor": "codex-one",
+                "to_actor": "codex-two",
+                "from": "codex/coding",
+                "to": "codex/reviewer",
+                "focus": "Review the patch",
+                "done_when": "Focused tests pass",
+                "dispatch": true
+            }),
+            &wiki,
+        )
+        .unwrap();
+        let sent_payload: Value =
+            serde_json::from_str(sent.content[0].text.as_deref().unwrap()).unwrap();
+        let handoff_id = sent_payload["handoff_id"].as_str().unwrap();
+        assert_eq!(sent_payload["status"].as_str(), Some("pending"));
+        assert_eq!(sent_payload["to_actor"].as_str(), Some("codex-two"));
+
+        let listed = tool_handoff_inbox(
+            &json!({"actor_id": "codex-two", "source_id": "alpha"}),
+            &wiki,
+        )
+        .unwrap();
+        let listed_payload: Value =
+            serde_json::from_str(listed.content[0].text.as_deref().unwrap()).unwrap();
+        assert_eq!(listed_payload["assignments"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            listed_payload["assignments"][0]["session_id"].as_str(),
+            Some(session_id)
+        );
+
+        let accepted = tool_handoff_inbox(
+            &json!({
+                "action": "accept",
+                "actor_id": "codex-two",
+                "handoff_id": handoff_id
+            }),
+            &wiki,
+        )
+        .unwrap();
+        let accepted_payload: Value =
+            serde_json::from_str(accepted.content[0].text.as_deref().unwrap()).unwrap();
+        assert_eq!(
+            accepted_payload["assignment"]["status"].as_str(),
+            Some("accepted")
+        );
+        assert!(
+            accepted_payload["content"]
+                .as_str()
+                .unwrap()
+                .contains("to_actor: codex-two")
+        );
+        assert_eq!(
+            accepted_payload["resume"]["env"]["AIDEMEMO_SESSION_ID"].as_str(),
+            Some(session_id)
+        );
+
+        let result = tool_fact_add(
+            &json!({
+                "content": "Focused tests pass",
+                "fact_type": "note",
+                "entities": ["Release"],
+                "source_id": "alpha",
+                "session_id": session_id
+            }),
+            &wiki,
+        )
+        .unwrap();
+        let result_payload: Value =
+            serde_json::from_str(result.content[0].text.as_deref().unwrap()).unwrap();
+        let result_fact_id = result_payload["id"].as_str().unwrap();
+
+        let completed = tool_handoff_inbox(
+            &json!({
+                "action": "return",
+                "actor_id": "codex-two",
+                "handoff_id": handoff_id,
+                "result_fact_id": result_fact_id,
+                "outcome": "succeeded"
+            }),
+            &wiki,
+        )
+        .unwrap();
+        let completed_payload: Value =
+            serde_json::from_str(completed.content[0].text.as_deref().unwrap()).unwrap();
+        assert_eq!(
+            completed_payload["assignment"]["status"].as_str(),
+            Some("completed")
+        );
+        assert_eq!(
+            completed_payload["assignment"]["result_fact_id"].as_str(),
+            Some(result_fact_id)
+        );
+
+        let outbox = tool_handoff_inbox(
+            &json!({
+                "action": "outbox",
+                "actor_id": "codex-one",
+                "source_id": "alpha"
+            }),
+            &wiki,
+        )
+        .unwrap();
+        let outbox_payload: Value =
+            serde_json::from_str(outbox.content[0].text.as_deref().unwrap()).unwrap();
+        assert_eq!(
+            outbox_payload["assignments"][0]["result_fact_id"].as_str(),
+            Some(result_fact_id)
+        );
+
+        let shown = tool_handoff_inbox(&json!({"action": "show", "handoff_id": handoff_id}), &wiki)
+            .unwrap();
+        let shown_payload: Value =
+            serde_json::from_str(shown.content[0].text.as_deref().unwrap()).unwrap();
+        assert_eq!(shown_payload["assignment"]["outcome"], "succeeded");
+
+        let status = tool_handoff_inbox(
+            &json!({
+                "action": "status",
+                "actor_id": "codex-one",
+                "handoff_id": handoff_id
+            }),
+            &wiki,
+        )
+        .unwrap();
+        let status_payload: Value =
+            serde_json::from_str(status.content[0].text.as_deref().unwrap()).unwrap();
+        assert_eq!(status_payload["assignment"]["outcome"], "succeeded");
+
+        let empty = tool_handoff_inbox(
+            &json!({"actor_id": "codex-two", "source_id": "alpha"}),
+            &wiki,
+        )
+        .unwrap();
+        let empty_payload: Value =
+            serde_json::from_str(empty.content[0].text.as_deref().unwrap()).unwrap();
+        assert!(empty_payload["assignments"].as_array().unwrap().is_empty());
     }
 
     #[test]
@@ -5084,10 +5592,35 @@ mod tests {
             &wiki,
         )
         .unwrap();
+        // Public scoped writes correctly reject attaching beta evidence to an
+        // alpha-owned session. Inject a cross-source legacy record directly so
+        // this read-side test still proves the handoff filter does not leak it.
+        let session_entity = wiki.entity_get(session_id).unwrap();
+        wiki.add_fact(FactInput {
+            content: "Beta session note: must not cross the alpha handoff boundary".into(),
+            fact_type: Some(aidememo_core::FactType::Error),
+            entity_ids: Some(vec![session_entity.id]),
+            source_id: Some("beta".into()),
+            ..Default::default()
+        })
+        .unwrap();
 
         let before = wiki.stats().unwrap();
         let canvas =
             tool_session_canvas(&json!({"session": session_id, "limit": 10}), &wiki).unwrap();
+        let handoff = tool_agent_handoff(
+            &json!({
+                "session": session_id,
+                "source_id": "alpha",
+                "from": "codex/coding",
+                "to": "hermes/reviewer",
+                "focus": "Verify the session artifact before release",
+                "done_when": "Focused tests pass and review findings are recorded",
+                "limit": 10
+            }),
+            &wiki,
+        )
+        .unwrap();
         let profile =
             tool_profile_export(&json!({"source_id": "alpha", "limit": 10}), &wiki).unwrap();
         let after = wiki.stats().unwrap();
@@ -5106,6 +5639,39 @@ mod tests {
         assert!(canvas_text.contains("aidememo fact get"));
         assert!(canvas_text.contains("canvas parity evidence"));
 
+        let handoff_payload: Value =
+            serde_json::from_str(handoff.content[0].text.as_deref().unwrap()).unwrap();
+        let handoff_text = handoff_payload["content"].as_str().unwrap();
+        assert_eq!(handoff_payload["artifact"].as_str(), Some("agent_handoff"));
+        assert_eq!(handoff_payload["session_id"].as_str(), Some(session_id));
+        assert_eq!(handoff_payload["from_agent"].as_str(), Some("codex"));
+        assert_eq!(handoff_payload["from_profile"].as_str(), Some("coding"));
+        assert_eq!(handoff_payload["to_agent"].as_str(), Some("hermes"));
+        assert_eq!(handoff_payload["to_profile"].as_str(), Some("reviewer"));
+        assert_eq!(
+            handoff_payload["resume"]["env"]["AIDEMEMO_SESSION_ID"].as_str(),
+            Some(session_id)
+        );
+        assert_eq!(
+            handoff_payload["resume"]["env"]["AIDEMEMO_SOURCE_ID"].as_str(),
+            Some("alpha")
+        );
+        assert!(
+            handoff_payload["resume"]["command"]
+                .as_str()
+                .unwrap()
+                .contains("aidememo session resume")
+        );
+        assert!(handoff_text.contains("# AideMemo Agent Handoff"));
+        assert!(handoff_text.contains("## Resume Contract"));
+        assert!(handoff_text.contains("eval \"$(aidememo session resume"));
+        assert!(handoff_text.contains("Verify the session artifact before release"));
+        assert!(handoff_text.contains("## Definition of Done"));
+        assert!(handoff_text.contains("Focused tests pass and review findings are recorded"));
+        assert!(handoff_text.contains("canvas parity evidence"));
+        assert!(!handoff_text.contains("must not cross the alpha handoff boundary"));
+        assert!(handoff_text.contains("aidememo fact get <fact_id>"));
+
         let profile_payload: Value =
             serde_json::from_str(profile.content[0].text.as_deref().unwrap()).unwrap();
         let profile_text = profile_payload["content"].as_str().unwrap();
@@ -5119,6 +5685,73 @@ mod tests {
         assert!(profile_text.contains("bounded session canvas"));
         assert!(!profile_text.contains("unrelated profile fact"));
         assert!(!profile_text.contains("private global compiled summary"));
+    }
+
+    #[test]
+    fn bounded_continuation_artifacts_keep_latest_session_state() {
+        let (_dir, wiki) = open_temp_wiki();
+        let workflow = tool_workflow_start(
+            &json!({
+                "title": "Keep the latest checkpoint",
+                "body": "Build enough history to exercise the bounded artifact window.",
+                "source_id": "alpha",
+                "bm25_only": true
+            }),
+            &wiki,
+        )
+        .unwrap();
+        let workflow_payload: Value =
+            serde_json::from_str(workflow.content[0].text.as_deref().unwrap()).unwrap();
+        let session_id = workflow_payload["session_id"].as_str().unwrap();
+
+        for index in 0..4 {
+            tool_fact_add(
+                &json!({
+                    "content": format!("Old checkpoint {index}: no longer the active state"),
+                    "entities": ["AideMemo"],
+                    "session_id": session_id,
+                    "source_id": "alpha",
+                    "fact_type": "note",
+                    "dedup_check": false
+                }),
+                &wiki,
+            )
+            .unwrap();
+        }
+        tool_fact_add(
+            &json!({
+                "content": "LATEST checkpoint: route the review to Hermes profile release-reviewer",
+                "entities": ["AideMemo"],
+                "session_id": session_id,
+                "source_id": "alpha",
+                "fact_type": "decision",
+                "dedup_check": false
+            }),
+            &wiki,
+        )
+        .unwrap();
+
+        let canvas =
+            tool_session_canvas(&json!({"session": session_id, "limit": 2}), &wiki).unwrap();
+        let handoff = tool_agent_handoff(
+            &json!({
+                "session": session_id,
+                "source_id": "alpha",
+                "to_agent": "hermes",
+                "to_profile": "release-reviewer",
+                "limit": 2
+            }),
+            &wiki,
+        )
+        .unwrap();
+
+        for result in [canvas, handoff] {
+            let payload: Value =
+                serde_json::from_str(result.content[0].text.as_deref().unwrap()).unwrap();
+            let content = payload["content"].as_str().unwrap();
+            assert!(content.contains("LATEST checkpoint"));
+            assert!(!content.contains("Old checkpoint 0"));
+        }
     }
 
     #[test]

@@ -47,6 +47,71 @@ Branch-log helpers are currently exposed in the Python composition SDK,
 artifacts through already-open handles. C ABI callers should use the CLI
 `aidememo branch ...` commands until the lower-level ABI needs that surface.
 
+## Run an external Codex or Claude handoff
+
+Installing the SDK also installs `aidememo-worker-lane`. It accepts one
+addressed AideMemo handoff, injects the current packet into a non-interactive
+coding CLI, and records the result on the same session:
+
+```bash
+aidememo-worker-lane handoff-... \
+  --actor-id codex-two \
+  --agent codex \
+  --workspace "$PWD" \
+  --store ~/.aidememo/wiki.sqlite \
+  --source-id release-team \
+  --kanban-task task-42
+```
+
+Use `--agent claude --actor-id claude-main` for Claude Code. Codex defaults to
+`codex exec --ephemeral --sandbox workspace-write`; Claude defaults to
+`claude --print --permission-mode acceptEdits --no-session-persistence`.
+Arguments are executed as a list without a shell. The receiver inherits
+`AIDEMEMO_SESSION_ID`, `AIDEMEMO_SOURCE_ID`, and `AIDEMEMO_ACTOR_ID` from the
+accepted packet.
+
+For multiple subscriptions/accounts, prefer a credential-free installation
+profile and let the Rust CLI resolve the worker arguments. The short form is
+`agent add --type ... --home ...`, followed by `handoff run ALIAS`:
+
+```bash
+aidememo agent add codex-two --type codex \
+  --home /path/to/codex-two-home --workspace "$PWD" \
+  --source-id release-team
+aidememo handoff run codex-two
+```
+
+Codex config roots are passed through `CODEX_HOME`; Claude roots use
+`CLAUDE_CONFIG_DIR`. The default `core` environment policy does not inherit
+unrelated provider tokens. Profiles contain paths and variable names, never
+credential values.
+
+The runner validates the agent binary and workspace before accepting the
+assignment, so local setup errors do not claim work. A process-start failure
+after acceptance follows the normal failure path below.
+
+Codex `--output-schema` and Claude `--json-schema` are normalized to the same
+`summary`, `changed_files`, `validations`, `done_when_met`, and `blockers`
+contract. Success is recorded as a session-attached result fact before the AideMemo
+assignment becomes `completed`. A non-zero exit, timeout, or structured
+`done_when_met=false` records an `error`
+fact and leaves the assignment `accepted`, allowing the upstream scheduler to
+retry or block. `--kanban-task` labels the return envelope and prompt but does
+not mutate Kanban: Hermes still owns claim, retry, validation, and card
+completion. This runner is not Hermes `spawn_fn` registration, authenticated
+identity, or exactly-once execution.
+
+The sender consumes the return path without scanning the whole session:
+
+```python
+sent = memory.handoff_outbox(actor_id="hermes-main")
+state = memory.handoff_show(sent[0]["handoff_id"])
+result_fact_id = state["assignment"]["result_fact_id"]
+```
+
+Programmatic callers can use `WorkerLaneConfig` and
+`run_external_assignment(...)` from `aidememo_agent`.
+
 ## Open memory
 
 ```python

@@ -2,6 +2,73 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Low-ceremony handoff UX** — `aidememo agent add` provides a friendly
+  alias for credential-free installation profiles, while `aidememo handoff
+  send ALIAS`, `handoff run ALIAS`, and actor-free `handoff show ID` reduce
+  the common multi-account round trip to four commands. Sender outbox now
+  includes completed results by default (`--pending-only` narrows it), and
+  MCP, the Python SDK, and the Hermes plugin expose the same actor-free
+  `show` lookup and completed-result default. Existing `installation`,
+  `session handoff --dispatch`, `status`, and `run --installation ... --next`
+  forms remain supported.
+- **Cross-agent workflow handoff** — `aidememo session handoff`, the
+  `aidememo_handoff` MCP/Hermes tool, and SDK `Memory.handoff(...)` export a
+  bounded Markdown packet for another coding agent or Hermes profile. Packets
+  preserve the tracked session, distinguish routing labels from `source_id`
+  scope, group decisions/questions/risks, and retain fact ids for verification.
+  Compact `--from AGENT[/PROFILE]` / `--to AGENT[/PROFILE]` routes reduce CLI
+  ceremony, while `aidememo session resume` validates the receiver session and
+  activates both `AIDEMEMO_SESSION_ID` and `AIDEMEMO_SOURCE_ID` in one eval-safe command.
+  `--done-when` carries an observable completion condition, SDK
+  `handoff_packet()` preserves the structured envelope, and Hermes now returns
+  that envelope directly instead of forcing orchestrators to parse Markdown.
+- **Cross-account assignment pull flow** — `--dispatch` and
+  `aidememo handoff inbox|accept|return|outbox|status` /
+  `aidememo_handoff_inbox` address
+  an existing session to a user-assigned account or installation alias such as
+  `codex-one`, `codex-two`, or `claude-main`. `mcp-install --actor-id` persists
+  the alias as `AIDEMEMO_ACTOR_ID`; the Python SDK and Hermes plugin expose the
+  same round-trip contract. A return links the result/error fact; successful
+  results complete the acknowledgement while failures remain accepted for the
+  caller's policy. The stored record is a session pointer plus
+  route/focus/status/result metadata, not a broker message: there are no
+  topics, offsets, consumer groups, retries, leases, or copied payloads.
+- **Credential-free installation profiles** — `aidememo installation
+  add|list|show|remove` records Codex/Claude adapter, config root, workspace,
+  source, model, and named environment allowances. `aidememo handoff run
+  --installation ALIAS --next` resolves the oldest pending assignment, maps
+  config roots through `CODEX_HOME` / `CLAUDE_CONFIG_DIR`, and uses a minimal
+  `core` child environment by default without storing credential values.
+- **Orchestrator handoff demo** — `scripts/demo-agent-handoff.sh` exercises a
+  Codex/coding to Hermes/reviewer route without an external LLM call.
+- **Cross-agent handoff Scenario P** — separates evidence/route/isolation
+  quality gates from context-efficiency gates. The scenario caught and fixed
+  bounded session artifacts selecting the oldest fact window; continuation
+  artifacts now retain the latest attached facts and render that window in
+  chronological order without changing global `fact_list` pagination.
+- **Multi-account Scenario Q** — three independent MCP processes acting as two
+  Codex subscriptions and one Claude account pass `10/10` routing gates,
+  including source/actor isolation, same-session continuation, zero fact
+  copies, and zero broker/payload keys in the persisted assignment.
+- **Hermes Kanban boundary Scenario R** — a real temporary Hermes Kanban board
+  passes `12/12` zero-token gates: internal profile reassignment stays in
+  Kanban with no AideMemo assignment, an external Codex boundary creates one
+  pointer and returns evidence on the same session, and Hermes explicitly owns
+  final card completion.
+- **External Codex/Claude worker lane and Scenario S** — the installable
+  `aidememo-worker-lane` command and Python `run_external_assignment(...)` API
+  accept one addressed handoff, invoke Codex or Claude with shell-free argv,
+  pass the packet/resume environment, and return success or error evidence to
+  the same session. Codex `--output-schema` and Claude `--json-schema` converge
+  on one result contract; `done_when_met=false` follows the failure path.
+  Scenario S passes `14/14` zero-token fake-CLI gates: sender outbox/status link
+  both success and failure facts, success completes the acknowledgement,
+  failure remains accepted, and neither path mutates Hermes Kanban. This is not
+  authentication, exactly-once execution, live-model task success, or Hermes
+  `spawn_fn` registration.
+
 ## [0.1.0] - 2026-07-09
 
 ### Added

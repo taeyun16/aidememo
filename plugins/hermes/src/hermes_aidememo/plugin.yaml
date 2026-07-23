@@ -10,6 +10,8 @@ kind: standalone
 requires_env: []
 provides_tools:
   - aidememo_workflow_start
+  - aidememo_handoff
+  - aidememo_handoff_inbox
   - aidememo_context
   - aidememo_query
   - aidememo_search

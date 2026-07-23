@@ -145,7 +145,14 @@ run_timed "verify installed aidememo-agent-sdk payload" "$venv_dir/bin/python" -
 import importlib.metadata
 import sys
 
-from aidememo_agent import Memory, AideMemoClient, AideMemoMemorySDK
+from aidememo_agent import (
+    AideMemoClient,
+    AideMemoMemorySDK,
+    Memory,
+    WorkerLaneConfig,
+    WorkerLaneResult,
+    run_external_assignment,
+)
 
 expected = sys.argv[1]
 metadata_version = importlib.metadata.version("aidememo-agent-sdk")
@@ -154,12 +161,20 @@ if metadata_version != expected:
 
 if Memory is not AideMemoMemorySDK:
     raise SystemExit("Memory alias does not point at AideMemoMemorySDK")
-for method in ("open", "search_rows", "remember", "session_canvas", "project_profile"):
+for method in ("open", "search_rows", "remember", "session_canvas", "handoff", "handoff_packet", "handoff_inbox", "handoff_accept", "handoff_complete", "project_profile"):
     if not hasattr(Memory, method):
         raise SystemExit(f"Memory missing first-use method: {method}")
-for method in ("session_canvas", "project_profile"):
+for method in ("session_canvas", "handoff", "handoff_packet", "handoff_inbox", "handoff_accept", "handoff_complete", "project_profile"):
     if not hasattr(AideMemoClient, method):
         raise SystemExit(f"AideMemoClient missing artifact method: {method}")
 
-print(f"installed aidememo-agent-sdk {metadata_version}; exports Memory, {AideMemoClient.__name__}, {AideMemoMemorySDK.__name__}")
+if not callable(run_external_assignment):
+    raise SystemExit("run_external_assignment is not callable")
+
+print(
+    f"installed aidememo-agent-sdk {metadata_version}; exports Memory, "
+    f"{AideMemoClient.__name__}, {AideMemoMemorySDK.__name__}, "
+    f"{WorkerLaneConfig.__name__}, and {WorkerLaneResult.__name__}"
+)
 PY
+run_timed "verify installed worker-lane console command" "$venv_dir/bin/aidememo-worker-lane" --help

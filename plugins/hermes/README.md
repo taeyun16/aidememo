@@ -8,10 +8,10 @@ lifecycle hooks.
 
 | Surface | What it does |
 |---|---|
-| **12 tools** | `aidememo_workflow_start`, `aidememo_context`, `aidememo_query`, `aidememo_search`, `aidememo_recent`, `aidememo_aggregate`, `aidememo_entity_list`, `aidememo_traverse`, `aidememo_fact_add`, `aidememo_fact_add_many`, `aidememo_doctor`, `aidememo_lint` — the Hermes-native surface now covers the MCP core tools plus the legacy raw lint helper. `aidememo_context`, retrieval/write tools, and `aidememo_aggregate` accept `source_id` for shared-store scoping and fall back to `plugins.aidememo.source_id` / `AIDEMEMO_SOURCE_ID` when omitted. |
+| **14 tools** | Adds `aidememo_handoff` plus `aidememo_handoff_inbox` to the prior context/query/search/aggregate/write/doctor/lint surface. Handoff can preview or dispatch a session pointer; inbox lists, accepts, or completes assignments for the current account/installation alias. Source-scoped tools fall back to `plugins.aidememo.source_id` / `AIDEMEMO_SOURCE_ID`; actor routing falls back to `AIDEMEMO_ACTOR_ID`. |
 | **8 slash commands** | `/aidememo-start <title>` (issue/ticket workflow context), `/aidememo-context [topic]` (top-of-turn context), `/aidememo <topic>` (topic query), `/aidememo-aggregate <query>` (exact count/sum/timeline), `/aidememo-add <content>` (record a fact), `/aidememo-recent` (last 7 days), `/aidememo-doctor` (setup/sharing diagnostics), `/aidememo-pending` (review/commit pending captures). Source-scoped commands accept `--source-id ID`. |
 | **Python SDK** | Re-exports `aidememo_agent.Memory` / `AideMemoMemorySDK` with code-first primitives: `open`, `search_rows`, `search_many`, `query_many`, `aggregate_many`, `coverage_by`, `group_by_entity`, and `remember`. Use it when a Hermes task needs fanout, coverage checks, or deterministic intermediate-state handling. The same `aidememo-agent-sdk` package also works from Codex, Claude Code, CI, and local scripts. |
-| **`pre_llm_call` hook** | Auto-injects recent facts into the first turn so the model has AideMemo context before it answers. |
+| **`pre_llm_call` hook** | Auto-injects recent facts into the first turn. In a dispatcher worker it detects `HERMES_KANBAN_TASK`, leaves task lifecycle to Kanban, and avoids creating a duplicate ticket workflow. |
 | **`post_llm_call` hook** | Optional auto-capture adapter. When explicitly enabled, scans turns for decision-style phrasings and queues them to pending review by default. |
 | **`hermes aidememo ...` CLI** | `hermes aidememo query` / `search` / `recent` / `add` / `stats` / `lint`. |
 | **Bundled skill** | The agentskills.io-conformant `SKILL.md` registers automatically. |
@@ -86,6 +86,8 @@ not when every turn uses the same generic retrieval call.
 | Profile | Use it for | Primary surface | Memory behaviour |
 |---|---|---|---|
 | `coding` | PRs, issues, sparse automation triggers | `aidememo_workflow_start`, `/aidememo-start`, `pre_llm_call` workflow auto-start | Creates a tracked session, stores the trigger, and injects prior decisions / lessons / errors before planning. |
+| `orchestrated` | A task crosses coding-agent installations or accounts | `aidememo_handoff`, `aidememo_handoff_inbox`, SDK handoff methods | Dispatches one tracked-session pointer with focus and `done_when`; the addressed actor pulls current evidence. Same-board Hermes role transitions stay in Kanban. |
+| `kanban-worker` | Hermes PM/coder/reviewer lanes, retries, fleet tasks | Kanban lifecycle tools + `aidememo_context` / fact writes | Kanban owns cards, claims, retries, comments, and completion. AideMemo adds cross-card memory and external-worker continuity without becoming a second queue. |
 | `long-session` | Multi-hour implementation or debugging sessions | `aidememo_context`, `/aidememo-context`, optional `post_llm_call` capture | Loads recent + personalisation + topic context up front, then optionally queues decisions before the session drifts. |
 | `research` | Experiments, ablations, metric interpretation | `aidememo_fact_add_many`, `aidememo_aggregate`, `/aidememo-aggregate` | Stores classified experiment observations in batches and answers exact count / timeline / total questions without in-head arithmetic. |
 | `team` | Multiple local Hermes agents sharing one store | `source_id`, `actor_id`, `lock_retry_ms`, `/aidememo-doctor` | Shares project retrieval while preserving writer provenance; use retry for small same-host teams and daemon/MCP for heavier write concurrency. |
@@ -115,7 +117,96 @@ sdk.remember([
         "entities": ["Hermes", "SupportGate"],
     }
 ])
+
+session_id = "session-..."  # carried by the Hermes card/parent handoff
+packet = sdk.handoff_packet(
+    session_id,
+    from_actor="hermes-coding",
+    to_actor="codex-reviewer",
+    from_route="hermes/coding",
+    to_route="codex/reviewer",
+    focus="Review the patch and run the release gate",
+    done_when="Focused tests pass and review findings are attached to the session",
+    source_id="research-alpha",
+    dispatch=True,
+)
+pending = sdk.handoff_inbox(actor_id="codex-reviewer")
+accepted = sdk.handoff_accept(pending[0]["handoff_id"], actor_id="codex-reviewer")
+next_prompt = accepted["content"]
+resume_env = accepted["resume"]["env"]
 ```
+
+The Hermes tool and SDK return the structured packet directly, so an
+orchestrator does not need to parse Markdown to recover routing or resume
+state. The MCP tool accepts the same compact `from: "hermes/coding"` and `to:
+"hermes/reviewer"` fields. Packets include one validated `aidememo session
+resume` command that activates both the tracked session and `source_id` scope.
+
+An orchestrator can inject `next_prompt` into an external worker. Both workers
+continue writing to the same `session_id`, while the Hermes card remains the
+canonical lifecycle and validation record.
+
+### Hermes Kanban: where handoff helps
+
+Use Kanban alone for internal profile routing: PM → coder → reviewer,
+dependencies, retry/reclaim, heartbeats, comments, and completion. Reuse the
+AideMemo session named in the card or parent metadata to record durable facts,
+but do not call `aidememo_handoff(..., dispatch=True)` merely to move between
+Hermes profiles.
+
+Handoff becomes useful at three boundaries:
+
+1. A card crosses to an external Codex/Claude installation whose vendor session
+   id Hermes cannot reuse.
+2. A retry or sibling card needs durable evidence older or broader than the
+   immediate Kanban run summary.
+3. A new board/project needs decisions, lessons, or measurements from prior
+   completed cards.
+
+In the first case, leave the Kanban card running or blocked, dispatch one
+AideMemo pointer to the external `actor_id`, then read the linked result through
+`handoff_outbox()` / `handoff_status()`. Validate that fact before completing
+the Kanban card. In the other cases, use scoped context/query reads and fact
+writes; no AideMemo assignment is needed.
+
+Actor aliases are non-secret routing metadata, not Hermes/Codex account
+authentication. The ledger stores a session pointer and acknowledgement state,
+not topics, offsets, consumer groups, retries, or message payload copies.
+
+### Run the external receiver
+
+Install `aidememo-agent-sdk` in the worker environment, then run the addressed
+assignment outside the Hermes board lifecycle:
+
+```bash
+aidememo-worker-lane handoff-... \
+  --actor-id codex-two \
+  --agent codex \
+  --workspace /path/to/worktree \
+  --source-id project-a \
+  --kanban-task task-42
+```
+
+For a recurring Codex/Claude account, Hermes can configure the installation
+once and invoke the shorter boundary:
+
+```bash
+aidememo agent add codex-two --type codex \
+  --home /path/to/codex-two-home --workspace /path/to/worktree \
+  --source-id project-a
+aidememo handoff run codex-two --kanban-task task-42
+```
+
+The profile stores no credentials. Codex account state stays behind
+`CODEX_HOME`; the default `core` environment policy prevents unrelated tokens
+from leaking into the worker.
+
+Use `--agent claude` for Claude Code. The runner accepts the pointer, passes the
+bounded packet and resume environment to the child CLI, and returns a result
+or error fact to the same AideMemo session. Success completes the acknowledgement;
+failure leaves it accepted. It does not mutate Kanban or register a Hermes
+`spawn_fn`, so the orchestrator must still validate the returned evidence and
+update the card.
 
 ## Configuration
 

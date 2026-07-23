@@ -114,10 +114,13 @@ fn main() {
             sub.no_ingest,
             sub.agent,
             sub.agent_force,
+            sub.source_id,
+            sub.actor_id,
             &store_path,
             config,
             json,
         ),
+        cmd::Command::Installation(sub) => cmd::installation::run_installation(config, sub, json),
         cmd::Command::Watch(sub) => {
             cmd::watch::run_watch(sub.wiki_root, &store_path, config, sub.interval, sub.search)
         }
@@ -152,6 +155,7 @@ fn main() {
         }
         cmd::Command::Extract(sub) => handle_extract(&store_path, config, sub, json),
         cmd::Command::Session(sub) => handle_session(&store_path, config, sub, json),
+        cmd::Command::Handoff(sub) => handle_handoff(&store_path, config, sub, json),
         cmd::Command::Workflow(sub) => handle_workflow(&store_path, config, sub, json),
         cmd::Command::Profile(sub) => handle_profile(&store_path, config, sub, json),
         cmd::Command::AutoRelate(sub) => handle_auto_relate(&store_path, config, sub),
@@ -1500,12 +1504,14 @@ fn handle_session(
                     ..Default::default()
                 })?;
             }
+            let exports =
+                cmd::artifacts::session_resume_exports(&session_name, source_id.as_deref());
             if json {
                 return serde_json::to_string_pretty(&serde_json::json!({
                     "session_id": session_name,
                     "topic": topic,
                     "source_id": source_id,
-                    "export": format!("export AIDEMEMO_SESSION_ID={}", session_name),
+                    "export": exports,
                 }))
                 .map_err(|e| AideMemoError::Serialize {
                     context: "session new (json)".into(),
@@ -1514,8 +1520,9 @@ fn handle_session(
             }
             // Stdout is shell-evaluable so users can `eval "$(aidememo session new …)"`.
             // The leading comment lines start with `#` so eval ignores them.
+            let topic_comment = topic.replace(['\r', '\n'], " ");
             Ok(format!(
-                "# aidememo session: {topic}\n# id: {session_name}\nexport AIDEMEMO_SESSION_ID={session_name}"
+                "# aidememo session: {topic_comment}\n# id: {session_name}\n{exports}"
             ))
         }),
         cmd::SessionSub::Current { source_id } => with_wiki(store_path, config, |wiki| {
@@ -1560,6 +1567,48 @@ fn handle_session(
                 entity.name,
                 entity.source_page.as_deref().unwrap_or("-"),
                 fact_count,
+            ))
+        }),
+        cmd::SessionSub::Resume { source_id, session } => with_wiki(store_path, config, |wiki| {
+            let source_id = source_id.or_else(|| {
+                std::env::var("AIDEMEMO_SOURCE_ID")
+                    .ok()
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty())
+            });
+            let entity = wiki.entity_get_scoped(session.trim(), source_id.as_deref())?;
+            if entity.entity_type.to_string() != "session" {
+                return Err(AideMemoError::InvalidInput(format!(
+                    "{} is a {} entity, not a session",
+                    entity.name, entity.entity_type
+                )));
+            }
+            let exports =
+                cmd::artifacts::session_resume_exports(&entity.name, source_id.as_deref());
+            if json {
+                return serde_json::to_string_pretty(&serde_json::json!({
+                    "session_id": entity.name.clone(),
+                    "topic": entity.source_page.clone(),
+                    "source_id": source_id.clone(),
+                    "env": {
+                        "AIDEMEMO_SESSION_ID": entity.name.clone(),
+                        "AIDEMEMO_SOURCE_ID": source_id.clone(),
+                    },
+                    "export": exports,
+                }))
+                .map_err(|e| AideMemoError::Serialize {
+                    context: "session resume (json)".into(),
+                    source: e,
+                });
+            }
+            let topic = entity
+                .source_page
+                .as_deref()
+                .unwrap_or("-")
+                .replace(['\r', '\n'], " ");
+            Ok(format!(
+                "# aidememo resume: {topic}\n# id: {}\n{exports}",
+                entity.name
             ))
         }),
         cmd::SessionSub::List { limit, source_id } => with_wiki(store_path, config, |wiki| {
@@ -1611,13 +1660,708 @@ fn handle_session(
                 json,
                 serde_json::json!({
                     "artifact": "session_canvas",
-                    "session_id": artifact.session_id,
+                    "session_id": artifact.session_id.clone(),
                     "topic": artifact.topic,
                     "fact_count": artifact.fact_count,
                 }),
             )
         }),
+        cmd::SessionSub::Handoff(args) => {
+            let cmd::SessionHandoffArgs {
+                output,
+                limit,
+                include_superseded,
+                source_id,
+                from_actor,
+                from_route,
+                to_route,
+                from_agent,
+                from_profile,
+                to_agent,
+                to_profile,
+                to_actor,
+                focus,
+                done_when,
+                dispatch,
+                session,
+            } = *args;
+            with_wiki(store_path, config, |wiki| {
+                let source_id = source_id.or_else(|| {
+                    std::env::var("AIDEMEMO_SOURCE_ID")
+                        .ok()
+                        .map(|value| value.trim().to_string())
+                        .filter(|value| !value.is_empty())
+                });
+                let (from_agent, from_profile) = cmd::artifacts::resolve_agent_endpoint(
+                    "from",
+                    from_route.as_deref(),
+                    from_agent.as_deref(),
+                    from_profile.as_deref(),
+                )?;
+                let (to_agent, to_profile) = cmd::artifacts::resolve_agent_endpoint(
+                    "to",
+                    to_route.as_deref(),
+                    to_agent.as_deref(),
+                    to_profile.as_deref(),
+                )?;
+                let from_actor = cmd::handoff::actor_id(from_actor.as_deref());
+                let to_actor = to_actor
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string);
+                let artifact = cmd::artifacts::agent_handoff(
+                    &wiki,
+                    session.as_deref(),
+                    limit.unwrap_or(40),
+                    include_superseded,
+                    cmd::artifacts::AgentHandoffRoute {
+                        from_actor: from_actor.as_deref(),
+                        from_agent: from_agent.as_deref(),
+                        from_profile: from_profile.as_deref(),
+                        to_actor: to_actor.as_deref(),
+                        to_agent: to_agent.as_deref(),
+                        to_profile: to_profile.as_deref(),
+                        focus: focus.as_deref(),
+                        done_when: done_when.as_deref(),
+                        source_id: source_id.as_deref(),
+                    },
+                )?;
+                let assignment = if dispatch {
+                    let from_actor = from_actor.clone().ok_or_else(|| {
+                        AideMemoError::InvalidInput(
+                            "--dispatch requires --from-actor or AIDEMEMO_ACTOR_ID".into(),
+                        )
+                    })?;
+                    let to_actor = to_actor.clone().ok_or_else(|| {
+                        AideMemoError::InvalidInput("--dispatch requires --to-actor".into())
+                    })?;
+                    Some(cmd::handoff::dispatch(
+                        &wiki,
+                        cmd::handoff::NewHandoffAssignment {
+                            session_id: artifact.session_id.clone(),
+                            source_id: source_id.clone(),
+                            from_actor,
+                            to_actor,
+                            from_agent: from_agent.clone(),
+                            from_profile: from_profile.clone(),
+                            to_agent: to_agent.clone(),
+                            to_profile: to_profile.clone(),
+                            focus: focus.clone(),
+                            done_when: done_when.clone(),
+                        },
+                    )?)
+                } else {
+                    None
+                };
+                let resume_command = cmd::artifacts::session_resume_command(
+                    &artifact.session_id,
+                    source_id.as_deref(),
+                );
+                let wrote_file = output.is_some();
+                let mut rendered = cmd::artifacts::write_artifact_or_stdout(
+                    output.as_deref(),
+                    artifact.body,
+                    json,
+                    serde_json::json!({
+                        "artifact": "agent_handoff",
+                        "session_id": artifact.session_id.clone(),
+                        "topic": artifact.topic,
+                        "fact_count": artifact.fact_count,
+                        "source_id": source_id.clone(),
+                        "handoff_id": assignment.as_ref().map(|record| record.handoff_id.clone()),
+                        "status": assignment.as_ref().map(|record| record.status.as_str()),
+                        "dispatched": assignment.is_some(),
+                        "from_actor": from_actor,
+                        "from_agent": from_agent,
+                        "from_profile": from_profile,
+                        "to_agent": to_agent,
+                        "to_profile": to_profile,
+                        "to_actor": to_actor,
+                        "focus": focus,
+                        "done_when": done_when,
+                        "resume": {
+                            "command": resume_command.clone(),
+                            "env": {
+                                "AIDEMEMO_SESSION_ID": artifact.session_id,
+                                "AIDEMEMO_SOURCE_ID": source_id,
+                            }
+                        },
+                    }),
+                )?;
+                if wrote_file && !json {
+                    rendered.push_str(&format!("\nResume: {resume_command}"));
+                }
+                if !json && let Some(assignment) = assignment {
+                    rendered.push_str(&format!(
+                        "\nAssignment: {} -> {} [{}]",
+                        assignment.from_actor, assignment.to_actor, assignment.handoff_id
+                    ));
+                }
+                Ok(rendered)
+            })
+        }
     }
+}
+
+fn handle_handoff(
+    store_path: &Path,
+    config: Config,
+    sub: cmd::HandoffSub,
+    json: bool,
+) -> Result<String, AideMemoError> {
+    let sub = match sub {
+        cmd::HandoffSub::Send {
+            from_actor,
+            source_id,
+            focus,
+            done_when,
+            installation,
+            session,
+        } => {
+            return send_handoff(
+                store_path,
+                config,
+                &installation,
+                from_actor.as_deref(),
+                source_id.as_deref(),
+                focus.as_deref(),
+                done_when.as_deref(),
+                session.as_deref(),
+                json,
+            );
+        }
+        cmd::HandoffSub::Run {
+            next,
+            installation,
+            workspace,
+            kanban_task,
+            installation_alias,
+            handoff_id,
+        } => {
+            let (installation, handoff_id) = match (
+                installation.as_deref(),
+                installation_alias.as_deref(),
+                handoff_id.as_deref(),
+            ) {
+                (Some(installation), None, handoff_id) => {
+                    (installation.to_string(), handoff_id.map(str::to_string))
+                }
+                // Preserve `--installation ALIAS HANDOFF_ID`: the first
+                // positional is parsed as the friendly alias slot.
+                (Some(installation), Some(legacy_handoff_id), None) => (
+                    installation.to_string(),
+                    Some(legacy_handoff_id.to_string()),
+                ),
+                (None, Some(installation), handoff_id) => {
+                    (installation.to_string(), handoff_id.map(str::to_string))
+                }
+                (None, None, _) => {
+                    return Err(AideMemoError::InvalidInput(
+                        "pass an agent alias, e.g. `aidememo handoff run codex-two`".into(),
+                    ));
+                }
+                (Some(_), Some(_), Some(_)) => {
+                    return Err(AideMemoError::InvalidInput(
+                        "do not combine --installation with the positional agent alias".into(),
+                    ));
+                }
+            };
+            return run_handoff_worker(
+                store_path,
+                &config,
+                next,
+                &installation,
+                workspace.as_deref(),
+                kanban_task.as_deref(),
+                handoff_id.as_deref(),
+                json,
+            );
+        }
+        sub => sub,
+    };
+    with_wiki(store_path, config, |wiki| match sub {
+        cmd::HandoffSub::Inbox {
+            actor_id,
+            source_id,
+            include_completed,
+            limit,
+        } => {
+            let actor_id = cmd::handoff::actor_id(actor_id.as_deref()).ok_or_else(|| {
+                AideMemoError::InvalidInput(
+                    "pass --actor-id or set AIDEMEMO_ACTOR_ID before reading the inbox".into(),
+                )
+            })?;
+            let source_id = source_id.or_else(|| {
+                std::env::var("AIDEMEMO_SOURCE_ID")
+                    .ok()
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty())
+            });
+            let records = cmd::handoff::inbox(
+                &wiki,
+                &actor_id,
+                source_id.as_deref(),
+                include_completed,
+                limit.unwrap_or(20),
+            )?;
+            if json {
+                return serde_json::to_string_pretty(&serde_json::json!({
+                    "actor_id": actor_id,
+                    "source_id": source_id,
+                    "assignments": records,
+                }))
+                .map_err(|source| AideMemoError::Serialize {
+                    context: "handoff inbox (json)".into(),
+                    source,
+                });
+            }
+            if records.is_empty() {
+                return Ok(format!("(no handoff assignments for {actor_id})"));
+            }
+            let mut out = format!(
+                "{} handoff assignment(s) for {}:\n",
+                records.len(),
+                actor_id
+            );
+            for record in records {
+                out.push_str(&format!(
+                    "  {} [{}] session={} from={} focus={}\n",
+                    record.handoff_id,
+                    record.status.as_str(),
+                    record.session_id,
+                    record.from_actor,
+                    record.focus.as_deref().unwrap_or("-")
+                ));
+            }
+            Ok(out.trim_end().to_string())
+        }
+        cmd::HandoffSub::Outbox {
+            actor_id,
+            source_id,
+            include_completed,
+            pending_only,
+            limit,
+        } => {
+            let actor_id = cmd::handoff::actor_id(actor_id.as_deref()).ok_or_else(|| {
+                AideMemoError::InvalidInput(
+                    "pass --actor-id or set AIDEMEMO_ACTOR_ID before reading the outbox".into(),
+                )
+            })?;
+            let source_id = source_id.or_else(|| {
+                std::env::var("AIDEMEMO_SOURCE_ID")
+                    .ok()
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty())
+            });
+            let records = cmd::handoff::outbox(
+                &wiki,
+                &actor_id,
+                source_id.as_deref(),
+                include_completed || !pending_only,
+                limit.unwrap_or(20),
+            )?;
+            if json {
+                return serde_json::to_string_pretty(&serde_json::json!({
+                    "actor_id": actor_id,
+                    "source_id": source_id,
+                    "assignments": records,
+                }))
+                .map_err(|source| AideMemoError::Serialize {
+                    context: "handoff outbox (json)".into(),
+                    source,
+                });
+            }
+            if records.is_empty() {
+                return Ok(format!("(no sent handoff assignments for {actor_id})"));
+            }
+            let mut out = format!(
+                "{} sent handoff assignment(s) for {}:\n",
+                records.len(),
+                actor_id
+            );
+            for record in records {
+                out.push_str(&format!(
+                    "  {} [{}] session={} to={} outcome={} result={}\n",
+                    record.handoff_id,
+                    record.status.as_str(),
+                    record.session_id,
+                    record.to_actor,
+                    record.outcome.as_deref().unwrap_or("-"),
+                    record.result_fact_id.as_deref().unwrap_or("-")
+                ));
+            }
+            Ok(out.trim_end().to_string())
+        }
+        cmd::HandoffSub::Show { handoff_id } => {
+            let record = cmd::handoff::get(&wiki, &handoff_id)?;
+            if json {
+                serde_json::to_string_pretty(&record).map_err(|source| AideMemoError::Serialize {
+                    context: "handoff show (json)".into(),
+                    source,
+                })
+            } else {
+                Ok(format!(
+                    "Handoff {} [{}] {} -> {} session={} outcome={} result={}",
+                    record.handoff_id,
+                    record.status.as_str(),
+                    record.from_actor,
+                    record.to_actor,
+                    record.session_id,
+                    record.outcome.as_deref().unwrap_or("-"),
+                    record.result_fact_id.as_deref().unwrap_or("-")
+                ))
+            }
+        }
+        cmd::HandoffSub::Status {
+            actor_id,
+            handoff_id,
+        } => {
+            let actor_id = cmd::handoff::actor_id(actor_id.as_deref()).ok_or_else(|| {
+                AideMemoError::InvalidInput(
+                    "pass --actor-id or set AIDEMEMO_ACTOR_ID before reading handoff status".into(),
+                )
+            })?;
+            let record = cmd::handoff::status(&wiki, &handoff_id, &actor_id)?;
+            if json {
+                serde_json::to_string_pretty(&record).map_err(|source| AideMemoError::Serialize {
+                    context: "handoff status (json)".into(),
+                    source,
+                })
+            } else {
+                Ok(format!(
+                    "Handoff {} [{}] {} -> {} session={} outcome={} result={}",
+                    record.handoff_id,
+                    record.status.as_str(),
+                    record.from_actor,
+                    record.to_actor,
+                    record.session_id,
+                    record.outcome.as_deref().unwrap_or("-"),
+                    record.result_fact_id.as_deref().unwrap_or("-")
+                ))
+            }
+        }
+        cmd::HandoffSub::Accept {
+            actor_id,
+            handoff_id,
+        } => {
+            let actor_id = cmd::handoff::actor_id(actor_id.as_deref()).ok_or_else(|| {
+                AideMemoError::InvalidInput(
+                    "pass --actor-id or set AIDEMEMO_ACTOR_ID before accepting a handoff".into(),
+                )
+            })?;
+            let record = cmd::handoff::transition(
+                &wiki,
+                &handoff_id,
+                &actor_id,
+                cmd::handoff::HandoffTransition::Accept,
+            )?;
+            render_assignment_accept(&wiki, &record, json)
+        }
+        cmd::HandoffSub::Complete {
+            actor_id,
+            handoff_id,
+        } => {
+            let actor_id = cmd::handoff::actor_id(actor_id.as_deref()).ok_or_else(|| {
+                AideMemoError::InvalidInput(
+                    "pass --actor-id or set AIDEMEMO_ACTOR_ID before completing a handoff".into(),
+                )
+            })?;
+            let record = cmd::handoff::transition(
+                &wiki,
+                &handoff_id,
+                &actor_id,
+                cmd::handoff::HandoffTransition::Complete,
+            )?;
+            if json {
+                serde_json::to_string_pretty(&record).map_err(|source| AideMemoError::Serialize {
+                    context: "handoff complete (json)".into(),
+                    source,
+                })
+            } else {
+                Ok(format!(
+                    "Completed handoff {} for session {} as {}",
+                    record.handoff_id, record.session_id, actor_id
+                ))
+            }
+        }
+        cmd::HandoffSub::Return {
+            actor_id,
+            outcome,
+            result_fact_id,
+            handoff_id,
+        } => {
+            let actor_id = cmd::handoff::actor_id(actor_id.as_deref()).ok_or_else(|| {
+                AideMemoError::InvalidInput(
+                    "pass --actor-id or set AIDEMEMO_ACTOR_ID before returning a handoff".into(),
+                )
+            })?;
+            let record = cmd::handoff::return_result(
+                &wiki,
+                &handoff_id,
+                &actor_id,
+                &result_fact_id,
+                &outcome,
+            )?;
+            if json {
+                serde_json::to_string_pretty(&record).map_err(|source| AideMemoError::Serialize {
+                    context: "handoff return (json)".into(),
+                    source,
+                })
+            } else {
+                Ok(format!(
+                    "Returned handoff {} outcome={} status={} result={}",
+                    record.handoff_id,
+                    record.outcome.as_deref().unwrap_or("-"),
+                    record.status.as_str(),
+                    record.result_fact_id.as_deref().unwrap_or("-")
+                ))
+            }
+        }
+        cmd::HandoffSub::Send { .. } | cmd::HandoffSub::Run { .. } => {
+            unreachable!("send/run handled before opening the store")
+        }
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn send_handoff(
+    store_path: &Path,
+    config: Config,
+    installation: &str,
+    from_actor: Option<&str>,
+    source_id: Option<&str>,
+    focus: Option<&str>,
+    done_when: Option<&str>,
+    session: Option<&str>,
+    json: bool,
+) -> Result<String, AideMemoError> {
+    let profile = config.installations.get(installation).cloned().ok_or_else(|| {
+        AideMemoError::InvalidInput(format!(
+            "agent {installation:?} is not connected; add it with `aidememo agent add {installation} --type codex`"
+        ))
+    })?;
+    let from_actor = cmd::handoff::actor_id(from_actor).ok_or_else(|| {
+        AideMemoError::InvalidInput(
+            "set AIDEMEMO_ACTOR_ID or pass --from with the sending account alias".into(),
+        )
+    })?;
+    let source_id = source_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            std::env::var("AIDEMEMO_SOURCE_ID")
+                .ok()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+        })
+        .or_else(|| profile.source_id.clone());
+    let to_agent = profile.agent.clone();
+    let to_actor = installation.trim().to_string();
+
+    with_wiki(store_path, config, |wiki| {
+        let artifact = cmd::artifacts::agent_handoff(
+            &wiki,
+            session,
+            40,
+            false,
+            cmd::artifacts::AgentHandoffRoute {
+                from_actor: Some(&from_actor),
+                from_agent: None,
+                from_profile: None,
+                to_actor: Some(&to_actor),
+                to_agent: Some(&to_agent),
+                to_profile: None,
+                focus,
+                done_when,
+                source_id: source_id.as_deref(),
+            },
+        )?;
+        let assignment = cmd::handoff::dispatch(
+            &wiki,
+            cmd::handoff::NewHandoffAssignment {
+                session_id: artifact.session_id,
+                source_id,
+                from_actor,
+                to_actor,
+                from_agent: None,
+                from_profile: None,
+                to_agent: Some(to_agent),
+                to_profile: None,
+                focus: focus.map(str::to_string),
+                done_when: done_when.map(str::to_string),
+            },
+        )?;
+        if json {
+            serde_json::to_string_pretty(&assignment).map_err(|source| AideMemoError::Serialize {
+                context: "handoff send (json)".into(),
+                source,
+            })
+        } else {
+            Ok(format!(
+                "Sent handoff {} to {} [{}]\nSession: {}\nRun: aidememo handoff run {}\nShow: aidememo handoff show {}",
+                assignment.handoff_id,
+                assignment.to_actor,
+                assignment.status.as_str(),
+                assignment.session_id,
+                installation,
+                assignment.handoff_id,
+            ))
+        }
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_handoff_worker(
+    store_path: &Path,
+    config: &Config,
+    next: bool,
+    installation: &str,
+    workspace_override: Option<&Path>,
+    kanban_task: Option<&str>,
+    handoff_id: Option<&str>,
+    _json: bool,
+) -> Result<String, AideMemoError> {
+    if next && handoff_id.is_some() {
+        return Err(AideMemoError::InvalidInput(
+            "pass HANDOFF_ID or --next, not both".into(),
+        ));
+    }
+    let profile = config.installations.get(installation).ok_or_else(|| {
+        AideMemoError::InvalidInput(format!(
+            "installation {installation:?} not found; add it with `aidememo installation add`"
+        ))
+    })?;
+    let workspace = match workspace_override
+        .map(Path::to_path_buf)
+        .or_else(|| profile.workspace.as_deref().map(PathBuf::from))
+    {
+        Some(workspace) => workspace,
+        None => std::env::current_dir().map_err(|source| {
+            AideMemoError::Internal(format!("resolve current worker workspace: {source}"))
+        })?,
+    };
+    if !workspace.is_dir() {
+        return Err(AideMemoError::InvalidInput(format!(
+            "worker workspace is not a directory: {}",
+            workspace.display()
+        )));
+    }
+
+    let runner = std::env::var("AIDEMEMO_WORKER_LANE_BIN")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "aidememo-worker-lane".to_string());
+    let mut command = std::process::Command::new(&runner);
+    if let Ok(current_exe) = std::env::current_exe() {
+        command.env("AIDEMEMO_BIN", current_exe);
+    }
+    if next || handoff_id.is_none() {
+        command.arg("--next");
+    } else if let Some(handoff_id) = handoff_id {
+        command.arg(handoff_id);
+    }
+    command
+        .arg("--actor-id")
+        .arg(installation)
+        .arg("--agent")
+        .arg(&profile.agent)
+        .arg("--workspace")
+        .arg(&workspace)
+        .arg("--store")
+        .arg(store_path)
+        .arg("--backend")
+        .arg(&config.store.backend)
+        .arg("--env-policy")
+        .arg(&profile.env_policy);
+    if let Some(binary) = profile.binary.as_deref() {
+        command.arg("--binary").arg(binary);
+    }
+    if let Some(config_home) = profile.config_home.as_deref() {
+        command.arg("--config-home").arg(config_home);
+    }
+    if let Some(source_id) = profile.source_id.as_deref() {
+        command.arg("--source-id").arg(source_id);
+    }
+    if let Some(model) = profile.model.as_deref() {
+        command.arg("--model").arg(model);
+    }
+    for name in &profile.pass_env {
+        command.arg("--pass-env").arg(name);
+    }
+    if let Some(kanban_task) = kanban_task {
+        command.arg("--kanban-task").arg(kanban_task);
+    }
+    let output = command.output().map_err(|source| {
+        AideMemoError::Internal(format!(
+            "could not start {runner:?}: {source}; install packages/aidememo-agent-sdk or set AIDEMEMO_WORKER_LANE_BIN"
+        ))
+    })?;
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if !output.status.success() {
+        return Err(AideMemoError::Internal(format!(
+            "external handoff worker failed (status {}): {}",
+            output.status,
+            if stderr.is_empty() { &stdout } else { &stderr }
+        )));
+    }
+    if stdout.is_empty() {
+        return Err(AideMemoError::Internal(
+            "external handoff worker returned no result".into(),
+        ));
+    }
+    Ok(stdout)
+}
+
+fn render_assignment_accept(
+    wiki: &AideMemo,
+    record: &cmd::handoff::HandoffAssignment,
+    json: bool,
+) -> Result<String, AideMemoError> {
+    let artifact = cmd::artifacts::agent_handoff(
+        wiki,
+        Some(&record.session_id),
+        40,
+        false,
+        cmd::artifacts::AgentHandoffRoute {
+            from_actor: Some(&record.from_actor),
+            from_agent: record.from_agent.as_deref(),
+            from_profile: record.from_profile.as_deref(),
+            to_actor: Some(&record.to_actor),
+            to_agent: record.to_agent.as_deref(),
+            to_profile: record.to_profile.as_deref(),
+            focus: record.focus.as_deref(),
+            done_when: record.done_when.as_deref(),
+            source_id: record.source_id.as_deref(),
+        },
+    )?;
+    let resume =
+        cmd::artifacts::session_resume_command(&record.session_id, record.source_id.as_deref());
+    if json {
+        return serde_json::to_string_pretty(&serde_json::json!({
+            "assignment": record,
+            "resume": {
+                "command": resume,
+                "env": {
+                    "AIDEMEMO_SESSION_ID": record.session_id,
+                    "AIDEMEMO_SOURCE_ID": record.source_id,
+                    "AIDEMEMO_ACTOR_ID": record.to_actor,
+                }
+            },
+            "content": artifact.body,
+        }))
+        .map_err(|source| AideMemoError::Serialize {
+            context: "handoff accept (json)".into(),
+            source,
+        });
+    }
+    Ok(format!(
+        "# Accepted assignment `{}`\n\n{}\nResume: {}",
+        record.handoff_id, artifact.body, resume
+    ))
 }
 
 fn handle_profile(
@@ -1772,7 +2516,9 @@ fn render_workflow_start_text(pack: &serde_json::Value, max_chars: usize) -> Str
     let mut out = String::new();
     out.push_str(&format!("# workflow start · {title}\n\n"));
     out.push_str(&format!("session: `{session_id}`\n"));
-    out.push_str(&format!("eval: `{export}`\n"));
+    out.push_str("resume environment:\n```sh\n");
+    out.push_str(export);
+    out.push_str("\n```\n");
     if let Some(source) = pack.get("source").and_then(|v| v.as_str()) {
         out.push_str(&format!("source: `{source}`\n"));
     }

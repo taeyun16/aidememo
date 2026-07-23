@@ -13,7 +13,9 @@ pub mod doctor;
 pub mod edit;
 pub mod feedback;
 pub mod graph;
+pub mod handoff;
 pub mod init;
+pub mod installation;
 pub mod mcp_install;
 pub mod mcp_serve;
 pub mod mcp_stdio;
@@ -34,6 +36,7 @@ pub use edit::EditSub;
 pub use feedback::FeedbackSub;
 pub use graph::GraphSub;
 pub use init::InitSub;
+pub use installation::InstallationSub;
 pub use mcp_install::McpInstallSub;
 pub use mcp_serve::McpSub;
 pub use mcp_stdio::McpStdioSub;
@@ -81,6 +84,7 @@ pub enum Command {
     Feedback(FeedbackSub),
     Adapt(AdaptSub),
     Init(InitSub),
+    Installation(InstallationSub),
     Watch(WatchSub),
     McpServe(McpSub),
     Mcp(McpStdioSub),
@@ -91,6 +95,7 @@ pub enum Command {
     Daemon(daemon::DaemonSub),
     Extract(ExtractSub),
     Session(SessionSub),
+    Handoff(HandoffSub),
     Workflow(WorkflowSub),
     Profile(ProfileSub),
     AutoRelate(AutoRelateSub),
@@ -170,6 +175,26 @@ pub enum WorkflowSub {
 }
 
 #[derive(Debug, Clone)]
+pub struct SessionHandoffArgs {
+    pub output: Option<PathBuf>,
+    pub limit: Option<usize>,
+    pub include_superseded: bool,
+    pub source_id: Option<String>,
+    pub from_actor: Option<String>,
+    pub from_route: Option<String>,
+    pub to_route: Option<String>,
+    pub from_agent: Option<String>,
+    pub from_profile: Option<String>,
+    pub to_agent: Option<String>,
+    pub to_profile: Option<String>,
+    pub to_actor: Option<String>,
+    pub focus: Option<String>,
+    pub done_when: Option<String>,
+    pub dispatch: bool,
+    pub session: Option<String>,
+}
+
+#[derive(Debug, Clone)]
 pub enum SessionSub {
     /// Warmup envelope: pinned + recent + top entities + open issues.
     /// Same payload as `aidememo_session_start` MCP tool.
@@ -191,6 +216,11 @@ pub enum SessionSub {
     },
     /// Show the current session entity (per AIDEMEMO_SESSION_ID).
     Current { source_id: Option<String> },
+    /// Validate and activate an existing tracked session in the caller shell.
+    Resume {
+        source_id: Option<String>,
+        session: String,
+    },
     /// List recent session entities.
     List {
         limit: Option<usize>,
@@ -203,6 +233,62 @@ pub enum SessionSub {
         include_superseded: bool,
         source_id: Option<String>,
         session: Option<String>,
+    },
+    /// Export a tool/profile-neutral packet for another agent to resume.
+    Handoff(Box<SessionHandoffArgs>),
+}
+
+#[derive(Debug, Clone)]
+pub enum HandoffSub {
+    Send {
+        from_actor: Option<String>,
+        source_id: Option<String>,
+        focus: Option<String>,
+        done_when: Option<String>,
+        installation: String,
+        session: Option<String>,
+    },
+    Inbox {
+        actor_id: Option<String>,
+        source_id: Option<String>,
+        include_completed: bool,
+        limit: Option<usize>,
+    },
+    Outbox {
+        actor_id: Option<String>,
+        source_id: Option<String>,
+        include_completed: bool,
+        pending_only: bool,
+        limit: Option<usize>,
+    },
+    Show {
+        handoff_id: String,
+    },
+    Status {
+        actor_id: Option<String>,
+        handoff_id: String,
+    },
+    Accept {
+        actor_id: Option<String>,
+        handoff_id: String,
+    },
+    Complete {
+        actor_id: Option<String>,
+        handoff_id: String,
+    },
+    Return {
+        actor_id: Option<String>,
+        outcome: String,
+        result_fact_id: String,
+        handoff_id: String,
+    },
+    Run {
+        next: bool,
+        installation: Option<String>,
+        workspace: Option<PathBuf>,
+        kanban_task: Option<String>,
+        installation_alias: Option<String>,
+        handoff_id: Option<String>,
     },
 }
 
@@ -514,6 +600,8 @@ pub fn build_cli() -> OptionParser<Args> {
         .switch();
 
     let init_cmd = init::init_command();
+    let installation_cmd = installation::installation_command();
+    let agent_cmd = installation::agent_command();
     let watch_cmd = watch::watch_command();
     let mcp_serve_cmd = mcp_serve::mcp_serve_command();
     let mcp_cmd = mcp_stdio::mcp_command();
@@ -559,6 +647,8 @@ pub fn build_cli() -> OptionParser<Args> {
         feedback_cmd,
         adapt_cmd,
         init_cmd,
+        installation_cmd,
+        agent_cmd,
         watch_cmd,
         mcp_serve_cmd,
         mcp_cmd,
@@ -569,6 +659,7 @@ pub fn build_cli() -> OptionParser<Args> {
         daemon_cmd,
         extract_command(),
         session_command(),
+        handoff_command(),
         workflow_command(),
         profile_command(),
         auto_relate_command(),
@@ -778,6 +869,23 @@ fn session_command() -> impl Parser<Command> {
         .command("current")
         .help("Show the current session entity (per AIDEMEMO_SESSION_ID env)");
 
+    let source_id = long("source-id")
+        .help("Also activate this shared memory namespace")
+        .argument::<String>("SOURCE_ID")
+        .optional();
+    let from_actor = long("from-actor")
+        .help("Sending account/installation alias; falls back to AIDEMEMO_ACTOR_ID")
+        .argument::<String>("ACTOR_ID")
+        .optional();
+    let session = positional::<String>("SESSION");
+    let resume_cmd = construct!(SessionSub::Resume { source_id, session })
+        .to_options()
+        .command("resume")
+        .help(
+            "Validate an existing tracked session and print shell exports. \
+             Usage: eval \"$(aidememo session resume SESSION --source-id TEAM)\"",
+        );
+
     let limit = long("limit")
         .help("Max sessions to return (default 20)")
         .argument::<usize>("N")
@@ -823,11 +931,301 @@ fn session_command() -> impl Parser<Command> {
          Defaults to AIDEMEMO_SESSION_ID when SESSION is omitted.",
     );
 
-    construct!([start, new_cmd, current_cmd, list_cmd, canvas_cmd])
-        .map(Command::Session)
+    let output = long("output")
+        .short('o')
+        .help("Write the Markdown handoff packet to PATH instead of stdout")
+        .argument::<PathBuf>("PATH")
+        .optional();
+    let limit = long("limit")
+        .short('l')
+        .help("Maximum session facts to include in the handoff (default 40)")
+        .argument::<usize>("N")
+        .optional();
+    let include_superseded = long("include-superseded")
+        .help("Include superseded facts for historical/audit handoffs")
+        .switch();
+    let source_id = long("source-id")
+        .help("Restrict evidence to one shared memory namespace")
+        .argument::<String>("SOURCE_ID")
+        .optional();
+    let from_route = long("from")
+        .help("Producing route shorthand AGENT[/PROFILE], e.g. codex/coding")
+        .argument::<String>("AGENT[/PROFILE]")
+        .optional();
+    let to_route = long("to")
+        .help("Receiving route shorthand AGENT[/PROFILE], e.g. hermes/reviewer")
+        .argument::<String>("AGENT[/PROFILE]")
+        .optional();
+    let from_agent = long("from-agent")
+        .help("Producing agent, e.g. codex or hermes")
+        .argument::<String>("AGENT")
+        .optional();
+    let from_profile = long("from-profile")
+        .help("Producing agent profile, e.g. coding")
+        .argument::<String>("PROFILE")
+        .optional();
+    let to_agent = long("to-agent")
+        .help("Receiving agent, e.g. claude-code or hermes")
+        .argument::<String>("AGENT")
+        .optional();
+    let to_profile = long("to-profile")
+        .help("Receiving agent profile, e.g. reviewer")
+        .argument::<String>("PROFILE")
+        .optional();
+    let to_actor = long("to-actor")
+        .help("Receiving account/installation alias, e.g. codex-two")
+        .argument::<String>("ACTOR_ID")
+        .optional();
+    let focus = long("focus")
+        .help("Explicit next objective for the receiving agent")
+        .argument::<String>("TEXT")
+        .optional();
+    let done_when = long("done-when")
+        .help("Observable completion condition for the receiving agent")
+        .argument::<String>("TEXT")
+        .optional();
+    let dispatch = long("dispatch")
+        .help("Persist a pending assignment for --to-actor; default remains read-only preview")
+        .switch();
+    let session = positional::<String>("SESSION").optional();
+    let handoff_cmd = construct!(SessionHandoffArgs {
+        output,
+        limit,
+        include_superseded,
+        source_id,
+        from_actor,
+        from_route,
+        to_route,
+        from_agent,
+        from_profile,
+        to_agent,
+        to_profile,
+        to_actor,
+        focus,
+        done_when,
+        dispatch,
+        session,
+    })
+    .map(|args| SessionSub::Handoff(Box::new(args)))
+    .to_options()
+    .command("handoff")
+    .help(
+        "Export a bounded, evidence-linked packet that another coding agent or \
+         Hermes profile can resume. Defaults to AIDEMEMO_SESSION_ID.",
+    );
+
+    construct!([
+        start,
+        new_cmd,
+        current_cmd,
+        resume_cmd,
+        list_cmd,
+        canvas_cmd,
+        handoff_cmd
+    ])
+    .map(Command::Session)
+    .to_options()
+    .command("session")
+    .help("Agent session helpers: warmup envelope + tracked sessions")
+}
+
+fn handoff_command() -> impl Parser<Command> {
+    let from_actor = long("from")
+        .help("Sending account alias; falls back to AIDEMEMO_ACTOR_ID")
+        .argument::<String>("ACTOR_ID")
+        .optional();
+    let source_id = long("source-id")
+        .help("Override the destination installation's default memory namespace")
+        .argument::<String>("SOURCE_ID")
+        .optional();
+    let focus = long("focus")
+        .help("Explicit next objective for the receiving agent")
+        .argument::<String>("TEXT")
+        .optional();
+    let done_when = long("done-when")
+        .help("Observable completion condition for the receiving agent")
+        .argument::<String>("TEXT")
+        .optional();
+    let installation = positional::<String>("AGENT");
+    let session = positional::<String>("SESSION").optional();
+    let send = construct!(HandoffSub::Send {
+        from_actor,
+        source_id,
+        focus,
+        done_when,
+        installation,
+        session,
+    })
+    .to_options()
+    .command("send")
+    .help("Send the current tracked session to a configured agent alias");
+
+    let actor_id = long("actor-id")
+        .help("Receiving account/installation alias; falls back to AIDEMEMO_ACTOR_ID")
+        .argument::<String>("ACTOR_ID")
+        .optional();
+    let source_id = long("source-id")
+        .help("Restrict assignments to one shared memory namespace")
+        .argument::<String>("SOURCE_ID")
+        .optional();
+    let include_completed = long("include-completed")
+        .help("Also show acknowledged assignments that are already completed")
+        .switch();
+    let limit = long("limit")
+        .short('l')
+        .help("Maximum assignments to show (default 20)")
+        .argument::<usize>("N")
+        .optional();
+    let inbox = construct!(HandoffSub::Inbox {
+        actor_id,
+        source_id,
+        include_completed,
+        limit,
+    })
+    .to_options()
+    .command("inbox")
+    .help("List session assignments addressed to this agent account/installation");
+
+    let actor_id = long("actor-id")
+        .help("Sending account/installation alias; falls back to AIDEMEMO_ACTOR_ID")
+        .argument::<String>("ACTOR_ID")
+        .optional();
+    let source_id = long("source-id")
+        .help("Restrict assignments to one shared memory namespace")
+        .argument::<String>("SOURCE_ID")
+        .optional();
+    let include_completed = long("include-completed")
+        .help("Deprecated compatibility flag; completed results are shown by default")
+        .switch();
+    let pending_only = long("pending-only")
+        .help("Hide completed assignments and returned results")
+        .switch();
+    let limit = long("limit")
+        .short('l')
+        .help("Maximum assignments to show (default 20)")
+        .argument::<usize>("N")
+        .optional();
+    let outbox = construct!(HandoffSub::Outbox {
+        actor_id,
+        source_id,
+        include_completed,
+        pending_only,
+        limit,
+    })
+    .to_options()
+    .command("outbox")
+    .help("List assignments sent by this account/installation, including returned results");
+
+    let handoff_id = positional::<String>("HANDOFF_ID");
+    let show = construct!(HandoffSub::Show { handoff_id })
         .to_options()
-        .command("session")
-        .help("Agent session helpers: warmup envelope + tracked sessions")
+        .command("show")
+        .help("Show one handoff and its linked result without requiring an actor alias");
+
+    let actor_id = long("actor-id")
+        .help("Sending or receiving account alias; falls back to AIDEMEMO_ACTOR_ID")
+        .argument::<String>("ACTOR_ID")
+        .optional();
+    let handoff_id = positional::<String>("HANDOFF_ID");
+    let status = construct!(HandoffSub::Status {
+        actor_id,
+        handoff_id,
+    })
+    .to_options()
+    .command("status")
+    .help("Inspect one routed assignment and its linked result fact");
+
+    let actor_id = long("actor-id")
+        .help("Receiving account/installation alias; falls back to AIDEMEMO_ACTOR_ID")
+        .argument::<String>("ACTOR_ID")
+        .optional();
+    let handoff_id = positional::<String>("HANDOFF_ID");
+    let accept = construct!(HandoffSub::Accept {
+        actor_id,
+        handoff_id,
+    })
+    .to_options()
+    .command("accept")
+    .help("Acknowledge one assignment and return its resumable handoff packet");
+
+    let actor_id = long("actor-id")
+        .help("Receiving account/installation alias; falls back to AIDEMEMO_ACTOR_ID")
+        .argument::<String>("ACTOR_ID")
+        .optional();
+    let handoff_id = positional::<String>("HANDOFF_ID");
+    let complete = construct!(HandoffSub::Complete {
+        actor_id,
+        handoff_id,
+    })
+    .to_options()
+    .command("complete")
+    .help("Mark an accepted assignment completed; this does not prove task success");
+
+    let actor_id = long("actor-id")
+        .help("Receiving account/installation alias; falls back to AIDEMEMO_ACTOR_ID")
+        .argument::<String>("ACTOR_ID")
+        .optional();
+    let outcome = long("outcome")
+        .help("Worker outcome: succeeded completes the acknowledgement; failed stays accepted")
+        .argument::<String>("succeeded|failed");
+    let result_fact_id = long("result-fact-id")
+        .help("Fact containing the worker result or failure evidence")
+        .argument::<String>("FACT_ID");
+    let handoff_id = positional::<String>("HANDOFF_ID");
+    let return_result = construct!(HandoffSub::Return {
+        actor_id,
+        outcome,
+        result_fact_id,
+        handoff_id,
+    })
+    .to_options()
+    .command("return")
+    .help("Link worker evidence to an accepted assignment and return it to the sender");
+
+    let next = long("next")
+        .help("Run the oldest pending assignment for the selected installation")
+        .switch();
+    let installation = long("installation")
+        .help("Legacy form of the positional agent alias")
+        .argument::<String>("ALIAS")
+        .optional();
+    let workspace = long("workspace")
+        .help("Override the installation profile workspace for this run")
+        .argument::<PathBuf>("PATH")
+        .optional();
+    let kanban_task = long("kanban-task")
+        .help("Optional upstream Hermes Kanban card id carried into result evidence")
+        .argument::<String>("TASK_ID")
+        .optional();
+    let installation_alias = positional::<String>("AGENT").optional();
+    let handoff_id = positional::<String>("HANDOFF_ID").optional();
+    let run = construct!(HandoffSub::Run {
+        next,
+        installation,
+        workspace,
+        kanban_task,
+        installation_alias,
+        handoff_id,
+    })
+    .to_options()
+    .command("run")
+    .help("Run one handoff through a configured Codex/Claude installation");
+
+    construct!([
+        send,
+        inbox,
+        outbox,
+        show,
+        status,
+        accept,
+        complete,
+        return_result,
+        run,
+    ])
+    .map(Command::Handoff)
+    .to_options()
+    .command("handoff")
+    .help("Small pull-based assignment ledger over tracked sessions (not a message queue)")
 }
 
 fn profile_command() -> impl Parser<Command> {

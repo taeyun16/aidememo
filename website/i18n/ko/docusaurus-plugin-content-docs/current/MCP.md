@@ -117,6 +117,8 @@ backend port에 대한 직접 접근을 제한하세요.
 | `aidememo_search` | 정확한 대상을 빠르게 검색할 때 |
 | `aidememo_aggregate` | 정확한 개수, 합계, 날짜 집합, 타임라인이 필요할 때 |
 | `aidememo_session_canvas` | 긴 추적 워크플로를 다시 시작할 때 |
+| `aidememo_handoff` | 다른 에이전트, 프로필, 계정으로 세션을 미리 보거나 dispatch할 때 |
+| `aidememo_handoff_inbox` | 수신자가 list/accept/return하고 발신자가 outbox/status로 결과를 확인할 때 |
 | `aidememo_profile_export` | 간결한 읽기 전용 프로젝트 프로필이 필요할 때 |
 | `aidememo_fact_add` | 새 팩트 하나를 배웠을 때 |
 | `aidememo_fact_add_many` | 여러 팩트를 배워 배치로 기록해야 할 때 |
@@ -158,17 +160,43 @@ aidememo_workflow_start
 aidememo_fact_add
 ```
 
+다른 계정이 이어받기 전에 `aidememo_handoff`를 호출합니다.
+
+```json
+{
+  "session_id": "session-...",
+  "from_actor": "codex-one",
+  "to_actor": "codex-two",
+  "from": "codex/coding",
+  "to": "codex/reviewer",
+  "focus": "패치를 검토하고 집중 회귀 테스트 실행",
+  "done_when": "집중 테스트 통과와 리뷰 결과 기록",
+  "source_id": "team-a",
+  "dispatch": true
+}
+```
+
+dispatch가 없으면 읽기 전용 preview입니다. dispatch한 수신자는
+`aidememo_handoff_inbox`의 `list`, `accept`, `return`, `outbox`, `status`
+action을 사용합니다. `return`은 결과 fact id와 outcome을 연결합니다. 실패는
+accepted 상태로 남으며 AideMemo가 자동 재시도하지 않습니다.
+`session_id`는 연속성, `source_id`는 검색 범위, `actor_id`는 사용자 지정
+계정/설치 주소, agent/profile은 역할입니다. actor는 인증이 아닙니다. 할당
+레코드에는 topic, offset, consumer group, retry state, 복제 content payload가 없습니다.
+
 ## 소스 범위 지정
 
 공유 저장소에 여러 팀, 프로젝트, 사용자, 에이전트가 포함되면 `source_id`를
 사용합니다.
 
 ```bash
-aidememo --backend libsqlite mcp-install --target <agent> --source-id team-a
+aidememo --backend libsqlite --store ~/.aidememo/team.sqlite \
+  mcp-install --target codex --source-id team-a --actor-id codex-one
 ```
 
 클라이언트가 명시적인 `source_id`를 전달하지 않으면 MCP 도구는 이 소스
-네임스페이스를 기본값으로 사용합니다. 설치 명령은 선택한 저장소 백엔드와 확인된
+네임스페이스를 기본값으로 사용합니다. Inbox는 설치된 `AIDEMEMO_ACTOR_ID`를
+기본값으로 사용합니다. 설치 명령은 선택한 저장소 백엔드와 확인된
 저장소 경로도 고정하므로 에이전트 프로세스가 다른 설정 기본값이나 작업 디렉터리로
 이동하지 않습니다. 여러 에이전트 프로필이 같은 네임스페이스를 공유하면서 작성자
 provenance가 필요하면 별도로 `--actor-id`를 사용합니다.

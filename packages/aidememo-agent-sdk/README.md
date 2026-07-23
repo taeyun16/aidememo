@@ -24,6 +24,74 @@ The fallback path needs the `aidememo` CLI on `$PATH`. The `binding` extra
 installs the published `aidememo-python` package and enables the optional
 in-process fast path.
 
+## External Codex / Claude worker lane
+
+The package installs `aidememo-worker-lane`, a shell-free receiver runner for
+an already-dispatched handoff:
+
+```bash
+aidememo-worker-lane handoff-... \
+  --actor-id codex-two \
+  --agent codex \
+  --workspace "$PWD" \
+  --store ~/.aidememo/wiki.sqlite \
+  --source-id release-team \
+  --kanban-task task-42
+
+aidememo-worker-lane handoff-... \
+  --actor-id claude-main \
+  --agent claude \
+  --workspace "$PWD"
+```
+
+Codex runs through `codex exec --ephemeral --sandbox workspace-write`; Claude
+runs through `claude --print --permission-mode acceptEdits
+--no-session-persistence`. The handoff packet is passed on stdin, and its
+resume environment becomes `AIDEMEMO_SESSION_ID`, `AIDEMEMO_SOURCE_ID`, and
+`AIDEMEMO_ACTOR_ID` for the child process. No shell command is constructed.
+The runner validates the agent binary and workspace before accepting the
+assignment, so a local setup error does not claim the handoff.
+
+For recurring accounts, register a credential-free local profile once:
+
+```bash
+aidememo agent add codex-two --type codex \
+  --home /path/to/codex-two-home --workspace "$PWD" \
+  --source-id release-team
+aidememo handoff run codex-two
+```
+
+The config root becomes `CODEX_HOME` or `CLAUDE_CONFIG_DIR`; the default
+`env_policy=core` avoids inheriting unrelated account tokens. Repeat
+`--pass-env NAME` to allow a named variable without storing its value.
+
+The adapters request the same `summary`, `changed_files`, `validations`,
+`done_when_met`, and `blockers` result. On success, it is recorded on the same
+session before acknowledgement completes. On non-zero exit, timeout, or
+`done_when_met=false`, an `error`
+fact is recorded and the assignment stays `accepted` so Hermes or another
+upstream scheduler can decide whether to retry or block. The runner never
+claims that a Hermes Kanban card is complete and does not register a Hermes
+`spawn_fn`; it is the external process adapter that such a lane can call.
+
+The same path is available from Python:
+
+```python
+from pathlib import Path
+from aidememo_agent import WorkerLaneConfig, run_external_assignment
+
+result = run_external_assignment(
+    mem.client,
+    WorkerLaneConfig(
+        handoff_id="handoff-...",
+        actor_id="codex-two",
+        agent="codex",
+        workspace=Path.cwd(),
+        kanban_task="task-42",
+    ),
+)
+```
+
 ## Quick Start
 
 ```python
@@ -59,6 +127,35 @@ pack = mem.client.workflow_start(
     actor_id="codex:account-a",
 )
 canvas = mem.session_canvas(pack["session_id"], limit=20)
+handoff = mem.handoff(
+    pack["session_id"],
+    from_route="codex/coding",
+    to_route="hermes/reviewer",
+    focus="Verify package metadata, then run release preflight",
+    done_when="The installed wheel matches workspace metadata and preflight passes",
+    source_id="codex-aidememo",
+)
+handoff_packet = mem.handoff_packet(
+    pack["session_id"],
+    from_actor="codex-one",
+    to_actor="codex-two",
+    from_route="codex/coding",
+    to_route="codex/reviewer",
+    focus="Verify package metadata, then run release preflight",
+    done_when="The installed wheel matches workspace metadata and preflight passes",
+    source_id="codex-aidememo",
+    dispatch=True,
+)
+pending = mem.handoff_inbox(actor_id="codex-two")
+accepted = mem.handoff_accept(pending[0]["handoff_id"], actor_id="codex-two")
+print(accepted["resume"]["env"])
+print(accepted["content"])
+[result_id] = mem.remember([
+    {"content": "Focused tests pass", "entities": ["Release"]}
+])
+mem.handoff_return(pending[0]["handoff_id"], result_id,
+                   outcome="succeeded", actor_id="codex-two")
+mem.handoff_outbox(actor_id="codex-one", include_completed=True)
 profile = mem.project_profile(limit=80)
 
 mem.remember(
@@ -85,12 +182,23 @@ main = Memory.open(store_path="./main.sqlite", storage_backend="libsqlite")
 main.branch_merge("./shared", branch="candidate-b")
 ```
 
+Use `handoff()` when only prompt-ready Markdown is needed. `handoff_packet()`
+returns the structured envelope and remains read-only unless `dispatch=True`.
+When dispatched, `handoff_inbox()`, `handoff_accept()`, `handoff_return()`,
+`handoff_outbox()`, and `handoff_show()` implement the default round trip.
+`handoff_status()` retains the actor-scoped check for callers that need it.
+
 Use MCP/tools for one-off model-visible calls. Use this SDK when the agent
 needs memory as code: fanout retrieval, dedupe, coverage checks, aggregation,
-artifact hydration, branch-log experiments, or session-aware batch writes
-without spending model turns on intermediate state. `session_canvas(...)` and
-`project_profile(...)` return read-only Markdown strings suitable for direct
-prompt injection before resuming long work.
+artifact hydration, cross-agent handoff, branch-log experiments, or
+session-aware batch writes without spending model turns on intermediate state.
+`session_canvas(...)`, `handoff(...)`, and `project_profile(...)` return
+read-only Markdown strings suitable for direct prompt injection;
+`handoff_packet(...)` retains the machine-readable envelope. The handoff
+packet separates durable `session_id`, scoped `source_id`, installation
+`actor_id`, and agent/profile route. Actor ids are user-assigned routing
+aliases, not authentication. Assignments point to sessions and intentionally
+do not implement topics, offsets, retries, leases, or copied payloads.
 
 ## Identity defaults and source scope
 
@@ -117,6 +225,9 @@ administrator client instead.
 Exact-content deduplication is source-local. Entity names and types remain a
 shared ontology, while source-scoped entity visibility is fact-backed and
 source-scoped graph traversal uses only relations created in that source.
+
+This matches `aidememo mcp-install --source-id <namespace> --actor-id
+<installation-alias>`; handoff calls use the same actor default for routing.
 
 `storage_backend` is optional and matches the CLI/native binding selector:
 omit it or pass an empty string for the compiled default, pass `"sqlite"` or

@@ -71,6 +71,25 @@ def fake_ctx(monkeypatch: pytest.MonkeyPatch) -> FakeCtx:
         "ticket_fact_id": "01HZ-FAKE-TICKET",
         "context": {"search": []},
     }
+    stub.handoff_packet.return_value = {
+        "artifact": "agent_handoff",
+        "session_id": "session-01HZ-FAKE",
+        "source_id": "team-a",
+        "resume": {
+            "env": {
+                "AIDEMEMO_SESSION_ID": "session-01HZ-FAKE",
+                "AIDEMEMO_SOURCE_ID": "team-a",
+            }
+        },
+        "content": "# AideMemo Agent Handoff",
+    }
+    stub.handoff_inbox.return_value = [{"handoff_id": "handoff-1", "status": "pending"}]
+    stub.handoff_outbox.return_value = [{"handoff_id": "handoff-1", "status": "completed"}]
+    stub.handoff_show.return_value = {"assignment": {"handoff_id": "handoff-1", "status": "completed"}}
+    stub.handoff_status.return_value = {"assignment": {"handoff_id": "handoff-1", "status": "completed"}}
+    stub.handoff_accept.return_value = {"assignment": {"handoff_id": "handoff-1", "status": "accepted"}}
+    stub.handoff_complete.return_value = {"assignment": {"handoff_id": "handoff-1", "status": "completed"}}
+    stub.handoff_return.return_value = {"assignment": {"handoff_id": "handoff-1", "status": "completed"}}
 
     def fake_init(self, *_a, **_kw):
         # Bypass `aidememo-python` import + CLI presence checks.
@@ -86,6 +105,18 @@ def fake_ctx(monkeypatch: pytest.MonkeyPatch) -> FakeCtx:
     monkeypatch.setattr(AideMemoClient, "aggregate", lambda self, *a, **kw: stub.aggregate(*a, **kw))
     monkeypatch.setattr(AideMemoClient, "doctor", lambda self: stub.doctor())
     monkeypatch.setattr(AideMemoClient, "workflow_start", lambda self, *a, **kw: stub.workflow_start(*a, **kw))
+    monkeypatch.setattr(
+        AideMemoClient,
+        "handoff_packet",
+        lambda self, *a, **kw: stub.handoff_packet(*a, **kw),
+    )
+    monkeypatch.setattr(AideMemoClient, "handoff_inbox", lambda self, **kw: stub.handoff_inbox(**kw))
+    monkeypatch.setattr(AideMemoClient, "handoff_outbox", lambda self, **kw: stub.handoff_outbox(**kw))
+    monkeypatch.setattr(AideMemoClient, "handoff_show", lambda self, *a, **kw: stub.handoff_show(*a, **kw))
+    monkeypatch.setattr(AideMemoClient, "handoff_status", lambda self, *a, **kw: stub.handoff_status(*a, **kw))
+    monkeypatch.setattr(AideMemoClient, "handoff_accept", lambda self, *a, **kw: stub.handoff_accept(*a, **kw))
+    monkeypatch.setattr(AideMemoClient, "handoff_complete", lambda self, *a, **kw: stub.handoff_complete(*a, **kw))
+    monkeypatch.setattr(AideMemoClient, "handoff_return", lambda self, *a, **kw: stub.handoff_return(*a, **kw))
     monkeypatch.setattr(AideMemoClient, "fact_add", lambda self, *a, **kw: stub.fact_add(*a, **kw))
     monkeypatch.setattr(AideMemoClient, "fact_add_many", lambda self, *a, **kw: ["fact-1", "fact-2"])
     monkeypatch.setattr(AideMemoClient, "lint", lambda self: [])
@@ -95,6 +126,7 @@ def fake_ctx(monkeypatch: pytest.MonkeyPatch) -> FakeCtx:
     monkeypatch.setattr("hermes_aidememo.client.AideMemoClient._has_cli", staticmethod(lambda: True))
 
     ctx = FakeCtx()
+    ctx.client = stub
     register(ctx)
     return ctx
 
@@ -103,6 +135,8 @@ def test_registers_core_hermes_tools(fake_ctx: FakeCtx) -> None:
     names = {t["name"] for t in fake_ctx.tools}
     assert names == {
         "aidememo_workflow_start",
+        "aidememo_handoff",
+        "aidememo_handoff_inbox",
         "aidememo_context",
         "aidememo_query",
         "aidememo_search",
@@ -120,16 +154,128 @@ def test_registers_core_hermes_tools(fake_ctx: FakeCtx) -> None:
 def test_source_and_actor_ids_are_exposed_on_relevant_tool_schemas(fake_ctx: FakeCtx) -> None:
     schemas = {t["name"]: t["schema"]["parameters"]["properties"] for t in fake_ctx.tools}
     assert "source_id" in schemas["aidememo_workflow_start"]
+    assert "source_id" in schemas["aidememo_handoff"]
+    assert "from" in schemas["aidememo_handoff"]
+    assert "to" in schemas["aidememo_handoff"]
+    assert "done_when" in schemas["aidememo_handoff"]
+    assert "from_actor" in schemas["aidememo_handoff"]
+    assert "to_actor" in schemas["aidememo_handoff"]
+    assert "action" in schemas["aidememo_handoff_inbox"]
     assert "source_id" in schemas["aidememo_query"]
     assert "source_id" in schemas["aidememo_context"]
     assert "source_id" in schemas["aidememo_search"]
     assert "source_id" in schemas["aidememo_aggregate"]
     assert "source_id" in schemas["aidememo_fact_add"]
+    assert "session_id" in schemas["aidememo_fact_add"]
     assert "AIDEMEMO_SOURCE_ID" in schemas["aidememo_workflow_start"]["source_id"]["description"]
     assert "actor_id" in schemas["aidememo_workflow_start"]
     assert "parent_session_id" in schemas["aidememo_workflow_start"]
     assert "actor_id" in schemas["aidememo_fact_add"]
     assert "AIDEMEMO_ACTOR_ID" in schemas["aidememo_fact_add"]["actor_id"]["description"]
+
+
+def test_handoff_tool_returns_receiver_packet(fake_ctx: FakeCtx) -> None:
+    handler = next(t for t in fake_ctx.tools if t["name"] == "aidememo_handoff")["handler"]
+    out = handler(
+        {
+            "session_id": "session-01HZ-FAKE",
+            "from": "hermes/coding",
+            "to": "hermes/reviewer",
+            "done_when": "Focused tests pass and review findings are recorded",
+            "source_id": "team-a",
+        }
+    )
+
+    payload = json.loads(out)
+    assert payload["artifact"] == "agent_handoff"
+    assert payload["resume"]["env"]["AIDEMEMO_SESSION_ID"] == "session-01HZ-FAKE"
+    assert payload["content"] == "# AideMemo Agent Handoff"
+    fake_ctx.client.handoff_packet.assert_called_once_with(
+        "session-01HZ-FAKE",
+        from_actor=None,
+        from_route="hermes/coding",
+        to_route="hermes/reviewer",
+        from_agent=None,
+        from_profile=None,
+        to_agent=None,
+        to_profile=None,
+        to_actor=None,
+        focus=None,
+        done_when="Focused tests pass and review findings are recorded",
+        dispatch=False,
+        source_id="team-a",
+        limit=40,
+        include_superseded=False,
+    )
+
+
+def test_handoff_inbox_lists_accepts_and_returns_assignments(fake_ctx: FakeCtx) -> None:
+    handler = next(t for t in fake_ctx.tools if t["name"] == "aidememo_handoff_inbox")["handler"]
+    listed = json.loads(handler({"actor_id": "codex-two", "source_id": "team-a"}))
+    assert listed["assignments"][0]["handoff_id"] == "handoff-1"
+    accepted = json.loads(
+        handler({"action": "accept", "actor_id": "codex-two", "handoff_id": "handoff-1"})
+    )
+    assert accepted["assignment"]["status"] == "accepted"
+    outbox = json.loads(handler({"action": "outbox", "actor_id": "hermes-main"}))
+    assert outbox["assignments"][0]["status"] == "completed"
+    shown = json.loads(handler({"action": "show", "handoff_id": "handoff-1"}))
+    assert shown["assignment"]["status"] == "completed"
+    returned = json.loads(
+        handler(
+            {
+                "action": "return",
+                "actor_id": "codex-two",
+                "handoff_id": "handoff-1",
+                "result_fact_id": "fact-1",
+                "outcome": "succeeded",
+            }
+        )
+    )
+    assert returned["assignment"]["status"] == "completed"
+    fake_ctx.client.handoff_inbox.assert_called_once_with(
+        actor_id="codex-two",
+        source_id="team-a",
+        include_completed=False,
+        limit=20,
+    )
+    fake_ctx.client.handoff_accept.assert_called_once_with("handoff-1", actor_id="codex-two")
+    fake_ctx.client.handoff_outbox.assert_called_once_with(
+        actor_id="hermes-main",
+        source_id=None,
+        include_completed=True,
+        limit=20,
+    )
+    fake_ctx.client.handoff_show.assert_called_once_with("handoff-1")
+    fake_ctx.client.handoff_return.assert_called_once_with(
+        "handoff-1", "fact-1", outcome="succeeded", actor_id="codex-two"
+    )
+
+
+def test_fact_add_preserves_workflow_session(fake_ctx: FakeCtx) -> None:
+    handler = next(t for t in fake_ctx.tools if t["name"] == "aidememo_fact_add")["handler"]
+    payload = json.loads(
+        handler(
+            {
+                "content": "Reviewer found a retry race",
+                "fact_type": "error",
+                "entities": ["Dispatcher"],
+                "source_id": "team-a",
+                "session_id": "session-01HZ-FAKE",
+            }
+        )
+    )
+
+    assert payload["id"] == "01HZ-FAKE-FACT-ID"
+    fake_ctx.client.fact_add.assert_called_once_with(
+        "Reviewer found a retry race",
+        entities=["Dispatcher"],
+        fact_type="error",
+        tags=None,
+        source_id="team-a",
+        actor_id=None,
+        session_id="session-01HZ-FAKE",
+    )
 
 
 def test_register_passes_configured_source_id(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -218,7 +364,7 @@ def test_pre_llm_call_auto_starts_sparse_ticket_workflow(fake_ctx: FakeCtx) -> N
     assert "workflow context pack" in result["context"]
 
 
-def test_post_llm_call_captures_sparse_ticket_even_when_auto_record_off(
+def test_post_llm_call_does_not_start_duplicate_sparse_ticket_workflow(
     fake_ctx: FakeCtx,
 ) -> None:
     post = next(cb for name, cb in fake_ctx.hooks if name == "post_llm_call")
@@ -227,6 +373,29 @@ def test_post_llm_call_captures_sparse_ticket_even_when_auto_record_off(
         assistant_response="Plan follows.",
         session_id="s",
     )
+    fake_ctx.client.workflow_start.assert_not_called()
+
+
+def test_pre_llm_call_defers_internal_routing_to_kanban(
+    fake_ctx: FakeCtx,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HERMES_KANBAN_TASK", "task-42")
+    monkeypatch.setenv("HERMES_KANBAN_BOARD", "release")
+    pre = next(cb for name, cb in fake_ctx.hooks if name == "pre_llm_call")
+
+    result = pre(
+        is_first_turn=True,
+        user_message="Issue #123: review the release patch",
+        session_id="s",
+    )
+
+    assert isinstance(result, dict)
+    assert "Kanban worker detected" in result["context"]
+    assert "task-42" in result["context"]
+    assert "do not create an AideMemo dispatch/inbox assignment" in result["context"]
+    assert "call `aidememo_workflow_start`" not in result["context"]
+    fake_ctx.client.workflow_start.assert_not_called()
 
 
 def test_pre_llm_call_returns_none_on_later_turns(fake_ctx: FakeCtx) -> None:
