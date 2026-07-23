@@ -665,6 +665,8 @@ def test_client_handoff_dispatch_and_inbox_use_assignment_contract(monkeypatch) 
     assert client.handoff_inbox(actor_id="codex-two")[0]["status"] == "pending"
     assert client.handoff_outbox(actor_id="codex-one")[0]["handoff_id"] == "handoff-1"
     client.handoff_show("handoff-1")
+    client.handoff_heartbeat("handoff-1", actor_id="codex-two")
+    client.handoff_board(actor_id="codex-two", stale_after="2h")
     client.handoff_status("handoff-1", actor_id="codex-one")
     client.handoff_accept("handoff-1", actor_id="codex-two")
     client.handoff_return(
@@ -708,23 +710,36 @@ def test_client_handoff_dispatch_and_inbox_use_assignment_contract(monkeypatch) 
         "handoff_id": "handoff-1",
     }
     assert calls[4][1] == {
+        "action": "heartbeat",
+        "handoff_id": "handoff-1",
+        "actor_id": "codex-two",
+    }
+    assert calls[5][1] == {
+        "action": "board",
+        "stale_after": "2h",
+        "include_completed": False,
+        "limit": 50,
+        "actor_id": "codex-two",
+        "source_id": "team-a",
+    }
+    assert calls[6][1] == {
         "action": "status",
         "handoff_id": "handoff-1",
         "actor_id": "codex-one",
     }
-    assert calls[5][1] == {
+    assert calls[7][1] == {
         "action": "accept",
         "handoff_id": "handoff-1",
         "actor_id": "codex-two",
     }
-    assert calls[6][1] == {
+    assert calls[8][1] == {
         "action": "return",
         "handoff_id": "handoff-1",
         "result_fact_id": "fact-1",
         "outcome": "succeeded",
         "actor_id": "codex-two",
     }
-    assert calls[7][1] == {
+    assert calls[9][1] == {
         "action": "complete",
         "handoff_id": "handoff-1",
         "actor_id": "codex-two",

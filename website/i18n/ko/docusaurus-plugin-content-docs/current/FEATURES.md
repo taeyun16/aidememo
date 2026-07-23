@@ -83,8 +83,8 @@ python3 scripts/docs-site-e2e.py
 | 데몬 | `aidememo daemon start`, `aidememo daemon stop`, `aidememo daemon status` |
 | 세션 | `aidememo session start`, `aidememo session new`, `aidememo session current`, `aidememo session resume`, `aidememo session list`, `aidememo session canvas`, `aidememo session handoff` |
 | 에이전트 설치 | `aidememo agent`, `aidememo agent add`, `aidememo agent list`, `aidememo agent show`, `aidememo agent remove`(권장); `aidememo installation`, `aidememo installation add`, `aidememo installation list`, `aidememo installation show`, `aidememo installation remove`(호환) |
-| 핸드오프 할당 | `aidememo handoff`, `aidememo handoff send`, `aidememo handoff run`, `aidememo handoff show`(권장); `aidememo handoff inbox`, `aidememo handoff outbox`, `aidememo handoff status`, `aidememo handoff accept`, `aidememo handoff return`, `aidememo handoff complete`(수동 lifecycle) |
-| 외부 worker 수신자 | 주소가 지정된 Codex/Claude handoff를 실행하고 같은 session에 result/error를 반환하는 SDK 명령 `aidememo-worker-lane` |
+| 핸드오프 할당 | `aidememo handoff`, `aidememo handoff send`, `aidememo handoff run`, `aidememo handoff show`(권장); `aidememo handoff inbox`, `aidememo handoff outbox`, `aidememo handoff heartbeat`, `aidememo handoff board`, `aidememo handoff status`, `aidememo handoff accept`, `aidememo handoff return`, `aidememo handoff complete`(수동 lifecycle) |
+| 외부 worker 수신자 | 주소가 지정된 Codex/Claude handoff 실행, 1시간 heartbeat, 선택적 Hermes Kanban pulse 전달, 같은 session result/error 반환을 제공하는 SDK 명령 `aidememo-worker-lane`. 다른 에이전트는 `--type manual`로 프로토콜만 연결할 수 있습니다. |
 | 워크플로 | `aidememo workflow start` |
 | 프로필 아티팩트 | `aidememo profile export` |
 | 인증 | `aidememo auth generate`, `aidememo auth login`, `aidememo auth logout`, `aidememo auth list` |

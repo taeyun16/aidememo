@@ -86,6 +86,8 @@ def fake_ctx(monkeypatch: pytest.MonkeyPatch) -> FakeCtx:
     stub.handoff_inbox.return_value = [{"handoff_id": "handoff-1", "status": "pending"}]
     stub.handoff_outbox.return_value = [{"handoff_id": "handoff-1", "status": "completed"}]
     stub.handoff_show.return_value = {"assignment": {"handoff_id": "handoff-1", "status": "completed"}}
+    stub.handoff_heartbeat.return_value = {"assignment": {"handoff_id": "handoff-1", "heartbeat_count": 1}}
+    stub.handoff_board.return_value = {"lanes": {"ready": 1}, "assignments": []}
     stub.handoff_status.return_value = {"assignment": {"handoff_id": "handoff-1", "status": "completed"}}
     stub.handoff_accept.return_value = {"assignment": {"handoff_id": "handoff-1", "status": "accepted"}}
     stub.handoff_complete.return_value = {"assignment": {"handoff_id": "handoff-1", "status": "completed"}}
@@ -113,6 +115,8 @@ def fake_ctx(monkeypatch: pytest.MonkeyPatch) -> FakeCtx:
     monkeypatch.setattr(AideMemoClient, "handoff_inbox", lambda self, **kw: stub.handoff_inbox(**kw))
     monkeypatch.setattr(AideMemoClient, "handoff_outbox", lambda self, **kw: stub.handoff_outbox(**kw))
     monkeypatch.setattr(AideMemoClient, "handoff_show", lambda self, *a, **kw: stub.handoff_show(*a, **kw))
+    monkeypatch.setattr(AideMemoClient, "handoff_heartbeat", lambda self, *a, **kw: stub.handoff_heartbeat(*a, **kw))
+    monkeypatch.setattr(AideMemoClient, "handoff_board", lambda self, **kw: stub.handoff_board(**kw))
     monkeypatch.setattr(AideMemoClient, "handoff_status", lambda self, *a, **kw: stub.handoff_status(*a, **kw))
     monkeypatch.setattr(AideMemoClient, "handoff_accept", lambda self, *a, **kw: stub.handoff_accept(*a, **kw))
     monkeypatch.setattr(AideMemoClient, "handoff_complete", lambda self, *a, **kw: stub.handoff_complete(*a, **kw))
@@ -221,6 +225,12 @@ def test_handoff_inbox_lists_accepts_and_returns_assignments(fake_ctx: FakeCtx) 
     assert outbox["assignments"][0]["status"] == "completed"
     shown = json.loads(handler({"action": "show", "handoff_id": "handoff-1"}))
     assert shown["assignment"]["status"] == "completed"
+    heartbeat = json.loads(
+        handler({"action": "heartbeat", "actor_id": "codex-two", "handoff_id": "handoff-1"})
+    )
+    assert heartbeat["assignment"]["heartbeat_count"] == 1
+    board = json.loads(handler({"action": "board", "actor_id": "codex-two"}))
+    assert board["lanes"]["ready"] == 1
     returned = json.loads(
         handler(
             {
@@ -247,6 +257,16 @@ def test_handoff_inbox_lists_accepts_and_returns_assignments(fake_ctx: FakeCtx) 
         limit=20,
     )
     fake_ctx.client.handoff_show.assert_called_once_with("handoff-1")
+    fake_ctx.client.handoff_heartbeat.assert_called_once_with(
+        "handoff-1", actor_id="codex-two"
+    )
+    fake_ctx.client.handoff_board.assert_called_once_with(
+        actor_id="codex-two",
+        source_id=None,
+        stale_after="1h",
+        include_completed=False,
+        limit=50,
+    )
     fake_ctx.client.handoff_return.assert_called_once_with(
         "handoff-1", "fact-1", outcome="succeeded", actor_id="codex-two"
     )

@@ -182,6 +182,10 @@ Hermes Kanban card crosses to an external worker installation.
    Kanban card. The worker does not own
    authentication, retries, exactly-once execution, Hermes `spawn_fn`, or
    upstream task state.
+7. The worker lane pulses hourly. With `HERMES_KANBAN_TASK`, it forwards the
+   pulse to Hermes; use `action="board"` only to inspect external handoffs.
+   For a non-Kanban runtime, `board` is a derived four-lane view, not a claim or
+   retry engine.
 
 When `HERMES_KANBAN_TASK` is set, Kanban is the canonical task lifecycle. Do
 not create an AideMemo inbox assignment for PM → coder → reviewer or retry

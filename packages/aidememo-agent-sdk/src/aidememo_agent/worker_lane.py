@@ -20,7 +20,7 @@ import shutil
 import subprocess
 import tempfile
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -49,6 +49,8 @@ class WorkerLaneConfig:
     env_policy: str = "core"
     pass_env: tuple[str, ...] = ()
     structured_result: bool = True
+    heartbeat_interval_seconds: int = 3600
+    hermes_binary: str | None = None
 
 
 @dataclass
@@ -72,6 +74,8 @@ class WorkerLaneResult:
     error: str | None = None
     structured_result: dict[str, Any] | None = None
     done_when_met: bool | None = None
+    heartbeat_count: int = 0
+    heartbeat_errors: list[str] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -265,6 +269,64 @@ def _assignment_value(accepted: dict[str, Any], key: str) -> str | None:
     return str(value) if value is not None else None
 
 
+def _forward_hermes_heartbeat(
+    task_id: str,
+    *,
+    binary: str | None = None,
+) -> str | None:
+    candidate = binary or "hermes"
+    executable = shutil.which(candidate)
+    if executable is None:
+        path = Path(candidate).expanduser()
+        executable = str(path.resolve()) if path.is_file() else None
+    if executable is None:
+        return f"Hermes heartbeat not forwarded: binary not found: {candidate}"
+    try:
+        proc = subprocess.run(
+            [
+                executable,
+                "kanban",
+                "heartbeat",
+                task_id,
+                "--note",
+                "AideMemo external worker still running",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+    except subprocess.TimeoutExpired:
+        return "Hermes heartbeat failed: command timed out after 30 seconds"
+    except OSError as exc:
+        return f"Hermes heartbeat failed to start: {exc}"
+    if proc.returncode == 0:
+        return None
+    detail = proc.stderr.strip() or proc.stdout.strip() or f"exit {proc.returncode}"
+    return f"Hermes heartbeat failed: {detail}"
+
+
+def _pulse_heartbeat(
+    client: AideMemoClient,
+    config: WorkerLaneConfig,
+    handoff_id: str,
+    kanban_task: str | None,
+) -> list[str]:
+    errors: list[str] = []
+    try:
+        client.handoff_heartbeat(handoff_id, actor_id=config.actor_id)
+    except Exception as exc:
+        errors.append(f"AideMemo heartbeat failed: {exc}")
+    if kanban_task:
+        error = _forward_hermes_heartbeat(
+            kanban_task,
+            binary=config.hermes_binary,
+        )
+        if error:
+            errors.append(error)
+    return errors
+
+
 def _next_handoff_id(client: AideMemoClient, config: WorkerLaneConfig) -> str:
     pending = [
         row
@@ -372,6 +434,8 @@ def run_external_assignment(
         raise ValueError(f"unsupported agent {config.agent!r}; expected codex or claude")
     if config.timeout_seconds <= 0:
         raise ValueError("timeout_seconds must be positive")
+    if config.heartbeat_interval_seconds <= 0:
+        raise ValueError("heartbeat_interval_seconds must be positive")
     if config.max_result_chars < 256:
         raise ValueError("max_result_chars must be at least 256")
 
@@ -392,7 +456,10 @@ def run_external_assignment(
     source_id = _assignment_value(accepted, "source_id")
     if not session_id:
         raise RuntimeError(f"handoff {handoff_id} accept returned no session_id")
-    prompt = build_worker_prompt(accepted, config)
+    kanban_task = config.kanban_task
+    if not kanban_task and _assignment_value(accepted, "upstream_system") == "hermes_kanban":
+        kanban_task = _assignment_value(accepted, "upstream_task_id")
+    prompt = build_worker_prompt(accepted, replace(config, kanban_task=kanban_task))
     resume_env = (accepted.get("resume") or {}).get("env") or {}
     child_env = _child_environment(config, resume_env, agent)
 
@@ -402,6 +469,8 @@ def run_external_assignment(
     stderr = ""
     exit_code = 1
     command: list[str] = []
+    heartbeat_count = 0
+    heartbeat_errors: list[str] = []
     with tempfile.TemporaryDirectory(prefix="aidememo-worker-lane-") as temp_dir:
         output_path = Path(temp_dir) / "last-message.txt"
         schema_path = Path(temp_dir) / "result-schema.json"
@@ -413,23 +482,44 @@ def run_external_assignment(
             schema_path=schema_path if config.structured_result else None,
         )
         try:
-            proc = subprocess.run(
+            proc = subprocess.Popen(
                 command,
-                input=prompt,
-                capture_output=True,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
-                timeout=config.timeout_seconds,
                 env=child_env,
                 cwd=_resolve_workspace(config.workspace),
             )
-            exit_code = proc.returncode
-            stdout = proc.stdout
-            stderr = proc.stderr
-        except subprocess.TimeoutExpired as exc:
-            timed_out = True
-            exit_code = 124
-            stdout = exc.stdout.decode() if isinstance(exc.stdout, bytes) else (exc.stdout or "")
-            stderr = exc.stderr.decode() if isinstance(exc.stderr, bytes) else (exc.stderr or "")
+            deadline = time.monotonic() + config.timeout_seconds
+            next_heartbeat = time.monotonic() + config.heartbeat_interval_seconds
+            first_wait = True
+            while True:
+                now = time.monotonic()
+                remaining = deadline - now
+                if remaining <= 0:
+                    timed_out = True
+                    proc.kill()
+                    stdout, stderr = proc.communicate()
+                    exit_code = 124
+                    break
+                wait_for = min(remaining, max(0.001, next_heartbeat - now))
+                try:
+                    stdout, stderr = proc.communicate(
+                        input=prompt if first_wait else None,
+                        timeout=wait_for,
+                    )
+                    exit_code = proc.returncode
+                    break
+                except subprocess.TimeoutExpired:
+                    first_wait = False
+                    now = time.monotonic()
+                    if now >= next_heartbeat:
+                        heartbeat_errors.extend(
+                            _pulse_heartbeat(client, config, handoff_id, kanban_task)
+                        )
+                        heartbeat_count += 1
+                        next_heartbeat = now + config.heartbeat_interval_seconds
         except OSError as exc:
             exit_code = 1
             stderr = f"failed to start external worker: {exc}"
@@ -479,7 +569,7 @@ def run_external_assignment(
                 agent=agent,
                 session_id=session_id,
                 source_id=source_id,
-                kanban_task=config.kanban_task,
+                kanban_task=kanban_task,
                 command=command,
                 exit_code=1,
                 timed_out=timed_out,
@@ -489,6 +579,8 @@ def run_external_assignment(
                 error=str(exc),
                 structured_result=structured_result,
                 done_when_met=done_when_met,
+                heartbeat_count=heartbeat_count,
+                heartbeat_errors=heartbeat_errors,
             )
         return WorkerLaneResult(
             ok=True,
@@ -498,7 +590,7 @@ def run_external_assignment(
             agent=agent,
             session_id=session_id,
             source_id=source_id,
-            kanban_task=config.kanban_task,
+            kanban_task=kanban_task,
             command=command,
             exit_code=0,
             timed_out=False,
@@ -508,6 +600,8 @@ def run_external_assignment(
             assignment_status=str((returned.get("assignment") or {}).get("status") or ""),
             structured_result=structured_result,
             done_when_met=done_when_met,
+            heartbeat_count=heartbeat_count,
+            heartbeat_errors=heartbeat_errors,
         )
 
     failure_detail = _bounded(
@@ -552,7 +646,7 @@ def run_external_assignment(
         agent=agent,
         session_id=session_id,
         source_id=source_id,
-        kanban_task=config.kanban_task,
+        kanban_task=kanban_task,
         command=command,
         exit_code=exit_code,
         timed_out=timed_out,
@@ -563,6 +657,8 @@ def run_external_assignment(
         error=f"external worker failed{record_error or ''}",
         structured_result=structured_result,
         done_when_met=done_when_met,
+        heartbeat_count=heartbeat_count,
+        heartbeat_errors=heartbeat_errors,
     )
 
 
@@ -599,6 +695,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--env-policy", choices=("core", "all"))
     parser.add_argument("--pass-env", action="append", default=[])
     parser.add_argument("--kanban-task")
+    parser.add_argument("--heartbeat-interval", type=int, default=3600)
+    parser.add_argument("--hermes-binary")
     parser.add_argument(
         "--no-structured-result", action="store_false", dest="structured_result"
     )
@@ -663,6 +761,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 env_policy=env_policy,
                 pass_env=pass_env,
                 structured_result=args.structured_result,
+                heartbeat_interval_seconds=args.heartbeat_interval,
+                hermes_binary=args.hermes_binary,
             ),
         )
     except Exception as exc:

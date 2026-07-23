@@ -139,10 +139,17 @@ am handoff send codex-two \
 ```bash
 am handoff run codex-two
 am handoff show handoff-...
+am handoff board --stale-after 1h --include-completed
 ```
 
 수신자 lifecycle을 직접 제어할 때만 `handoff inbox`, `accept`, `return`을
 사용합니다. 완료 결과는 기본적으로 `handoff outbox`에 포함되며 활성 작업만
 보려면 `--pending-only`를 전달합니다.
+
+긴 외부 실행에서 worker lane은 1시간마다 AideMemo heartbeat를 기록하고 연결된
+Hermes 카드에도 같은 pulse를 전달합니다. claim, retry, dependency, 완료는 계속
+Hermes가 소유합니다. 내장 runner가 없는 코딩 에이전트는 `--type manual`로
+등록해 CLI/MCP/SDK의 accept, heartbeat, return을 사용할 수 있습니다.
+`handoff board`는 별도 Kanban 상태 머신이 아닌 파생 작업 뷰입니다.
 
 이제 CLI, MCP, SDK에서 사용할 수 있는 로컬 메모리 저장소가 준비됐습니다.

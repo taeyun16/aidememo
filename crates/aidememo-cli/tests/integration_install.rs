@@ -196,6 +196,8 @@ fn account_handoff_cli_dispatch_accept_return_outbox_is_json_stable() {
     let dispatched = Command::new(aidememo_bin())
         .env("HOME", dir.path())
         .env("AIDEMEMO_ACTOR_ID", "codex-one")
+        .env("HERMES_KANBAN_TASK", "task-42")
+        .env("HERMES_KANBAN_BOARD", "board-a")
         .args([
             "--store",
             store,
@@ -223,6 +225,14 @@ fn account_handoff_cli_dispatch_accept_return_outbox_is_json_stable() {
     assert_eq!(dispatched_json["to_actor"].as_str(), Some("codex-two"));
     assert_eq!(dispatched_json["to_agent"].as_str(), Some("codex"));
     assert_eq!(dispatched_json["source_id"].as_str(), Some("team-a"));
+    assert_eq!(
+        dispatched_json["upstream_system"].as_str(),
+        Some("hermes_kanban")
+    );
+    assert_eq!(
+        dispatched_json["upstream_task_id"].as_str(),
+        Some("task-42")
+    );
 
     let inbox = Command::new(aidememo_bin())
         .env("AIDEMEMO_ACTOR_ID", "codex-two")
@@ -247,6 +257,42 @@ fn account_handoff_cli_dispatch_accept_return_outbox_is_json_stable() {
     assert_eq!(
         accepted_json["resume"]["env"]["AIDEMEMO_SESSION_ID"],
         session_id
+    );
+
+    let heartbeat = Command::new(aidememo_bin())
+        .env("AIDEMEMO_ACTOR_ID", "codex-two")
+        .args([
+            "--store",
+            store,
+            "--json",
+            "handoff",
+            "heartbeat",
+            handoff_id,
+        ])
+        .output()
+        .unwrap();
+    let heartbeat_json: serde_json::Value = serde_json::from_slice(&heartbeat.stdout).unwrap();
+    assert_eq!(heartbeat_json["heartbeat_count"], 1);
+
+    let board = Command::new(aidememo_bin())
+        .args([
+            "--store",
+            store,
+            "--json",
+            "handoff",
+            "board",
+            "--actor-id",
+            "codex-two",
+            "--stale-after",
+            "1h",
+        ])
+        .output()
+        .unwrap();
+    let board_json: serde_json::Value = serde_json::from_slice(&board.stdout).unwrap();
+    assert_eq!(board_json["lanes"]["in_progress"], 1);
+    assert_eq!(
+        board_json["assignments"][0]["lifecycle_owner"],
+        "hermes_kanban"
     );
 
     let result_fact = Command::new(aidememo_bin())

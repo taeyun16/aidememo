@@ -111,23 +111,30 @@ def _make_handlers(client: AideMemoClient) -> list[tuple[str, dict, Callable[...
         )
 
     def _handoff(args: dict, **_: Any) -> str:
+        kwargs = {
+            "from_actor": args.get("from_actor"),
+            "from_route": args.get("from") or args.get("from_route"),
+            "to_route": args.get("to") or args.get("to_route"),
+            "from_agent": args.get("from_agent"),
+            "from_profile": args.get("from_profile"),
+            "to_agent": args.get("to_agent"),
+            "to_profile": args.get("to_profile"),
+            "to_actor": args.get("to_actor"),
+            "focus": args.get("focus"),
+            "done_when": args.get("done_when"),
+            "dispatch": bool(args.get("dispatch", False)),
+            "source_id": args.get("source_id"),
+            "limit": int(args.get("limit") or 40),
+            "include_superseded": bool(args.get("include_superseded", False)),
+        }
+        if args.get("kanban_task"):
+            kwargs["kanban_task"] = args["kanban_task"]
+        if args.get("kanban_board"):
+            kwargs["kanban_board"] = args["kanban_board"]
         return _serialize(
             client.handoff_packet(
                 args.get("session") or args.get("session_id"),
-                from_actor=args.get("from_actor"),
-                from_route=args.get("from") or args.get("from_route"),
-                to_route=args.get("to") or args.get("to_route"),
-                from_agent=args.get("from_agent"),
-                from_profile=args.get("from_profile"),
-                to_agent=args.get("to_agent"),
-                to_profile=args.get("to_profile"),
-                to_actor=args.get("to_actor"),
-                focus=args.get("focus"),
-                done_when=args.get("done_when"),
-                dispatch=bool(args.get("dispatch", False)),
-                source_id=args.get("source_id"),
-                limit=int(args.get("limit") or 40),
-                include_superseded=bool(args.get("include_superseded", False)),
+                **kwargs,
             )
         )
 
@@ -155,11 +162,25 @@ def _make_handlers(client: AideMemoClient) -> list[tuple[str, dict, Callable[...
                     )
                 }
             )
+        if action == "board":
+            return _serialize(
+                client.handoff_board(
+                    actor_id=args.get("actor_id"),
+                    source_id=args.get("source_id"),
+                    stale_after=str(args.get("stale_after") or "1h"),
+                    include_completed=bool(args.get("include_completed", False)),
+                    limit=int(args.get("limit") or 50),
+                )
+            )
         handoff_id = args.get("handoff_id")
         if not handoff_id:
             raise ValueError(f"handoff_id required for action={action}")
         if action == "show":
             return _serialize(client.handoff_show(handoff_id))
+        if action == "heartbeat":
+            return _serialize(
+                client.handoff_heartbeat(handoff_id, actor_id=args.get("actor_id"))
+            )
         if action == "accept":
             return _serialize(client.handoff_accept(handoff_id, actor_id=args.get("actor_id")))
         if action == "status":
@@ -315,6 +336,8 @@ def _make_handlers(client: AideMemoClient) -> list[tuple[str, dict, Callable[...
                         "to_actor": {"type": "string", "description": "Receiving account/installation alias. Required when dispatch=true."},
                         "focus": {"type": "string", "description": "Next objective for the receiver."},
                         "done_when": {"type": "string", "description": "Observable completion condition before the receiver returns the workflow."},
+                        "kanban_task": {"type": "string", "description": "Upstream Hermes Kanban task. Usually inferred from HERMES_KANBAN_TASK."},
+                        "kanban_board": {"type": "string", "description": "Upstream Hermes Kanban board. Usually inferred from HERMES_KANBAN_BOARD."},
                         "dispatch": {"type": "boolean", "description": "Persist a pull-based assignment pointer; default false keeps read-only preview."},
                         "source_id": {"type": "string", "description": "Shared memory namespace. Unlike profile names, this scopes retrieval and falls back to plugin config or AIDEMEMO_SOURCE_ID."},
                         "limit": {"type": "integer", "description": "Max session facts (default 40)."},
@@ -330,16 +353,17 @@ def _make_handlers(client: AideMemoClient) -> list[tuple[str, dict, Callable[...
             "aidememo_handoff_inbox",
             _schema(
                 "aidememo_handoff_inbox",
-                "Pull, inspect, or return cross-installation session assignments. Sender outbox/status expose linked result evidence, while Hermes Kanban remains the canonical card lifecycle.",
+                "Pull, inspect, heartbeat, or return cross-installation session assignments. The board action derives a minimal view for runtimes without Kanban; Hermes Kanban remains the canonical card lifecycle.",
                 {
                     "type": "object",
                     "properties": {
-                        "action": {"type": "string", "enum": ["list", "outbox", "show", "status", "accept", "return", "complete"], "default": "list"},
+                        "action": {"type": "string", "enum": ["list", "outbox", "show", "heartbeat", "board", "status", "accept", "return", "complete"], "default": "list"},
                         "actor_id": {"type": "string", "description": "Current account/installation alias. Falls back to AIDEMEMO_ACTOR_ID."},
                         "handoff_id": {"type": "string", "description": "Required for show, status, accept, return, or complete. show does not require actor_id."},
                         "result_fact_id": {"type": "string", "description": "Persisted worker result/error fact for action=return."},
                         "outcome": {"type": "string", "enum": ["succeeded", "failed"]},
                         "source_id": {"type": "string"},
+                        "stale_after": {"type": "string", "description": "For board, inactivity threshold (default 1h)."},
                         "include_completed": {"type": "boolean"},
                         "limit": {"type": "integer"},
                     },

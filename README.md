@@ -300,6 +300,9 @@ aidememo handoff run codex-two
 
 # The send output includes the id used here. No actor flag is needed.
 aidememo handoff show handoff-...
+
+# Read-only operational view; inactive work moves to attention after one hour.
+aidememo handoff board --stale-after 1h --include-completed
 ```
 
 `send` infers the current session from `AIDEMEMO_SESSION_ID`, the sender from
@@ -335,6 +338,25 @@ unique non-secret alias per installation. Without `--dispatch`, handoff remains
 a read-only preview. With it, the receiver pulls a tiny assignment record and
 `accept` renders the packet from the current session, so there is no copied
 message payload.
+
+The external worker lane records an AideMemo heartbeat every hour while a
+Codex/Claude process is still running. When `HERMES_KANBAN_TASK` (or
+`--kanban-task`) links the assignment to Hermes, the same pulse is forwarded to
+`hermes kanban heartbeat`; Hermes still owns claim, retry, dependency, and card
+completion. `handoff board` is derived from the ledger on every read and only
+groups work as `ready`, `in_progress`, `attention`, or `returned`.
+
+Agents without an automatic adapter can still join the protocol without
+pretending AideMemo is their scheduler:
+
+```bash
+aidememo agent add cursor-review --type manual --workspace "$PWD"
+aidememo handoff send cursor-review --focus "Review the patch"
+```
+
+The manual runtime uses CLI, MCP, or SDK `inbox` / `accept` / `heartbeat` /
+`return`; `handoff run cursor-review` intentionally refuses because no verified
+process adapter is configured.
 
 This is intentionally not Kafka or a job queue. AideMemo has no topics,
 offsets, consumer groups, leases, delivery retries, or exactly-once claim. The

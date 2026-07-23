@@ -178,6 +178,9 @@ Hermes profile hands work to another.
 6. For an external Codex/Claude process, `aidememo-worker-lane` may run the
    accepted assignment and return a same-session result/error. It does not own
    authentication, retries, exactly-once execution, or upstream task state.
+7. The runner records heartbeat liveness every hour. A linked Hermes card
+   receives the same pulse; other agents can inspect the derived handoff board
+   without turning AideMemo into a Kanban claim/retry system.
 
 ### long-session profile
 
