@@ -148,6 +148,8 @@ handoff_packet = mem.handoff_packet(
 )
 pending = mem.handoff_inbox(actor_id="codex-two")
 accepted = mem.handoff_accept(pending[0]["handoff_id"], actor_id="codex-two")
+mem.handoff_heartbeat(pending[0]["handoff_id"], actor_id="codex-two")
+board = mem.handoff_board(actor_id="codex-two", stale_after="1h")
 print(accepted["resume"]["env"])
 print(accepted["content"])
 [result_id] = mem.remember([
@@ -184,8 +186,12 @@ main.branch_merge("./shared", branch="candidate-b")
 
 Use `handoff()` when only prompt-ready Markdown is needed. `handoff_packet()`
 returns the structured envelope and remains read-only unless `dispatch=True`.
-When dispatched, `handoff_inbox()`, `handoff_accept()`, `handoff_return()`,
-`handoff_outbox()`, and `handoff_show()` implement the default round trip.
+When dispatched, `handoff_inbox()`, `handoff_accept()`, `handoff_heartbeat()`,
+`handoff_return()`, `handoff_outbox()`, and `handoff_show()` implement the
+default round trip. `handoff_board()` derives `ready`, `in_progress`,
+`attention`, and `returned` lanes for runtimes without Kanban; it does not add
+claims, dependencies, or retries. The packaged external runner pulses hourly
+and forwards that pulse to a linked Hermes Kanban card.
 `handoff_status()` retains the actor-scoped check for callers that need it.
 
 Use MCP/tools for one-off model-visible calls. Use this SDK when the agent

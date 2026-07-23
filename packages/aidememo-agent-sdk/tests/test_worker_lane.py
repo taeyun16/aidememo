@@ -18,6 +18,7 @@ class FakeClient:
         self.accepted: list[tuple[str, str | None]] = []
         self.facts: list[dict[str, Any]] = []
         self.returned: list[tuple[str, str, str, str | None]] = []
+        self.heartbeats: list[tuple[str, str | None]] = []
 
     def handoff_inbox(self, **kwargs: Any) -> list[dict[str, Any]]:
         return [
@@ -61,6 +62,12 @@ class FakeClient:
         self.returned.append((handoff_id, result_fact_id, outcome, actor_id))
         status = "completed" if outcome == "succeeded" else "accepted"
         return {"assignment": {"status": status}}
+
+    def handoff_heartbeat(
+        self, handoff_id: str, *, actor_id: str | None = None
+    ) -> dict:
+        self.heartbeats.append((handoff_id, actor_id))
+        return {"assignment": {"handoff_id": handoff_id, "heartbeat_count": len(self.heartbeats)}}
 
 
 def make_executable(path: Path, body: str) -> Path:
@@ -227,6 +234,52 @@ raise SystemExit(7)
     assert client.facts[0]["fact_type"] == "error"
     assert client.facts[0]["session_id"] == "session-1"
     assert "workspace test failed" in client.facts[0]["content"]
+
+
+def test_long_worker_heartbeats_aidememo_and_linked_hermes_card(tmp_path: Path) -> None:
+    fake_agent = make_executable(
+        tmp_path / "codex",
+        """
+import pathlib
+import sys
+import time
+time.sleep(1.2)
+args = sys.argv[1:]
+out = pathlib.Path(args[args.index("--output-last-message") + 1])
+out.write_text("Long task completed.", encoding="utf-8")
+""",
+    )
+    capture = tmp_path / "hermes-heartbeat.txt"
+    fake_hermes = make_executable(
+        tmp_path / "hermes",
+        f"""
+import pathlib
+import sys
+pathlib.Path({str(capture)!r}).write_text(" ".join(sys.argv[1:]), encoding="utf-8")
+""",
+    )
+    client = FakeClient()
+    result = run_external_assignment(
+        client,
+        WorkerLaneConfig(
+            handoff_id="handoff-long",
+            actor_id="codex-two",
+            agent="codex",
+            workspace=tmp_path,
+            binary=str(fake_agent),
+            kanban_task="task-42",
+            heartbeat_interval_seconds=1,
+            hermes_binary=str(fake_hermes),
+        ),
+    )
+
+    assert result.ok is True
+    assert result.heartbeat_count == 1
+    assert result.heartbeat_errors == []
+    assert client.heartbeats == [("handoff-long", "codex-two")]
+    forwarded = capture.read_text(encoding="utf-8")
+    assert forwarded.startswith("kanban heartbeat task-42")
+    assert "AideMemo external worker still running" in forwarded
 
 
 def test_structured_unmet_done_when_returns_failure_without_completion(

@@ -147,6 +147,13 @@ aidememo handoff show handoff-...
 기존 `installation` 및 `handoff run --installation ALIAS --next` 표기도 계속
 지원합니다.
 
+긴 외부 실행은 1시간마다 `handoff heartbeat`를 기록합니다. handoff에
+`HERMES_KANBAN_TASK` 또는 `--kanban-task`가 있으면 worker가 같은 pulse를
+Hermes로 전달하되 카드 claim, retry, 완료는 Kanban이 계속 소유합니다.
+handoff board --stale-after 1h는 별도 상태 머신을 만들지 않고 외부 작업을
+관찰합니다. 자동 adapter가 없는 코딩 에이전트는 agent add `--type manual`로
+등록할 수 있지만 검증된 실행기가 없으므로 `handoff run`은 사용할 수 없습니다.
+
 `accept`는 최신 packet과 resume 환경을 반환합니다. `complete`는 장부 상태만
 바꾸며 테스트 통과를 증명하지 않습니다. `mcp-install --actor-id codex-two`로
 설치 기본값을 지정하거나 `AIDEMEMO_ACTOR_ID`를 설정할 수 있습니다. actor

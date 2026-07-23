@@ -288,6 +288,7 @@ AIDEMEMO_ACTOR_ID=codex-one aidememo handoff send codex-two \
 
 aidememo handoff run codex-two
 aidememo handoff show handoff-...
+aidememo handoff board --stale-after 1h --include-completed
 ```
 
 `send`는 현재 세션과 발신 actor를 환경에서, 수신 런타임·workspace·기본 source
@@ -321,6 +322,17 @@ agent/profile은 런타임 역할입니다. actor 별칭은 인증 정보가 아
 고유한 비밀 아닌 이름을 사용합니다. `--dispatch`가 없으면 기존처럼 읽기 전용
 미리보기이며, dispatch한 경우에도 수신자는 작은 세션 포인터만 pull합니다.
 `accept` 시점에 현재 세션에서 packet을 다시 만들므로 메시지 본문을 복제하지 않습니다.
+
+외부 worker lane은 Codex/Claude 프로세스가 실행 중인 동안 1시간마다 AideMemo
+heartbeat를 기록합니다. `HERMES_KANBAN_TASK` 또는 `--kanban-task`가 있으면 같은
+pulse를 `hermes kanban heartbeat`로 전달하지만 claim, retry, dependency, 카드 완료는
+계속 Hermes가 소유합니다. `handoff board`는 ledger를 읽을 때마다 `ready`,
+`in_progress`, `attention`, `returned`로 계산하는 관찰 뷰일 뿐입니다.
+
+자동 실행 adapter가 없는 Cursor, Aider, OpenCode 같은 런타임은
+`aidememo agent add cursor-review --type manual --workspace "$PWD"`로 연결할 수
+있습니다. 이 런타임은 CLI/MCP/SDK의 `inbox` / `accept` / `heartbeat` / `return`을
+사용하며, 검증된 실행 adapter가 없으므로 `handoff run`은 의도적으로 거절됩니다.
 
 이는 Kafka나 작업 큐가 아닙니다. 토픽, 오프셋, consumer group, lease, 재전송,
 exactly-once 보장이 없습니다. 저장하는 것은 세션 포인터, route, focus,

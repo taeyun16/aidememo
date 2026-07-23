@@ -1749,6 +1749,10 @@ fn handle_session(
                             to_profile: to_profile.clone(),
                             focus: focus.clone(),
                             done_when: done_when.clone(),
+                            upstream_system: env_value("HERMES_KANBAN_TASK")
+                                .map(|_| "hermes_kanban".to_string()),
+                            upstream_task_id: env_value("HERMES_KANBAN_TASK"),
+                            upstream_board_id: env_value("HERMES_KANBAN_BOARD"),
                         },
                     )?)
                 } else {
@@ -1816,6 +1820,8 @@ fn handle_handoff(
             source_id,
             focus,
             done_when,
+            kanban_task,
+            kanban_board,
             installation,
             session,
         } => {
@@ -1827,6 +1833,8 @@ fn handle_handoff(
                 source_id.as_deref(),
                 focus.as_deref(),
                 done_when.as_deref(),
+                kanban_task.as_deref(),
+                kanban_board.as_deref(),
                 session.as_deref(),
                 json,
             );
@@ -2013,6 +2021,76 @@ fn handle_handoff(
                 ))
             }
         }
+        cmd::HandoffSub::Heartbeat {
+            actor_id,
+            handoff_id,
+        } => {
+            let actor_id = cmd::handoff::actor_id(actor_id.as_deref()).ok_or_else(|| {
+                AideMemoError::InvalidInput(
+                    "pass --actor-id or set AIDEMEMO_ACTOR_ID before sending a heartbeat".into(),
+                )
+            })?;
+            let record = cmd::handoff::heartbeat(&wiki, &handoff_id, &actor_id)?;
+            if json {
+                serde_json::to_string_pretty(&record).map_err(|source| AideMemoError::Serialize {
+                    context: "handoff heartbeat (json)".into(),
+                    source,
+                })
+            } else {
+                Ok(format!(
+                    "Heartbeat {} count={} at={}",
+                    record.handoff_id,
+                    record.heartbeat_count,
+                    record.last_heartbeat_at.unwrap_or_default()
+                ))
+            }
+        }
+        cmd::HandoffSub::Board {
+            actor_id,
+            source_id,
+            stale_after,
+            include_completed,
+            limit,
+        } => {
+            let source_id = source_id.or_else(|| env_value("AIDEMEMO_SOURCE_ID"));
+            let stale_after_ms = parse_duration_to_ms(&stale_after)?;
+            let report = cmd::handoff::board(
+                &wiki,
+                actor_id.as_deref(),
+                source_id.as_deref(),
+                stale_after_ms,
+                include_completed,
+                limit.unwrap_or(50),
+            )?;
+            if json {
+                serde_json::to_string_pretty(&report).map_err(|source| AideMemoError::Serialize {
+                    context: "handoff board (json)".into(),
+                    source,
+                })
+            } else if report.assignments.is_empty() {
+                Ok("(no handoff assignments)".into())
+            } else {
+                let mut out = format!(
+                    "Handoff board: ready={} in_progress={} attention={} returned={}\n",
+                    report.lanes.ready,
+                    report.lanes.in_progress,
+                    report.lanes.attention,
+                    report.lanes.returned
+                );
+                for item in report.assignments {
+                    out.push_str(&format!(
+                        "  {} [{}] {} -> {} next={} owner={}\n",
+                        item.assignment.handoff_id,
+                        item.lane,
+                        item.assignment.from_actor,
+                        item.assignment.to_actor,
+                        item.next_action,
+                        item.lifecycle_owner
+                    ));
+                }
+                Ok(out.trim_end().to_string())
+            }
+        }
         cmd::HandoffSub::Status {
             actor_id,
             handoff_id,
@@ -2124,6 +2202,20 @@ fn handle_handoff(
     })
 }
 
+fn env_value(name: &str) -> Option<String> {
+    std::env::var(name)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn clean_value(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn send_handoff(
     store_path: &Path,
@@ -2133,6 +2225,8 @@ fn send_handoff(
     source_id: Option<&str>,
     focus: Option<&str>,
     done_when: Option<&str>,
+    kanban_task: Option<&str>,
+    kanban_board: Option<&str>,
     session: Option<&str>,
     json: bool,
 ) -> Result<String, AideMemoError> {
@@ -2159,6 +2253,11 @@ fn send_handoff(
         .or_else(|| profile.source_id.clone());
     let to_agent = profile.agent.clone();
     let to_actor = installation.trim().to_string();
+    let upstream_task_id = clean_value(kanban_task).or_else(|| env_value("HERMES_KANBAN_TASK"));
+    let upstream_board_id = clean_value(kanban_board).or_else(|| env_value("HERMES_KANBAN_BOARD"));
+    let upstream_system = upstream_task_id
+        .as_ref()
+        .map(|_| "hermes_kanban".to_string());
 
     with_wiki(store_path, config, |wiki| {
         let artifact = cmd::artifacts::agent_handoff(
@@ -2191,6 +2290,9 @@ fn send_handoff(
                 to_profile: None,
                 focus: focus.map(str::to_string),
                 done_when: done_when.map(str::to_string),
+                upstream_system,
+                upstream_task_id,
+                upstream_board_id,
             },
         )?;
         if json {
@@ -2233,6 +2335,11 @@ fn run_handoff_worker(
             "installation {installation:?} not found; add it with `aidememo installation add`"
         ))
     })?;
+    if profile.agent == "manual" {
+        return Err(AideMemoError::InvalidInput(format!(
+            "agent {installation:?} uses the manual adapter; read/accept/heartbeat/return it through CLI, MCP, or the Python SDK"
+        )));
+    }
     let workspace = match workspace_override
         .map(Path::to_path_buf)
         .or_else(|| profile.workspace.as_deref().map(PathBuf::from))

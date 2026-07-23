@@ -161,11 +161,18 @@ aidememo agent add claude-main --type claude \
 aidememo agent list
 aidememo handoff send codex-two --focus "Review the patch"
 aidememo handoff run codex-two
+aidememo handoff board --stale-after 1h --include-completed
 ```
 
 `installation` and `handoff run --installation ALIAS --next` remain supported
 for existing scripts. Completed results are included in outbox by default;
 pass `--pending-only` to hide them.
+
+Long-running external workers record `handoff heartbeat` every hour. When the
+handoff carries `HERMES_KANBAN_TASK` / `--kanban-task`, the worker forwards the
+pulse to Hermes while leaving card claim, retry, and completion in Kanban.
+Register `--type manual` for another coding agent that consumes the CLI/MCP/SDK
+protocol itself; automatic `handoff run` remains limited to verified adapters.
 
 Profiles never store credentials or environment values. `config_home` maps to
 `CODEX_HOME` for Codex and `CLAUDE_CONFIG_DIR` for Claude. The default `core`

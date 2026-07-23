@@ -169,6 +169,13 @@ AideMemo pointer to the external `actor_id`, then read the linked result through
 the Kanban card. In the other cases, use scoped context/query reads and fact
 writes; no AideMemo assignment is needed.
 
+For a long external run, the worker lane emits an AideMemo heartbeat every hour
+and forwards it to `hermes kanban heartbeat` when a Kanban task is linked. This
+is a liveness bridge, not a second lease: Hermes remains responsible for stale
+reclaim, retry, dependencies, comments, and completion. Use
+`aidememo_handoff_inbox(action="board", stale_after="1h")` only to inspect
+external boundaries; the result is derived and never mutates the Hermes board.
+
 Actor aliases are non-secret routing metadata, not Hermes/Codex account
 authentication. The ledger stores a session pointer and acknowledgement state,
 not topics, offsets, consumer groups, retries, or message payload copies.

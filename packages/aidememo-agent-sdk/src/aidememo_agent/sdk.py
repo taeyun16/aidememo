@@ -174,6 +174,8 @@ class AideMemoMemorySDK:
         to_actor: str | None = None,
         focus: str | None = None,
         done_when: str | None = None,
+        kanban_task: str | None = None,
+        kanban_board: str | None = None,
         dispatch: bool = False,
         source_id: str | None = None,
         limit: int = 40,
@@ -181,23 +183,27 @@ class AideMemoMemorySDK:
     ) -> str:
         """Build a portable handoff packet from a tracked workflow session."""
 
-        return self.client.handoff(
-            session_id,
-            from_actor=from_actor,
-            from_route=from_route,
-            to_route=to_route,
-            from_agent=from_agent,
-            from_profile=from_profile,
-            to_agent=to_agent,
-            to_profile=to_profile,
-            to_actor=to_actor,
-            focus=focus,
-            done_when=done_when,
-            dispatch=dispatch,
-            source_id=source_id,
-            limit=limit,
-            include_superseded=include_superseded,
-        )
+        kwargs: dict[str, Any] = {
+            "from_actor": from_actor,
+            "from_route": from_route,
+            "to_route": to_route,
+            "from_agent": from_agent,
+            "from_profile": from_profile,
+            "to_agent": to_agent,
+            "to_profile": to_profile,
+            "to_actor": to_actor,
+            "focus": focus,
+            "done_when": done_when,
+            "dispatch": dispatch,
+            "source_id": source_id,
+            "limit": limit,
+            "include_superseded": include_superseded,
+        }
+        if kanban_task:
+            kwargs["kanban_task"] = kanban_task
+        if kanban_board:
+            kwargs["kanban_board"] = kanban_board
+        return self.client.handoff(session_id, **kwargs)
 
     def handoff_packet(
         self,
@@ -213,6 +219,8 @@ class AideMemoMemorySDK:
         to_actor: str | None = None,
         focus: str | None = None,
         done_when: str | None = None,
+        kanban_task: str | None = None,
+        kanban_board: str | None = None,
         dispatch: bool = False,
         source_id: str | None = None,
         limit: int = 40,
@@ -220,23 +228,27 @@ class AideMemoMemorySDK:
     ) -> dict[str, Any]:
         """Return a structured handoff envelope for orchestrator routing."""
 
-        return self.client.handoff_packet(
-            session_id,
-            from_actor=from_actor,
-            from_route=from_route,
-            to_route=to_route,
-            from_agent=from_agent,
-            from_profile=from_profile,
-            to_agent=to_agent,
-            to_profile=to_profile,
-            to_actor=to_actor,
-            focus=focus,
-            done_when=done_when,
-            dispatch=dispatch,
-            source_id=source_id,
-            limit=limit,
-            include_superseded=include_superseded,
-        )
+        kwargs: dict[str, Any] = {
+            "from_actor": from_actor,
+            "from_route": from_route,
+            "to_route": to_route,
+            "from_agent": from_agent,
+            "from_profile": from_profile,
+            "to_agent": to_agent,
+            "to_profile": to_profile,
+            "to_actor": to_actor,
+            "focus": focus,
+            "done_when": done_when,
+            "dispatch": dispatch,
+            "source_id": source_id,
+            "limit": limit,
+            "include_superseded": include_superseded,
+        }
+        if kanban_task:
+            kwargs["kanban_task"] = kanban_task
+        if kanban_board:
+            kwargs["kanban_board"] = kanban_board
+        return self.client.handoff_packet(session_id, **kwargs)
 
     def handoff_inbox(
         self,
@@ -274,6 +286,28 @@ class AideMemoMemorySDK:
         """Inspect one assignment by id without supplying an actor alias."""
 
         return self.client.handoff_show(handoff_id)
+
+    def handoff_heartbeat(
+        self, handoff_id: str, *, actor_id: str | None = None
+    ) -> dict[str, Any]:
+        return self.client.handoff_heartbeat(handoff_id, actor_id=actor_id)
+
+    def handoff_board(
+        self,
+        *,
+        actor_id: str | None = None,
+        source_id: str | None = None,
+        stale_after: str = "1h",
+        include_completed: bool = False,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        return self.client.handoff_board(
+            actor_id=actor_id,
+            source_id=source_id,
+            stale_after=stale_after,
+            include_completed=include_completed,
+            limit=limit,
+        )
 
     def handoff_status(
         self, handoff_id: str, *, actor_id: str | None = None

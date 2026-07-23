@@ -576,6 +576,8 @@ class AideMemoClient:
         to_actor: str | None = None,
         focus: str | None = None,
         done_when: str | None = None,
+        kanban_task: str | None = None,
+        kanban_board: str | None = None,
         dispatch: bool = False,
         source_id: str | None = None,
         limit: int = 40,
@@ -583,23 +585,27 @@ class AideMemoClient:
     ) -> str:
         """Return an evidence-linked packet for another agent/profile to resume."""
 
-        payload = self.handoff_packet(
-            session_id,
-            from_actor=from_actor,
-            from_route=from_route,
-            to_route=to_route,
-            from_agent=from_agent,
-            from_profile=from_profile,
-            to_agent=to_agent,
-            to_profile=to_profile,
-            to_actor=to_actor,
-            focus=focus,
-            done_when=done_when,
-            dispatch=dispatch,
-            source_id=source_id,
-            limit=limit,
-            include_superseded=include_superseded,
-        )
+        kwargs: dict[str, Any] = {
+            "from_actor": from_actor,
+            "from_route": from_route,
+            "to_route": to_route,
+            "from_agent": from_agent,
+            "from_profile": from_profile,
+            "to_agent": to_agent,
+            "to_profile": to_profile,
+            "to_actor": to_actor,
+            "focus": focus,
+            "done_when": done_when,
+            "dispatch": dispatch,
+            "source_id": source_id,
+            "limit": limit,
+            "include_superseded": include_superseded,
+        }
+        if kanban_task:
+            kwargs["kanban_task"] = kanban_task
+        if kanban_board:
+            kwargs["kanban_board"] = kanban_board
+        payload = self.handoff_packet(session_id, **kwargs)
         content = payload.get("content")
         return content if isinstance(content, str) else ""
 
@@ -617,6 +623,8 @@ class AideMemoClient:
         to_actor: str | None = None,
         focus: str | None = None,
         done_when: str | None = None,
+        kanban_task: str | None = None,
+        kanban_board: str | None = None,
         dispatch: bool = False,
         source_id: str | None = None,
         limit: int = 40,
@@ -643,6 +651,8 @@ class AideMemoClient:
             "to_actor": to_actor,
             "focus": focus,
             "done_when": done_when,
+            "kanban_task": kanban_task,
+            "kanban_board": kanban_board,
             "source_id": source_id,
         }
         args.update({key: value for key, value in optional.items() if value})
@@ -710,6 +720,42 @@ class AideMemoClient:
             "aidememo_handoff_inbox",
             {"action": "show", "handoff_id": handoff_id},
         )
+        return payload if isinstance(payload, dict) else {"content": str(payload)}
+
+    def handoff_heartbeat(
+        self, handoff_id: str, *, actor_id: str | None = None
+    ) -> dict[str, Any]:
+        """Record liveness for an accepted external-worker assignment."""
+
+        args: dict[str, Any] = {"action": "heartbeat", "handoff_id": handoff_id}
+        if actor_id:
+            args["actor_id"] = actor_id
+        payload = self._mcp_tool("aidememo_handoff_inbox", args)
+        return payload if isinstance(payload, dict) else {"content": str(payload)}
+
+    def handoff_board(
+        self,
+        *,
+        actor_id: str | None = None,
+        source_id: str | None = None,
+        stale_after: str = "1h",
+        include_completed: bool = False,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        """Derive a minimal work view without creating a task lifecycle."""
+
+        source_id = self._source_id(source_id)
+        args: dict[str, Any] = {
+            "action": "board",
+            "stale_after": stale_after,
+            "include_completed": include_completed,
+            "limit": limit,
+        }
+        if actor_id:
+            args["actor_id"] = actor_id
+        if source_id:
+            args["source_id"] = source_id
+        payload = self._mcp_tool("aidememo_handoff_inbox", args)
         return payload if isinstance(payload, dict) else {"content": str(payload)}
 
     def handoff_status(

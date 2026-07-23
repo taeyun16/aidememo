@@ -245,6 +245,8 @@ pub enum HandoffSub {
         source_id: Option<String>,
         focus: Option<String>,
         done_when: Option<String>,
+        kanban_task: Option<String>,
+        kanban_board: Option<String>,
         installation: String,
         session: Option<String>,
     },
@@ -263,6 +265,17 @@ pub enum HandoffSub {
     },
     Show {
         handoff_id: String,
+    },
+    Heartbeat {
+        actor_id: Option<String>,
+        handoff_id: String,
+    },
+    Board {
+        actor_id: Option<String>,
+        source_id: Option<String>,
+        stale_after: String,
+        include_completed: bool,
+        limit: Option<usize>,
     },
     Status {
         actor_id: Option<String>,
@@ -1046,6 +1059,14 @@ fn handoff_command() -> impl Parser<Command> {
         .help("Observable completion condition for the receiving agent")
         .argument::<String>("TEXT")
         .optional();
+    let kanban_task = long("kanban-task")
+        .help("Upstream Hermes Kanban task; defaults to HERMES_KANBAN_TASK")
+        .argument::<String>("TASK_ID")
+        .optional();
+    let kanban_board = long("kanban-board")
+        .help("Upstream Hermes Kanban board; defaults to HERMES_KANBAN_BOARD")
+        .argument::<String>("BOARD_ID")
+        .optional();
     let installation = positional::<String>("AGENT");
     let session = positional::<String>("SESSION").optional();
     let send = construct!(HandoffSub::Send {
@@ -1053,6 +1074,8 @@ fn handoff_command() -> impl Parser<Command> {
         source_id,
         focus,
         done_when,
+        kanban_task,
+        kanban_board,
         installation,
         session,
     })
@@ -1121,6 +1144,50 @@ fn handoff_command() -> impl Parser<Command> {
         .to_options()
         .command("show")
         .help("Show one handoff and its linked result without requiring an actor alias");
+
+    let actor_id = long("actor-id")
+        .help("Receiving account/installation alias; falls back to AIDEMEMO_ACTOR_ID")
+        .argument::<String>("ACTOR_ID")
+        .optional();
+    let handoff_id = positional::<String>("HANDOFF_ID");
+    let heartbeat = construct!(HandoffSub::Heartbeat {
+        actor_id,
+        handoff_id,
+    })
+    .to_options()
+    .command("heartbeat")
+    .help("Record worker liveness for an accepted external handoff");
+
+    let actor_id = long("actor-id")
+        .help("Show assignments routed through one actor; omit for the shared board")
+        .argument::<String>("ACTOR_ID")
+        .optional();
+    let source_id = long("source-id")
+        .help("Restrict the derived board to one shared memory namespace")
+        .argument::<String>("SOURCE_ID")
+        .optional();
+    let stale_after = long("stale-after")
+        .help("Move inactive pending/accepted work to attention (default 1h)")
+        .argument::<String>("DURATION")
+        .fallback("1h".to_string());
+    let include_completed = long("include-completed")
+        .help("Include returned assignments in the derived board")
+        .switch();
+    let limit = long("limit")
+        .short('l')
+        .help("Maximum assignments to show (default 50)")
+        .argument::<usize>("N")
+        .optional();
+    let board = construct!(HandoffSub::Board {
+        actor_id,
+        source_id,
+        stale_after,
+        include_completed,
+        limit,
+    })
+    .to_options()
+    .command("board")
+    .help("Derive a minimal work view without creating a second task system");
 
     let actor_id = long("actor-id")
         .help("Sending or receiving account alias; falls back to AIDEMEMO_ACTOR_ID")
@@ -1216,6 +1283,8 @@ fn handoff_command() -> impl Parser<Command> {
         inbox,
         outbox,
         show,
+        heartbeat,
+        board,
         status,
         accept,
         complete,

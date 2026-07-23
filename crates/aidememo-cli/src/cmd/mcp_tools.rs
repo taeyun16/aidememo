@@ -2666,6 +2666,12 @@ fn tool_agent_handoff(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, S
         .get("dispatch")
         .and_then(|value| value.as_bool())
         .unwrap_or(false);
+    let upstream_task_id = string_arg("kanban_task")
+        .map(str::to_string)
+        .or_else(|| clean_env("HERMES_KANBAN_TASK"));
+    let upstream_board_id = string_arg("kanban_board")
+        .map(str::to_string)
+        .or_else(|| clean_env("HERMES_KANBAN_BOARD"));
 
     let artifact = artifacts::agent_handoff(
         wiki,
@@ -2704,6 +2710,11 @@ fn tool_agent_handoff(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, S
                     to_profile: to_profile.clone(),
                     focus: string_arg("focus").map(str::to_string),
                     done_when: string_arg("done_when").map(str::to_string),
+                    upstream_system: upstream_task_id
+                        .as_ref()
+                        .map(|_| "hermes_kanban".to_string()),
+                    upstream_task_id: upstream_task_id.clone(),
+                    upstream_board_id: upstream_board_id.clone(),
                 },
             )
             .map_err(|e| e.to_string())?,
@@ -2773,7 +2784,7 @@ fn tool_handoff_inbox(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, S
                 .unwrap_or(20) as usize;
             let assignments = crate::cmd::handoff::inbox(
                 wiki,
-                &actor_id,
+                actor_id,
                 source_id.as_deref(),
                 include_completed,
                 limit,
@@ -2798,7 +2809,7 @@ fn tool_handoff_inbox(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, S
                 .unwrap_or(20) as usize;
             let assignments = crate::cmd::handoff::outbox(
                 wiki,
-                &actor_id,
+                actor_id,
                 source_id.as_deref(),
                 include_completed,
                 limit,
@@ -2818,13 +2829,52 @@ fn tool_handoff_inbox(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, S
             let record = crate::cmd::handoff::get(wiki, handoff_id).map_err(|e| e.to_string())?;
             json!({"assignment": record})
         }
+        "heartbeat" => {
+            let actor_id = require_actor()?;
+            let handoff_id = args
+                .get("handoff_id")
+                .and_then(|value| value.as_str())
+                .ok_or("handoff_id required for action=heartbeat")?;
+            let record = crate::cmd::handoff::heartbeat(wiki, handoff_id, actor_id)
+                .map_err(|e| e.to_string())?;
+            json!({"assignment": record})
+        }
+        "board" => {
+            let source_id = mcp_source_id(args);
+            let stale_after = args
+                .get("stale_after")
+                .and_then(|value| value.as_str())
+                .unwrap_or("1h");
+            let stale_after_ms =
+                crate::parse_duration_to_ms(stale_after).map_err(|e| e.to_string())?;
+            let include_completed = args
+                .get("include_completed")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false);
+            let limit = args
+                .get("limit")
+                .and_then(|value| value.as_u64())
+                .unwrap_or(50) as usize;
+            serde_json::to_value(
+                crate::cmd::handoff::board(
+                    wiki,
+                    actor_id.as_deref(),
+                    source_id.as_deref(),
+                    stale_after_ms,
+                    include_completed,
+                    limit,
+                )
+                .map_err(|e| e.to_string())?,
+            )
+            .map_err(|e| e.to_string())?
+        }
         "status" => {
             let actor_id = require_actor()?;
             let handoff_id = args
                 .get("handoff_id")
                 .and_then(|value| value.as_str())
                 .ok_or("handoff_id required for action=status")?;
-            let record = crate::cmd::handoff::status(wiki, handoff_id, &actor_id)
+            let record = crate::cmd::handoff::status(wiki, handoff_id, actor_id)
                 .map_err(|e| e.to_string())?;
             json!({"assignment": record})
         }
@@ -2837,7 +2887,7 @@ fn tool_handoff_inbox(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, S
             let record = crate::cmd::handoff::transition(
                 wiki,
                 handoff_id,
-                &actor_id,
+                actor_id,
                 crate::cmd::handoff::HandoffTransition::Accept,
             )
             .map_err(|e| e.to_string())?;
@@ -2852,7 +2902,7 @@ fn tool_handoff_inbox(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, S
             let record = crate::cmd::handoff::transition(
                 wiki,
                 handoff_id,
-                &actor_id,
+                actor_id,
                 crate::cmd::handoff::HandoffTransition::Complete,
             )
             .map_err(|e| e.to_string())?;
@@ -2875,7 +2925,7 @@ fn tool_handoff_inbox(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, S
             let record = crate::cmd::handoff::return_result(
                 wiki,
                 handoff_id,
-                &actor_id,
+                actor_id,
                 result_fact_id,
                 outcome,
             )
@@ -2884,7 +2934,7 @@ fn tool_handoff_inbox(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, S
         }
         other => {
             return Err(format!(
-                "unknown handoff inbox action {other:?}; expected list, outbox, show, status, accept, return, or complete"
+                "unknown handoff inbox action {other:?}; expected list, outbox, show, heartbeat, board, status, accept, return, or complete"
             ));
         }
     };
@@ -2892,6 +2942,13 @@ fn tool_handoff_inbox(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, S
         content: vec![ContentBlock::text(payload.to_string())],
         is_error: None,
     })
+}
+
+fn clean_env(name: &str) -> Option<String> {
+    std::env::var(name)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 fn handoff_assignment_packet(
@@ -4087,6 +4144,8 @@ pub fn list_tools() -> Vec<Tool> {
                     "to_actor": {"type": "string", "description": "Receiving account/installation alias, e.g. codex-two. Required when dispatch=true."},
                     "focus": {"type": "string", "description": "Explicit next objective for the receiving agent."},
                     "done_when": {"type": "string", "description": "Observable completion condition the receiver should satisfy before returning the workflow."},
+                    "kanban_task": {"type": "string", "description": "Optional upstream Hermes Kanban task. Falls back to HERMES_KANBAN_TASK and remains the canonical lifecycle owner."},
+                    "kanban_board": {"type": "string", "description": "Optional upstream Hermes Kanban board. Falls back to HERMES_KANBAN_BOARD."},
                     "dispatch": {"type": "boolean", "default": false, "description": "Persist an addressable assignment pointer. False keeps the existing read-only artifact behavior."},
                     "source_id": {"type": "string", "description": "Restrict evidence to the shared memory namespace. Unlike profile names, this is the retrieval scope. If omitted, falls back to AIDEMEMO_SOURCE_ID."},
                     "limit": {"type": "number", "default": 40, "description": "Max session facts included in the packet."},
@@ -4096,17 +4155,18 @@ pub fn list_tools() -> Vec<Tool> {
         },
         Tool {
             name: "aidememo_handoff_inbox".into(),
-            description: "Pull assignments addressed to this account/installation alias, inspect sent assignments, or acknowledge and return a linked result fact. Records only point to tracked sessions; there are no topics, offsets, consumer groups, retries, or copied message payloads. actor_id falls back to AIDEMEMO_ACTOR_ID."
+            description: "Pull assignments addressed to this account/installation alias, record external-worker liveness, derive a small work view, or acknowledge and return a linked result fact. Records only point to tracked sessions; there are no topics, offsets, consumer groups, retries, or copied message payloads. Hermes Kanban remains the canonical lifecycle when linked. actor_id falls back to AIDEMEMO_ACTOR_ID."
                 .into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "action": {"type": "string", "enum": ["list", "outbox", "show", "status", "accept", "return", "complete"], "default": "list"},
+                    "action": {"type": "string", "enum": ["list", "outbox", "show", "heartbeat", "board", "status", "accept", "return", "complete"], "default": "list"},
                     "actor_id": {"type": "string", "description": "Current account/installation alias, e.g. codex-two. Falls back to AIDEMEMO_ACTOR_ID."},
-                    "handoff_id": {"type": "string", "description": "Required for show, status, accept, return, or complete. show does not require actor_id."},
+                    "handoff_id": {"type": "string", "description": "Required for show, heartbeat, status, accept, return, or complete. show and board do not require actor_id."},
                     "result_fact_id": {"type": "string", "description": "For return, the persisted fact containing worker result or failure evidence."},
                     "outcome": {"type": "string", "enum": ["succeeded", "failed"], "description": "For return. succeeded completes the acknowledgement; failed preserves accepted state for orchestrator policy."},
                     "source_id": {"type": "string", "description": "For list, restrict assignments to one shared memory namespace. Falls back to AIDEMEMO_SOURCE_ID."},
+                    "stale_after": {"type": "string", "default": "1h", "description": "For board, inactivity window before work moves to attention."},
                     "include_completed": {"type": "boolean", "description": "Defaults to true for outbox so returned results remain visible; false for receiver list."},
                     "limit": {"type": "integer", "default": 20}
                 }
@@ -4678,6 +4738,8 @@ mod tests {
                 "to": "codex/reviewer",
                 "focus": "Review the patch",
                 "done_when": "Focused tests pass",
+                "kanban_task": "task-42",
+                "kanban_board": "board-a",
                 "dispatch": true
             }),
             &wiki,
@@ -4726,6 +4788,38 @@ mod tests {
         assert_eq!(
             accepted_payload["resume"]["env"]["AIDEMEMO_SESSION_ID"].as_str(),
             Some(session_id)
+        );
+        assert_eq!(
+            accepted_payload["assignment"]["upstream_system"].as_str(),
+            Some("hermes_kanban")
+        );
+
+        let heartbeat = tool_handoff_inbox(
+            &json!({
+                "action": "heartbeat",
+                "actor_id": "codex-two",
+                "handoff_id": handoff_id
+            }),
+            &wiki,
+        )
+        .unwrap();
+        let heartbeat_payload: Value =
+            serde_json::from_str(heartbeat.content[0].text.as_deref().unwrap()).unwrap();
+        assert_eq!(
+            heartbeat_payload["assignment"]["heartbeat_count"].as_u64(),
+            Some(1)
+        );
+        let board = tool_handoff_inbox(
+            &json!({"action": "board", "actor_id": "codex-two", "stale_after": "1h"}),
+            &wiki,
+        )
+        .unwrap();
+        let board_payload: Value =
+            serde_json::from_str(board.content[0].text.as_deref().unwrap()).unwrap();
+        assert_eq!(board_payload["lanes"]["in_progress"].as_u64(), Some(1));
+        assert_eq!(
+            board_payload["assignments"][0]["lifecycle_owner"].as_str(),
+            Some("hermes_kanban")
         );
 
         let result = tool_fact_add(

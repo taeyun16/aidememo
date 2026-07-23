@@ -83,8 +83,8 @@ python3 scripts/docs-site-e2e.py
 | Daemon | `aidememo daemon start`, `aidememo daemon stop`, `aidememo daemon status` |
 | Sessions | `aidememo session start`, `aidememo session new`, `aidememo session current`, `aidememo session resume`, `aidememo session list`, `aidememo session canvas`, `aidememo session handoff` |
 | Agent installations | `aidememo agent`, `aidememo agent add`, `aidememo agent list`, `aidememo agent show`, `aidememo agent remove` (friendly); `aidememo installation`, `aidememo installation add`, `aidememo installation list`, `aidememo installation show`, `aidememo installation remove` (compatibility) |
-| Handoff assignments | `aidememo handoff`, `aidememo handoff send`, `aidememo handoff run`, `aidememo handoff show` (friendly); `aidememo handoff inbox`, `aidememo handoff outbox`, `aidememo handoff status`, `aidememo handoff accept`, `aidememo handoff return`, `aidememo handoff complete` (manual lifecycle) |
-| External worker receiver | SDK command `aidememo-worker-lane` for addressed Codex/Claude handoff execution and same-session result/error return |
+| Handoff assignments | `aidememo handoff`, `aidememo handoff send`, `aidememo handoff run`, `aidememo handoff show` (friendly); `aidememo handoff inbox`, `aidememo handoff outbox`, `aidememo handoff heartbeat`, `aidememo handoff board`, `aidememo handoff status`, `aidememo handoff accept`, `aidememo handoff return`, `aidememo handoff complete` (manual lifecycle) |
+| External worker receiver | SDK command `aidememo-worker-lane` for addressed Codex/Claude execution, hourly liveness, optional Hermes Kanban heartbeat forwarding, and same-session result/error return. `--type manual` exposes the protocol to other coding agents without claiming an automatic adapter. |
 | Workflows | `aidememo workflow start` |
 | Profile artifacts | `aidememo profile export` |
 | Auth | `aidememo auth generate`, `aidememo auth login`, `aidememo auth logout`, `aidememo auth list` |

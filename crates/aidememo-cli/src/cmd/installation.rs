@@ -33,7 +33,7 @@ fn installation_subcommands(
     config_home_flag: &'static str,
 ) -> impl Parser<InstallationSub> {
     let agent = long(agent_flag)
-        .help("Worker adapter: codex or claude")
+        .help("Worker adapter: codex, claude, or manual")
         .argument::<String>("AGENT");
     let binary = long("binary")
         .help("Optional coding-agent executable override")
@@ -104,7 +104,7 @@ pub fn installation_command() -> impl Parser<Command> {
         .map(Command::Installation)
         .to_options()
         .command("installation")
-        .help("Manage local Codex/Claude account runtime profiles (no stored credentials)")
+        .help("Manage coding-agent runtime profiles (no stored credentials)")
 }
 
 /// Friendly alias for the infrastructure-oriented `installation` command.
@@ -117,7 +117,7 @@ pub fn agent_command() -> impl Parser<Command> {
         .map(Command::Installation)
         .to_options()
         .command("agent")
-        .help("Connect local Codex/Claude accounts for cross-agent handoff")
+        .help("Connect coding-agent accounts for cross-agent handoff")
 }
 
 pub fn run_installation(
@@ -257,9 +257,9 @@ fn validate_alias(value: &str) -> Result<String, AideMemoError> {
 fn normalise_agent(value: &str) -> Result<String, AideMemoError> {
     let value = value.trim().to_ascii_lowercase();
     match value.as_str() {
-        "codex" | "claude" => Ok(value),
+        "codex" | "claude" | "manual" => Ok(value),
         _ => Err(AideMemoError::InvalidInput(
-            "--agent must be codex or claude".to_string(),
+            "--agent must be codex, claude, or manual".to_string(),
         )),
     }
 }
@@ -328,6 +328,7 @@ mod tests {
             validate_env_names(vec!["OPENAI_API_KEY".to_string()]).unwrap(),
             vec!["OPENAI_API_KEY"]
         );
+        assert_eq!(normalise_agent("manual").unwrap(), "manual");
         assert!(validate_env_names(vec!["1BAD".to_string()]).is_err());
     }
 }
