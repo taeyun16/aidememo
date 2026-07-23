@@ -201,7 +201,7 @@ once and invoke the shorter boundary:
 aidememo agent add codex-two --type codex \
   --home /path/to/codex-two-home --workspace /path/to/worktree \
   --source-id project-a
-aidememo handoff run codex-two --kanban-task task-42
+aidememo handoff run codex-two --kanban-task task-42 --timeout 14400
 ```
 
 The profile stores no credentials. Codex account state stays behind

@@ -171,6 +171,8 @@ pass `--pending-only` to hide them.
 Long-running external workers record `handoff heartbeat` every hour. When the
 handoff carries `HERMES_KANBAN_TASK` / `--kanban-task`, the worker forwards the
 pulse to Hermes while leaving card claim, retry, and completion in Kanban.
+Pass `handoff run --timeout 14400` when work may exceed the 1800-second default;
+`--heartbeat-interval` defaults to 3600 seconds.
 Register `--type manual` for another coding agent that consumes the CLI/MCP/SDK
 protocol itself; automatic `handoff run` remains limited to verified adapters.
 

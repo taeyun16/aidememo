@@ -153,6 +153,8 @@ the owner of claims, retries, dependencies, and completion. For coding agents
 without a built-in runner, register `--type manual` and use the CLI/MCP/SDK
 accept, heartbeat, and return calls; `handoff board` provides a derived work
 view without adding another Kanban state machine.
+Pass `handoff run --timeout 14400` for work that may exceed the default 1800
+seconds; `--heartbeat-interval` remains 3600 seconds by default.
 
 At this point you have a working local memory store that can be used from the
 CLI, MCP, or SDK.

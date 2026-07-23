@@ -345,6 +345,9 @@ Codex/Claude process is still running. When `HERMES_KANBAN_TASK` (or
 `hermes kanban heartbeat`; Hermes still owns claim, retry, dependency, and card
 completion. `handoff board` is derived from the ledger on every read and only
 groups work as `ready`, `in_progress`, `attention`, or `returned`.
+For work expected to exceed the 30-minute default timeout, run
+`aidememo handoff run codex-two --timeout 14400`; the heartbeat interval remains
+3600 seconds unless `--heartbeat-interval` overrides it.
 
 Agents without an automatic adapter can still join the protocol without
 pretending AideMemo is their scheduler:

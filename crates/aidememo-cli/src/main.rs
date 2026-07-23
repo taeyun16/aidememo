@@ -1844,6 +1844,8 @@ fn handle_handoff(
             installation,
             workspace,
             kanban_task,
+            timeout_seconds,
+            heartbeat_interval_seconds,
             installation_alias,
             handoff_id,
         } => {
@@ -1882,6 +1884,8 @@ fn handle_handoff(
                 &installation,
                 workspace.as_deref(),
                 kanban_task.as_deref(),
+                timeout_seconds,
+                heartbeat_interval_seconds,
                 handoff_id.as_deref(),
                 json,
             );
@@ -2322,6 +2326,8 @@ fn run_handoff_worker(
     installation: &str,
     workspace_override: Option<&Path>,
     kanban_task: Option<&str>,
+    timeout_seconds: Option<u64>,
+    heartbeat_interval_seconds: Option<u64>,
     handoff_id: Option<&str>,
     _json: bool,
 ) -> Result<String, AideMemoError> {
@@ -2400,6 +2406,14 @@ fn run_handoff_worker(
     }
     if let Some(kanban_task) = kanban_task {
         command.arg("--kanban-task").arg(kanban_task);
+    }
+    if let Some(timeout_seconds) = timeout_seconds {
+        command.arg("--timeout").arg(timeout_seconds.to_string());
+    }
+    if let Some(interval_seconds) = heartbeat_interval_seconds {
+        command
+            .arg("--heartbeat-interval")
+            .arg(interval_seconds.to_string());
     }
     let output = command.output().map_err(|source| {
         AideMemoError::Internal(format!(

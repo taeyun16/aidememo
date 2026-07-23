@@ -300,6 +300,8 @@ pub enum HandoffSub {
         installation: Option<String>,
         workspace: Option<PathBuf>,
         kanban_task: Option<String>,
+        timeout_seconds: Option<u64>,
+        heartbeat_interval_seconds: Option<u64>,
         installation_alias: Option<String>,
         handoff_id: Option<String>,
     },
@@ -1264,6 +1266,14 @@ fn handoff_command() -> impl Parser<Command> {
         .help("Optional upstream Hermes Kanban card id carried into result evidence")
         .argument::<String>("TASK_ID")
         .optional();
+    let timeout_seconds = long("timeout")
+        .help("External worker timeout in seconds (default 1800)")
+        .argument::<u64>("SECONDS")
+        .optional();
+    let heartbeat_interval_seconds = long("heartbeat-interval")
+        .help("Worker heartbeat interval in seconds (default 3600)")
+        .argument::<u64>("SECONDS")
+        .optional();
     let installation_alias = positional::<String>("AGENT").optional();
     let handoff_id = positional::<String>("HANDOFF_ID").optional();
     let run = construct!(HandoffSub::Run {
@@ -1271,6 +1281,8 @@ fn handoff_command() -> impl Parser<Command> {
         installation,
         workspace,
         kanban_task,
+        timeout_seconds,
+        heartbeat_interval_seconds,
         installation_alias,
         handoff_id,
     })

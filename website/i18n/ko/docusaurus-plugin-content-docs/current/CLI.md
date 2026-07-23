@@ -150,6 +150,8 @@ aidememo handoff show handoff-...
 긴 외부 실행은 1시간마다 `handoff heartbeat`를 기록합니다. handoff에
 `HERMES_KANBAN_TASK` 또는 `--kanban-task`가 있으면 worker가 같은 pulse를
 Hermes로 전달하되 카드 claim, retry, 완료는 Kanban이 계속 소유합니다.
+기본 1800초를 넘길 작업은 `handoff run --timeout 14400`으로 실행하며,
+`--heartbeat-interval`의 기본값은 3600초입니다.
 handoff board --stale-after 1h는 별도 상태 머신을 만들지 않고 외부 작업을
 관찰합니다. 자동 adapter가 없는 코딩 에이전트는 agent add `--type manual`로
 등록할 수 있지만 검증된 실행기가 없으므로 `handoff run`은 사용할 수 없습니다.
