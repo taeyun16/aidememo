@@ -11,11 +11,42 @@ Premature SDK language for a low-level binding creates support expectations
 around installers, docs, examples, async clients, and semantic-version
 guarantees.
 
+## Strongest Orchestrator Use Case
+
+The SDK's most differentiated workflow is not merely recalling a fact inside
+one agent. It is preserving a task when the worker changes:
+
+1. `workflow_start` creates the durable task thread.
+2. Codex, Claude Code, or a Hermes `coding` profile attaches decisions,
+   lessons, errors, and questions to the session.
+3. `handoff_packet(...)` previews a structured route/resume/content envelope or
+   dispatches a session pointer to a user-assigned account/installation alias.
+   `handoff_inbox` / `handoff_accept` receive it, `handoff_return` links the
+   result fact, and `handoff_outbox` / `handoff_status` give the sender the
+   return path; `handoff(...)` is the Markdown-only convenience view.
+4. The receiver continues the same `session_id`; `source_id` keeps shared-store
+   retrieval scoped independently of the profile route.
+5. A credential-free installation profile plus `aidememo handoff run
+   --installation ALIAS --next` can accept the pointer, invoke Codex or Claude,
+   and return success/error evidence to that session; task validation remains
+   with the orchestrator.
+6. On another machine, branch logs transfer the source records while the
+   handoff packet remains the prompt-sized routing artifact.
+
+This gives an orchestrator a stable memory protocol without requiring every
+agent vendor to share chat-history formats or profile schemas.
+
+It is intentionally smaller than a queue. `session_id` carries task continuity,
+`source_id` carries retrieval scope, `actor_id` addresses an installation, and
+agent/profile describes the role. There are no topics, offsets, consumer
+groups, retries, leases, copied payloads, authentication, or exactly-once
+guarantee; completion remains a separately validated outcome.
+
 ## Current Call
 
 | Package | Current label | Why |
 |---|---|---|
-| `aidememo-agent-sdk` | Agent SDK | Pure-Python composition layer for agents that can execute code. It owns the code-first memory workflow (`Memory.open`, `search_rows`, `coverage_by`, `aggregate_many`, `remember`) and can run through either the published `aidememo-python` package or the `aidememo` CLI fallback, making it usable from Codex, Claude Code, Hermes, CI, and local scripts. |
+| `aidememo-agent-sdk` | Agent SDK | Pure-Python composition layer for agents that can execute code. It owns the code-first memory workflow (`Memory.open`, `search_rows`, `coverage_by`, `aggregate_many`, `remember`, `handoff`) plus the external Codex/Claude worker lane, and can run through either the published `aidememo-python` package or the `aidememo` CLI fallback, making it usable from Codex, Claude Code, Hermes, CI, and local scripts. |
 | `aidememo-python` | SDK candidate | Hermes already gets the largest measured lift from in-process Python: Scenario G showed p50 `1795.71ms` CLI vs `13.14ms` binding with shape parity. Scenario K keeps Python shape parity with CLI across sparse tickets. Python exposes `workflow_start` and typed exceptions and is installable from PyPI; promotion now depends on the remaining workflow-level SDK criteria rather than distribution. |
 | `aidememo-napi` | SDK candidate | Node has a published platform-package split, a native adapter path that was `1.66x` faster than daemon BrainBench on the same checkout, a `workflowStart` API, package README examples, stable `[aidememo_code]` error messages, and Scenario K parity with CLI. Promotion now depends on the remaining workflow-level SDK criteria rather than distribution. |
 | `aidememo-nif` | Binding | Useful for Elixir/Erlang systems, but the package is still a thin NIF wrapper over the Rust core. Keep it low-level until Hex packaging, examples, and supervision-friendly lifecycle docs exist. |

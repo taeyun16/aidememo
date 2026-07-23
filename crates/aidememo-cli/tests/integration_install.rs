@@ -38,6 +38,385 @@ fn run_with_home(home: &Path, args: &[&str]) -> std::process::Output {
         .expect("failed to execute aidememo binary")
 }
 
+#[test]
+fn session_resume_emits_validated_shell_exports_and_json_metadata() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = dir.path().join("resume.sqlite");
+    let store = store.to_str().unwrap();
+
+    let created = run(&[
+        "--store",
+        store,
+        "--json",
+        "session",
+        "new",
+        "--source-id",
+        "release-team",
+        "Cross-agent release review",
+    ]);
+    assert!(
+        created.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&created.stderr)
+    );
+    let created_json: serde_json::Value = serde_json::from_slice(&created.stdout).unwrap();
+    let session_id = created_json["session_id"].as_str().unwrap();
+
+    let resumed = run(&[
+        "--store",
+        store,
+        "session",
+        "resume",
+        "--source-id",
+        "release-team",
+        session_id,
+    ]);
+    assert!(
+        resumed.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&resumed.stderr)
+    );
+    let shell = String::from_utf8_lossy(&resumed.stdout);
+    assert!(shell.contains(&format!("export AIDEMEMO_SESSION_ID='{session_id}'")));
+    assert!(shell.contains("export AIDEMEMO_SOURCE_ID='release-team'"));
+
+    let resumed_json = run(&[
+        "--store",
+        store,
+        "--json",
+        "session",
+        "resume",
+        "--source-id",
+        "release-team",
+        session_id,
+    ]);
+    assert!(resumed_json.status.success());
+    let payload: serde_json::Value = serde_json::from_slice(&resumed_json.stdout).unwrap();
+    assert_eq!(payload["session_id"].as_str(), Some(session_id));
+    assert_eq!(
+        payload["env"]["AIDEMEMO_SOURCE_ID"].as_str(),
+        Some("release-team")
+    );
+
+    let handoff = Command::new(aidememo_bin())
+        .env("AIDEMEMO_SOURCE_ID", "release-team")
+        .args([
+            "--store",
+            store,
+            "--json",
+            "session",
+            "handoff",
+            "--from",
+            "codex/coding",
+            "--to",
+            "hermes/reviewer",
+            "--done-when",
+            "Focused tests pass",
+            session_id,
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        handoff.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&handoff.stderr)
+    );
+    let packet: serde_json::Value = serde_json::from_slice(&handoff.stdout).unwrap();
+    assert_eq!(packet["source_id"].as_str(), Some("release-team"));
+    assert_eq!(packet["from_profile"].as_str(), Some("coding"));
+    assert_eq!(packet["to_profile"].as_str(), Some("reviewer"));
+    assert_eq!(packet["done_when"].as_str(), Some("Focused tests pass"));
+
+    let packet_path = dir.path().join("handoff.md");
+    let packet_path_str = packet_path.to_str().unwrap();
+    let written = run(&[
+        "--store",
+        store,
+        "session",
+        "handoff",
+        "--from",
+        "codex/coding",
+        "--to",
+        "hermes/reviewer",
+        "--done-when",
+        "Focused tests pass",
+        "--output",
+        packet_path_str,
+        session_id,
+    ]);
+    assert!(written.status.success());
+    assert!(String::from_utf8_lossy(&written.stdout).contains("Resume: eval"));
+    assert!(
+        std::fs::read_to_string(packet_path)
+            .unwrap()
+            .contains("## Definition of Done")
+    );
+}
+
+#[test]
+fn account_handoff_cli_dispatch_accept_return_outbox_is_json_stable() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = dir.path().join("account-handoff.sqlite");
+    let store = store.to_str().unwrap();
+    let connected = Command::new(aidememo_bin())
+        .env("HOME", dir.path())
+        .args([
+            "agent",
+            "add",
+            "codex-two",
+            "--type",
+            "codex",
+            "--home",
+            dir.path().to_str().unwrap(),
+            "--workspace",
+            dir.path().to_str().unwrap(),
+            "--source-id",
+            "team-a",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        connected.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&connected.stderr)
+    );
+    let created = run(&[
+        "--store",
+        store,
+        "--json",
+        "session",
+        "new",
+        "--source-id",
+        "team-a",
+        "Two Codex accounts review one patch",
+    ]);
+    let created_json: serde_json::Value = serde_json::from_slice(&created.stdout).unwrap();
+    let session_id = created_json["session_id"].as_str().unwrap();
+
+    let dispatched = Command::new(aidememo_bin())
+        .env("HOME", dir.path())
+        .env("AIDEMEMO_ACTOR_ID", "codex-one")
+        .args([
+            "--store",
+            store,
+            "--json",
+            "handoff",
+            "send",
+            "codex-two",
+            "--focus",
+            "Review the patch",
+            "--done-when",
+            "Focused tests pass",
+            session_id,
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        dispatched.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&dispatched.stderr)
+    );
+    // Regression: human-readable Assignment text must never trail JSON output.
+    let dispatched_json: serde_json::Value = serde_json::from_slice(&dispatched.stdout).unwrap();
+    let handoff_id = dispatched_json["handoff_id"].as_str().unwrap();
+    assert_eq!(dispatched_json["from_actor"].as_str(), Some("codex-one"));
+    assert_eq!(dispatched_json["to_actor"].as_str(), Some("codex-two"));
+    assert_eq!(dispatched_json["to_agent"].as_str(), Some("codex"));
+    assert_eq!(dispatched_json["source_id"].as_str(), Some("team-a"));
+
+    let inbox = Command::new(aidememo_bin())
+        .env("AIDEMEMO_ACTOR_ID", "codex-two")
+        .env("AIDEMEMO_SOURCE_ID", "team-a")
+        .args(["--store", store, "--json", "handoff", "inbox"])
+        .output()
+        .unwrap();
+    let inbox_json: serde_json::Value = serde_json::from_slice(&inbox.stdout).unwrap();
+    assert_eq!(inbox_json["assignments"][0]["handoff_id"], handoff_id);
+
+    let accepted = Command::new(aidememo_bin())
+        .env("AIDEMEMO_ACTOR_ID", "codex-two")
+        .args(["--store", store, "--json", "handoff", "accept", handoff_id])
+        .output()
+        .unwrap();
+    let accepted_json: serde_json::Value = serde_json::from_slice(&accepted.stdout).unwrap();
+    assert_eq!(accepted_json["assignment"]["status"], "accepted");
+    assert_eq!(
+        accepted_json["resume"]["env"]["AIDEMEMO_ACTOR_ID"],
+        "codex-two"
+    );
+    assert_eq!(
+        accepted_json["resume"]["env"]["AIDEMEMO_SESSION_ID"],
+        session_id
+    );
+
+    let result_fact = Command::new(aidememo_bin())
+        .env("AIDEMEMO_SESSION_ID", session_id)
+        .args([
+            "--store",
+            store,
+            "--json",
+            "fact",
+            "add",
+            "Focused tests pass",
+            "--entities",
+            "Release",
+            "--type",
+            "note",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        result_fact.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&result_fact.stderr)
+    );
+    let result_json: serde_json::Value = serde_json::from_slice(&result_fact.stdout).unwrap();
+    let result_fact_id = result_json["id"].as_str().unwrap();
+
+    let completed = Command::new(aidememo_bin())
+        .env("AIDEMEMO_ACTOR_ID", "codex-two")
+        .args([
+            "--store",
+            store,
+            "--json",
+            "handoff",
+            "return",
+            "--outcome",
+            "succeeded",
+            "--result-fact-id",
+            result_fact_id,
+            handoff_id,
+        ])
+        .output()
+        .unwrap();
+    let completed_json: serde_json::Value = serde_json::from_slice(&completed.stdout).unwrap();
+    assert_eq!(completed_json["status"], "completed");
+    assert_eq!(completed_json["result_fact_id"], result_fact_id);
+
+    let outbox = Command::new(aidememo_bin())
+        .env("AIDEMEMO_ACTOR_ID", "codex-one")
+        .args(["--store", store, "--json", "handoff", "outbox"])
+        .output()
+        .unwrap();
+    let outbox_json: serde_json::Value = serde_json::from_slice(&outbox.stdout).unwrap();
+    assert_eq!(
+        outbox_json["assignments"][0]["result_fact_id"],
+        result_fact_id
+    );
+
+    let shown = Command::new(aidememo_bin())
+        .args(["--store", store, "--json", "handoff", "show", handoff_id])
+        .output()
+        .unwrap();
+    let shown_json: serde_json::Value = serde_json::from_slice(&shown.stdout).unwrap();
+    assert_eq!(shown_json["outcome"], "succeeded");
+
+    let status = Command::new(aidememo_bin())
+        .env("AIDEMEMO_ACTOR_ID", "codex-one")
+        .args(["--store", store, "--json", "handoff", "status", handoff_id])
+        .output()
+        .unwrap();
+    let status_json: serde_json::Value = serde_json::from_slice(&status.stdout).unwrap();
+    assert_eq!(status_json["outcome"], "succeeded");
+}
+
+#[test]
+fn installation_profile_crud_stores_runtime_metadata_without_credentials() {
+    let home = tempfile::tempdir().unwrap();
+    let codex_home = home.path().join("codex-two");
+    let workspace = home.path().join("workspace");
+    std::fs::create_dir_all(&codex_home).unwrap();
+    std::fs::create_dir_all(&workspace).unwrap();
+
+    let added = Command::new(aidememo_bin())
+        .env("HOME", home.path())
+        .args([
+            "--json",
+            "installation",
+            "add",
+            "codex-two",
+            "--agent",
+            "codex",
+            "--config-home",
+            codex_home.to_str().unwrap(),
+            "--workspace",
+            workspace.to_str().unwrap(),
+            "--source-id",
+            "team-a",
+            "--pass-env",
+            "RELEASE_CHANNEL",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        added.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&added.stderr)
+    );
+    let added_json: serde_json::Value = serde_json::from_slice(&added.stdout).unwrap();
+    assert_eq!(added_json["alias"], "codex-two");
+    assert_eq!(added_json["installation"]["env_policy"], "core");
+    assert_eq!(added_json["installation"]["pass_env"][0], "RELEASE_CHANNEL");
+
+    let config = std::fs::read_to_string(home.path().join(".aidememo/config.toml")).unwrap();
+    assert!(config.contains("[installations.codex-two]"));
+    let config_value: toml::Value = toml::from_str(&config).unwrap();
+    let profile = config_value["installations"]["codex-two"]
+        .as_table()
+        .unwrap();
+    assert!(!profile.contains_key("token"));
+    assert!(!profile.contains_key("secret"));
+    assert!(!profile.contains_key("password"));
+
+    let shown = Command::new(aidememo_bin())
+        .env("HOME", home.path())
+        .args(["--json", "installation", "show", "codex-two"])
+        .output()
+        .unwrap();
+    let shown_json: serde_json::Value = serde_json::from_slice(&shown.stdout).unwrap();
+    assert_eq!(
+        shown_json["installation"]["config_home"],
+        codex_home.to_str().unwrap()
+    );
+
+    let removed = Command::new(aidememo_bin())
+        .env("HOME", home.path())
+        .args(["--json", "installation", "remove", "codex-two"])
+        .output()
+        .unwrap();
+    assert!(removed.status.success());
+}
+
+#[test]
+fn mcp_install_codex_honors_codex_home() {
+    let home = tempfile::tempdir().unwrap();
+    let codex_home = home.path().join("isolated-codex");
+    std::fs::create_dir_all(&codex_home).unwrap();
+    let out = Command::new(aidememo_bin())
+        .env("HOME", home.path())
+        .env("CODEX_HOME", &codex_home)
+        .args([
+            "mcp-install",
+            "--target",
+            "codex",
+            "--source-id",
+            "team-a",
+            "--actor-id",
+            "codex-two",
+            "--no-verify",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let config = std::fs::read_to_string(codex_home.join("config.toml")).unwrap();
+    assert!(config.contains("AIDEMEMO_ACTOR_ID = \"codex-two\""));
+    assert!(!home.path().join(".codex/config.toml").exists());
+}
+
 // ---------------------------------------------------------------------------
 // `aidememo skill install`
 // ---------------------------------------------------------------------------

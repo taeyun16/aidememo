@@ -30,5 +30,8 @@ Documentation = "https://github.com/taeyun16/aidememo/tree/main/packages/aidemem
 Source = "https://github.com/taeyun16/aidememo/tree/main/packages/aidememo-agent-sdk"
 Issues = "https://github.com/taeyun16/aidememo/issues"
 
+[project.scripts]
+aidememo-worker-lane = "aidememo_agent.worker_lane:main"
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/aidememo_agent"]

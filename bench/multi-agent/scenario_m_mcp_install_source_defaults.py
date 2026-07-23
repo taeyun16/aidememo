@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Scenario M - installed MCP source/backend defaults are usable.
+"""Scenario M - installed MCP source/actor/backend defaults are usable.
 
 P3.38/P3.39 made `aidememo --backend libsqlite mcp-install --source-id` the
 smooth path for shared-store MCP agents. This zero-token scenario validates the
 install contract at the product boundary:
 
   1. Install file-edit MCP targets into an isolated HOME.
-  2. Verify Codex / Cursor / OpenCode configs contain AIDEMEMO_SOURCE_ID and
-     the resolved storage backend selector.
+  2. Verify Codex / Cursor / OpenCode configs contain AIDEMEMO_SOURCE_ID,
+     AIDEMEMO_ACTOR_ID, and the resolved storage backend selector.
   3. Verify shell-out targets report env injection and backend args in --print mode.
   4. Feed the installed Codex env/args into `aidememo mcp` and prove writes/searches
      are source-scoped without explicit source_id tool arguments.
@@ -38,6 +38,14 @@ HOME = BASE / "home"
 STORE = str(BASE / "install-source-defaults.sqlite")
 SOURCE_ID = "agent-alpha"
 BACKEND = "libsqlite"
+ACTOR_IDS = {
+    "codex": "codex-one",
+    "cursor": "cursor-main",
+    "opencode": "opencode-main",
+    "claude": "claude-main",
+    "hermes": "hermes-main",
+    "openclaw": "openclaw-main",
+}
 
 
 def run(
@@ -84,6 +92,8 @@ def install(target: str, *, print_only: bool = False) -> dict[str, Any]:
         target,
         "--source-id",
         SOURCE_ID,
+        "--actor-id",
+        ACTOR_IDS[target],
         "--no-verify",
     ]
     if print_only:
@@ -104,10 +114,11 @@ def read_codex_entry() -> dict[str, Any]:
         )
     entry: dict[str, Any] = {}
     for line in text.splitlines():
-        if line.strip().startswith("AIDEMEMO_SOURCE_ID"):
-            entry.setdefault("env", {})["AIDEMEMO_SOURCE_ID"] = (
-                line.split("=", 1)[1].strip().strip('"')
-            )
+        for key in ("AIDEMEMO_SOURCE_ID", "AIDEMEMO_ACTOR_ID"):
+            if line.strip().startswith(key):
+                entry.setdefault("env", {})[key] = (
+                    line.split("=", 1)[1].strip().strip('"')
+                )
     return entry
 
 
@@ -165,11 +176,19 @@ def main() -> int:
         if isinstance(codex_entry.get("env"), dict)
         else None
     )
+    codex_actor_id = (
+        codex_entry.get("env", {}).get("AIDEMEMO_ACTOR_ID")
+        if isinstance(codex_entry.get("env"), dict)
+        else None
+    )
     codex_args = [str(arg) for arg in codex_entry.get("args", [])]
     cursor = read_json(HOME / ".cursor" / "mcp.json")
     opencode = read_json(HOME / ".config" / "opencode" / "opencode.json")
 
-    env = {"AIDEMEMO_SOURCE_ID": codex_source_id or ""}
+    env = {
+        "AIDEMEMO_SOURCE_ID": codex_source_id or "",
+        "AIDEMEMO_ACTOR_ID": codex_actor_id or "",
+    }
     add_payload = mcp_tool_call(
         "aidememo_fact_add",
         {
@@ -190,6 +209,12 @@ def main() -> int:
         command_args=codex_args,
         env=env,
     )
+    inbox_payload = mcp_tool_call(
+        "aidememo_handoff_inbox",
+        {"action": "list"},
+        command_args=codex_args,
+        env=env,
+    )
 
     elapsed_ms = (time.perf_counter_ns() - start) / 1e6
     results = search_payload.get("results", [])
@@ -199,10 +224,15 @@ def main() -> int:
         "cursor_report_verified": file_reports["cursor"].get("verified") is True,
         "opencode_report_verified": file_reports["opencode"].get("verified") is True,
         "codex_config_has_source_id": codex_source_id == SOURCE_ID,
+        "codex_config_has_actor_id": codex_actor_id == ACTOR_IDS["codex"],
         "cursor_config_has_source_id": cursor["mcpServers"]["aidememo"]["env"]["AIDEMEMO_SOURCE_ID"]
         == SOURCE_ID,
+        "cursor_config_has_actor_id": cursor["mcpServers"]["aidememo"]["env"]["AIDEMEMO_ACTOR_ID"]
+        == ACTOR_IDS["cursor"],
         "opencode_config_has_source_id": opencode["mcp"]["aidememo"]["env"]["AIDEMEMO_SOURCE_ID"]
         == SOURCE_ID,
+        "opencode_config_has_actor_id": opencode["mcp"]["aidememo"]["env"]["AIDEMEMO_ACTOR_ID"]
+        == ACTOR_IDS["opencode"],
         "codex_config_has_backend_args": codex_args == ["--backend", BACKEND, "mcp"],
         "cursor_config_has_backend_args": cursor["mcpServers"]["aidememo"]["args"]
         == ["--backend", BACKEND, "mcp"],
@@ -213,9 +243,15 @@ def main() -> int:
         "opencode_report_has_backend": file_reports["opencode"].get("storage_backend") == BACKEND,
         "claude_print_has_env": "AIDEMEMO_SOURCE_ID=agent-alpha"
         in shell_reports["claude"].get("detail", ""),
+        "claude_print_has_actor": "AIDEMEMO_ACTOR_ID=claude-main"
+        in shell_reports["claude"].get("detail", ""),
         "hermes_print_has_env": "--env AIDEMEMO_SOURCE_ID=agent-alpha"
         in shell_reports["hermes"].get("detail", ""),
+        "hermes_print_has_actor": "--env AIDEMEMO_ACTOR_ID=hermes-main"
+        in shell_reports["hermes"].get("detail", ""),
         "openclaw_print_has_env": "AIDEMEMO_SOURCE_ID"
+        in shell_reports["openclaw"].get("detail", ""),
+        "openclaw_print_has_actor": "AIDEMEMO_ACTOR_ID"
         in shell_reports["openclaw"].get("detail", ""),
         "claude_print_has_backend": "--backend libsqlite mcp"
         in shell_reports["claude"].get("detail", ""),
@@ -231,16 +267,21 @@ def main() -> int:
             for row in results
         ),
         "mcp_add_returned_fact_id": isinstance(add_payload.get("id"), str),
+        "mcp_inbox_used_installed_actor_id": inbox_payload.get("actor_id")
+        == ACTOR_IDS["codex"],
     }
 
     out = {
-        "scenario": "M - installed MCP source/backend defaults are usable",
+        "scenario": "M - installed MCP source/actor/backend defaults are usable",
         "home": str(HOME),
         "store": STORE,
         "latency_ms": round(elapsed_ms, 2),
         "file_reports": file_reports,
         "shell_reports": shell_reports,
-        "installed_env": {"AIDEMEMO_SOURCE_ID": codex_source_id},
+        "installed_env": {
+            "AIDEMEMO_SOURCE_ID": codex_source_id,
+            "AIDEMEMO_ACTOR_ID": codex_actor_id,
+        },
         "installed_args": {"codex": codex_args, "backend": BACKEND},
         "mcp": {
             "add_source_id": add_payload.get("source_id"),

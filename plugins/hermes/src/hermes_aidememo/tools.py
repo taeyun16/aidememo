@@ -110,6 +110,77 @@ def _make_handlers(client: AideMemoClient) -> list[tuple[str, dict, Callable[...
             )
         )
 
+    def _handoff(args: dict, **_: Any) -> str:
+        return _serialize(
+            client.handoff_packet(
+                args.get("session") or args.get("session_id"),
+                from_actor=args.get("from_actor"),
+                from_route=args.get("from") or args.get("from_route"),
+                to_route=args.get("to") or args.get("to_route"),
+                from_agent=args.get("from_agent"),
+                from_profile=args.get("from_profile"),
+                to_agent=args.get("to_agent"),
+                to_profile=args.get("to_profile"),
+                to_actor=args.get("to_actor"),
+                focus=args.get("focus"),
+                done_when=args.get("done_when"),
+                dispatch=bool(args.get("dispatch", False)),
+                source_id=args.get("source_id"),
+                limit=int(args.get("limit") or 40),
+                include_superseded=bool(args.get("include_superseded", False)),
+            )
+        )
+
+    def _handoff_inbox(args: dict, **_: Any) -> str:
+        action = args.get("action") or "list"
+        if action == "list":
+            return _serialize(
+                {
+                    "assignments": client.handoff_inbox(
+                        actor_id=args.get("actor_id"),
+                        source_id=args.get("source_id"),
+                        include_completed=bool(args.get("include_completed", False)),
+                        limit=int(args.get("limit") or 20),
+                    )
+                }
+            )
+        if action == "outbox":
+            return _serialize(
+                {
+                    "assignments": client.handoff_outbox(
+                        actor_id=args.get("actor_id"),
+                        source_id=args.get("source_id"),
+                        include_completed=bool(args.get("include_completed", True)),
+                        limit=int(args.get("limit") or 20),
+                    )
+                }
+            )
+        handoff_id = args.get("handoff_id")
+        if not handoff_id:
+            raise ValueError(f"handoff_id required for action={action}")
+        if action == "show":
+            return _serialize(client.handoff_show(handoff_id))
+        if action == "accept":
+            return _serialize(client.handoff_accept(handoff_id, actor_id=args.get("actor_id")))
+        if action == "status":
+            return _serialize(client.handoff_status(handoff_id, actor_id=args.get("actor_id")))
+        if action == "return":
+            result_fact_id = args.get("result_fact_id")
+            outcome = args.get("outcome")
+            if not result_fact_id or not outcome:
+                raise ValueError("result_fact_id and outcome required for action=return")
+            return _serialize(
+                client.handoff_return(
+                    handoff_id,
+                    result_fact_id,
+                    outcome=outcome,
+                    actor_id=args.get("actor_id"),
+                )
+            )
+        if action == "complete":
+            return _serialize(client.handoff_complete(handoff_id, actor_id=args.get("actor_id")))
+        raise ValueError(f"unknown handoff inbox action: {action}")
+
     def _aggregate(args: dict, **_: Any) -> str:
         return _serialize(
             client.aggregate(
@@ -163,6 +234,7 @@ def _make_handlers(client: AideMemoClient) -> list[tuple[str, dict, Callable[...
                     tags=tags,
                     source_id=args.get("source_id"),
                     actor_id=args.get("actor_id"),
+                    session_id=args.get("session_id"),
                 )
             }
         )
@@ -223,6 +295,59 @@ def _make_handlers(client: AideMemoClient) -> list[tuple[str, dict, Callable[...
             _workflow_start,
             "Start a ticket/issue workflow and return the project-memory context pack.",
             "🚦",
+        ),
+        (
+            "aidememo_handoff",
+            _schema(
+                "aidememo_handoff",
+                "Create a structured evidence-linked handoff packet before work crosses to another coding-agent installation or external worker lane. Keeps the same session id, focus, done_when, resume state, grouped decisions/questions/risks, prompt-ready content, and fact ids for verification. Inside one Hermes Kanban board, keep claim/retry/status/completion in Kanban and use a read-only packet only when compact evidence is useful; do not dispatch a second AideMemo assignment for an internal profile transition.",
+                {
+                    "type": "object",
+                    "properties": {
+                        "session": {"type": "string", "description": "Tracked session id. Falls back to AIDEMEMO_SESSION_ID."},
+                        "from_actor": {"type": "string", "description": "Sending account/installation alias. Falls back to AIDEMEMO_ACTOR_ID."},
+                        "from": {"type": "string", "description": "Producing route shorthand AGENT[/PROFILE], e.g. hermes/coding."},
+                        "to": {"type": "string", "description": "Receiving route shorthand AGENT[/PROFILE], e.g. hermes/reviewer."},
+                        "from_agent": {"type": "string", "description": "Producing agent, e.g. hermes or codex."},
+                        "from_profile": {"type": "string", "description": "Producing Hermes profile, e.g. coding."},
+                        "to_agent": {"type": "string", "description": "Receiving agent, e.g. claude-code or hermes."},
+                        "to_profile": {"type": "string", "description": "Receiving profile, e.g. reviewer."},
+                        "to_actor": {"type": "string", "description": "Receiving account/installation alias. Required when dispatch=true."},
+                        "focus": {"type": "string", "description": "Next objective for the receiver."},
+                        "done_when": {"type": "string", "description": "Observable completion condition before the receiver returns the workflow."},
+                        "dispatch": {"type": "boolean", "description": "Persist a pull-based assignment pointer; default false keeps read-only preview."},
+                        "source_id": {"type": "string", "description": "Shared memory namespace. Unlike profile names, this scopes retrieval and falls back to plugin config or AIDEMEMO_SOURCE_ID."},
+                        "limit": {"type": "integer", "description": "Max session facts (default 40)."},
+                        "include_superseded": {"type": "boolean", "description": "Include superseded evidence for audit replay."},
+                    },
+                },
+            ),
+            _handoff,
+            "Bridge a tracked workflow across agent installations with structured resume state and evidence intact.",
+            "🤝",
+        ),
+        (
+            "aidememo_handoff_inbox",
+            _schema(
+                "aidememo_handoff_inbox",
+                "Pull, inspect, or return cross-installation session assignments. Sender outbox/status expose linked result evidence, while Hermes Kanban remains the canonical card lifecycle.",
+                {
+                    "type": "object",
+                    "properties": {
+                        "action": {"type": "string", "enum": ["list", "outbox", "show", "status", "accept", "return", "complete"], "default": "list"},
+                        "actor_id": {"type": "string", "description": "Current account/installation alias. Falls back to AIDEMEMO_ACTOR_ID."},
+                        "handoff_id": {"type": "string", "description": "Required for show, status, accept, return, or complete. show does not require actor_id."},
+                        "result_fact_id": {"type": "string", "description": "Persisted worker result/error fact for action=return."},
+                        "outcome": {"type": "string", "enum": ["succeeded", "failed"]},
+                        "source_id": {"type": "string"},
+                        "include_completed": {"type": "boolean"},
+                        "limit": {"type": "integer"},
+                    },
+                },
+            ),
+            _handoff_inbox,
+            "Pull or acknowledge assignments for this agent installation.",
+            "📥",
         ),
         (
             "aidememo_context",
@@ -368,7 +493,7 @@ def _make_handlers(client: AideMemoClient) -> list[tuple[str, dict, Callable[...
             "aidememo_fact_add",
             _schema(
                 "aidememo_fact_add",
-                "Append a fact to the wiki. Pick fact_type when you know it; if omitted, aidememo infers strong preference/lesson/error/decision/convention cues and returns type metadata.",
+                "Append a fact to the wiki. Pick fact_type when you know it; if omitted, aidememo infers strong preference/lesson/error/decision/convention cues and returns type metadata. Pass session_id from the workflow or Kanban parent handoff so later workers recover the same evidence thread.",
                 {
                     "type": "object",
                     "properties": {
@@ -378,6 +503,7 @@ def _make_handlers(client: AideMemoClient) -> list[tuple[str, dict, Callable[...
                         "tags": {"type": "array", "items": {"type": "string"}},
                         "source_id": {"type": "string", "description": "Optional source namespace / tenant / upstream id. If omitted, Hermes falls back to plugins.aidememo.source_id or AIDEMEMO_SOURCE_ID when set."},
                         "actor_id": {"type": "string", "description": "Optional writer identity. Falls back to plugins.aidememo.actor_id or AIDEMEMO_ACTOR_ID."},
+                        "session_id": {"type": "string", "description": "Optional tracked workflow session id. In a Kanban worker, reuse the id carried by the card or parent handoff; Kanban remains the task lifecycle owner."},
                     },
                     "required": ["content"],
                 },

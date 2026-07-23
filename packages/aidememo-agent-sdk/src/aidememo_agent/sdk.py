@@ -160,6 +160,151 @@ class AideMemoMemorySDK:
             include_superseded=include_superseded,
         )
 
+    def handoff(
+        self,
+        session_id: str | None = None,
+        *,
+        from_actor: str | None = None,
+        from_route: str | None = None,
+        to_route: str | None = None,
+        from_agent: str | None = None,
+        from_profile: str | None = None,
+        to_agent: str | None = None,
+        to_profile: str | None = None,
+        to_actor: str | None = None,
+        focus: str | None = None,
+        done_when: str | None = None,
+        dispatch: bool = False,
+        source_id: str | None = None,
+        limit: int = 40,
+        include_superseded: bool = False,
+    ) -> str:
+        """Build a portable handoff packet from a tracked workflow session."""
+
+        return self.client.handoff(
+            session_id,
+            from_actor=from_actor,
+            from_route=from_route,
+            to_route=to_route,
+            from_agent=from_agent,
+            from_profile=from_profile,
+            to_agent=to_agent,
+            to_profile=to_profile,
+            to_actor=to_actor,
+            focus=focus,
+            done_when=done_when,
+            dispatch=dispatch,
+            source_id=source_id,
+            limit=limit,
+            include_superseded=include_superseded,
+        )
+
+    def handoff_packet(
+        self,
+        session_id: str | None = None,
+        *,
+        from_actor: str | None = None,
+        from_route: str | None = None,
+        to_route: str | None = None,
+        from_agent: str | None = None,
+        from_profile: str | None = None,
+        to_agent: str | None = None,
+        to_profile: str | None = None,
+        to_actor: str | None = None,
+        focus: str | None = None,
+        done_when: str | None = None,
+        dispatch: bool = False,
+        source_id: str | None = None,
+        limit: int = 40,
+        include_superseded: bool = False,
+    ) -> dict[str, Any]:
+        """Return a structured handoff envelope for orchestrator routing."""
+
+        return self.client.handoff_packet(
+            session_id,
+            from_actor=from_actor,
+            from_route=from_route,
+            to_route=to_route,
+            from_agent=from_agent,
+            from_profile=from_profile,
+            to_agent=to_agent,
+            to_profile=to_profile,
+            to_actor=to_actor,
+            focus=focus,
+            done_when=done_when,
+            dispatch=dispatch,
+            source_id=source_id,
+            limit=limit,
+            include_superseded=include_superseded,
+        )
+
+    def handoff_inbox(
+        self,
+        *,
+        actor_id: str | None = None,
+        source_id: str | None = None,
+        include_completed: bool = False,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        """Pull assignments addressed to one account/installation alias."""
+
+        return self.client.handoff_inbox(
+            actor_id=actor_id,
+            source_id=source_id,
+            include_completed=include_completed,
+            limit=limit,
+        )
+
+    def handoff_outbox(
+        self,
+        *,
+        actor_id: str | None = None,
+        source_id: str | None = None,
+        include_completed: bool = True,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        return self.client.handoff_outbox(
+            actor_id=actor_id,
+            source_id=source_id,
+            include_completed=include_completed,
+            limit=limit,
+        )
+
+    def handoff_show(self, handoff_id: str) -> dict[str, Any]:
+        """Inspect one assignment by id without supplying an actor alias."""
+
+        return self.client.handoff_show(handoff_id)
+
+    def handoff_status(
+        self, handoff_id: str, *, actor_id: str | None = None
+    ) -> dict[str, Any]:
+        return self.client.handoff_status(handoff_id, actor_id=actor_id)
+
+    def handoff_accept(
+        self, handoff_id: str, *, actor_id: str | None = None
+    ) -> dict[str, Any]:
+        return self.client.handoff_accept(handoff_id, actor_id=actor_id)
+
+    def handoff_complete(
+        self, handoff_id: str, *, actor_id: str | None = None
+    ) -> dict[str, Any]:
+        return self.client.handoff_complete(handoff_id, actor_id=actor_id)
+
+    def handoff_return(
+        self,
+        handoff_id: str,
+        result_fact_id: str,
+        *,
+        outcome: str,
+        actor_id: str | None = None,
+    ) -> dict[str, Any]:
+        return self.client.handoff_return(
+            handoff_id,
+            result_fact_id,
+            outcome=outcome,
+            actor_id=actor_id,
+        )
+
     def project_profile(
         self,
         *,

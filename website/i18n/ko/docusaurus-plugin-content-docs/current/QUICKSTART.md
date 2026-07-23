@@ -111,4 +111,38 @@ am recent --last 1d
 am stats
 ```
 
+## 7. 다른 코딩 에이전트 계정으로 세션 넘기기
+
+반복해서 사용하는 Codex 또는 Claude 계정은 한 번만 등록합니다. 프로필에는
+경로와 라우팅 메타데이터만 저장되며 자격 증명은 저장되지 않습니다.
+
+```bash
+am agent add codex-two --type codex \
+  --home /path/to/codex-two-home \
+  --workspace "$PWD"
+```
+
+활성 세션을 보냅니다. 목적지 프로필에서 런타임과 기본 source 범위를
+가져옵니다.
+
+```bash
+export AIDEMEMO_ACTOR_ID=codex-one
+
+am handoff send codex-two \
+  --focus "Redis timeout 패치 검토" \
+  --done-when "집중 테스트를 통과하고 검토 결과를 기록"
+```
+
+해당 계정의 가장 오래된 pending 작업을 실행하고 `send`가 출력한 ID로 반환
+결과를 확인합니다.
+
+```bash
+am handoff run codex-two
+am handoff show handoff-...
+```
+
+수신자 lifecycle을 직접 제어할 때만 `handoff inbox`, `accept`, `return`을
+사용합니다. 완료 결과는 기본적으로 `handoff outbox`에 포함되며 활성 작업만
+보려면 `--pending-only`를 전달합니다.
+
 이제 CLI, MCP, SDK에서 사용할 수 있는 로컬 메모리 저장소가 준비됐습니다.

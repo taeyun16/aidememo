@@ -217,7 +217,7 @@ sdk = AideMemoMemorySDK.__name__
 client = AideMemoClient.__name__
 if AideMemoMemorySDK is not Memory:
     raise SystemExit("hermes_aidememo.AideMemoMemorySDK does not re-export aidememo_agent.Memory")
-for method in ("open", "search_rows", "remember", "session_canvas", "project_profile"):
+for method in ("open", "search_rows", "remember", "session_canvas", "handoff", "handoff_packet", "handoff_inbox", "handoff_accept", "handoff_complete", "project_profile"):
     if not hasattr(AideMemoMemorySDK, method):
         raise SystemExit(f"AideMemoMemorySDK missing first-use method: {method}")
 cfg = capture_adapter.config_from_plugin({})

@@ -81,7 +81,10 @@ python3 scripts/docs-site-e2e.py
 | 순위 adapter | `aidememo adapt train`, `aidememo adapt status`, `aidememo adapt eval` |
 | 대기 팩트 검토 | `aidememo pending review`, `aidememo pending list`, `aidememo pending approve`, `aidememo pending reject`, `aidememo pending stats` |
 | 데몬 | `aidememo daemon start`, `aidememo daemon stop`, `aidememo daemon status` |
-| 세션 | `aidememo session start`, `aidememo session new`, `aidememo session current`, `aidememo session list`, `aidememo session canvas` |
+| 세션 | `aidememo session start`, `aidememo session new`, `aidememo session current`, `aidememo session resume`, `aidememo session list`, `aidememo session canvas`, `aidememo session handoff` |
+| 에이전트 설치 | `aidememo agent`, `aidememo agent add`, `aidememo agent list`, `aidememo agent show`, `aidememo agent remove`(권장); `aidememo installation`, `aidememo installation add`, `aidememo installation list`, `aidememo installation show`, `aidememo installation remove`(호환) |
+| 핸드오프 할당 | `aidememo handoff`, `aidememo handoff send`, `aidememo handoff run`, `aidememo handoff show`(권장); `aidememo handoff inbox`, `aidememo handoff outbox`, `aidememo handoff status`, `aidememo handoff accept`, `aidememo handoff return`, `aidememo handoff complete`(수동 lifecycle) |
+| 외부 worker 수신자 | 주소가 지정된 Codex/Claude handoff를 실행하고 같은 session에 result/error를 반환하는 SDK 명령 `aidememo-worker-lane` |
 | 워크플로 | `aidememo workflow start` |
 | 프로필 아티팩트 | `aidememo profile export` |
 | 인증 | `aidememo auth generate`, `aidememo auth login`, `aidememo auth logout`, `aidememo auth list` |
@@ -108,6 +111,8 @@ python3 scripts/docs-site-e2e.py
 | `aidememo_recent` | 최근 팩트 반환 |
 | `aidememo_context` | 넓은 턴 시작 컨텍스트 envelope 반환 |
 | `aidememo_workflow_start` | 선택적으로 parent session에 연결되는 추적 이슈, PR, 티켓, 자동화 워크플로 시작 |
+| `aidememo_handoff` | 범위가 제한되고 팩트와 연결된 근거, `done_when`, 구조화된 resume 메타데이터로 추적 세션을 다른 코딩 에이전트 또는 프로필에 라우팅 |
+| `aidememo_handoff_inbox` | 수신자의 list/accept/return과 발신자의 outbox/status를 제공하고 결과 fact를 연결하며 broker delivery 의미론은 제공하지 않음 |
 | `aidememo_session_canvas` | 긴 워크플로 재개를 위한 범위 제한 Markdown + Mermaid canvas 반환 |
 | `aidememo_profile_export` | 현재 타입 지정 팩트에서 읽기 전용 프로젝트 프로필 텍스트 아티팩트 반환 |
 | `aidememo_query` | 집중된 주제 컨텍스트 팩 반환 |

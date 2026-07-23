@@ -39,6 +39,10 @@ pub struct Config {
     /// Named projects (multi-store support). Empty by default.
     #[serde(default)]
     pub projects: BTreeMap<String, ProjectConfig>,
+    /// Local coding-agent installations used by external handoff runners.
+    /// Profiles store routing/runtime paths only, never credentials.
+    #[serde(default)]
+    pub installations: BTreeMap<String, InstallationConfig>,
     /// Name of the project to use when neither --store nor --project is given.
     /// If unset (or the project is missing), falls back to `store.path`.
     #[serde(default)]
@@ -49,6 +53,54 @@ pub struct Config {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ProjectConfig {
     pub path: String,
+}
+
+/// One local coding-agent installation/account runtime.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct InstallationConfig {
+    /// Supported runner adapter (`codex` or `claude`).
+    pub agent: String,
+    /// Optional executable override.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub binary: Option<String>,
+    /// Agent state/config root. For Codex this becomes `CODEX_HOME`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config_home: Option<String>,
+    /// Default workspace for handoff execution.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<String>,
+    /// Default AideMemo retrieval namespace.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_id: Option<String>,
+    /// Optional coding-agent model override.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// Child-process environment policy: `core` or `all`.
+    #[serde(default = "default_installation_env_policy")]
+    pub env_policy: String,
+    /// Additional environment-variable names to copy from the launcher.
+    /// Values are deliberately not persisted in config.toml.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pass_env: Vec<String>,
+}
+
+fn default_installation_env_policy() -> String {
+    "core".to_string()
+}
+
+impl Default for InstallationConfig {
+    fn default() -> Self {
+        Self {
+            agent: String::new(),
+            binary: None,
+            config_home: None,
+            workspace: None,
+            source_id: None,
+            model: None,
+            env_policy: default_installation_env_policy(),
+            pass_env: Vec::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

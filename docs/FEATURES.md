@@ -81,7 +81,10 @@ python3 scripts/docs-site-e2e.py
 | Ranking adapter | `aidememo adapt train`, `aidememo adapt status`, `aidememo adapt eval` |
 | Pending fact review | `aidememo pending review`, `aidememo pending list`, `aidememo pending approve`, `aidememo pending reject`, `aidememo pending stats` |
 | Daemon | `aidememo daemon start`, `aidememo daemon stop`, `aidememo daemon status` |
-| Sessions | `aidememo session start`, `aidememo session new`, `aidememo session current`, `aidememo session list`, `aidememo session canvas` |
+| Sessions | `aidememo session start`, `aidememo session new`, `aidememo session current`, `aidememo session resume`, `aidememo session list`, `aidememo session canvas`, `aidememo session handoff` |
+| Agent installations | `aidememo agent`, `aidememo agent add`, `aidememo agent list`, `aidememo agent show`, `aidememo agent remove` (friendly); `aidememo installation`, `aidememo installation add`, `aidememo installation list`, `aidememo installation show`, `aidememo installation remove` (compatibility) |
+| Handoff assignments | `aidememo handoff`, `aidememo handoff send`, `aidememo handoff run`, `aidememo handoff show` (friendly); `aidememo handoff inbox`, `aidememo handoff outbox`, `aidememo handoff status`, `aidememo handoff accept`, `aidememo handoff return`, `aidememo handoff complete` (manual lifecycle) |
+| External worker receiver | SDK command `aidememo-worker-lane` for addressed Codex/Claude handoff execution and same-session result/error return |
 | Workflows | `aidememo workflow start` |
 | Profile artifacts | `aidememo profile export` |
 | Auth | `aidememo auth generate`, `aidememo auth login`, `aidememo auth logout`, `aidememo auth list` |
@@ -108,6 +111,8 @@ python3 scripts/docs-site-e2e.py
 | `aidememo_recent` | Return recent facts. |
 | `aidememo_context` | Return the broad opening-turn context envelope. |
 | `aidememo_workflow_start` | Start a tracked issue, PR, ticket, or automation workflow, optionally linked to a parent session. |
+| `aidememo_handoff` | Route a tracked session to another coding agent or profile with bounded, fact-linked evidence, `done_when`, and structured resume metadata. |
+| `aidememo_handoff_inbox` | Receiver list/accept/return and sender outbox/status over session pointers; returned evidence is linked by fact id, with no broker delivery semantics. |
 | `aidememo_session_canvas` | Return a bounded Markdown + Mermaid canvas for long workflow resumption. |
 | `aidememo_profile_export` | Return a read-only project profile text artifact from current typed facts. |
 | `aidememo_query` | Return a focused topic context pack. |

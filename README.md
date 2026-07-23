@@ -1,7 +1,7 @@
 <div align="center">
   <img src="./website/static/img/aidememo-logo.png" alt="AideMemo logo" width="96" height="96">
   <h1 align="center">AideMemo</h1>
-  <p><strong>Agent-friendly SDK memory for coding agents.</strong></p>
+  <p><strong>Portable working memory for coding agents and orchestrators.</strong></p>
   <p>
     One Rust binary. One embedded store. A code-first SDK, MCP tools, CLI, and native bindings for agents that need memory with facts, graph traversal, and history.
   </p>
@@ -27,11 +27,14 @@
 
 ---
 
-**AideMemo** (`aidememo`) is an agent-friendly SDK memory system for Claude Code,
-Codex, Hermes, pi, Cursor, OpenClaw, OpenCode, and other coding agents. It stores project knowledge as typed facts
+**AideMemo** (`aidememo`) is portable, agent-friendly working memory and an SDK
+for Claude Code, Codex, Hermes, pi, Cursor, OpenClaw, OpenCode, coding-agent
+orchestrators, and other agent runtimes. It stores project knowledge as typed facts
 connected to entities and relations, keeps temporal history with validity
 windows, and exposes the same store through a Python agent SDK, MCP tools, CLI,
-and in-process bindings.
+and in-process bindings. A tracked workflow can move from Codex to Claude Code,
+or between Hermes profiles, without flattening its decisions and failures into
+an unauditable chat summary.
 
 It is deliberately not a hosted memory SaaS, a full agent runtime, or a vector
 database you have to operate. The default path is local and serverless: agents
@@ -114,6 +117,7 @@ placement boundaries.
 | Need | What AideMemo gives you |
 |---|---|
 | Agent-friendly SDK memory | `aidememo-agent-sdk` gives code-executing agents `Memory.open`, `search_rows`, `coverage_by`, `aggregate_many`, and `remember`. |
+| Cross-agent and cross-account handoff | `aidememo_handoff` packages a tracked session; optional dispatch plus `aidememo_handoff_inbox` lets `codex-one`, `codex-two`, or `claude-main` pull the same session without exchanging vendor chat ids. |
 | Local agent memory | Single binary + single embedded store. No Postgres, Qdrant, Neo4j, or hosted vendor. |
 | Zero-token default path | Default capture, typed writes, BM25-first search, and MCP/SDK reads run locally without external LLM API calls. |
 | Opt-in local SLMs | MLX LFM sidecars can assist weak-query retrieval, candidate reranking, and shadow fact typing without turning model inference into the source of truth. |
@@ -220,7 +224,8 @@ Register it with an agent:
 
 ```bash
 aidememo init --agent codex ./my-wiki
-aidememo --backend libsqlite mcp-install --target codex --source-id my-project
+aidememo --backend libsqlite mcp-install --target codex \
+  --source-id my-project --actor-id codex-one
 
 # Claude Code
 aidememo --backend libsqlite mcp-install --target claude --source-id my-project
@@ -267,12 +272,145 @@ question shape requires it:
 | Exact totals, counts, date sets, or timelines | `aidememo_aggregate` | Deterministic arithmetic over matching facts; use it as insurance for cross-fact counting, not for simple recall. |
 | Learned a durable fact | `aidememo_fact_add` / `aidememo_fact_add_many` | Store typed memory explicitly; omitted `fact_type` uses deterministic strong-cue inference, and `session_id` keeps follow-up facts on the workflow thread. |
 | Resuming a long workflow | `aidememo_session_canvas` / `aidememo session canvas` / SDK `session_canvas()` | Fetch a bounded Markdown + Mermaid map of the session with fact-id drill-down instead of injecting the whole thread. |
+| Routing work across agent installations/accounts | `aidememo_handoff` + `aidememo_handoff_inbox` / CLI `handoff` / SDK handoff methods | Preview a bounded packet or dispatch a session pointer to Codex → Claude Code, Hermes Kanban → external Codex, or `codex-one` → `codex-two`. Keep same-board Hermes task state in Kanban. |
 | Preparing project context | `aidememo_profile_export` / `aidememo profile export` / SDK `project_profile()` | Generate a read-only `project_profile.md` text view from current typed facts; the store remains the source of truth. |
 
 The agent-facing memory profile itself is treated as an auditable artifact.
 [`docs/SKILLOPT_LITE.md`](docs/SKILLOPT_LITE.md) describes the
 SkillOpt-inspired loop, and `scripts/skillopt-lite-check.sh` gates candidate
 `SKILL.md` / memory-profile edits before they are accepted.
+
+## Orchestrator Handoff
+
+The attractive unit is not a static profile; it is a workflow that survives a
+change of worker. Connect each recurring account once, then send the active
+session by its short alias:
+
+```bash
+aidememo agent add codex-two --type codex \
+  --home /path/to/codex-two-home --workspace "$PWD" \
+  --source-id release-team
+
+AIDEMEMO_ACTOR_ID=codex-one aidememo handoff send codex-two \
+  --focus "Verify package metadata, then run release preflight" \
+  --done-when "The installed wheel matches workspace metadata and preflight passes"
+
+# In the second Codex account/terminal, or from the orchestrator:
+aidememo handoff run codex-two
+
+# The send output includes the id used here. No actor flag is needed.
+aidememo handoff show handoff-...
+```
+
+`send` infers the current session from `AIDEMEMO_SESSION_ID`, the sender from
+`AIDEMEMO_ACTOR_ID`, and the receiving runtime, workspace, and default source
+scope from `codex-two`. The lower-level packet and manual accept/return flow
+remain available when an orchestrator needs explicit route fields:
+
+```bash
+aidememo session handoff "$AIDEMEMO_SESSION_ID" \
+  --from-actor codex-one \
+  --to-actor codex-two \
+  --from codex/coding \
+  --to codex/reviewer \
+  --source-id release-team \
+  --focus "Verify package metadata, then run release preflight" \
+  --done-when "The installed wheel matches workspace metadata and preflight passes" \
+  --dispatch
+
+# In the second Codex account/terminal:
+AIDEMEMO_ACTOR_ID=codex-two aidememo handoff inbox --source-id release-team
+AIDEMEMO_ACTOR_ID=codex-two aidememo handoff accept handoff-...
+
+# The sender can inspect the returned result fact without polling the session:
+aidememo handoff outbox --actor-id codex-one
+aidememo handoff show handoff-...
+```
+
+The identifiers have deliberately separate jobs: `session_id` is task
+continuity, `source_id` is the project/tenant retrieval scope, `actor_id` is a
+user-assigned account or installation alias, and agent/profile fields describe
+the runtime role. Actor aliases are routing metadata, not authentication; use a
+unique non-secret alias per installation. Without `--dispatch`, handoff remains
+a read-only preview. With it, the receiver pulls a tiny assignment record and
+`accept` renders the packet from the current session, so there is no copied
+message payload.
+
+This is intentionally not Kafka or a job queue. AideMemo has no topics,
+offsets, consumer groups, leases, delivery retries, or exactly-once claim. The
+ledger only stores a session pointer, routing labels, focus, `done_when`,
+acknowledgement state, and an optional linked result fact. A successful return
+completes the acknowledgement; a failed return stays accepted for orchestrator
+policy. Neither state is a distributed task-success proof.
+
+MCP and SDK consumers can keep the envelope structured instead of parsing the
+Markdown: `Memory.handoff_packet(...)` returns route, focus, `done_when`,
+resume environment, and prompt-ready `content`; `handoff_inbox()`,
+`handoff_accept()`, `handoff_return()`, `handoff_outbox()`, and
+`handoff_show()` expose the default round trip; actor-scoped
+`handoff_status()` remains available for stricter routing checks. Meanwhile,
+`Memory.handoff(...)` remains the text-only convenience call.
+
+Installation profiles store only non-secret runtime metadata: agent adapter,
+workspace, source scope, model, environment policy, and a config-root path.
+For Codex, the worker maps that path to the documented `CODEX_HOME` boundary;
+credentials remain in the agent-owned directory. The default `core`
+environment policy avoids leaking unrelated account tokens and permits named
+variables only through repeatable `--pass-env` entries.
+
+Run `scripts/demo-agent-handoff.sh` for a zero-token Codex/coding →
+Hermes/reviewer smoke of this complete path.
+
+The zero-token Scenario P gate preserves critical evidence `4/4`, route fields
+`4/4`, and neighbouring-source leakage `0`, while reducing the packet by
+`82.6%` versus the raw session JSON and `34.5%` versus the bounded session
+canvas. This validates the handoff protocol and context envelope; downstream
+model task success remains a separate opt-in evaluation.
+
+Scenario Q additionally runs three independent MCP processes as `codex-one`,
+`codex-two`, and `claude-main`. Its `10/10` gates verify actor and source
+isolation, same-session continuation, explicit acknowledgement, one pointer
+entity per dispatch, zero copied facts, and zero broker/payload keys.
+
+Scenario R uses a real temporary Hermes Kanban DB and passes `12/12` gates.
+The internal `coding -> reviewer` transition creates no AideMemo assignment;
+only the external `codex-two` boundary creates one pointer, returned evidence
+stays on the same session, and Hermes explicitly owns final card completion.
+It is protocol evidence, not an external CLI worker spawner or model-success
+result.
+
+Scenario S closes that receiver-side gap with the installable
+`aidememo-worker-lane` SDK command. Its zero-token fake Codex/Claude gate passes
+`14/14`: the success path receives the packet and resume environment, returns a
+fact on the same session, then completes the acknowledgement; the failure path
+records an error on the same session and remains accepted for the scheduler.
+Sender outbox/status links both returned facts without scanning the session.
+The runner uses shell-free argv and leaves Hermes Kanban untouched. This still
+does not prove live-model task success, account authentication, exactly-once
+execution, or Hermes `spawn_fn` integration.
+
+### Hermes Kanban composition
+
+Hermes Kanban and AideMemo have complementary ownership. Kanban is the
+canonical task state machine: cards, dependencies, atomic claims, retries,
+heartbeats, comments, worker runs, and completion stay on the board. AideMemo
+owns durable semantic memory: project decisions, lessons, recurring errors,
+fact-linked evidence, and continuity when work leaves the current Hermes
+worker lane.
+
+| Use case | Kanban owns | AideMemo adds |
+|---|---|---|
+| PM → coder → reviewer profiles on one board | Dependencies, assignment, parent summary, review gate | Cross-card decisions and failure patterns. Reuse one `session_id` from card metadata/comment; do not dispatch an AideMemo inbox item. |
+| Retry or crash recovery | Reclaim, prior run, retry count, circuit breaker | Durable failed approaches that remain searchable across retries and sibling cards. |
+| A new board/project revisits old work | New board lifecycle | Retrieval of prior project evidence even though the old card is outside the active board. |
+| Hermes card delegates to Codex/Claude | Card remains the canonical task and validation gate | A bounded external-agent packet, account-addressed pull, fact ids, and the same session when the result returns to Hermes. |
+| Research fleet promotes one result | Fan-out tasks, workspaces, winner/reviewer status | Comparable experiment facts and the evidence/claim boundary used to select the winner. |
+
+Dispatcher-spawned workers expose `HERMES_KANBAN_TASK` and
+`HERMES_KANBAN_BOARD`. The Hermes plugin detects that context, avoids
+auto-starting a second workflow for ticket-shaped worker prompts, and injects
+the ownership rule above. `aidememo_fact_add` now accepts `session_id`, so a
+worker can attach one durable finding without falling back to a batch call.
 
 ## Common Workflows
 
@@ -461,7 +599,7 @@ parallel.
 | Optional-redb serverless lock-retry sweep, retry `5000` | smooth through 4 writers; 8 writers persisted 79/80 |
 | HTTP shared `mcp-serve`, 2 clients x 10 writes | p50 `18.4ms`, p95 `41.8ms`, 20/20 persisted |
 | Zero-token workflow demo | decision + lesson + error surfaced in `128ms` |
-| MCP source/backend-default install Scenario M | 21/21 invariants; installed `AIDEMEMO_SOURCE_ID` + `--backend libsqlite` scoped MCP write/search in `111.6ms` |
+| MCP source/actor/backend install Scenario M | 28/28 invariants; installed source + per-installation actor + `--backend libsqlite` drove MCP write/search/inbox defaults in `107.8ms` |
 | Hermes Memory-as-Code Scenario N | 9/9 invariants; SDK fanout/dedupe/coverage/aggregate excluded beta-source rows |
 | `aidememo-agent-sdk` pack smoke | wheel install + `Memory` / `AideMemoClient` / `AideMemoMemorySDK` artifact-method checks passed in `3.38s` |
 | `hermes-aidememo` pack smoke | wheel install + SDK re-export / bundled skill / opt-in capture adapter checks passed in `4.43s` |
@@ -490,12 +628,12 @@ and temporal memory semantics, not a SOTA benchmark claim.
 | Retrieval | BM25, semantic HNSW, hybrid RRF, optional TEI / `lfm-sidecar`, fastembed and rerank paths |
 | Graph | entities, facts, relations, traversal, shortest path, Mermaid / DOT export |
 | Time | `supersede`, `current_only`, `as_of`, archive / cold tier |
-| Agent tools | 27 MCP tools including `aidememo_workflow_start`, `aidememo_context`, `aidememo_query`, `aidememo_aggregate`, `aidememo_fact_add_many` |
+| Agent tools | 29 MCP tools including `aidememo_workflow_start`, `aidememo_handoff`, `aidememo_handoff_inbox`, `aidememo_context`, `aidememo_query`, `aidememo_aggregate`, `aidememo_fact_add_many` |
 | Capture | `aidememo_extract`, pending review queue, review-only LFM LoRA `fact_type_hint` shadow path, opt-in Hermes/OpenClaw capture adapter |
-| Artifacts | `aidememo session canvas`, `aidememo profile export` for bounded, auditable Markdown views over typed facts |
+| Artifacts | `aidememo session canvas`, `aidememo session handoff`, `aidememo profile export` for bounded, auditable Markdown views over typed facts |
 | Ops | `doctor` / MCP `aidememo_doctor`, `overview`, `bench`, `vector-rebuild`, `consolidate`, `auto-relate` |
-| Sharing | `source_id`, multi-project stores, stdio MCP, HTTP/SSE MCP, daemon discovery, branch logs for cloud agents and speculative memory runs |
-| Code-first composition | `aidememo-agent-sdk` with `Memory.open`, `search_rows`, `coverage_by`, `aggregate_many`, `remember` |
+| Sharing | `source_id`, installation-scoped `actor_id`, pull-based session assignments, multi-project stores, stdio/HTTP MCP, daemon discovery, branch logs |
+| Code-first composition | `aidememo-agent-sdk` with `Memory.open`, `search_rows`, `coverage_by`, `aggregate_many`, `remember`, and handoff send/inbox/accept/return/show methods |
 | Bindings | Python, Node, Elixir, C |
 
 ## CLI Reference

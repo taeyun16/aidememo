@@ -21,6 +21,7 @@ flowchart TD
   code{"에이전트가 코드를 실행하고<br/>중간 상태를 유지할 수 있는가?"}
   learned{"에이전트가 오래 유지할<br/>메모리를 배웠는가?"}
   resume{"긴 추적 워크플로를<br/>다시 시작하는가?"}
+  route{"다른 에이전트, 프로필,<br/>계정이 다음 작업을 맡는가?"}
 
   workflow["aidememo_workflow_start<br/>또는 aidememo workflow start"]
   context["aidememo_context"]
@@ -30,6 +31,8 @@ flowchart TD
   sdk["aidememo-agent-sdk<br/>Memory.open / search_rows / coverage_by"]
   add["aidememo_fact_add<br/>또는 aidememo_fact_add_many"]
   canvas["aidememo_session_canvas<br/>또는 aidememo session canvas"]
+  handoff["aidememo_handoff<br/>미리보기 또는 dispatch"]
+  inbox["aidememo_handoff_inbox<br/>list / accept / return / outbox / status"]
 
   start --> sparse
   sparse -- 예 --> workflow
@@ -50,6 +53,10 @@ flowchart TD
   learned -- 아니오 --> resume
   add --> resume
   resume -- 예 --> canvas
+  resume -- 아니오 --> route
+  canvas --> route
+  route -- 예 --> handoff
+  handoff --> inbox
 ```
 
 ## 작업 형태별 진입점
@@ -64,7 +71,135 @@ flowchart TD
 | 오래 유지할 팩트 하나를 학습 | `aidememo_fact_add` / `aidememo fact add` | 타입 지정 메모리를 명시적으로 저장하고 워크플로 세션에 연결할 수 있습니다. |
 | 오래 유지할 여러 팩트를 학습 | `aidememo_fact_add_many` | 쓰기를 배치해 디스크 동기화 비용을 한 번만 지불합니다. |
 | 긴 워크플로 다시 시작 | `aidememo_session_canvas` / `aidememo session canvas` / `Memory.session_canvas(...)` | 팩트 ID 상세 조회 명령을 포함하는 제한된 Markdown 및 Mermaid 지도를 반환합니다. |
+| 에이전트 설치 또는 계정 사이로 작업 라우팅 | `aidememo_handoff` + `aidememo_handoff_inbox` / CLI `handoff` / SDK handoff 메서드 | packet을 미리 보거나 같은 워크플로 세션 포인터를 dispatch하고 명시적으로 accept/complete합니다. Hermes Kanban 같은 기존 스케줄러는 내부 작업 상태를 계속 소유합니다. |
 | 간결한 프로젝트 컨텍스트 준비 | `aidememo_profile_export` / `aidememo profile export` / `Memory.project_profile(...)` | 현재 타입 지정 팩트로 읽기 전용 프로필을 만들고 저장소를 근거 기록으로 유지합니다. |
+
+## 에이전트 간 핸드오프 패턴
+
+AideMemo는 오케스트레이터가 자주 혼합하는 네 가지 개념을 분리합니다.
+
+| 개념 | 의미 |
+|---|---|
+| `session_id` | 연속성: 다음 작업자가 이어받을 추적 워크플로입니다. |
+| `source_id` | 범위: 공유 저장소에서 볼 수 있는 프로젝트/팀/테넌트 팩트입니다. |
+| `actor_id` | 주소: `codex-one` 같은 사용자 지정 계정/설치 별칭이며 인증이 아닙니다. |
+| 에이전트/프로필 경로 | 스케줄링 메타데이터: 패킷을 받을 런타임과 역할이며 권한 경계가 아닙니다. |
+
+보내는 작업자는 먼저 지속할 결정, 교훈, 오류, 열린 질문을 세션에
+연결합니다. 그다음 패킷을 만듭니다.
+
+```bash
+aidememo session handoff \
+  --from-actor codex-one \
+  --to-actor codex-two \
+  --from codex/coding \
+  --to codex/reviewer \
+  --source-id team-a \
+  --focus "패치를 검토하고 집중 회귀 테스트 실행" \
+  --done-when "집중 테스트가 통과하고 리뷰 결과가 세션에 기록됨" \
+  --dispatch \
+  "$AIDEMEMO_SESSION_ID"
+```
+
+route는 `AGENT[/PROFILE]` 형식이며 기존 `from_agent` / `from_profile`,
+`to_agent` / `to_profile` 상세 필드도 계속 지원합니다. Hermes 간 근거
+미리보기에는 `--from hermes/coding --to hermes/reviewer`를 사용할 수 있지만,
+같은 보드의 프로필 전환은 Kanban에 남겨 두고 두 번째 AideMemo 할당을 만들지
+않아야 합니다. `--dispatch`가 없으면 읽기 전용 packet 미리보기입니다. 외부
+수신자에게 dispatch한 경우
+`aidememo_handoff_inbox`의 `list`, `accept`를 호출하며, accept는 현재 세션
+근거와 구조화된 session/source/actor resume 값을 반환합니다. 수신자는 결과
+fact를 쓴 뒤 `return`하고, 발신자는 `outbox` 또는 `status`에서 그 fact를
+확인합니다. MCP 후속 쓰기는 반환된 `session_id`를 전달합니다.
+
+반복 사용하는 계정은 자격 증명 없이 실행 메타데이터만 등록합니다.
+
+```bash
+aidememo agent add codex-two --type codex \
+  --home /path/to/codex-two-home --workspace /path/to/repo \
+  --source-id team-a
+aidememo handoff send codex-two --focus "패치 검토"
+aidememo handoff run codex-two
+aidememo handoff show handoff-...
+```
+
+Codex config root는 `CODEX_HOME`으로 전달되며 기본 `core` 환경 정책은 무관한
+계정 토큰을 자식 프로세스에 상속하지 않습니다.
+
+프로그래밍 방식 라우팅에는 `Memory.handoff_packet(...)`을 사용합니다. 동일한
+Markdown을 `content`에 담고 `session_id`, `source_id`, route, `focus`,
+`done_when`, `resume`을 구조화해 반환합니다. `Memory.handoff(...)`은 prompt에
+텍스트를 바로 주입할 때 쓰는 단축 호출로 유지됩니다.
+
+수동 shell 핸드오프에서 accept 결과는 읽기 전용 packet과 같은
+`aidememo session resume` bootstrap도 제공합니다.
+
+할당 계층은 메시지 broker가 아닙니다. topic, offset, consumer group, lease,
+재전송, payload 복제가 없습니다. 같은 actor 별칭을 여러 client가 사용하면 같은
+할당에 접근할 수 있으므로 설치마다 고유한 비밀 아닌 별칭을 사용합니다.
+
+### 핸드오프 유즈케이스
+
+| 유즈케이스 | route 예시 | 반드시 이어져야 하는 것 |
+|---|---|---|
+| 구현에서 리뷰로 | `codex/coding -> hermes/reviewer` | 결정, 알려진 실패, 집중 테스트, 완료 조건 |
+| 같은 에이전트 구독 두 개 | `codex-one -> codex-two` | vendor-local chat ID와 무관한 동일 세션과 리뷰 결과 |
+| Hermes Kanban에서 외부 작업자로 | `hermes/research -> codex/coding` | 실험 결과, 기각한 접근, 구현 목표. Kanban은 계속 카드를 소유합니다. |
+| 장애 대응 교대 | `hermes/oncall -> claude-code/incident` | 타임라인, 시도한 완화책, 활성 위험, 다음 진단 |
+| 연구에서 구현으로 | `hermes/research -> codex/coding` | 측정 근거, 주장 경계, 선택한 개입 |
+| branch winner 승격 | `codex/experiment -> codex/integrator` | 승자 branch id, merge 전제, 검증 명령, rollback 조건 |
+
+이 패턴들은 동일한 continuity/scope/routing 계약을 사용합니다. handoff packet은
+분산 lock이나 권한 token이 아니며 다음 모델이 작업을 완료했다는 증거도
+아닙니다. `done_when`은 관찰 가능한 기대 결과를 명시하고 실제 완료는 별도로
+검증해야 합니다.
+
+## Hermes Kanban 경계
+
+Hermes 카드를 AideMemo 할당 원장에 복제하지 마세요. Kanban은 이미 지속성
+있는 큐와 수명주기 상태를 제공합니다. 두 시스템은 메모리와 외부 작업자
+경계에서 조합합니다.
+
+| 상황 | Hermes Kanban | AideMemo |
+|---|---|---|
+| 같은 보드의 PM → coder → reviewer | dependency edge, claim, comment, run summary, review, completion을 소유 | 공유 워크플로 세션에 지속할 decision/lesson/error를 기록하며 AideMemo dispatch는 사용하지 않음 |
+| retry, stale claim, worker crash | retry/reclaim과 즉시 사용할 이전 시도 컨텍스트를 소유 | 현재 run이나 card보다 오래 유지해야 하는 실패를 회상 |
+| 보드를 넘는 후속 작업 | 새 card만 소유하고 board는 격리 | 프로젝트 `source_id`에서 관련 근거를 검색 |
+| Hermes → Codex/Claude 외부 lane | 외부 결과를 검증할 때까지 card를 running/blocked로 유지 | 주소가 지정된 설치에 한 session pointer를 dispatch하고 현재 fact-linked evidence를 반환 |
+| fleet experiment → 선택한 구현 | fan-out, workspace, winner/reviewer gate를 소유 | 비교 가능한 측정값과 선택한 주장의 경계를 저장 |
+
+프로젝트/팀 검색 경계에는 `source_id`를 사용합니다. Hermes board slug와 task
+id는 card/session metadata의 upstream reference로 유지하며 `actor_id`로 쓰지
+않습니다. `actor_id`는 주소를 지정할 수 있는 외부 계정 또는 설치에만
+사용합니다. worker는 parent handoff나 card comment에 담긴 AideMemo
+`session_id`를 재사용해 `aidememo_fact_add` 또는 `aidememo_fact_add_many`에
+전달해야 합니다.
+
+### 외부 CLI 수신자
+
+Python SDK는 명시적인 외부 경계를 위한 `aidememo-worker-lane`을 설치합니다.
+주소가 지정된 assignment 하나를 accept하고, 현재 handoff packet을 stdin으로
+Codex 또는 Claude에 전달한 뒤 결과를 같은 session에 기록합니다.
+
+```bash
+aidememo-worker-lane handoff-... \
+  --actor-id codex-two \
+  --agent codex \
+  --workspace "$PWD" \
+  --source-id release-team \
+  --kanban-task task-42
+```
+
+runner는 shell 없이 argv를 직접 실행합니다. 성공한 process는 session result를
+추가한 뒤 AideMemo acknowledgement를 complete하고, non-zero exit 또는 timeout은
+`error` fact를 추가하고 upstream scheduler가 처리할 수 있도록 `accepted`로
+남깁니다. `--kanban-task`는 correlation metadata일 뿐이며 runner가 Hermes card를
+claim, retry, complete하지 않습니다. 또한 authentication, exactly-once execution,
+Hermes `spawn_fn` registration을 제공하지 않습니다.
+
+수신자가 다른 머신에서 실행되면 먼저 branch log로 팩트 델타를 내보내고
+병합합니다. handoff packet은 작업을 라우팅하고 branch segment는 원본 레코드를
+이동합니다.
 
 ## 간단한 티켓 패턴
 

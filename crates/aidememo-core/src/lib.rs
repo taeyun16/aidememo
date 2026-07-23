@@ -45,7 +45,7 @@ use std::sync::Arc;
 #[cfg(feature = "semantic")]
 use std::sync::OnceLock;
 
-pub use config::{Config, ProjectConfig};
+pub use config::{Config, InstallationConfig, ProjectConfig};
 pub use error::{AideMemoError, Result};
 pub use ingest::{IngestStats, ParsedFile, Section, Wikilink};
 
@@ -130,6 +130,22 @@ pub struct AideMemo {
     /// True for cold-tier AideMemos so they refuse to recursively
     /// open another cold (would create nested cold-tier files).
     is_cold: bool,
+}
+
+fn workflow_resume_exports(session_id: &str, source_id: Option<&str>) -> String {
+    fn shell_quote(value: &str) -> String {
+        format!("'{}'", value.replace('\'', "'\"'\"'"))
+    }
+
+    let mut exports = format!(
+        "export AIDEMEMO_SESSION_ID={}",
+        shell_quote(session_id.trim())
+    );
+    if let Some(source_id) = source_id.map(str::trim).filter(|value| !value.is_empty()) {
+        exports.push_str("\nexport AIDEMEMO_SOURCE_ID=");
+        exports.push_str(&shell_quote(source_id));
+    }
+    exports
 }
 
 impl AideMemo {
@@ -2181,7 +2197,7 @@ impl AideMemo {
 
         Ok(types::WorkflowStartPack {
             session_id: session_name.clone(),
-            export: format!("export AIDEMEMO_SESSION_ID={session_name}"),
+            export: workflow_resume_exports(&session_name, source_id),
             title: title.to_string(),
             source: source.map(str::to_string),
             source_id: source_id.map(str::to_string),

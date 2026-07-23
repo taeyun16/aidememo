@@ -4,8 +4,10 @@ Hermes calls :func:`register` once per plugin enable. We:
 
 1. Build a :class:`AideMemoClient` (aidememo-python in-process if available, CLI
    subprocess fallback otherwise).
-2. Register 12 native tools for context, retrieval, aggregation, writes, and health.
-3. Register 8 slash commands for the same operator workflows.
+2. Register 14 focused AideMemo tools for context, retrieval, handoff, writes,
+   and health.
+3. Register 8 slash commands (including workflow, context, aggregate, doctor,
+   write, recent, and pending-review entry points).
 4. Register 2 lifecycle hooks (``pre_llm_call`` auto-context,
    ``post_llm_call`` opt-in capture adapter).
 5. Register the ``hermes aidememo`` CLI subtree.

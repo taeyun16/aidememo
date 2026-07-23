@@ -18,9 +18,11 @@ import json
 import os
 import re
 import secrets
+import shlex
 import shutil
 import subprocess
 import time
+from pathlib import Path
 from typing import Any
 
 
@@ -91,7 +93,8 @@ class AideMemoClient:
 
     @staticmethod
     def _has_cli() -> bool:
-        return shutil.which("aidememo") is not None
+        candidate = os.environ.get("AIDEMEMO_BIN", "aidememo")
+        return shutil.which(candidate) is not None or Path(candidate).is_file()
 
     @property
     def backend(self) -> str:
@@ -516,9 +519,12 @@ class AideMemoClient:
         prior_lessons = _take_fact_type(typed_hits, "lesson", 5)
         prior_errors = _take_fact_type(typed_hits, "error", 5)
         relevant_decisions = _take_fact_type(typed_hits, "decision", 5)
+        exports = f"export AIDEMEMO_SESSION_ID={shlex.quote(session_id)}"
+        if source_id is not None:
+            exports += f"\nexport AIDEMEMO_SOURCE_ID={shlex.quote(source_id)}"
         return {
             "session_id": session_id,
-            "export": f"export AIDEMEMO_SESSION_ID={session_id}",
+            "export": exports,
             "title": title,
             "source": source,
             "source_id": source_id,
@@ -555,6 +561,210 @@ class AideMemoClient:
             content = payload.get("content")
             return content if isinstance(content, str) else ""
         return str(payload)
+
+    def handoff(
+        self,
+        session_id: str | None = None,
+        *,
+        from_actor: str | None = None,
+        from_route: str | None = None,
+        to_route: str | None = None,
+        from_agent: str | None = None,
+        from_profile: str | None = None,
+        to_agent: str | None = None,
+        to_profile: str | None = None,
+        to_actor: str | None = None,
+        focus: str | None = None,
+        done_when: str | None = None,
+        dispatch: bool = False,
+        source_id: str | None = None,
+        limit: int = 40,
+        include_superseded: bool = False,
+    ) -> str:
+        """Return an evidence-linked packet for another agent/profile to resume."""
+
+        payload = self.handoff_packet(
+            session_id,
+            from_actor=from_actor,
+            from_route=from_route,
+            to_route=to_route,
+            from_agent=from_agent,
+            from_profile=from_profile,
+            to_agent=to_agent,
+            to_profile=to_profile,
+            to_actor=to_actor,
+            focus=focus,
+            done_when=done_when,
+            dispatch=dispatch,
+            source_id=source_id,
+            limit=limit,
+            include_superseded=include_superseded,
+        )
+        content = payload.get("content")
+        return content if isinstance(content, str) else ""
+
+    def handoff_packet(
+        self,
+        session_id: str | None = None,
+        *,
+        from_actor: str | None = None,
+        from_route: str | None = None,
+        to_route: str | None = None,
+        from_agent: str | None = None,
+        from_profile: str | None = None,
+        to_agent: str | None = None,
+        to_profile: str | None = None,
+        to_actor: str | None = None,
+        focus: str | None = None,
+        done_when: str | None = None,
+        dispatch: bool = False,
+        source_id: str | None = None,
+        limit: int = 40,
+        include_superseded: bool = False,
+    ) -> dict[str, Any]:
+        """Return structured route, resume metadata, and Markdown content."""
+
+        source_id = self._source_id(source_id)
+        args: dict[str, Any] = {
+            "limit": limit,
+            "include_superseded": include_superseded,
+        }
+        if dispatch:
+            args["dispatch"] = True
+        optional = {
+            "session": session_id,
+            "from_actor": from_actor,
+            "from": from_route,
+            "to": to_route,
+            "from_agent": from_agent,
+            "from_profile": from_profile,
+            "to_agent": to_agent,
+            "to_profile": to_profile,
+            "to_actor": to_actor,
+            "focus": focus,
+            "done_when": done_when,
+            "source_id": source_id,
+        }
+        args.update({key: value for key, value in optional.items() if value})
+        payload = self._mcp_tool("aidememo_handoff", args)
+        if isinstance(payload, dict):
+            return payload
+        return {"content": str(payload)}
+
+    def handoff_inbox(
+        self,
+        *,
+        actor_id: str | None = None,
+        source_id: str | None = None,
+        include_completed: bool = False,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        """Return session assignments addressed to this agent installation."""
+
+        source_id = self._source_id(source_id)
+        args: dict[str, Any] = {
+            "action": "list",
+            "include_completed": include_completed,
+            "limit": limit,
+        }
+        if actor_id:
+            args["actor_id"] = actor_id
+        if source_id:
+            args["source_id"] = source_id
+        payload = self._mcp_tool("aidememo_handoff_inbox", args)
+        if not isinstance(payload, dict):
+            return []
+        assignments = payload.get("assignments")
+        return assignments if isinstance(assignments, list) else []
+
+    def handoff_outbox(
+        self,
+        *,
+        actor_id: str | None = None,
+        source_id: str | None = None,
+        include_completed: bool = True,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        """Return assignments sent by this installation, including result links."""
+
+        source_id = self._source_id(source_id)
+        args: dict[str, Any] = {
+            "action": "outbox",
+            "include_completed": include_completed,
+            "limit": limit,
+        }
+        if actor_id:
+            args["actor_id"] = actor_id
+        if source_id:
+            args["source_id"] = source_id
+        payload = self._mcp_tool("aidememo_handoff_inbox", args)
+        if not isinstance(payload, dict):
+            return []
+        assignments = payload.get("assignments")
+        return assignments if isinstance(assignments, list) else []
+
+    def handoff_show(self, handoff_id: str) -> dict[str, Any]:
+        """Inspect one assignment by id without requiring routing metadata."""
+
+        payload = self._mcp_tool(
+            "aidememo_handoff_inbox",
+            {"action": "show", "handoff_id": handoff_id},
+        )
+        return payload if isinstance(payload, dict) else {"content": str(payload)}
+
+    def handoff_status(
+        self, handoff_id: str, *, actor_id: str | None = None
+    ) -> dict[str, Any]:
+        """Inspect an assignment routed through the current actor."""
+
+        args: dict[str, Any] = {"action": "status", "handoff_id": handoff_id}
+        if actor_id:
+            args["actor_id"] = actor_id
+        payload = self._mcp_tool("aidememo_handoff_inbox", args)
+        return payload if isinstance(payload, dict) else {"content": str(payload)}
+
+    def handoff_accept(
+        self, handoff_id: str, *, actor_id: str | None = None
+    ) -> dict[str, Any]:
+        """Acknowledge an assignment and return its current session packet."""
+
+        args: dict[str, Any] = {"action": "accept", "handoff_id": handoff_id}
+        if actor_id:
+            args["actor_id"] = actor_id
+        payload = self._mcp_tool("aidememo_handoff_inbox", args)
+        return payload if isinstance(payload, dict) else {"content": str(payload)}
+
+    def handoff_complete(
+        self, handoff_id: str, *, actor_id: str | None = None
+    ) -> dict[str, Any]:
+        """Mark an accepted assignment completed without implying task proof."""
+
+        args: dict[str, Any] = {"action": "complete", "handoff_id": handoff_id}
+        if actor_id:
+            args["actor_id"] = actor_id
+        payload = self._mcp_tool("aidememo_handoff_inbox", args)
+        return payload if isinstance(payload, dict) else {"content": str(payload)}
+
+    def handoff_return(
+        self,
+        handoff_id: str,
+        result_fact_id: str,
+        *,
+        outcome: str,
+        actor_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Link worker evidence and return an accepted assignment to its sender."""
+
+        args: dict[str, Any] = {
+            "action": "return",
+            "handoff_id": handoff_id,
+            "result_fact_id": result_fact_id,
+            "outcome": outcome,
+        }
+        if actor_id:
+            args["actor_id"] = actor_id
+        payload = self._mcp_tool("aidememo_handoff_inbox", args)
+        return payload if isinstance(payload, dict) else {"content": str(payload)}
 
     def project_profile(
         self,
@@ -800,7 +1010,7 @@ class AideMemoClient:
     # ------------------------------------------------------------------
 
     def _cli(self, args: list[str], input_text: str | None = None) -> str:
-        cmd = ["aidememo"]
+        cmd = [os.environ.get("AIDEMEMO_BIN", "aidememo")]
         if self.storage_backend:
             cmd += ["--backend", self.storage_backend]
         if self.store_path:

@@ -22,7 +22,11 @@ reader 모델은 선택 기능입니다.
 | **BrainBench, 데몬을 통한 BM25**<br />P@5 `17.4%`, R@5 `64.1%`; 새 CLI 프로세스와 같은 점수로 `5.7x` 빠름 | 표면형이 겹치는 검색은 어휘 경로에 두고 저장소를 웜 상태로 유지합니다. |
 | **공유 HTTP MCP, 클라이언트 2개 x 쓰기 10회**<br />20/20 저장; p50 `18.4ms`, p95 `41.8ms` | 하나의 로컬 데몬이 권장 동시 쓰기 경로입니다. |
 | **토큰 없는 워크플로 데모**<br />`128ms`에 decision, lesson, error 노출 | 에이전트나 모델 호출 없이 핵심 워크플로를 시연할 수 있습니다. |
-| **에이전트 SDK 패키지 스모크**<br />wheel 설치와 `Memory`, client, canvas, profile 검사가 `3.38s`에 통과 | 코드 우선 통합은 특정 에이전트 런타임과 독립적으로 패키징할 수 있습니다. |
+| **에이전트 간 핸드오프 Scenario P**<br />quality gate `12/12`; 핵심 근거 `4/4`, route `4/4`, 이웃 source 누출 `0`; 구조화 SDK packet과 `done_when` 보존; raw thread 대비 handoff context `-82.6%`, session canvas 대비 `-34.5%` | 오케스트레이터가 제한된 팩트 연결 context, 관찰 가능한 완료 조건, 수신자 one-command resume으로 하나의 추적 워크플로를 에이전트/프로필 경계 너머로 라우팅할 수 있습니다. 이는 결정적 artifact 계약을 증명하며 downstream 모델의 작업 성공률 결과는 아닙니다. |
+| **다중 계정 핸드오프 Scenario Q**<br />`codex-one`, `codex-two`, `claude-main`에서 `10/10`; actor/source 누출 `0`; dispatch당 pointer entity 1개와 복제 fact 0개; broker/payload key `0` | 계정 설치가 vendor-local chat ID를 공유하지 않고 같은 추적 세션을 pull/확인할 수 있습니다. 인증, queue delivery, 배타 소유권, downstream 성공률의 증거는 아닙니다. |
+| **Hermes Kanban 경계 Scenario R**<br />실제 임시 Hermes Kanban DB에서 `12/12`; 내부 `coding -> reviewer` 전환은 AideMemo assignment 0개; 외부 `codex-two` dispatch는 pointer 1개와 fact 0개 추가; Hermes가 card를 명시적으로 완료하기 전에 같은 session으로 evidence 반환 | Kanban은 canonical task lifecycle을 유지하고 AideMemo는 외부 설치 경계를 넘는 durable evidence를 운반합니다. 외부 CLI worker spawner, 인증, downstream 모델 성공률을 증명하지는 않습니다. |
+| **외부 worker lane Scenario S**<br />fake Codex/Claude gate `14/14`; 성공은 packet과 resume 환경을 받고 같은 session에 evidence를 반환한 뒤 complete; 실패는 같은 session에 error를 기록하고 accepted 유지; 발신자 outbox/status는 두 fact를 연결 | 패키지 수신자가 shell-free argv로 handoff/return protocol을 실행하면서 Hermes Kanban을 변경하지 않음을 보입니다. live-model task success, authentication, 자동 retry, exactly-once execution, Hermes `spawn_fn` 통합을 증명하지는 않습니다. |
+| **에이전트 SDK 패키지 스모크**<br />wheel 설치와 `Memory`, client, worker-lane export, 설치된 `aidememo-worker-lane --help` 검사가 `3.28s`에 통과 | 코드 우선 통합과 외부 수신자는 특정 에이전트 런타임과 독립적으로 패키징할 수 있습니다. |
 
 각 측정은 데이터셋과 실행 조건이 다릅니다. 하나의 종합 점수로 합치지 말고
 각 벤치마크 안에서 비교하세요.

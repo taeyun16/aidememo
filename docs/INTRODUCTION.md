@@ -29,6 +29,7 @@ tool choice guide, read [`Agent Workflows`](AGENT_WORKFLOWS.md).
 | Search prior context | `aidememo search` and `aidememo query` |
 | Start work from a sparse ticket | `aidememo workflow start` |
 | Share memory across agents | Stable `source_id` / `actor_id` identities and `aidememo mcp-serve` |
+| Move a tracked task to another coding-agent account | `aidememo handoff send ALIAS` |
 | Give agents tool access | `aidememo mcp` or HTTP MCP |
 | Use memory from code | `aidememo-agent-sdk` |
 

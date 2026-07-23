@@ -1,6 +1,6 @@
 # multi-agent e2e
 
-Scenarios A-O exercise the integration between `aidememo` and the three
+Scenarios A-S exercise the integration between `aidememo` and the three
 agents installed on this machine: Claude Code, Codex, and Hermes.
 
 | script | what it does | model cost |
@@ -17,9 +17,13 @@ agents installed on this machine: Claude Code, Codex, and Hermes.
 | `scenario_j_lock_retry_sweep.py` | Sweeps 1/2/4/8 serverless CLI writers against the optional redb backend with `store.lock_retry_ms=0` vs `5000` to find when retry remains smooth and when users should switch to a shared daemon. Requires an `aidememo` binary built with `--features redb`. | 0 |
 | `scenario_k_sdk_workflow_parity.py` | Compares `workflow_start` shape parity across CLI, `aidememo-python`, and `aidememo-napi`; verifies scoped priors, unique sessions/tickets, and forbidden-source leakage. | 0 |
 | `scenario_l_self_extraction.py` | Simulates an agent-classified `aidememo_fact_add_many` batch, verifies omitted `fact_type` strong-cue inference and explicit-note hints, then checks typed facts drive sparse-ticket workflow context and `source_id` isolation. | 0 |
-| `scenario_m_mcp_install_source_defaults.py` | Installs MCP configs into an isolated HOME, verifies `AIDEMEMO_SOURCE_ID` is written for file targets / printed for shell targets, then proves the installed env scopes MCP write/search calls. | 0 |
+| `scenario_m_mcp_install_source_defaults.py` | Installs MCP configs into an isolated HOME, verifies source/backend plus per-installation `AIDEMEMO_ACTOR_ID` defaults across file and shell targets, then proves MCP source and inbox calls use those defaults. | 0 |
 | `scenario_n_hermes_memory_as_code.py` | Exercises the shared `aidememo_agent.Memory` research profile for Hermes/Codex/Claude-style code execution: fanout row collection, dedupe, coverage, `remember` batch write, aggregate, and source isolation. | 0 |
 | `scenario_o_session_canvas_pressure.py` | Builds a verbose long workflow, exports bounded `session canvas` and `project_profile.md` artifacts, and verifies fact-id drill-down plus read-only behavior. | 0 |
+| `scenario_p_cross_agent_handoff.py` | Routes one verbose workflow from Codex/coding to Hermes/reviewer; verifies critical evidence, route, source isolation, CLI/MCP/SDK content parity, structured SDK metadata, observable `done_when`, and receiver resume separately from raw-thread/canvas context reduction. | 0 |
+| `scenario_q_multi_account_handoff.py` | Runs three independent MCP processes as `codex-one`, `codex-two`, and `claude-main`; verifies pull/accept/complete routing, same-session continuation, source/actor isolation, pointer-only persistence, and absence of broker/payload fields. | 0 |
+| `scenario_r_hermes_kanban_boundary.py` | Uses a real temporary Hermes Kanban DB: internal `coding -> reviewer` reassignment stays in Kanban with zero AideMemo assignment, while an external `codex-two` boundary creates one pointer, returns fact-linked evidence on the same session, and leaves final card completion to Hermes. Requires the Hermes CLI, but no model call or authentication. | 0 |
+| `scenario_s_external_worker_lane.py` | Runs the installable worker-lane module against fake Codex and Claude CLIs; verifies shell-free command defaults, workspace/resume environment injection, same-session success/error facts, completion only on success, and no Hermes lifecycle mutation. | 0 |
 
 ## Running locally
 
@@ -37,6 +41,10 @@ python3 bench/multi-agent/scenario_l_self_extraction.py
 python3 bench/multi-agent/scenario_m_mcp_install_source_defaults.py
 python3 bench/multi-agent/scenario_n_hermes_memory_as_code.py
 python3 bench/multi-agent/scenario_o_session_canvas_pressure.py
+python3 bench/multi-agent/scenario_p_cross_agent_handoff.py
+python3 bench/multi-agent/scenario_q_multi_account_handoff.py
+python3 bench/multi-agent/scenario_r_hermes_kanban_boundary.py
+python3 bench/multi-agent/scenario_s_external_worker_lane.py
 
 # optional-redb lock scenarios
 cargo build -p aidememo-cli --release --features redb

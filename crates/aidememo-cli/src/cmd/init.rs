@@ -17,6 +17,10 @@ pub struct InitSub {
     pub agent: Option<String>,
     /// Overwrite existing agent skill/MCP config when --agent is set.
     pub agent_force: bool,
+    /// Default shared-memory namespace installed into the agent MCP config.
+    pub source_id: Option<String>,
+    /// Stable account/installation alias installed into the agent MCP config.
+    pub actor_id: Option<String>,
     /// Wiki root directory path.
     pub wiki_root: PathBuf,
 }
@@ -38,6 +42,14 @@ pub fn init_command() -> impl Parser<Command> {
     let agent_force = long("agent-force")
         .help("Overwrite existing agent skill/MCP config during --agent setup")
         .switch();
+    let source_id = long("source-id")
+        .help("Set AIDEMEMO_SOURCE_ID during --agent MCP setup")
+        .argument::<String>("SOURCE_ID")
+        .optional();
+    let actor_id = long("actor-id")
+        .help("Set AIDEMEMO_ACTOR_ID during --agent MCP setup")
+        .argument::<String>("ACTOR_ID")
+        .optional();
 
     let wiki_root = positional::<PathBuf>("WIKI_ROOT").help("Path to the wiki root directory");
 
@@ -45,6 +57,8 @@ pub fn init_command() -> impl Parser<Command> {
         no_ingest,
         agent,
         agent_force,
+        source_id,
+        actor_id,
         wiki_root,
     })
     .map(Command::Init)
@@ -59,6 +73,8 @@ pub fn run_init(
     no_ingest: bool,
     agent: Option<String>,
     agent_force: bool,
+    source_id: Option<String>,
+    actor_id: Option<String>,
     store_path: &Path,
     config: Config,
     json: bool,
@@ -129,6 +145,8 @@ pub fn run_init(
         steps.extend(run_agent_setup(
             target,
             agent_force,
+            source_id.as_deref(),
+            actor_id.as_deref(),
             config.store.backend.as_str(),
             store_path,
         ));
@@ -139,6 +157,8 @@ pub fn run_init(
         wiki_root: wiki_root.display().to_string(),
         no_ingest,
         agent,
+        source_id,
+        actor_id,
         ingest: stats.clone(),
         steps,
         elapsed_ms: started.elapsed().as_millis() as u64,
@@ -194,6 +214,8 @@ struct InitReport {
     wiki_root: String,
     no_ingest: bool,
     agent: Option<String>,
+    source_id: Option<String>,
+    actor_id: Option<String>,
     ingest: Option<IngestStats>,
     steps: Vec<InitStep>,
     elapsed_ms: u64,
@@ -202,6 +224,8 @@ struct InitReport {
 fn run_agent_setup(
     target: &str,
     force: bool,
+    source_id: Option<&str>,
+    actor_id: Option<&str>,
     storage_backend: &str,
     store_path: &Path,
 ) -> Vec<InitStep> {
@@ -246,8 +270,8 @@ fn run_agent_setup(
                 print: false,
                 list_targets: false,
                 no_verify: true,
-                source_id: None,
-                actor_ids: Vec::new(),
+                source_id: source_id.map(str::to_string),
+                actor_ids: actor_id.map(str::to_string).into_iter().collect(),
                 codex_homes: Vec::new(),
             },
             false,

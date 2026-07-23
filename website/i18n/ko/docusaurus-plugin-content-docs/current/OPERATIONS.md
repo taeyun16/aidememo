@@ -169,7 +169,7 @@ MCP 설치:
 
 ```bash
 aidememo --backend libsqlite --store ~/.aidememo/team.sqlite \
-  mcp-install --target codex --source-id team-a
+  mcp-install --target codex --source-id team-a --actor-id codex-one
 ```
 
 같은 경계가 fact get/list/mutation, pinned context, entity, graph read에도
@@ -186,6 +186,10 @@ fact로 유지됩니다. Relation은 별도의 소유 source namespace를 가지
 자기 `source_id`를 선택할 수 있습니다. 상호 신뢰하지 않는 tenant는 별도 store를
 사용해야 합니다. Reference 배포 형태와 production checklist는
 [`공용 메모리 레이어`](SHARED_MEMORY.md)를 참고하세요.
+
+계정/설치마다 고유한 비밀 아닌 `actor_id`를 사용합니다. 이는 handoff 주소이며
+vendor 계정 인증이 아닙니다. 할당 장부는 기존 세션 포인터와 확인 상태만
+저장하며 queue topic, retry, lease, exactly-once delivery를 제공하지 않습니다.
 
 ## 로컬 저장소 쓰기 경합 방지
 

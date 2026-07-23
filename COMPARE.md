@@ -83,7 +83,7 @@ database and prefer an explicit, zero-external-LLM default write path. See
 | Embedding | BGE-based retrieval in the published OMEGA report | Multilingual model2vec default; opt-in `bge-small-en-v1.5` for English paraphrase-heavy memory |
 | Storage | SQLite + sqlite-vec | SQLite default; optional redb Cargo feature |
 | Bindings | Python only | **Py / Node / Elixir / C** in-process |
-| Model-visible tools | OMEGA-specific tool surface | 27 MCP tools + CLI |
+| Model-visible tools | OMEGA-specific tool surface | 29 MCP tools + CLI |
 | Default capture | LLM-aided | Deterministic / explicit; opt-in LLM |
 | Encryption at rest | AES-256 | ❌ (relies on OS-level FS encryption) |
 | Hook-based auto-capture | Built-in deeply integrated | aidememo-skill/hooks/ 3 scripts (manual install) |
@@ -126,7 +126,7 @@ than treating this comparison page as a benchmark ledger.
 
 3. **MCP-native on both transports.** stdio (`aidememo mcp`) for in-editor
    agents, HTTP/SSE (`aidememo mcp-serve`) for shared / remote clients —
-   the same 27-tool surface served by the same dispatcher in-process Rust.
+   the same 29-tool surface served by the same dispatcher in-process Rust.
 
 4. **Polyglot in-process bindings.** Python · Node · Elixir · C all
    call the same `AideMemo` API directly without IPC. Lets editor
