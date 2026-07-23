@@ -328,6 +328,9 @@ heartbeat를 기록합니다. `HERMES_KANBAN_TASK` 또는 `--kanban-task`가 있
 pulse를 `hermes kanban heartbeat`로 전달하지만 claim, retry, dependency, 카드 완료는
 계속 Hermes가 소유합니다. `handoff board`는 ledger를 읽을 때마다 `ready`,
 `in_progress`, `attention`, `returned`로 계산하는 관찰 뷰일 뿐입니다.
+기본 30분 timeout을 넘길 작업은
+`aidememo handoff run codex-two --timeout 14400`으로 실행합니다. heartbeat 간격은
+`--heartbeat-interval`로 바꾸지 않는 한 3600초입니다.
 
 자동 실행 adapter가 없는 Cursor, Aider, OpenCode 같은 런타임은
 `aidememo agent add cursor-review --type manual --workspace "$PWD"`로 연결할 수
