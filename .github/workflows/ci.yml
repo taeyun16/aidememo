@@ -41,7 +41,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version: "1.25.x"
       - name: install actionlint
@@ -58,7 +58,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: "24"
           cache: npm
@@ -119,7 +119,7 @@ jobs:
       PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
       - uses: dtolnay/rust-toolchain@stable
@@ -156,10 +156,10 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: "24"
       - uses: dtolnay/rust-toolchain@stable
@@ -191,7 +191,7 @@ jobs:
         with:
           shared-key: ubuntu-aidememo-v2
           save-if: false
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
       - name: storage backend parity
@@ -252,7 +252,7 @@ jobs:
         with:
           shared-key: ubuntu-aidememo-v2
           save-if: false
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
       - run: cargo build -p aidememo-cli --release --features redb
@@ -285,7 +285,7 @@ jobs:
         with:
           shared-key: ubuntu-aidememo-v2
           save-if: false
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
       - name: workflow release smoke
@@ -303,10 +303,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
       - name: SDK promotion check
@@ -377,7 +377,7 @@ jobs:
       - name: build aidememo CLI
         run: cargo build -p aidememo-cli
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.10"
           cache: pip
@@ -392,7 +392,7 @@ jobs:
           pip install -e ".[test]"
           pytest -q
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
