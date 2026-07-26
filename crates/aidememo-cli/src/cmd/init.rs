@@ -69,16 +69,19 @@ pub fn init_command() -> impl Parser<Command> {
 
 /// Run `aidememo init` — create config/store and optionally ingest.
 pub fn run_init(
-    wiki_root: PathBuf,
-    no_ingest: bool,
-    agent: Option<String>,
-    agent_force: bool,
-    source_id: Option<String>,
-    actor_id: Option<String>,
+    sub: InitSub,
     store_path: &Path,
     config: Config,
     json: bool,
 ) -> Result<String, AideMemoError> {
+    let InitSub {
+        wiki_root,
+        no_ingest,
+        agent,
+        agent_force,
+        source_id,
+        actor_id,
+    } = sub;
     let started = Instant::now();
     let wiki_root = wiki_root
         .canonicalize()

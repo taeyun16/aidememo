@@ -86,6 +86,8 @@ def install(target: str, *, print_only: bool = False) -> dict[str, Any]:
         WG,
         "--backend",
         BACKEND,
+        "--store",
+        STORE,
         "--json",
         "mcp-install",
         "--target",
@@ -144,7 +146,7 @@ def mcp_tool_call(
         },
     ]
     proc = run(
-        [WG, "--store", STORE, *command_args],
+        [WG, *command_args],
         input_text="".join(json.dumps(call) + "\n" for call in calls),
         env=env,
     )
@@ -233,11 +235,12 @@ def main() -> int:
         == SOURCE_ID,
         "opencode_config_has_actor_id": opencode["mcp"]["aidememo"]["env"]["AIDEMEMO_ACTOR_ID"]
         == ACTOR_IDS["opencode"],
-        "codex_config_has_backend_args": codex_args == ["--backend", BACKEND, "mcp"],
+        "codex_config_has_backend_args": codex_args
+        == ["--backend", BACKEND, "--store", STORE, "mcp"],
         "cursor_config_has_backend_args": cursor["mcpServers"]["aidememo"]["args"]
-        == ["--backend", BACKEND, "mcp"],
+        == ["--backend", BACKEND, "--store", STORE, "mcp"],
         "opencode_config_has_backend_args": opencode["mcp"]["aidememo"]["command"]
-        == ["aidememo", "--backend", BACKEND, "mcp"],
+        == ["aidememo", "--backend", BACKEND, "--store", STORE, "mcp"],
         "codex_report_has_backend": file_reports["codex"].get("storage_backend") == BACKEND,
         "cursor_report_has_backend": file_reports["cursor"].get("storage_backend") == BACKEND,
         "opencode_report_has_backend": file_reports["opencode"].get("storage_backend") == BACKEND,
@@ -247,19 +250,20 @@ def main() -> int:
         in shell_reports["claude"].get("detail", ""),
         "hermes_print_has_env": "--env AIDEMEMO_SOURCE_ID=agent-alpha"
         in shell_reports["hermes"].get("detail", ""),
-        "hermes_print_has_actor": "--env AIDEMEMO_ACTOR_ID=hermes-main"
+        "hermes_print_has_actor": "AIDEMEMO_ACTOR_ID=hermes-main"
         in shell_reports["hermes"].get("detail", ""),
         "openclaw_print_has_env": "AIDEMEMO_SOURCE_ID"
         in shell_reports["openclaw"].get("detail", ""),
         "openclaw_print_has_actor": "AIDEMEMO_ACTOR_ID"
         in shell_reports["openclaw"].get("detail", ""),
-        "claude_print_has_backend": "--backend libsqlite mcp"
+        "claude_print_has_backend": f"--backend libsqlite --store {STORE} mcp"
         in shell_reports["claude"].get("detail", ""),
-        "hermes_print_has_backend": "--args=--backend --args=libsqlite --args=mcp"
+        "hermes_print_has_backend": f"--args --backend libsqlite --store {STORE} mcp"
         in shell_reports["hermes"].get("detail", ""),
         "openclaw_print_has_backend": "--backend"
         in shell_reports["openclaw"].get("detail", "")
-        and "libsqlite" in shell_reports["openclaw"].get("detail", ""),
+        and "libsqlite" in shell_reports["openclaw"].get("detail", "")
+        and STORE in shell_reports["openclaw"].get("detail", ""),
         "mcp_write_used_installed_source_id": add_payload.get("source_id") == SOURCE_ID,
         "mcp_search_used_installed_source_id": any(
             row.get("source_id") == SOURCE_ID

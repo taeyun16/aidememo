@@ -109,17 +109,7 @@ fn main() {
         cmd::Command::Model(sub) => handle_model(config, sub),
         cmd::Command::Feedback(sub) => cmd::feedback::run_feedback(&store_path, config, sub),
         cmd::Command::Adapt(sub) => cmd::adapt::run_adapt(&store_path, config, sub),
-        cmd::Command::Init(sub) => cmd::init::run_init(
-            sub.wiki_root,
-            sub.no_ingest,
-            sub.agent,
-            sub.agent_force,
-            sub.source_id,
-            sub.actor_id,
-            &store_path,
-            config,
-            json,
-        ),
+        cmd::Command::Init(sub) => cmd::init::run_init(sub, &store_path, config, json),
         cmd::Command::Installation(sub) => cmd::installation::run_installation(config, sub, json),
         cmd::Command::Watch(sub) => {
             cmd::watch::run_watch(sub.wiki_root, &store_path, config, sub.interval, sub.search)
