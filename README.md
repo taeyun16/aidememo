@@ -168,6 +168,12 @@ python -m pip install "aidememo-agent-sdk[binding]"  # optional native Python fa
 npm install aidememo-napi                            # native Node.js binding
 ```
 
+> **Release boundary:** the public v0.1.0 CLI, `aidememo-agent-sdk`, and
+> `hermes-aidememo` packages provide the baseline memory surface, but do not
+> include the handoff, agent-profile, or worker-lane additions listed under
+> [`Unreleased`](CHANGELOG.md). Until the next release, use a current `main`
+> checkout for the handoff sections below.
+
 ## Documentation Site
 
 The static product and documentation site lives in [`website/`](website/) and
@@ -282,6 +288,9 @@ SkillOpt-inspired loop, and `scripts/skillopt-lite-check.sh` gates candidate
 
 ## Orchestrator Handoff
 
+> This section documents the unreleased `main` branch. Public v0.1.0 artifacts
+> do not expose these commands or SDK methods yet.
+
 The attractive unit is not a static profile; it is a workflow that survives a
 change of worker. Connect each recurring account once, then send the active
 session by its short alias:
@@ -388,7 +397,7 @@ Hermes/reviewer smoke of this complete path.
 
 The zero-token Scenario P gate preserves critical evidence `4/4`, route fields
 `4/4`, and neighbouring-source leakage `0`, while reducing the packet by
-`82.6%` versus the raw session JSON and `34.5%` versus the bounded session
+`82.8%` versus the raw session JSON and `36.1%` versus the bounded session
 canvas. This validates the handoff protocol and context envelope; downstream
 model task success remains a separate opt-in evaluation.
 
@@ -624,7 +633,7 @@ parallel.
 | Optional-redb serverless lock-retry sweep, retry `5000` | smooth through 4 writers; 8 writers persisted 79/80 |
 | HTTP shared `mcp-serve`, 2 clients x 10 writes | p50 `18.4ms`, p95 `41.8ms`, 20/20 persisted |
 | Zero-token workflow demo | decision + lesson + error surfaced in `128ms` |
-| MCP source/actor/backend install Scenario M | 28/28 invariants; installed source + per-installation actor + `--backend libsqlite` drove MCP write/search/inbox defaults in `107.8ms` |
+| MCP source/actor/backend install Scenario M | 28/28 invariants; installed source + per-installation actor + `--backend libsqlite` drove MCP write/search/inbox defaults in `76.43ms` |
 | Hermes Memory-as-Code Scenario N | 9/9 invariants; SDK fanout/dedupe/coverage/aggregate excluded beta-source rows |
 | `aidememo-agent-sdk` pack smoke | wheel install + `Memory` / `AideMemoClient` / `AideMemoMemorySDK` artifact-method checks passed in `3.38s` |
 | `hermes-aidememo` pack smoke | wheel install + SDK re-export / bundled skill / opt-in capture adapter checks passed in `4.43s` |
@@ -635,7 +644,7 @@ parallel.
 | Public registry smoke | `plan` mode records post-release `cargo`, `pip`, and `npm` install checks; `verify` mode installs from public registries after publish, locally or through the manual GitHub workflow |
 | `aidememo-agent-sdk` publish workflow | PyPI payload dry-run + trusted-publisher workflow defaults to dry-run |
 | `hermes-aidememo` publish workflow | PyPI payload dry-run + trusted-publisher workflow defaults to dry-run |
-| Changelog release gate | `CHANGELOG.md` cut for workspace `0.1.0`, empty `Unreleased`, dated `0.1.0` notes |
+| Changelog release gate | `CHANGELOG.md` has dated `0.1.0` notes and keeps current-main changes under `Unreleased` |
 | SkillOpt-lite profile gate | validates candidate memory-profile tokens, `aidememo skill check`, workflow demo, and SDK promotion gate |
 | SkillOpt-lite periodic cycle | records accepted / rejected skill-profile candidates under `target/skillopt-lite`; applies only with `--apply` |
 | `aidememo-napi` package split | root JS/types package + current-platform optional package install smoke passed |

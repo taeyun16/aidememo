@@ -49,6 +49,11 @@ Cargo `redb` 기능으로 빌드합니다.
 
 ## 외부 Codex 또는 Claude 핸드오프 실행
 
+> Handoff API와 `aidememo-worker-lane`은 아직 릴리스되지 않은 `main`
+> 기능이며 공개 `aidememo-agent-sdk==0.1.0` 패키지에는 없습니다. 이 절에서는
+> 현재 체크아웃에서 `python -m pip install -e ./packages/aidememo-agent-sdk`로
+> 설치하고 같은 `main` 버전의 CLI를 사용하세요.
+
 SDK를 설치하면 `aidememo-worker-lane`도 설치됩니다. 이 명령은 주소가 지정된
 AideMemo handoff 하나를 accept하고 현재 packet을 non-interactive coding CLI에
 주입한 뒤 결과를 같은 session에 기록합니다.

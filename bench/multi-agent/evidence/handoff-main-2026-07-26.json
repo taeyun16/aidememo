@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "recorded_on": "2026-07-26",
+  "git_commit": "36e8ba8fc598c64d1df937756c234be87ae73abc",
+  "command": "./scripts/bench-agent-ux.sh",
+  "environment": {
+    "os": "macOS 26.3 (25D125)",
+    "arch": "arm64",
+    "rust": "1.96.0",
+    "python": "3.13.14",
+    "hermes": "0.18.2"
+  },
+  "scenarios": {
+    "M": {
+      "passed": 28,
+      "total": 28,
+      "elapsed_ms": 76.43
+    },
+    "P": {
+      "quality_passed": 12,
+      "quality_total": 12,
+      "efficiency_passed": 3,
+      "efficiency_total": 3,
+      "critical_evidence_recall": "4/4",
+      "route_recall": "4/4",
+      "forbidden_leakage_count": 0,
+      "raw_thread_bytes": 33640,
+      "session_canvas_bytes": 9055,
+      "handoff_bytes": 5784,
+      "raw_thread_estimated_tokens": 8410,
+      "session_canvas_estimated_tokens": 2264,
+      "handoff_estimated_tokens": 1446,
+      "handoff_reduction_vs_raw_percent": 82.8,
+      "handoff_reduction_vs_canvas_percent": 36.1,
+      "elapsed_ms": 62.96
+    },
+    "Q": {
+      "passed": 10,
+      "total": 10,
+      "elapsed_ms": 287.57
+    },
+    "R": {
+      "passed": 12,
+      "total": 12,
+      "hermes_version": "0.18.2",
+      "elapsed_ms": 1331.03
+    },
+    "S": {
+      "passed": 14,
+      "total": 14,
+      "elapsed_ms": 1033.72
+    }
+  },
+  "claim_boundary": "Scenarios M and P-S are deterministic local protocol and integration checks. They do not measure authenticated identity, queue delivery, exactly-once execution, or downstream model task success."
+}

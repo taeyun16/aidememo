@@ -33,7 +33,7 @@ flowchart TD
   add["aidememo_fact_add<br/>or aidememo_fact_add_many"]
   canvas["aidememo_session_canvas<br/>or aidememo session canvas"]
   handoff["aidememo_handoff<br/>preview or dispatch"]
-  inbox["aidememo_handoff_inbox<br/>list / accept / complete"]
+  inbox["aidememo_handoff_inbox<br/>list / accept / return / outbox / status"]
 
   start --> sparse
   sparse -- yes --> workflow
@@ -72,10 +72,13 @@ flowchart TD
 | Learned one durable fact | `aidememo_fact_add` / `aidememo fact add` | Stores typed memory explicitly and can attach it to a workflow session. |
 | Learned several durable facts | `aidememo_fact_add_many` | Batches writes so the disk sync cost is paid once. |
 | Resuming a long workflow | `aidememo_session_canvas` / `aidememo session canvas` / `Memory.session_canvas(...)` | Returns a bounded Markdown and Mermaid map with fact-id drill-down commands. |
-| Routing work across agent installations or accounts | `aidememo_handoff` + `aidememo_handoff_inbox` / CLI `handoff` / SDK handoff methods | Previews a packet or dispatches a pull-based pointer to the same workflow session, then explicitly accepts/completes it. An existing scheduler such as Hermes Kanban remains the owner of its internal task state. |
+| Routing work across agent installations or accounts | `aidememo_handoff` + `aidememo_handoff_inbox` / CLI `handoff` / SDK handoff methods | Previews a packet or dispatches a pull-based pointer to the same workflow session. The receiver accepts and returns fact-linked evidence; the sender inspects outbox/status. An existing scheduler such as Hermes Kanban remains the owner of its internal task state. |
 | Preparing compact project context | `aidememo_profile_export` / `aidememo profile export` / `Memory.project_profile(...)` | Generates a read-only profile from current typed facts while keeping the store as the evidence trail. |
 
 ## Cross-agent handoff pattern
+
+> Handoff is currently an unreleased `main` feature. Public v0.1.0 artifacts do
+> not expose this surface.
 
 For recurring local accounts, use the short path first:
 

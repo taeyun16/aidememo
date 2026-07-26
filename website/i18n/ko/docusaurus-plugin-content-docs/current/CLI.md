@@ -107,6 +107,9 @@ Python 에이전트는 `Memory.session_canvas(...)`를 호출할 수 있습니�
 
 현재 작업에서 오래 유지할 내용을 기록한 뒤 간결한 packet을 만듭니다.
 
+> Handoff는 현재 아직 릴리스되지 않은 `main` 기능입니다. 공개 v0.1.0
+> 바이너리에는 이 명령이 없습니다.
+
 ```bash
 aidememo session handoff \
   --from-actor codex-one \

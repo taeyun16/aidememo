@@ -160,6 +160,9 @@ aidememo_workflow_start
 aidememo_fact_add
 ```
 
+> Handoff는 현재 아직 릴리스되지 않은 `main` 기능입니다. 공개 v0.1.0 MCP
+> 서버와 Hermes 패키지에는 이 도구가 없습니다.
+
 다른 계정이 이어받기 전에 `aidememo_handoff`를 호출합니다.
 
 ```json

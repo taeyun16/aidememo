@@ -2,7 +2,8 @@
 
 The runner deliberately owns only the external-installation boundary:
 
-* AideMemo accepts/completes the session-pointer assignment.
+* AideMemo accepts the session-pointer assignment and returns fact-linked
+  evidence before completing the acknowledgement.
 * Codex or Claude runs in an explicit workspace without a shell wrapper.
 * The final response (or failure) is attached to the same AideMemo session.
 * An upstream scheduler such as Hermes Kanban remains responsible for task
