@@ -20,6 +20,7 @@ ARCHITECTURE_DOC = ROOT / "docs" / "ARCHITECTURE.md"
 AGENT_WORKFLOWS_DOC = ROOT / "docs" / "AGENT_WORKFLOWS.md"
 CODING_AGENTS_DOC = ROOT / "docs" / "CODING_AGENTS.md"
 CODEX_MULTI_PROFILE_DOC = ROOT / "docs" / "CODEX_MULTI_PROFILE.md"
+SDK_DOC = ROOT / "docs" / "SDK.md"
 INSTALLATION_DOC = ROOT / "docs" / "INSTALLATION.md"
 QUICKSTART_DOC = ROOT / "docs" / "QUICKSTART.md"
 EVIDENCE_DOC = ROOT / "docs" / "EVIDENCE.md"
@@ -121,6 +122,9 @@ DOC_CONTENT_REQUIREMENTS = [
             "search.auto_hybrid=true",
             "LFM is not the global default embedding replacement",
             "39/155 hints",
+            "Cross-agent handoff Scenario P",
+            "Hermes Kanban boundary Scenario R",
+            "External worker lane Scenario S",
             "Measurement Ledger",
             "Release Checklist",
         ],
@@ -197,12 +201,33 @@ DOC_CONTENT_REQUIREMENTS = [
             "aidememo_fact_add",
             "aidememo_fact_add_many",
             "aidememo_session_canvas",
+            "aidememo_handoff",
             "aidememo_profile_export",
             "Memory.open",
             "search_rows",
             "coverage_by",
             "aggregate_many",
             "remember",
+            "Memory.handoff",
+            "Memory.handoff_packet",
+            "aidememo session resume",
+            "--from codex/coding",
+            "done_when",
+            "Incident shift change",
+            "Hermes Kanban boundary",
+            "aidememo-worker-lane",
+            "accepted",
+            "must not create a second AideMemo assignment",
+        ],
+    ),
+    (
+        SDK_DOC,
+        [
+            "aidememo-worker-lane",
+            "WorkerLaneConfig",
+            "run_external_assignment",
+            "same session",
+            "spawn_fn",
         ],
     ),
     (
@@ -217,6 +242,11 @@ DOC_CONTENT_REQUIREMENTS = [
             "cargo-package-readiness",
             "public-registry-smoke",
             "public-portability-check.py",
+            "Cross-agent handoff Scenario P",
+            "Hermes Kanban boundary Scenario R",
+            "scenario_r_hermes_kanban_boundary.py",
+            "External worker lane Scenario S",
+            "scenario_s_external_worker_lane.py",
             ".github/workflows/fresh-checkout-smoke.yml",
         ],
     ),

@@ -13,7 +13,7 @@ that if a config is broken the agent has no way to ever reach aidememo.
 Invariants
 ----------
 - Server prints exactly one initialize response with protocolVersion.
-- tools/list returns the 13 tools enumerated in cmd/mcp_tools.rs.
+- tools/list returns the tools enumerated in cmd/mcp_tools.rs.
 - tools/call aidememo_query returns a result with topic/entity/related/recent_facts.
 """
 

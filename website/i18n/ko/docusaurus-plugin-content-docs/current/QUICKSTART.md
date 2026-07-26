@@ -111,4 +111,47 @@ am recent --last 1d
 am stats
 ```
 
+## 7. 다른 코딩 에이전트 계정으로 세션 넘기기
+
+반복해서 사용하는 Codex 또는 Claude 계정은 한 번만 등록합니다. 프로필에는
+경로와 라우팅 메타데이터만 저장되며 자격 증명은 저장되지 않습니다.
+
+```bash
+am agent add codex-two --type codex \
+  --home /path/to/codex-two-home \
+  --workspace "$PWD"
+```
+
+활성 세션을 보냅니다. 목적지 프로필에서 런타임과 기본 source 범위를
+가져옵니다.
+
+```bash
+export AIDEMEMO_ACTOR_ID=codex-one
+
+am handoff send codex-two \
+  --focus "Redis timeout 패치 검토" \
+  --done-when "집중 테스트를 통과하고 검토 결과를 기록"
+```
+
+해당 계정의 가장 오래된 pending 작업을 실행하고 `send`가 출력한 ID로 반환
+결과를 확인합니다.
+
+```bash
+am handoff run codex-two
+am handoff show handoff-...
+am handoff board --stale-after 1h --include-completed
+```
+
+수신자 lifecycle을 직접 제어할 때만 `handoff inbox`, `accept`, `return`을
+사용합니다. 완료 결과는 기본적으로 `handoff outbox`에 포함되며 활성 작업만
+보려면 `--pending-only`를 전달합니다.
+
+긴 외부 실행에서 worker lane은 1시간마다 AideMemo heartbeat를 기록하고 연결된
+Hermes 카드에도 같은 pulse를 전달합니다. claim, retry, dependency, 완료는 계속
+Hermes가 소유합니다. 내장 runner가 없는 코딩 에이전트는 `--type manual`로
+등록해 CLI/MCP/SDK의 accept, heartbeat, return을 사용할 수 있습니다.
+`handoff board`는 별도 Kanban 상태 머신이 아닌 파생 작업 뷰입니다.
+기본 1800초를 넘길 작업은 `handoff run --timeout 14400`을 전달하며,
+`--heartbeat-interval` 기본값은 3600초입니다.
+
 이제 CLI, MCP, SDK에서 사용할 수 있는 로컬 메모리 저장소가 준비됐습니다.

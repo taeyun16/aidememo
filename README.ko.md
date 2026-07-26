@@ -1,7 +1,7 @@
 <div align="center">
   <img src="./website/static/img/aidememo-logo.png" alt="AideMemo 로고" width="96" height="96">
   <h1 align="center">AideMemo</h1>
-  <p><strong>코딩 에이전트에 친화적인 SDK 메모리.</strong></p>
+  <p><strong>코딩 에이전트와 오케스트레이터를 위한 이식 가능한 작업 메모리.</strong></p>
   <p>
     하나의 Rust 바이너리와 하나의 임베디드 저장소. 팩트, 그래프 탐색, 이력이 필요한 에이전트를 위한 코드 우선 SDK, MCP 도구, CLI, 네이티브 바인딩을 제공합니다.
   </p>
@@ -28,11 +28,13 @@
 ---
 
 **AideMemo**(`aidememo`)는 Claude Code, Codex, Hermes, pi, Cursor, OpenClaw,
-OpenCode를 비롯한 코딩
-에이전트를 위한 SDK 친화적 메모리 시스템입니다. 프로젝트 지식을 엔티티와
+OpenCode, 코딩 에이전트 오케스트레이터와 기타 에이전트 런타임을 위한 이식
+가능하고 SDK 친화적인 작업 메모리입니다. 프로젝트 지식을 엔티티와
 관계로 연결된 타입 있는 팩트로 저장하고, 유효 기간을 통해 시간 이력을
 보존하며, 하나의 저장소를 Python 에이전트 SDK, MCP 도구, CLI, 인프로세스
-바인딩으로 제공합니다.
+바인딩으로 제공합니다. 추적 워크플로는 Codex에서 Claude Code로, 또는 서로
+다른 Hermes 프로필 사이로 이동해도 결정과 실패를 검증 불가능한 채팅 요약으로
+평탄화하지 않습니다.
 
 AideMemo는 의도적으로 호스팅 메모리 SaaS, 완전한 에이전트 런타임, 또는
 직접 운영해야 하는 벡터 데이터베이스가 아닙니다. 기본 경로는 로컬이며
@@ -113,6 +115,7 @@ auto-hybrid 검색이며, 아래 모델은 각각 별도로 다운로드하고 �
 | 필요 | AideMemo가 제공하는 것 |
 |---|---|
 | 에이전트 친화적 SDK 메모리 | `aidememo-agent-sdk`는 코드를 실행하는 에이전트에 `Memory.open`, `search_rows`, `coverage_by`, `aggregate_many`, `remember`를 제공합니다. |
+| 에이전트·계정 간 핸드오프 | `aidememo_handoff`가 추적 세션을 패키징하고, 선택형 dispatch와 `aidememo_handoff_inbox`가 `codex-one`, `codex-two`, `claude-main` 사이에서 vendor 채팅 ID 없이 같은 세션을 이어 줍니다. |
 | 로컬 에이전트 메모리 | 하나의 바이너리와 하나의 임베디드 저장소. Postgres, Qdrant, Neo4j, 호스팅 벤더가 필요 없습니다. |
 | 제로 토큰 기본 경로 | 기본 캡처, 타입 있는 쓰기, BM25 우선 검색, MCP/SDK 읽기는 외부 LLM API 호출 없이 로컬에서 실행됩니다. |
 | 선택형 로컬 SLM | MLX LFM 사이드카가 모델 추론을 진실의 원천으로 만들지 않으면서 약한 쿼리 검색, 후보 재랭킹, shadow 팩트 분류를 보조합니다. |
@@ -212,7 +215,8 @@ aidememo graph --from Redis --depth 2 --format mermaid
 
 ```bash
 aidememo init --agent codex ./my-wiki
-aidememo --backend libsqlite mcp-install --target codex --source-id my-project
+aidememo --backend libsqlite mcp-install --target codex \
+  --source-id my-project --actor-id codex-one
 
 # Claude Code
 aidememo --backend libsqlite mcp-install --target claude --source-id my-project
@@ -259,12 +263,126 @@ MCP, 기능별 스킬, 훅을 묶은 Claude 플러그인 설치 방법은
 | 정확한 합계, 횟수, 날짜 집합, 타임라인 | `aidememo_aggregate` | 여러 팩트에 걸친 계산을 결정적으로 수행합니다. 단순 회상이 아니라 교차 팩트 계산을 위한 안전장치로 사용합니다. |
 | 지속할 가치가 있는 팩트를 학습 | `aidememo_fact_add` / `aidememo_fact_add_many` | 타입 있는 메모리를 명시적으로 저장합니다. `fact_type`을 생략하면 강한 단서를 결정적으로 추론하고, `session_id`는 후속 팩트를 워크플로 스레드에 유지합니다. |
 | 긴 워크플로 재개 | `aidememo_session_canvas` / `aidememo session canvas` / SDK `session_canvas()` | 전체 스레드를 주입하는 대신 팩트 ID 드릴다운이 있는 제한된 Markdown + Mermaid 세션 지도를 가져옵니다. |
+| 다른 에이전트/프로필/계정으로 라우팅 | `aidememo_handoff` + `aidememo_handoff_inbox` / CLI `handoff` / SDK handoff 메서드 | 제한된 packet을 미리 보거나 Codex → Claude Code, Hermes 프로필 전환, `codex-one` → `codex-two` 세션 포인터를 dispatch합니다. |
 | 프로젝트 맥락 준비 | `aidememo_profile_export` / `aidememo profile export` / SDK `project_profile()` | 현재 타입 팩트에서 읽기 전용 `project_profile.md` 텍스트 뷰를 만듭니다. 저장소가 계속 원본입니다. |
 
 에이전트가 보는 메모리 프로필 자체도 감사 가능한 산출물로 취급합니다.
 [`docs/SKILLOPT_LITE.md`](docs/SKILLOPT_LITE.md)는 SkillOpt에서 영감을 받은
 루프를 설명하며, `scripts/skillopt-lite-check.sh`는 후보 `SKILL.md`와 메모리
 프로필 편집을 수락하기 전에 검사합니다.
+
+## 오케스트레이터 핸드오프
+
+매력적인 단위는 정적인 프로필이 아니라 작업자가 바뀌어도 이어지는
+워크플로입니다. 반복해서 사용하는 계정은 한 번만 연결하고 활성 세션을 짧은
+별칭으로 보냅니다.
+
+```bash
+aidememo agent add codex-two --type codex \
+  --home /path/to/codex-two-home --workspace "$PWD" \
+  --source-id release-team
+
+AIDEMEMO_ACTOR_ID=codex-one aidememo handoff send codex-two \
+  --focus "패키지 메타데이터를 검증한 뒤 릴리스 프리플라이트 실행" \
+  --done-when "설치된 wheel과 workspace 메타데이터가 일치하고 preflight 통과"
+
+aidememo handoff run codex-two
+aidememo handoff show handoff-...
+aidememo handoff board --stale-after 1h --include-completed
+```
+
+`send`는 현재 세션과 발신 actor를 환경에서, 수신 런타임·workspace·기본 source
+범위를 `codex-two` 설정에서 가져옵니다. 명시적인 route 제어가 필요한
+오케스트레이터는 기존 저수준 흐름을 그대로 사용할 수 있습니다.
+
+```bash
+aidememo session handoff \
+  --from-actor codex-one \
+  --to-actor codex-two \
+  --from codex/coding \
+  --to codex/reviewer \
+  --source-id release-team \
+  --focus "패키지 메타데이터를 검증한 뒤 릴리스 프리플라이트 실행" \
+  --done-when "설치된 wheel과 workspace 메타데이터가 일치하고 preflight 통과" \
+  --dispatch \
+  "$AIDEMEMO_SESSION_ID"
+
+# 두 번째 Codex 계정/터미널에서:
+AIDEMEMO_ACTOR_ID=codex-two aidememo handoff inbox --source-id release-team
+AIDEMEMO_ACTOR_ID=codex-two aidememo handoff accept handoff-...
+
+# 발신자는 연결된 결과 fact를 outbox/show에서 확인
+aidememo handoff outbox --actor-id codex-one
+aidememo handoff show handoff-...
+```
+
+식별자의 역할은 분리됩니다. `session_id`는 작업 연속성, `source_id`는
+프로젝트/테넌트 검색 범위, `actor_id`는 사용자가 정한 계정·설치 별칭,
+agent/profile은 런타임 역할입니다. actor 별칭은 인증 정보가 아니므로 설치마다
+고유한 비밀 아닌 이름을 사용합니다. `--dispatch`가 없으면 기존처럼 읽기 전용
+미리보기이며, dispatch한 경우에도 수신자는 작은 세션 포인터만 pull합니다.
+`accept` 시점에 현재 세션에서 packet을 다시 만들므로 메시지 본문을 복제하지 않습니다.
+
+외부 worker lane은 Codex/Claude 프로세스가 실행 중인 동안 1시간마다 AideMemo
+heartbeat를 기록합니다. `HERMES_KANBAN_TASK` 또는 `--kanban-task`가 있으면 같은
+pulse를 `hermes kanban heartbeat`로 전달하지만 claim, retry, dependency, 카드 완료는
+계속 Hermes가 소유합니다. `handoff board`는 ledger를 읽을 때마다 `ready`,
+`in_progress`, `attention`, `returned`로 계산하는 관찰 뷰일 뿐입니다.
+기본 30분 timeout을 넘길 작업은
+`aidememo handoff run codex-two --timeout 14400`으로 실행합니다. heartbeat 간격은
+`--heartbeat-interval`로 바꾸지 않는 한 3600초입니다.
+
+자동 실행 adapter가 없는 Cursor, Aider, OpenCode 같은 런타임은
+`aidememo agent add cursor-review --type manual --workspace "$PWD"`로 연결할 수
+있습니다. 이 런타임은 CLI/MCP/SDK의 `inbox` / `accept` / `heartbeat` / `return`을
+사용하며, 검증된 실행 adapter가 없으므로 `handoff run`은 의도적으로 거절됩니다.
+
+이는 Kafka나 작업 큐가 아닙니다. 토픽, 오프셋, consumer group, lease, 재전송,
+exactly-once 보장이 없습니다. 저장하는 것은 세션 포인터, route, focus,
+`done_when`, pending/accepted/completed 확인 상태뿐입니다. `complete`는 장부
+상태이며 downstream 모델 성공의 증거가 아닙니다.
+
+MCP와 SDK에서는 Markdown을 다시 파싱할 필요가 없습니다.
+`Memory.handoff_packet(...)`이 route, focus, `done_when`, resume 환경과
+prompt-ready `content`를 구조화해 반환합니다. `handoff_inbox()`,
+`handoff_accept()`, `handoff_return()`, `handoff_outbox()`,
+`handoff_show()`가 기본 왕복 흐름을 제공하며 actor 범위 검사가 필요하면
+`handoff_status()`를 사용할 수 있습니다.
+`Memory.handoff(...)`은 텍스트만 필요할 때 사용합니다.
+
+installation profile에는 자격 증명이 아니라 agent, workspace, source,
+model, 환경 정책, config root 경로만 저장합니다. Codex worker는 이 경로를
+공개된 `CODEX_HOME` 경계로 전달하고, 기본 `core` 환경 정책은 무관한 계정
+토큰의 상속을 막습니다. 추가 환경 변수는 `--pass-env`로 이름만 허용합니다.
+
+`scripts/demo-agent-handoff.sh`를 실행하면 Codex/coding → Hermes/reviewer 전체
+경로를 외부 LLM 호출 없이 확인할 수 있습니다.
+
+토큰 없는 Scenario P 게이트에서는 핵심 근거 `4/4`, route field `4/4`, 이웃
+source 누출 `0`을 유지하면서 raw session JSON 대비 `82.6%`, 제한된 session
+canvas 대비 `34.5%` 더 작은 packet을 만들었습니다. 이는 handoff protocol과
+context envelope 검증이며 downstream 모델의 작업 성공률은 별도 선택형
+평가로 남습니다.
+
+Scenario Q는 독립 MCP 프로세스 세 개를 `codex-one`, `codex-two`,
+`claude-main`으로 실행합니다. `10/10` gate에서 actor/source 격리, 같은 세션
+연속성, 명시적 확인, dispatch당 포인터 엔티티 하나, 팩트 복제 0,
+broker/payload 키 0을 검증했습니다.
+
+Scenario R은 실제 임시 Hermes Kanban DB를 사용해 `12/12` gate를
+통과했습니다. 내부 `coding -> reviewer` 전환에는 AideMemo assignment가
+생기지 않고, 외부 `codex-two` 경계에서만 pointer 하나가 생성됩니다. 반환
+근거는 같은 session에 남고 최종 card 완료는 Hermes가 명시적으로 소유합니다.
+이는 protocol 근거이며 외부 CLI worker spawner나 모델 성공률 결과는 아닙니다.
+
+Scenario S는 설치 가능한 SDK 명령 `aidememo-worker-lane`으로 수신자 측 공백을
+메웁니다. 토큰 없는 fake Codex/Claude gate는 `14/14`를 통과합니다. 성공 경로는
+packet과 resume 환경을 받고 같은 session에 fact를 반환한 다음 acknowledgement를
+완료하며, 실패 경로는 같은 session에 error를 기록하고 scheduler를 위해
+accepted 상태를 유지합니다. 발신자의 outbox/status는 두 결과 fact를 직접
+가리킵니다. runner는 shell-free argv를 사용하고 Hermes Kanban을
+변경하지 않습니다. 이는 live-model task success, 계정 인증, exactly-once 실행,
+Hermes `spawn_fn` 통합을 증명하지 않습니다.
 
 ## 일반 워크플로
 
@@ -418,8 +536,9 @@ aidememo profile export --output project_profile.md
 ```
 
 동일한 산출물은 MCP의 에이전트 핫패스(`aidememo_session_canvas`,
-`aidememo_profile_export`)와 `aidememo-agent-sdk`의
-`Memory.session_canvas(...)`, `Memory.project_profile(...)`에서도 제공됩니다.
+`aidememo_handoff`, `aidememo_profile_export`)와 `aidememo-agent-sdk`의
+`Memory.session_canvas(...)`, `Memory.handoff(...)`, `Memory.handoff_packet(...)`,
+`Memory.project_profile(...)`에서도 제공됩니다.
 
 이 산출물은 계층형 메모리 시스템의 유용한 부분, 즉 결정적 드릴다운이 있는
 간결한 매크로 뷰를 차용합니다. 숨겨진 상태를 자동으로 캡처하거나 타입 있는
@@ -456,7 +575,7 @@ curl http://127.0.0.1:3000/admin/status
 | 선택형 redb 서버리스 lock-retry sweep, retry `5000` | writer 4개까지 원활, writer 8개에서 79/80 저장 |
 | HTTP 공유 `mcp-serve`, 클라이언트 2개 x 쓰기 10회 | p50 `18.4ms`, p95 `41.8ms`, 20/20 저장 |
 | 제로 토큰 워크플로 데모 | `128ms`에 decision + lesson + error 노출 |
-| MCP source/backend 기본 설치 시나리오 M | 21/21 invariant, 설치된 `AIDEMEMO_SOURCE_ID` + `--backend libsqlite`가 MCP 쓰기/검색을 `111.6ms`에 범위화 |
+| MCP source/actor/backend 설치 Scenario M | 28/28 invariant, 설치된 source + 설치별 actor + `--backend libsqlite`가 MCP 쓰기/검색/inbox 기본값을 `107.8ms`에 적용 |
 | Hermes Memory-as-Code 시나리오 N | 9/9 invariant, SDK fanout/중복 제거/커버리지/집계에서 beta-source 행 제외 |
 | `aidememo-agent-sdk` 패키지 smoke | wheel 설치 + `Memory` / `AideMemoClient` / `AideMemoMemorySDK` 산출물 메서드 검사 `3.38s` 통과 |
 | `hermes-aidememo` 패키지 smoke | wheel 설치 + SDK 재노출 / 번들 skill / 선택형 캡처 어댑터 검사 `4.43s` 통과 |
@@ -485,12 +604,12 @@ curl http://127.0.0.1:3000/admin/status
 | 검색 | BM25, semantic HNSW, hybrid RRF, 선택형 TEI / `lfm-sidecar`, fastembed 및 리랭크 경로 |
 | 그래프 | 엔티티, 팩트, 관계, 탐색, 최단 경로, Mermaid / DOT 내보내기 |
 | 시간 | `supersede`, `current_only`, `as_of`, archive / cold tier |
-| 에이전트 도구 | `aidememo_workflow_start`, `aidememo_context`, `aidememo_query`, `aidememo_aggregate`, `aidememo_fact_add_many`를 포함한 27개 MCP 도구 |
+| 에이전트 도구 | `aidememo_workflow_start`, `aidememo_handoff`, `aidememo_handoff_inbox`, `aidememo_context`, `aidememo_query`, `aidememo_aggregate`, `aidememo_fact_add_many`를 포함한 29개 MCP 도구 |
 | 캡처 | `aidememo_extract`, pending review queue, review-only LFM LoRA `fact_type_hint` shadow 경로, 선택형 Hermes/OpenClaw 캡처 어댑터 |
-| 산출물 | 타입 있는 팩트에 대한 제한적이고 감사 가능한 Markdown 뷰인 `aidememo session canvas`, `aidememo profile export` |
+| 산출물 | 타입 있는 팩트에 대한 제한적이고 감사 가능한 Markdown 뷰인 `aidememo session canvas`, `aidememo session handoff`, `aidememo profile export` |
 | 운영 | `doctor` / MCP `aidememo_doctor`, `overview`, `bench`, `vector-rebuild`, `consolidate`, `auto-relate` |
-| 공유 | `source_id`, 멀티 프로젝트 저장소, stdio MCP, HTTP/SSE MCP, 데몬 탐색, 클라우드 에이전트와 실험적 메모리 실행을 위한 branch log |
-| 코드 우선 조합 | `Memory.open`, `search_rows`, `coverage_by`, `aggregate_many`, `remember`를 제공하는 `aidememo-agent-sdk` |
+| 공유 | `source_id`, 설치별 `actor_id`, pull 기반 세션 할당, 멀티 프로젝트 저장소, stdio/HTTP MCP, 데몬 탐색, branch log |
+| 코드 우선 조합 | `Memory.open`, `search_rows`, `coverage_by`, `aggregate_many`, `remember`, handoff inbox/accept/complete를 제공하는 `aidememo-agent-sdk` |
 | 바인딩 | Python, Node, Elixir, C |
 
 ## CLI 참고

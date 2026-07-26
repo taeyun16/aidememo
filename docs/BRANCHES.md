@@ -8,6 +8,11 @@ description: Use AideMemo branch logs for speculative memory changes and cloud a
 Branch logs let several agents start from the same backup snapshot, write local
 memory independently, and later merge only the branch you want to keep.
 
+Branch logs move the source-of-truth records between stores or machines. Pair
+them with `aidememo session handoff` when an orchestrator also needs a compact,
+receiver-specific prompt artifact: merge the chosen branch, then generate or
+consume the handoff packet with the same `session_id`.
+
 This is useful when the memory itself is part of an experiment:
 
 | Situation | Why branch logs help |

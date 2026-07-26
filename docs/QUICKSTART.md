@@ -112,5 +112,49 @@ am recent --last 1d
 am stats
 ```
 
+## 7. Hand the session to another coding-agent account
+
+Register a recurring Codex or Claude account once. The profile stores paths
+and routing metadata, never credentials:
+
+```bash
+am agent add codex-two --type codex \
+  --home /path/to/codex-two-home \
+  --workspace "$PWD"
+```
+
+Send the active session. The destination profile supplies its runtime and
+default source scope:
+
+```bash
+export AIDEMEMO_ACTOR_ID=codex-one
+
+am handoff send codex-two \
+  --focus "Review the Redis timeout patch" \
+  --done-when "Focused tests pass and findings are recorded"
+```
+
+Run the oldest pending assignment for that account, then inspect the returned
+result using the id printed by `send`:
+
+```bash
+am handoff run codex-two
+am handoff show handoff-...
+am handoff board --stale-after 1h --include-completed
+```
+
+Use `handoff inbox`, `accept`, and `return` only when manually controlling the
+receiver lifecycle. Completed results remain visible in `handoff outbox` by
+default; pass `--pending-only` when only active work is wanted.
+
+The worker lane emits an AideMemo heartbeat every hour during long external
+runs. A linked Hermes card receives the same heartbeat, while Hermes remains
+the owner of claims, retries, dependencies, and completion. For coding agents
+without a built-in runner, register `--type manual` and use the CLI/MCP/SDK
+accept, heartbeat, and return calls; `handoff board` provides a derived work
+view without adding another Kanban state machine.
+Pass `handoff run --timeout 14400` for work that may exceed the default 1800
+seconds; `--heartbeat-interval` remains 3600 seconds by default.
+
 At this point you have a working local memory store that can be used from the
 CLI, MCP, or SDK.

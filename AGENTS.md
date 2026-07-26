@@ -213,6 +213,18 @@ aidememo session start [--source-id ID]           scoped warmup envelope.
 aidememo session current|list [--source-id ID]    current/recent tracked sessions.
 aidememo session canvas [SESSION] [--source-id ID]
                                             auditable Markdown + Mermaid session artifact.
+aidememo session resume SESSION [--source-id ID] validate an existing session + print shell exports
+                                            for both session continuity and source scope.
+aidememo session handoff SESSION [--dispatch --from-actor ID --to-actor ID]
+                                            preview a bounded packet; optional dispatch stores
+                                            only a pull-based session assignment pointer.
+aidememo agent add|list|show|remove                friendly account/runtime profile surface.
+aidememo installation add|list|show|remove         credential-free Codex/Claude runtime profiles.
+aidememo handoff send AGENT [SESSION]              infer destination metadata and dispatch the session.
+aidememo handoff inbox|accept|return|outbox|show|status
+                                            receiver/sender round trip with result fact link;
+aidememo handoff run AGENT [HANDOFF_ID]             execute oldest pending external-worker assignment;
+                                            not a message queue, auto-retry, or task-success proof.
 aidememo workflow start <TITLE> [--body-file issue.md] [--source github:org/repo#123]
                                             [--source-id ID] [--actor-id ID]
                                             [--parent-session SESSION]
@@ -379,7 +391,7 @@ crates/aidememo-cli/src/
   output.rs          Format::{Table, Json} renderers + format_query_result
   cmd/mod.rs         bpaf top-level + per-command parsers (--project / --json)
   cmd/{init,watch,model,feedback,adapt,doctor,recent,edit,graph,project}.rs
-  cmd/mcp_tools.rs   shared MCP JSON-RPC types + 27-tool dispatch
+  cmd/mcp_tools.rs   shared MCP JSON-RPC types + 29-tool dispatch
   cmd/mcp_stdio.rs   `aidememo mcp` (stdio)
   cmd/mcp_serve.rs   `aidememo mcp-serve` (HTTP + SSE)
 ```
@@ -437,14 +449,16 @@ crates/aidememo-cli/src/
 | `aidememo mcp` | stdio (newline-delimited JSON-RPC) | local agents (Claude Code, Codex CLI) |
 | `aidememo mcp-serve --port 3000` | HTTP POST `/mcp` + SSE `/sse` | browser/remote clients |
 
-**Tool surface — 5 core, then standard, then advanced.** Agent prompts
-should lead with the core 5; the rest are there when needed.
+**Tool surface — 7 core, then standard, then advanced.** Agent prompts
+should lead with the core 7; the rest are there when needed.
 
 **Core (90% of agent traffic)**:
 
 | Tool | When |
 |---|---|
 | **`aidememo_workflow_start`** | **🟢 Ticket/issue/PR automation entry point** — create tracked session + store trigger text + return decisions/lessons/errors/search context. |
+| **`aidememo_handoff`** | **🟢 Orchestrator routing point** — preview a tracked-session packet or dispatch a pointer to another account/agent/profile. `session_id` is continuity, `source_id` is scope, and actor/agent/profile fields are routing metadata. |
+| **`aidememo_handoff_inbox`** | **🟢 Round-trip routing point** — receiver list/accept/return and sender outbox/status for `actor_id` / `AIDEMEMO_ACTOR_ID`. Results link to facts; there are no topics, offsets, retries, or copied payloads. |
 | **`aidememo_context`** | **🟢 Top-of-turn entry point** — pinned + personalisation + recent + (with topic) search/traverse/lessons. One round-trip. |
 | **`aidememo_query`** | Topic dive after aidememo_context. `format:"text"` for compact prompt injection; `max_chars:N` for hard caps; `level:"entity"`/`"session"` to group by entity / by tracked session. |
 | **`aidememo_aggregate`** | Deterministic counting / sum / timeline across facts. Pulls agent out of in-head arithmetic for "how much / how many / between when" questions. ops: `count`/`enumerate`/`by_entity`/`sum_currency`/`sum_duration`/`count_distinct_dates`/`timeline`. |

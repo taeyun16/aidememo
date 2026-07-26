@@ -47,6 +47,51 @@ Cargo `redb` 기능으로 빌드합니다.
 아티팩트에 제공됩니다. C ABI 호출자는 저수준 ABI에 해당 표면이 필요해질
 때까지 CLI의 `aidememo branch ...` 명령을 사용해야 합니다.
 
+## 외부 Codex 또는 Claude 핸드오프 실행
+
+SDK를 설치하면 `aidememo-worker-lane`도 설치됩니다. 이 명령은 주소가 지정된
+AideMemo handoff 하나를 accept하고 현재 packet을 non-interactive coding CLI에
+주입한 뒤 결과를 같은 session에 기록합니다.
+
+```bash
+aidememo-worker-lane handoff-... \
+  --actor-id codex-two \
+  --agent codex \
+  --workspace "$PWD" \
+  --store ~/.aidememo/wiki.sqlite \
+  --source-id release-team \
+  --kanban-task task-42
+```
+
+Claude Code에는 `--agent claude --actor-id claude-main`을 사용합니다. Codex의
+기본값은 `codex exec --ephemeral --sandbox workspace-write`, Claude의 기본값은
+`claude --print --permission-mode acceptEdits --no-session-persistence`입니다.
+인자는 shell 없이 list로 실행되며 수신자는 accepted packet의
+`AIDEMEMO_SESSION_ID`, `AIDEMEMO_SOURCE_ID`, `AIDEMEMO_ACTOR_ID`를 상속합니다.
+
+runner는 assignment를 accept하기 전에 agent binary와 workspace를 검증하므로
+로컬 설정 오류가 작업을 점유하지 않습니다. accept 이후 process 시작 실패는
+아래의 일반 failure 경로로 처리합니다.
+
+반복 사용하는 계정은 `agent add --type ... --home ...`으로 config root와
+workspace를 등록하고 `handoff run ALIAS`로 실행할 수 있습니다.
+Codex에는 `CODEX_HOME`, Claude에는 `CLAUDE_CONFIG_DIR`가 전달되며 profile은
+자격 증명 값을 저장하지 않습니다. 기본 `core` 환경 정책을 사용하고 Codex의
+`--output-schema`와 Claude의 `--json-schema`를 공통 결과 계약으로 정규화합니다.
+
+두 adapter는 `summary`, `changed_files`, `validations`, `done_when_met`,
+`blockers` 결과 계약을 사용합니다. 성공 시 session에 연결된 result fact를 먼저
+기록한 뒤 AideMemo assignment를 `completed`로 바꿉니다. non-zero exit, timeout,
+또는 `done_when_met=false`는 `error` fact를 기록하고
+assignment를 `accepted`로 유지하므로 upstream scheduler가 retry 또는 block할
+수 있습니다. `--kanban-task`는 반환 envelope와 prompt에 label만 붙이며 Kanban을
+변경하지 않습니다. Hermes가 claim, retry, validation, card completion을 계속
+소유합니다. 이 runner는 Hermes `spawn_fn` registration, authenticated identity,
+exactly-once execution을 제공하지 않습니다.
+
+프로그램에서는 `aidememo_agent`의 `WorkerLaneConfig`와
+`run_external_assignment(...)`을 사용할 수 있습니다.
+
 ## 메모리 열기
 
 ```python

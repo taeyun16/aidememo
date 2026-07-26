@@ -44,7 +44,10 @@ session_id_from_output() {
 import re
 import sys
 
-match = re.search(r"AIDEMEMO_SESSION_ID=(session-[0-9A-HJKMNP-TV-Z]{26}|[0-9A-HJKMNP-TV-Z]{26})", sys.argv[1])
+match = re.search(
+    r"""AIDEMEMO_SESSION_ID=['"]?(session-[0-9A-HJKMNP-TV-Z]{26}|[0-9A-HJKMNP-TV-Z]{26})['"]?""",
+    sys.argv[1],
+)
 if not match:
     raise SystemExit(f"could not parse session id from: {sys.argv[1]}")
 print(match.group(1))

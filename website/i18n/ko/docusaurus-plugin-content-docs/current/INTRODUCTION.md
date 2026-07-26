@@ -29,6 +29,7 @@ AideMemo를 사용합니다.
 | 이전 컨텍스트 검색 | `aidememo search`, `aidememo query` |
 | 간단한 티켓에서 작업 시작 | `aidememo workflow start` |
 | 여러 에이전트가 메모리 공유 | 안정적인 `source_id` / `actor_id` identity와 `aidememo mcp-serve` |
+| 추적 중인 작업을 다른 코딩 에이전트 계정으로 이동 | `aidememo handoff send ALIAS` |
 | 에이전트에 도구 제공 | `aidememo mcp` 또는 HTTP MCP |
 | 코드에서 메모리 사용 | `aidememo-agent-sdk` |
 

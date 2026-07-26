@@ -175,7 +175,7 @@ For MCP installs:
 
 ```bash
 aidememo --backend libsqlite --store ~/.aidememo/team.sqlite \
-  mcp-install --target codex --source-id team-a
+  mcp-install --target codex --source-id team-a --actor-id codex-one
 ```
 
 The same boundary is applied to fact get/list/mutations, pinned context,
@@ -192,6 +192,11 @@ names and types intentionally remain a shared ontology, and native/CLI callers
 can choose their own `source_id`. Use separate stores for mutually untrusted
 tenants. See [`Shared Memory Layer`](SHARED_MEMORY.md) for the reference
 deployment patterns and production checklist.
+
+Use a unique non-secret `actor_id` per account/installation. It addresses
+handoff assignments but does not authenticate the vendor account. The handoff
+ledger stores pointers to existing sessions and acknowledgement state; it does
+not provide queue topics, retries, leases, or exactly-once delivery.
 
 ## Avoid local store write contention
 

@@ -119,6 +119,8 @@ Most agent workflows only need these tools:
 | `aidememo_search` | The agent needs pinpoint retrieval |
 | `aidememo_aggregate` | The agent needs exact counts, totals, date sets, or timelines |
 | `aidememo_session_canvas` | The agent is resuming a long tracked workflow |
+| `aidememo_handoff` | An orchestrator is routing the tracked workflow to another agent or profile |
+| `aidememo_handoff_inbox` | Receiver list/accept/return plus sender outbox/status for a session assignment |
 | `aidememo_profile_export` | The agent needs a compact read-only project profile |
 | `aidememo_fact_add` | The agent learned a new fact |
 | `aidememo_fact_add_many` | The agent learned several facts and should batch them |
@@ -160,17 +162,70 @@ Call:
 aidememo_fact_add
 ```
 
+Before another worker takes over, call `aidememo_handoff`:
+
+```json
+{
+  "session_id": "session-...",
+  "from_actor": "codex-one",
+  "to_actor": "codex-two",
+  "from": "codex/coding",
+  "to": "codex/reviewer",
+  "focus": "Verify the patch and run the focused regression test",
+  "done_when": "Focused tests pass and review findings are recorded",
+  "source_id": "team-a",
+  "dispatch": true
+}
+```
+
+Without `dispatch`, the result is the existing read-only Markdown preview. With
+dispatch, AideMemo additionally stores a pending pointer that the receiving
+account pulls through `aidememo_handoff_inbox`. Use `action: "list"`, then
+`action: "accept"` with the returned `handoff_id`; accept returns the packet
+rendered from the current session plus a structured resume environment. The
+receiver persists its evidence fact and calls `action: "return"` with
+`result_fact_id` and `outcome`. The sender uses `action: "outbox"` or
+`action: "status"` to recover that link. `outcome: "failed"` remains accepted;
+no retry is scheduled by AideMemo. Legacy `action: "complete"` is an evidence-free
+acknowledgement and does not prove task success.
+
+`session_id` identifies task continuity, `source_id` scopes retrieval,
+`actor_id` names a user-assigned account/installation, and agent/profile names
+describe runtime role. Actor ids and profiles are routing metadata, not
+authentication. The assignment record contains no topic, offset, consumer
+group, retry state, or copied content payload.
+
+The SDK exposes both consumption shapes:
+
+```python
+packet = memory.handoff_packet(..., from_actor="codex-one",
+                               to_actor="codex-two", dispatch=True)
+pending = memory.handoff_inbox(actor_id="codex-two")
+accepted = memory.handoff_accept(pending[0]["handoff_id"], actor_id="codex-two")
+[result_id] = memory.remember([
+    {"content": "Focused tests pass", "entities": ["Release"]}
+])
+memory.handoff_return(pending[0]["handoff_id"], result_id,
+                      outcome="succeeded", actor_id="codex-two")
+memory.handoff_outbox(actor_id="codex-one", include_completed=True)
+```
+
+Hermes' `aidememo_handoff` tool returns the same structured envelope rather
+than a JSON-encoded Markdown string.
+
 ## Source scoping
 
 Use `source_id` when a shared store contains multiple teams, projects, users, or
 agents.
 
 ```bash
-aidememo --backend libsqlite mcp-install --target <agent> --source-id team-a
+aidememo --backend libsqlite --store ~/.aidememo/team.sqlite \
+  mcp-install --target codex --source-id team-a --actor-id codex-one
 ```
 
 MCP tools then default to that source namespace when the client does not pass an
-explicit `source_id`. The installed command also pins the selected storage
+explicit `source_id`; inbox calls similarly fall back to the installed
+`AIDEMEMO_ACTOR_ID`. The installed command also pins the selected storage
 backend and resolved store path so an agent process does not drift back to a
 different config default or working directory. Use `--actor-id` independently
 when multiple agent profiles share that namespace and writes need provenance.
