@@ -1,11 +1,16 @@
 ---
-title: 에이전트 간 연속성 데모
-description: Hermes에서 Codex를 거쳐 Claude Code로 이어지는 실제 프로젝트 메모리 인계를 녹화합니다.
+title: 연속성 영상 녹화 계획
+description: Hermes에서 Codex를 거쳐 Claude Code로 이어지는 공유 메모리 연속성 영상을 제작합니다.
 ---
 
-# 에이전트 간 연속성 데모
+# 연속성 영상 녹화 계획
 
-이 녹화는 채팅 동기화가 아니라 프로젝트 연속성을 보여줍니다. Hermes가 인증
+이 페이지는 홈페이지 영상 제작 계획이며 핸드오프 빠른 시작이 아닙니다. 계정
+사이에서 명시적으로 할당한 추적 작업을 넘기려면
+[`추적 작업 핸드오프`](HANDOFF.md)를 사용하세요.
+
+이 녹화는 assignment lifecycle이나 채팅 동기화가 아니라 상시 프로젝트
+연속성을 보여줍니다. Hermes가 인증
 실패를 진단하고 지속 가능한 결과를 기록합니다. 새 프로세스의 Codex가 그
 지식에서 작업을 이어가고, Claude Code는 두 에이전트의 대화 내용 없이 같은
 프로젝트 메모리로 결과를 검토합니다.
@@ -76,7 +81,7 @@ implement the agreed fix and run the test.
 
 화면 챕터 문구: `NEW SESSION / DIFFERENT AGENT / NO RE-EXPLAINING`
 
-### 장면 3 - Claude Code가 인계를 검증합니다
+### 장면 3 - Claude Code가 연속성을 검증합니다
 
 Codex를 종료하고 같은 폴더에서 Claude Code를 시작합니다. 다음 프롬프트를
 사용합니다.

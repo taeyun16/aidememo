@@ -109,6 +109,10 @@ agents can call `Memory.session_canvas(...)`.
 > Handoff is currently an unreleased `main` feature. Public v0.1.0 binaries do
 > not expose these commands.
 
+For the shortest sender-to-receiver path, start with
+[`Hand off a tracked task`](HANDOFF.md). This section is the complete CLI
+reference.
+
 Create a compact packet after recording the current task's durable findings:
 
 ```bash

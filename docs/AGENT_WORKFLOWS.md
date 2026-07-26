@@ -80,6 +80,10 @@ flowchart TD
 > Handoff is currently an unreleased `main` feature. Public v0.1.0 artifacts do
 > not expose this surface.
 
+Start with [`Hand off a tracked task`](HANDOFF.md) for the user-facing
+five-step flow. The rest of this section documents lower-level orchestrator and
+SDK composition.
+
 For recurring local accounts, use the short path first:
 
 ```bash

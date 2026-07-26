@@ -165,6 +165,9 @@ aidememo_fact_add
 > Handoff is currently an unreleased `main` feature. Public v0.1.0 MCP servers
 > and Hermes packages do not expose these tools.
 
+Start with [`Hand off a tracked task`](HANDOFF.md) for the user-facing
+round trip. The calls below document the lower-level MCP envelope.
+
 Before another worker takes over, call `aidememo_handoff`:
 
 ```json

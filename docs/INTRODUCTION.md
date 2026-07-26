@@ -16,8 +16,14 @@ extraction, embedding, and reranking remain opt-in.
 Use it when your agent needs project memory that survives across sessions,
 editors, and model providers.
 
+Shared memory and handoff solve different parts of that continuity. Shared
+memory keeps durable context available to connected agents. Handoff deliberately
+moves one tracked task to a named worker with a `focus`, a `done_when`
+condition, and a result linked back to the same session.
+
 For the system map, read [`Architecture`](ARCHITECTURE.md). To run one durable
 store across multiple agents, read [`Shared Memory Layer`](SHARED_MEMORY.md).
+To move task ownership, read [`Hand off a tracked task`](HANDOFF.md).
 For the validated scorecard, read [`Evidence`](EVIDENCE.md). For the per-turn
 tool choice guide, read [`Agent Workflows`](AGENT_WORKFLOWS.md).
 
@@ -60,6 +66,8 @@ Facts can be typed so the right memories rank higher:
 3. Search/query memory before making a plan.
 4. Register AideMemo as an MCP server for your agent.
 5. Use `workflow start` for issue, PR, or ticket automation.
+6. When ownership changes, use `handoff send` so the next worker continues the
+   same tracked session and returns evidence.
 
 ```bash
 aidememo fact add \

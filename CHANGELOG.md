@@ -4,6 +4,12 @@
 
 ### Added
 
+- **Handoff-first documentation** — the GitHub README and Docusaurus homepage
+  now lead from the cross-agent continuity promise into a five-step tracked
+  workflow handoff. A dedicated English/Korean guide separates always-on shared
+  memory from deliberate ownership transfer, keeps the unreleased `main`
+  boundary explicit, and moves recording-production notes out of the primary
+  onboarding path.
 - **Low-ceremony handoff UX** — `aidememo agent add` provides a friendly
   alias for credential-free installation profiles, while `aidememo handoff
   send ALIAS`, `handoff run ALIAS`, and actor-free `handoff show ID` reduce

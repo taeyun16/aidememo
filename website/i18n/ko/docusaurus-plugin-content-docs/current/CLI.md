@@ -110,6 +110,10 @@ Python 에이전트는 `Memory.session_canvas(...)`를 호출할 수 있습니�
 > Handoff는 현재 아직 릴리스되지 않은 `main` 기능입니다. 공개 v0.1.0
 > 바이너리에는 이 명령이 없습니다.
 
+가장 짧은 발신자-수신자 흐름은
+[`추적 작업 핸드오프`](HANDOFF.md)에서 시작하세요. 이 절은 전체 CLI
+레퍼런스입니다.
+
 ```bash
 aidememo session handoff \
   --from-actor codex-one \

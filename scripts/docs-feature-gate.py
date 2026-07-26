@@ -23,6 +23,7 @@ CODEX_MULTI_PROFILE_DOC = ROOT / "docs" / "CODEX_MULTI_PROFILE.md"
 SDK_DOC = ROOT / "docs" / "SDK.md"
 INSTALLATION_DOC = ROOT / "docs" / "INSTALLATION.md"
 QUICKSTART_DOC = ROOT / "docs" / "QUICKSTART.md"
+HANDOFF_DOC = ROOT / "docs" / "HANDOFF.md"
 EVIDENCE_DOC = ROOT / "docs" / "EVIDENCE.md"
 MEASUREMENTS_DOC = ROOT / "docs" / "MEASUREMENTS.md"
 LFM_EXPERIMENTS_DOC = ROOT / "docs" / "LFM_EXPERIMENTS.md"
@@ -64,6 +65,7 @@ REQUIRED_SIDEBAR_DOCS = [
     "ARCHITECTURE",
     "INSTALLATION",
     "QUICKSTART",
+    "HANDOFF",
     "CLI",
     "MCP",
     "SHARED_MEMORY",
@@ -83,6 +85,7 @@ REQUIRED_SIDEBAR_DOCS = [
 REQUIRED_HOMEPAGE_DOCS = [
     "INTRODUCTION",
     "QUICKSTART",
+    "HANDOFF",
     "ARCHITECTURE",
     "MCP",
     "SHARED_MEMORY",
@@ -93,6 +96,19 @@ REQUIRED_HOMEPAGE_DOCS = [
 ]
 
 DOC_CONTENT_REQUIREMENTS = [
+    (
+        HANDOFF_DOC,
+        [
+            "Shared memory is always on.",
+            "Handoff is deliberate.",
+            "cargo install --path crates/aidememo-cli",
+            "aidememo handoff send codex-two",
+            "aidememo handoff run codex-two",
+            "aidememo handoff show handoff-...",
+            "same tracked session",
+            "not a message broker",
+        ],
+    ),
     (
         README,
         [

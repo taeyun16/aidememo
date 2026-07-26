@@ -43,6 +43,26 @@ Python and need to keep intermediate memory state in code. AideMemo's default
 memory loop calls no external LLM API; remote extraction, embedding, and rerank
 services are explicit opt-ins.
 
+### Hand off the work, not the chat
+
+Shared memory keeps project context available. When ownership changes, AideMemo
+hands the same tracked session to a named coding-agent account with an explicit
+focus and definition of done, then links the returned evidence back to that
+session:
+
+```bash
+eval "$(aidememo session new 'Review the Redis timeout patch')"
+export AIDEMEMO_ACTOR_ID=codex-one
+aidememo agent add codex-two --type codex --home /path/to/codex-two-home --workspace "$PWD"
+aidememo handoff send codex-two --focus "Review the patch" --done-when "Tests pass and findings are recorded"
+aidememo handoff run codex-two
+aidememo handoff show handoff-...
+```
+
+No transcript copy, vendor chat id, or hidden model state is transferred.
+[Follow the handoff guide](docs/HANDOFF.md) for the receiver lifecycle,
+operational boundaries, and the current release note.
+
 ```mermaid
 flowchart TB
     subgraph access["Agent and SDK entry points"]
@@ -286,14 +306,15 @@ The agent-facing memory profile itself is treated as an auditable artifact.
 SkillOpt-inspired loop, and `scripts/skillopt-lite-check.sh` gates candidate
 `SKILL.md` / memory-profile edits before they are accepted.
 
-## Orchestrator Handoff
+## Tracked Workflow Handoff
 
 > This section documents the unreleased `main` branch. Public v0.1.0 artifacts
 > do not expose these commands or SDK methods yet.
 
-The attractive unit is not a static profile; it is a workflow that survives a
-change of worker. Connect each recurring account once, then send the active
-session by its short alias:
+The unit of continuity is a tracked workflow, not a static profile or copied
+chat. Shared memory is always available; use handoff deliberately when a named
+worker should take ownership and return evidence. Connect each recurring
+account once, then send the active session by its short alias:
 
 ```bash
 aidememo agent add codex-two --type codex \
@@ -313,6 +334,11 @@ aidememo handoff show handoff-...
 # Read-only operational view; inactive work moves to attention after one hour.
 aidememo handoff board --stale-after 1h --include-completed
 ```
+
+[Follow the five-step handoff guide](docs/HANDOFF.md) for the shortest path.
+
+<details>
+<summary>Protocol, receiver lifecycle, and measured boundaries</summary>
 
 `send` infers the current session from `AIDEMEMO_SESSION_ID`, the sender from
 `AIDEMEMO_ACTOR_ID`, and the receiving runtime, workspace, and default source
@@ -445,6 +471,8 @@ Dispatcher-spawned workers expose `HERMES_KANBAN_TASK` and
 auto-starting a second workflow for ticket-shaped worker prompts, and injects
 the ownership rule above. `aidememo_fact_add` now accepts `session_id`, so a
 worker can attach one durable finding without falling back to a batch call.
+
+</details>
 
 ## Common Workflows
 

@@ -1,11 +1,16 @@
 ---
-title: Cross-agent continuity demo
-description: Record a real Hermes to Codex to Claude Code project-memory handoff.
+title: Continuity recording plan
+description: Produce the Hermes to Codex to Claude Code shared-memory continuity video.
 ---
 
-# Cross-agent continuity demo
+# Continuity recording plan
 
-This recording demonstrates project continuity, not chat synchronization.
+This page is a production plan for the homepage video, not the handoff
+quickstart. To move an explicitly assigned tracked task between accounts, use
+[`Hand off a tracked task`](HANDOFF.md).
+
+The recording demonstrates ambient project continuity, not chat synchronization
+or the assignment lifecycle.
 Hermes diagnoses an authentication failure and records the durable result.
 Codex continues from that knowledge in a new process. Claude Code then reviews
 the result with the same project memory and no transcript from either agent.
@@ -76,7 +81,7 @@ passing.
 
 On-screen chapter text: `NEW SESSION / DIFFERENT AGENT / NO RE-EXPLAINING`
 
-### Scene 3 - Claude Code verifies the handoff
+### Scene 3 - Claude Code verifies the continuity
 
 Quit Codex and start Claude Code in the same folder. Use:
 
