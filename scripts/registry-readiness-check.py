@@ -94,7 +94,7 @@ def validate_pypi_package(
     require_contains(
         failures,
         text,
-        "pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b",
+        "pypa/gh-action-pypi-publish@ba38be9e461d3875417946c167d0b5f3d385a247",
         f"{label} PyPI action",
     )
     require_contains(failures, text, "packages-dir: dist", f"{label} dist directory")
