@@ -51,6 +51,9 @@ PyPI trusted publishers:
 | `aidememo-agent-sdk` | `taeyun16/aidememo` | `aidememo-agent-sdk-publish.yml` | `pypi-publish` | Workflow ready |
 | `hermes-aidememo` | `taeyun16/aidememo` | `hermes-aidememo-publish.yml` | `pypi-publish` | Workflow ready |
 
+All three projects have public v0.1.0 packages. The status column records the
+trusted-publisher workflow configuration separately from package publication.
+
 npm trusted publishers:
 
 Register each npm package with GitHub owner/repo `taeyun16/aidememo`, workflow
@@ -224,19 +227,23 @@ mise run agent-sdk-publish-dry-run
 mise run hermes-publish-dry-run
 ```
 
-Before the first PyPI release, user-facing docs should show checkout installs:
-
-```bash
-python -m pip install -e packages/aidememo-agent-sdk
-python -m pip install -e plugins/hermes
-```
-
-After PyPI release, docs can promote:
+Public v0.1.0 packages are installed from PyPI:
 
 ```bash
 python -m pip install aidememo-agent-sdk
 python -m pip install "aidememo-agent-sdk[binding]"
 python -m pip install hermes-aidememo
+```
+
+Features added under the current
+[`Unreleased`](https://github.com/taeyun16/aidememo/blob/main/CHANGELOG.md#unreleased)
+section must
+continue to show checkout installs until the next version is published. This
+currently includes handoff, agent profiles, and the worker lane:
+
+```bash
+python -m pip install -e packages/aidememo-agent-sdk
+python -m pip install -e plugins/hermes
 ```
 
 ## 6. Node package

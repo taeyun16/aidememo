@@ -106,6 +106,9 @@ agents can call `Memory.session_canvas(...)`.
 
 ## Hand off to another agent, profile, or account
 
+> Handoff is currently an unreleased `main` feature. Public v0.1.0 binaries do
+> not expose these commands.
+
 Create a compact packet after recording the current task's durable findings:
 
 ```bash

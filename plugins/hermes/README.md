@@ -8,7 +8,7 @@ lifecycle hooks.
 
 | Surface | What it does |
 |---|---|
-| **14 tools** | Adds `aidememo_handoff` plus `aidememo_handoff_inbox` to the prior context/query/search/aggregate/write/doctor/lint surface. Handoff can preview or dispatch a session pointer; inbox lists, accepts, or completes assignments for the current account/installation alias. Source-scoped tools fall back to `plugins.aidememo.source_id` / `AIDEMEMO_SOURCE_ID`; actor routing falls back to `AIDEMEMO_ACTOR_ID`. |
+| **14 tools on current `main`** | Adds `aidememo_handoff` plus `aidememo_handoff_inbox` to the prior context/query/search/aggregate/write/doctor/lint surface. Handoff can preview or dispatch a session pointer; inbox supports receiver list/accept/return and sender outbox/status for the current account/installation alias. Source-scoped tools fall back to `plugins.aidememo.source_id` / `AIDEMEMO_SOURCE_ID`; actor routing falls back to `AIDEMEMO_ACTOR_ID`. |
 | **8 slash commands** | `/aidememo-start <title>` (issue/ticket workflow context), `/aidememo-context [topic]` (top-of-turn context), `/aidememo <topic>` (topic query), `/aidememo-aggregate <query>` (exact count/sum/timeline), `/aidememo-add <content>` (record a fact), `/aidememo-recent` (last 7 days), `/aidememo-doctor` (setup/sharing diagnostics), `/aidememo-pending` (review/commit pending captures). Source-scoped commands accept `--source-id ID`. |
 | **Python SDK** | Re-exports `aidememo_agent.Memory` / `AideMemoMemorySDK` with code-first primitives: `open`, `search_rows`, `search_many`, `query_many`, `aggregate_many`, `coverage_by`, `group_by_entity`, and `remember`. Use it when a Hermes task needs fanout, coverage checks, or deterministic intermediate-state handling. The same `aidememo-agent-sdk` package also works from Codex, Claude Code, CI, and local scripts. |
 | **`pre_llm_call` hook** | Auto-injects recent facts into the first turn. In a dispatcher worker it detects `HERMES_KANBAN_TASK`, leaves task lifecycle to Kanban, and avoids creating a duplicate ticket workflow. |
@@ -19,18 +19,19 @@ lifecycle hooks.
 ## Install
 
 ```bash
-# From a checkout, until the PyPI releases land:
+# Published v0.1.0 baseline:
 HERMES_PY="${HERMES_PY:-$HOME/.hermes/hermes-agent/venv/bin/python3}"
-"$HERMES_PY" -m pip install -e packages/aidememo-agent-sdk -e plugins/hermes
-
-# After the PyPI releases:
 "$HERMES_PY" -m pip install hermes-aidememo
-"$HERMES_PY" -m pip install "hermes-aidememo[binding]"  # optional aidememo-python fast path
+"$HERMES_PY" -m pip install "hermes-aidememo[binding]"  # optional native fast path
+
+# Current main handoff and worker-lane support, until the next release:
+"$HERMES_PY" -m pip install -e packages/aidememo-agent-sdk -e plugins/hermes
 ```
 
 Use Hermes's own Python interpreter. Installing with an unrelated system
 `python` leaves the package outside Hermes's plugin host and the plugin will
-not be discovered.
+not be discovered. Public v0.1.0 provides the baseline plugin but not the
+handoff tools or worker lane documented in the current-main sections.
 
 Then enable it in `~/.hermes/config.yaml`:
 
@@ -55,8 +56,9 @@ plugins:
 ```
 
 The plugin needs **either** `aidememo-python` (in-process binding) **or** the
-`aidememo` CLI binary on `$PATH`. The CLI fallback is always available — install
-from Git or build from source until the crates.io release lands.
+`aidememo` CLI binary on `$PATH`. The public v0.1.0 CLI supports the baseline
+plugin surface. Current-main handoff support requires a matching CLI built from
+the same checkout.
 
 ## Why a plugin instead of just the MCP server?
 

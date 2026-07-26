@@ -114,6 +114,10 @@ am stats
 
 ## 7. Hand the session to another coding-agent account
 
+> Handoff is currently an unreleased `main` feature. Public v0.1.0 binaries do
+> not contain these commands. Build the CLI from a current checkout with
+> `cargo install --path crates/aidememo-cli` before following this section.
+
 Register a recurring Codex or Claude account once. The profile stores paths
 and routing metadata, never credentials:
 

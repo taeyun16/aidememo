@@ -47,6 +47,9 @@ PyPI trusted publisher:
 | `aidememo-agent-sdk` | `taeyun16/aidememo` | `aidememo-agent-sdk-publish.yml` | `pypi-publish` | 워크플로 준비 완료 |
 | `hermes-aidememo` | `taeyun16/aidememo` | `hermes-aidememo-publish.yml` | `pypi-publish` | 워크플로 준비 완료 |
 
+세 프로젝트 모두 공개 v0.1.0 패키지가 있습니다. 상태 열은 패키지 공개 여부와
+분리해 trusted publisher 워크플로 구성을 기록합니다.
+
 npm trusted publisher:
 
 각 npm 패키지를 GitHub owner/repo `taeyun16/aidememo`, workflow
@@ -219,19 +222,22 @@ mise run agent-sdk-publish-dry-run
 mise run hermes-publish-dry-run
 ```
 
-첫 PyPI 릴리스 전 사용자 문서는 checkout 설치를 보여야 합니다.
-
-```bash
-python -m pip install -e packages/aidememo-agent-sdk
-python -m pip install -e plugins/hermes
-```
-
-PyPI 릴리스 후에는 다음 설치를 안내할 수 있습니다.
+공개 v0.1.0 패키지는 PyPI에서 설치합니다.
 
 ```bash
 python -m pip install aidememo-agent-sdk
 python -m pip install "aidememo-agent-sdk[binding]"
 python -m pip install hermes-aidememo
+```
+
+현재
+[`Unreleased`](https://github.com/taeyun16/aidememo/blob/main/CHANGELOG.md#unreleased)에
+추가된 기능은 다음 버전이 배포될 때까지 checkout 설치를 계속 안내해야
+합니다. 현재 handoff, agent profile, worker lane이 여기에 해당합니다.
+
+```bash
+python -m pip install -e packages/aidememo-agent-sdk
+python -m pip install -e plugins/hermes
 ```
 
 ## 6. Node 패키지

@@ -168,6 +168,12 @@ python -m pip install "aidememo-agent-sdk[binding]"  # 선택형 네이티브 Py
 npm install aidememo-napi                            # 네이티브 Node.js 바인딩
 ```
 
+> **릴리스 경계:** 공개 v0.1.0 CLI, `aidememo-agent-sdk`,
+> `hermes-aidememo` 패키지는 기본 메모리 표면을 제공하지만
+> [`Unreleased`](CHANGELOG.md)의 handoff, agent profile, worker lane 추가사항은
+> 포함하지 않습니다. 다음 릴리스 전까지 아래 handoff 문서는 현재 `main`
+> 체크아웃을 기준으로 사용하세요.
+
 ## 문서 사이트
 
 정적 문서 사이트는 [`website/`](website/)에 있으며, Docusaurus가
@@ -263,7 +269,7 @@ MCP, 기능별 스킬, 훅을 묶은 Claude 플러그인 설치 방법은
 | 정확한 합계, 횟수, 날짜 집합, 타임라인 | `aidememo_aggregate` | 여러 팩트에 걸친 계산을 결정적으로 수행합니다. 단순 회상이 아니라 교차 팩트 계산을 위한 안전장치로 사용합니다. |
 | 지속할 가치가 있는 팩트를 학습 | `aidememo_fact_add` / `aidememo_fact_add_many` | 타입 있는 메모리를 명시적으로 저장합니다. `fact_type`을 생략하면 강한 단서를 결정적으로 추론하고, `session_id`는 후속 팩트를 워크플로 스레드에 유지합니다. |
 | 긴 워크플로 재개 | `aidememo_session_canvas` / `aidememo session canvas` / SDK `session_canvas()` | 전체 스레드를 주입하는 대신 팩트 ID 드릴다운이 있는 제한된 Markdown + Mermaid 세션 지도를 가져옵니다. |
-| 다른 에이전트/프로필/계정으로 라우팅 | `aidememo_handoff` + `aidememo_handoff_inbox` / CLI `handoff` / SDK handoff 메서드 | 제한된 packet을 미리 보거나 Codex → Claude Code, Hermes 프로필 전환, `codex-one` → `codex-two` 세션 포인터를 dispatch합니다. |
+| 다른 에이전트/프로필/계정으로 라우팅 | `aidememo_handoff` + `aidememo_handoff_inbox` / CLI `handoff` / SDK handoff 메서드 | 제한된 packet을 미리 보거나 Codex → Claude Code, Hermes Kanban → 외부 Codex, `codex-one` → `codex-two` 세션 포인터를 dispatch합니다. 같은 Hermes 보드 안의 작업 상태는 Kanban에 유지합니다. |
 | 프로젝트 맥락 준비 | `aidememo_profile_export` / `aidememo profile export` / SDK `project_profile()` | 현재 타입 팩트에서 읽기 전용 `project_profile.md` 텍스트 뷰를 만듭니다. 저장소가 계속 원본입니다. |
 
 에이전트가 보는 메모리 프로필 자체도 감사 가능한 산출물로 취급합니다.
@@ -272,6 +278,9 @@ MCP, 기능별 스킬, 훅을 묶은 Claude 플러그인 설치 방법은
 프로필 편집을 수락하기 전에 검사합니다.
 
 ## 오케스트레이터 핸드오프
+
+> 이 절은 아직 릴리스되지 않은 `main` 브랜치를 설명합니다. 공개 v0.1.0
+> 산출물에는 이 명령과 SDK 메서드가 없습니다.
 
 매력적인 단위는 정적인 프로필이 아니라 작업자가 바뀌어도 이어지는
 워크플로입니다. 반복해서 사용하는 계정은 한 번만 연결하고 활성 세션을 짧은
@@ -339,8 +348,10 @@ pulse를 `hermes kanban heartbeat`로 전달하지만 claim, retry, dependency, 
 
 이는 Kafka나 작업 큐가 아닙니다. 토픽, 오프셋, consumer group, lease, 재전송,
 exactly-once 보장이 없습니다. 저장하는 것은 세션 포인터, route, focus,
-`done_when`, pending/accepted/completed 확인 상태뿐입니다. `complete`는 장부
-상태이며 downstream 모델 성공의 증거가 아닙니다.
+`done_when`, 확인 상태, 선택형 연결 결과 fact입니다. 성공한 `return`은 확인을
+완료하고 실패한 `return`은 오케스트레이터 정책을 위해 accepted로 남습니다.
+기존 `complete`는 근거를 연결하지 않는 legacy 상태 변경이며 downstream 모델
+성공의 증거가 아닙니다.
 
 MCP와 SDK에서는 Markdown을 다시 파싱할 필요가 없습니다.
 `Memory.handoff_packet(...)`이 route, focus, `done_when`, resume 환경과
@@ -359,8 +370,8 @@ model, 환경 정책, config root 경로만 저장합니다. Codex worker는 이
 경로를 외부 LLM 호출 없이 확인할 수 있습니다.
 
 토큰 없는 Scenario P 게이트에서는 핵심 근거 `4/4`, route field `4/4`, 이웃
-source 누출 `0`을 유지하면서 raw session JSON 대비 `82.6%`, 제한된 session
-canvas 대비 `34.5%` 더 작은 packet을 만들었습니다. 이는 handoff protocol과
+source 누출 `0`을 유지하면서 raw session JSON 대비 `82.8%`, 제한된 session
+canvas 대비 `36.1%` 더 작은 packet을 만들었습니다. 이는 handoff protocol과
 context envelope 검증이며 downstream 모델의 작업 성공률은 별도 선택형
 평가로 남습니다.
 
@@ -575,7 +586,7 @@ curl http://127.0.0.1:3000/admin/status
 | 선택형 redb 서버리스 lock-retry sweep, retry `5000` | writer 4개까지 원활, writer 8개에서 79/80 저장 |
 | HTTP 공유 `mcp-serve`, 클라이언트 2개 x 쓰기 10회 | p50 `18.4ms`, p95 `41.8ms`, 20/20 저장 |
 | 제로 토큰 워크플로 데모 | `128ms`에 decision + lesson + error 노출 |
-| MCP source/actor/backend 설치 Scenario M | 28/28 invariant, 설치된 source + 설치별 actor + `--backend libsqlite`가 MCP 쓰기/검색/inbox 기본값을 `107.8ms`에 적용 |
+| MCP source/actor/backend 설치 Scenario M | 28/28 invariant, 설치된 source + 설치별 actor + `--backend libsqlite`가 MCP 쓰기/검색/inbox 기본값을 `76.43ms`에 적용 |
 | Hermes Memory-as-Code 시나리오 N | 9/9 invariant, SDK fanout/중복 제거/커버리지/집계에서 beta-source 행 제외 |
 | `aidememo-agent-sdk` 패키지 smoke | wheel 설치 + `Memory` / `AideMemoClient` / `AideMemoMemorySDK` 산출물 메서드 검사 `3.38s` 통과 |
 | `hermes-aidememo` 패키지 smoke | wheel 설치 + SDK 재노출 / 번들 skill / 선택형 캡처 어댑터 검사 `4.43s` 통과 |
@@ -586,7 +597,7 @@ curl http://127.0.0.1:3000/admin/status
 | 공개 레지스트리 smoke | `plan` 모드는 배포 후 `cargo`, `pip`, `npm` 설치 검사를 기록하고, `verify` 모드는 배포 후 로컬 또는 수동 GitHub 워크플로에서 공개 레지스트리로 설치 |
 | `aidememo-agent-sdk` 배포 워크플로 | PyPI payload dry-run + trusted publisher 워크플로가 기본적으로 dry-run |
 | `hermes-aidememo` 배포 워크플로 | PyPI payload dry-run + trusted publisher 워크플로가 기본적으로 dry-run |
-| Changelog 릴리스 gate | 워크스페이스 `0.1.0`에 맞게 `CHANGELOG.md` 정리, 빈 `Unreleased`, 날짜가 있는 `0.1.0` 노트 |
+| Changelog 릴리스 gate | `CHANGELOG.md`에 날짜가 있는 `0.1.0` 노트를 유지하고 현재 main 변경사항은 `Unreleased`에 기록 |
 | SkillOpt-lite 프로필 gate | 후보 메모리 프로필 토큰, `aidememo skill check`, 워크플로 데모, SDK 승격 gate 검증 |
 | SkillOpt-lite 주기적 사이클 | 수락/거절된 skill-profile 후보를 `target/skillopt-lite`에 기록, `--apply`일 때만 적용 |
 | `aidememo-napi` 패키지 분리 | 루트 JS/types 패키지 + 현재 플랫폼 선택형 패키지 설치 smoke 통과 |
@@ -609,7 +620,7 @@ curl http://127.0.0.1:3000/admin/status
 | 산출물 | 타입 있는 팩트에 대한 제한적이고 감사 가능한 Markdown 뷰인 `aidememo session canvas`, `aidememo session handoff`, `aidememo profile export` |
 | 운영 | `doctor` / MCP `aidememo_doctor`, `overview`, `bench`, `vector-rebuild`, `consolidate`, `auto-relate` |
 | 공유 | `source_id`, 설치별 `actor_id`, pull 기반 세션 할당, 멀티 프로젝트 저장소, stdio/HTTP MCP, 데몬 탐색, branch log |
-| 코드 우선 조합 | `Memory.open`, `search_rows`, `coverage_by`, `aggregate_many`, `remember`, handoff inbox/accept/complete를 제공하는 `aidememo-agent-sdk` |
+| 코드 우선 조합 | `Memory.open`, `search_rows`, `coverage_by`, `aggregate_many`, `remember`, handoff inbox/accept/return/outbox/status를 제공하는 `aidememo-agent-sdk` |
 | 바인딩 | Python, Node, Elixir, C |
 
 ## CLI 참고

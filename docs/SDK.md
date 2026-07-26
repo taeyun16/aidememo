@@ -49,6 +49,12 @@ artifacts through already-open handles. C ABI callers should use the CLI
 
 ## Run an external Codex or Claude handoff
 
+> The handoff API and `aidememo-worker-lane` are unreleased on `main`; the public
+> `aidememo-agent-sdk==0.1.0` package does not include them. For this section,
+> install from a current checkout with
+> `python -m pip install -e ./packages/aidememo-agent-sdk` and use a matching
+> current-main CLI.
+
 Installing the SDK also installs `aidememo-worker-lane`. It accepts one
 addressed AideMemo handoff, injects the current packet into a non-interactive
 coding CLI, and records the result on the same session:

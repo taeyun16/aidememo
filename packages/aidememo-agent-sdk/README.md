@@ -26,6 +26,11 @@ in-process fast path.
 
 ## External Codex / Claude worker lane
 
+> The worker-lane and handoff APIs are currently unreleased on `main`. Public
+> `aidememo-agent-sdk==0.1.0` does not include them. Install this checkout with
+> `python -m pip install -e ./packages/aidememo-agent-sdk` and use the matching
+> current-main CLI for the examples below.
+
 The package installs `aidememo-worker-lane`, a shell-free receiver runner for
 an already-dispatched handoff:
 

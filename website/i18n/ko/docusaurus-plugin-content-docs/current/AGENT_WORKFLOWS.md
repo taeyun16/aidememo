@@ -71,10 +71,13 @@ flowchart TD
 | 오래 유지할 팩트 하나를 학습 | `aidememo_fact_add` / `aidememo fact add` | 타입 지정 메모리를 명시적으로 저장하고 워크플로 세션에 연결할 수 있습니다. |
 | 오래 유지할 여러 팩트를 학습 | `aidememo_fact_add_many` | 쓰기를 배치해 디스크 동기화 비용을 한 번만 지불합니다. |
 | 긴 워크플로 다시 시작 | `aidememo_session_canvas` / `aidememo session canvas` / `Memory.session_canvas(...)` | 팩트 ID 상세 조회 명령을 포함하는 제한된 Markdown 및 Mermaid 지도를 반환합니다. |
-| 에이전트 설치 또는 계정 사이로 작업 라우팅 | `aidememo_handoff` + `aidememo_handoff_inbox` / CLI `handoff` / SDK handoff 메서드 | packet을 미리 보거나 같은 워크플로 세션 포인터를 dispatch하고 명시적으로 accept/complete합니다. Hermes Kanban 같은 기존 스케줄러는 내부 작업 상태를 계속 소유합니다. |
+| 에이전트 설치 또는 계정 사이로 작업 라우팅 | `aidememo_handoff` + `aidememo_handoff_inbox` / CLI `handoff` / SDK handoff 메서드 | packet을 미리 보거나 같은 워크플로 세션 포인터를 dispatch합니다. 수신자는 accept한 뒤 fact가 연결된 근거를 return하고 발신자는 outbox/status에서 확인합니다. Hermes Kanban 같은 기존 스케줄러는 내부 작업 상태를 계속 소유합니다. |
 | 간결한 프로젝트 컨텍스트 준비 | `aidememo_profile_export` / `aidememo profile export` / `Memory.project_profile(...)` | 현재 타입 지정 팩트로 읽기 전용 프로필을 만들고 저장소를 근거 기록으로 유지합니다. |
 
 ## 에이전트 간 핸드오프 패턴
+
+> Handoff는 현재 아직 릴리스되지 않은 `main` 기능입니다. 공개 v0.1.0
+> 산출물에는 이 표면이 없습니다.
 
 AideMemo는 오케스트레이터가 자주 혼합하는 네 가지 개념을 분리합니다.
 
