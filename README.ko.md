@@ -43,6 +43,25 @@ AideMemo는 의도적으로 호스팅 메모리 SaaS, 완전한 에이전트 런
 수 있습니다. AideMemo의 기본 메모리 루프는 외부 LLM API를 호출하지 않으며,
 원격 추출·임베딩·리랭크 서비스는 명시적으로 선택해야 합니다.
 
+### 채팅이 아니라 작업을 핸드오프
+
+공유 메모리는 프로젝트 맥락을 항상 사용할 수 있게 합니다. 작업 주체가
+바뀌면 AideMemo가 같은 추적 세션을 명확한 목표와 완료 조건과 함께 지정한
+코딩 에이전트 계정으로 보내고, 반환 근거를 그 세션에 다시 연결합니다.
+
+```bash
+eval "$(aidememo session new 'Redis timeout 패치 검토')"
+export AIDEMEMO_ACTOR_ID=codex-one
+aidememo agent add codex-two --type codex --home /path/to/codex-two-home --workspace "$PWD"
+aidememo handoff send codex-two --focus "패치 검토" --done-when "테스트가 통과하고 결과가 기록됨"
+aidememo handoff run codex-two
+aidememo handoff show handoff-...
+```
+
+대화 기록, vendor chat ID, 숨겨진 모델 상태를 복사하지 않습니다. 수신
+lifecycle, 운영 경계, 현재 릴리스 안내는
+[추적 작업 핸드오프](docs/HANDOFF.md)를 참고하세요.
+
 ```mermaid
 flowchart TB
     subgraph access["에이전트와 SDK 진입점"]
@@ -277,14 +296,15 @@ MCP, 기능별 스킬, 훅을 묶은 Claude 플러그인 설치 방법은
 루프를 설명하며, `scripts/skillopt-lite-check.sh`는 후보 `SKILL.md`와 메모리
 프로필 편집을 수락하기 전에 검사합니다.
 
-## 오케스트레이터 핸드오프
+## 추적 워크플로 핸드오프
 
 > 이 절은 아직 릴리스되지 않은 `main` 브랜치를 설명합니다. 공개 v0.1.0
 > 산출물에는 이 명령과 SDK 메서드가 없습니다.
 
-매력적인 단위는 정적인 프로필이 아니라 작업자가 바뀌어도 이어지는
-워크플로입니다. 반복해서 사용하는 계정은 한 번만 연결하고 활성 세션을 짧은
-별칭으로 보냅니다.
+연속성의 단위는 정적 프로필이나 복사한 채팅이 아니라 추적 워크플로입니다.
+공유 메모리는 항상 사용할 수 있고, 지정한 작업자가 소유권을 이어받아 근거를
+반환해야 할 때 핸드오프를 명시적으로 사용합니다. 반복해서 사용하는 계정은
+한 번만 연결하고 활성 세션을 짧은 별칭으로 보냅니다.
 
 ```bash
 aidememo agent add codex-two --type codex \
@@ -299,6 +319,11 @@ aidememo handoff run codex-two
 aidememo handoff show handoff-...
 aidememo handoff board --stale-after 1h --include-completed
 ```
+
+[5단계 핸드오프 가이드](docs/HANDOFF.md)에서 가장 짧은 경로부터 시작하세요.
+
+<details>
+<summary>프로토콜, 수신 lifecycle, 측정 경계</summary>
 
 `send`는 현재 세션과 발신 actor를 환경에서, 수신 런타임·workspace·기본 source
 범위를 `codex-two` 설정에서 가져옵니다. 명시적인 route 제어가 필요한
@@ -394,6 +419,8 @@ accepted 상태를 유지합니다. 발신자의 outbox/status는 두 결과 fac
 가리킵니다. runner는 shell-free argv를 사용하고 Hermes Kanban을
 변경하지 않습니다. 이는 live-model task success, 계정 인증, exactly-once 실행,
 Hermes `spawn_fn` 통합을 증명하지 않습니다.
+
+</details>
 
 ## 일반 워크플로
 

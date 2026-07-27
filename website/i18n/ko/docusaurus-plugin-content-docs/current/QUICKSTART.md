@@ -111,7 +111,7 @@ am recent --last 1d
 am stats
 ```
 
-## 7. 다른 코딩 에이전트 계정으로 세션 넘기기
+## 7. 추적 세션 핸드오프
 
 > Handoff는 현재 아직 릴리스되지 않은 `main` 기능입니다. 공개 v0.1.0
 > 바이너리에는 이 명령이 없습니다. 이 절을 진행하기 전에 현재 체크아웃에서
@@ -146,16 +146,9 @@ am handoff show handoff-...
 am handoff board --stale-after 1h --include-completed
 ```
 
-수신자 lifecycle을 직접 제어할 때만 `handoff inbox`, `accept`, `return`을
-사용합니다. 완료 결과는 기본적으로 `handoff outbox`에 포함되며 활성 작업만
-보려면 `--pending-only`를 전달합니다.
-
-긴 외부 실행에서 worker lane은 1시간마다 AideMemo heartbeat를 기록하고 연결된
-Hermes 카드에도 같은 pulse를 전달합니다. claim, retry, dependency, 완료는 계속
-Hermes가 소유합니다. 내장 runner가 없는 코딩 에이전트는 `--type manual`로
-등록해 CLI/MCP/SDK의 accept, heartbeat, return을 사용할 수 있습니다.
-`handoff board`는 별도 Kanban 상태 머신이 아닌 파생 작업 뷰입니다.
-기본 1800초를 넘길 작업은 `handoff run --timeout 14400`을 전달하며,
-`--heartbeat-interval` 기본값은 3600초입니다.
+이것으로 자동 왕복이 끝납니다. 발신자가 다음 목표를 명시하고, 수신 계정이
+같은 세션을 이어서 작업하며, 반환 결과도 그 세션에 연결됩니다. 수동 수신자,
+identity 필드, timeout, heartbeat, Hermes 경계는
+[`추적 작업 핸드오프`](HANDOFF.md)에서 이어서 확인하세요.
 
 이제 CLI, MCP, SDK에서 사용할 수 있는 로컬 메모리 저장소가 준비됐습니다.

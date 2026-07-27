@@ -15,6 +15,14 @@
     "message": "저장소를 만들고 typed fact를 추가한 뒤 티켓에서 다시 찾아냅니다.",
     "description": "Homepage link description for the quickstart."
   },
+  "homepage.card.handoff.title": {
+    "message": "추적 작업 핸드오프",
+    "description": "Homepage link title for the handoff guide."
+  },
+  "homepage.card.handoff.description": {
+    "message": "하나의 세션을 지정한 코딩 에이전트 계정으로 보내고 반환 근거를 연결합니다.",
+    "description": "Homepage link description for the handoff guide."
+  },
   "homepage.card.architecture.title": {
     "message": "아키텍처",
     "description": "Homepage link title for the architecture guide."
@@ -78,10 +86,10 @@
     "message": "대화가 끝나도 작업은 끝나지 않습니다."
   },
   "homepage.profiles.body": {
-    "message": "AideMemo는 도구 사이에서 채팅을 옮기지 않습니다. 대신 다음 에이전트가 이어서 작업하는 데 필요한 프로젝트 지식, 즉 무엇을 시도했고 왜 실패했으며 다음에 무엇을 하기로 했는지를 전달합니다."
+    "message": "공유 메모리는 프로젝트 맥락을 항상 사용할 수 있게 합니다. 핸드오프는 목표, 완료 조건, 같은 세션에 연결되는 반환 근거와 함께 작업 소유권을 명시적으로 바꿉니다."
   },
   "homepage.profiles.action": {
-    "message": "코딩 에이전트 연결하기"
+    "message": "추적 작업 핸드오프"
   },
   "homepage.logo.alt": {
     "message": "AideMemo 로고",
@@ -486,7 +494,37 @@
     "message": "Hermes, Codex, Claude Code가 하나의 프로젝트 메모리에서 이어서 작업합니다."
   },
   "homepage.action.docs": {
-    "message": "작업이 이어지는 방식 보기"
+    "message": "핸드오프 사용해 보기"
+  },
+  "homepage.handoff.flow.alt": {
+    "message": "하나의 추적 세션이 발신자에서 AideMemo를 거쳐 수신자로 이동합니다."
+  },
+  "homepage.handoff.sender.meta": {
+    "message": "발신자 · HERMES"
+  },
+  "homepage.handoff.sender.title": {
+    "message": "다음 목표를 명시합니다"
+  },
+  "homepage.handoff.sender.detail": {
+    "message": "refresh token 수정안을 검토하고 집중 테스트를 실행합니다."
+  },
+  "homepage.handoff.packet.meta": {
+    "message": "핸드오프 · 같은 세션"
+  },
+  "homepage.handoff.packet.title": {
+    "message": "지속 가능한 근거를 전달합니다"
+  },
+  "homepage.handoff.packet.detail": {
+    "message": "focus, done_when, 결정, 실패, 교훈을 함께 전달합니다."
+  },
+  "homepage.handoff.receiver.meta": {
+    "message": "수신자 · CODEX"
+  },
+  "homepage.handoff.receiver.title": {
+    "message": "이어서 작업하고 반환합니다"
+  },
+  "homepage.handoff.receiver.detail": {
+    "message": "결과 fact는 같은 추적 워크플로에 연결됩니다."
   },
   "homepage.install.label": {
     "message": "AideMemo 설치"

@@ -141,6 +141,19 @@ const docLinks: DocLink[] = [
   },
   {
     title: translate({
+      id: 'homepage.card.handoff.title',
+      message: 'Hand off a tracked task',
+      description: 'Homepage link title for the handoff guide.',
+    }),
+    description: translate({
+      id: 'homepage.card.handoff.description',
+      message: 'Send one session to a named coding-agent account and link the returned evidence.',
+      description: 'Homepage link description for the handoff guide.',
+    }),
+    to: '/docs/HANDOFF',
+  },
+  {
+    title: translate({
       id: 'homepage.card.architecture.title',
       message: 'Architecture',
       description: 'Homepage link title for the architecture guide.',
@@ -339,8 +352,8 @@ function HomepageHero(): JSX.Element {
               <Translate id="homepage.action.start">Give my agents memory</Translate>
               <span aria-hidden="true">↓</span>
             </Link>
-            <Link className={styles.secondaryAction} to="/docs/INTRODUCTION">
-              <Translate id="homepage.action.docs">See how continuity works</Translate>
+            <Link className={styles.secondaryAction} to="/docs/HANDOFF">
+              <Translate id="homepage.action.docs">Try a handoff</Translate>
               <Arrow />
             </Link>
           </div>
@@ -465,33 +478,63 @@ function ProfileContinuitySection(): JSX.Element {
           </Heading>
           <p className={styles.sectionBody}>
             <Translate id="homepage.profiles.body">
-              AideMemo does not move chats between tools. It gives the next agent the durable
-              project knowledge it needs to continue: what was tried, what failed, and what the
-              team decided next.
+              Shared memory keeps project context available. Handoff deliberately changes
+              ownership with a focus, a definition of done, and returned evidence linked to the
+              same session.
             </Translate>
           </p>
-          <Link className={styles.textLink} to="/docs/CODEX_MULTI_PROFILE">
-            <Translate id="homepage.profiles.action">Set up your coding agents</Translate>
+          <Link className={styles.textLink} to="/docs/HANDOFF">
+            <Translate id="homepage.profiles.action">Hand off a tracked task</Translate>
             <Arrow />
           </Link>
         </div>
-        <div className={styles.profileFlow} aria-label="A failed attempt becomes useful context for the next coding agent">
+        <div
+          className={styles.profileFlow}
+          aria-label={translate({
+            id: 'homepage.handoff.flow.alt',
+            message: 'One tracked session moves from a sender through AideMemo to a receiver.',
+          })}
+        >
           <div className={styles.profileNode}>
-            <span>YESTERDAY · HERMES</span>
-            <strong>Found the failure</strong>
-            <small>Old refresh tokens trigger replay detection.</small>
+            <span>
+              <Translate id="homepage.handoff.sender.meta">SENDER · HERMES</Translate>
+            </span>
+            <strong>
+              <Translate id="homepage.handoff.sender.title">Names the next objective</Translate>
+            </strong>
+            <small>
+              <Translate id="homepage.handoff.sender.detail">
+                Review the refresh-token fix and run focused tests.
+              </Translate>
+            </small>
           </div>
           <div className={styles.profileConnector} aria-hidden="true">↘</div>
           <div className={styles.sharedMemoryNode}>
-            <span>AIDEMEMO · LOCAL</span>
-            <strong>Kept the lesson</strong>
-            <small>Error, root cause, and agreed fix stay with the project.</small>
+            <span>
+              <Translate id="homepage.handoff.packet.meta">HANDOFF · SAME SESSION</Translate>
+            </span>
+            <strong>
+              <Translate id="homepage.handoff.packet.title">Carries the durable evidence</Translate>
+            </strong>
+            <small>
+              <Translate id="homepage.handoff.packet.detail">
+                Focus, done_when, decisions, failures, and lessons.
+              </Translate>
+            </small>
           </div>
           <div className={styles.profileConnector} aria-hidden="true">↘</div>
           <div className={styles.profileNode}>
-            <span>TODAY · CLAUDE CODE</span>
-            <strong>Continued the fix</strong>
-            <small>Started from the atomic token update—not the failed attempt.</small>
+            <span>
+              <Translate id="homepage.handoff.receiver.meta">RECEIVER · CODEX</Translate>
+            </span>
+            <strong>
+              <Translate id="homepage.handoff.receiver.title">Continues and returns</Translate>
+            </strong>
+            <small>
+              <Translate id="homepage.handoff.receiver.detail">
+                The result fact lands on the same tracked workflow.
+              </Translate>
+            </small>
           </div>
         </div>
       </div>

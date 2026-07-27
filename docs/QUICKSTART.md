@@ -112,7 +112,7 @@ am recent --last 1d
 am stats
 ```
 
-## 7. Hand the session to another coding-agent account
+## 7. Hand off the tracked session
 
 > Handoff is currently an unreleased `main` feature. Public v0.1.0 binaries do
 > not contain these commands. Build the CLI from a current checkout with
@@ -147,18 +147,11 @@ am handoff show handoff-...
 am handoff board --stale-after 1h --include-completed
 ```
 
-Use `handoff inbox`, `accept`, and `return` only when manually controlling the
-receiver lifecycle. Completed results remain visible in `handoff outbox` by
-default; pass `--pending-only` when only active work is wanted.
-
-The worker lane emits an AideMemo heartbeat every hour during long external
-runs. A linked Hermes card receives the same heartbeat, while Hermes remains
-the owner of claims, retries, dependencies, and completion. For coding agents
-without a built-in runner, register `--type manual` and use the CLI/MCP/SDK
-accept, heartbeat, and return calls; `handoff board` provides a derived work
-view without adding another Kanban state machine.
-Pass `handoff run --timeout 14400` for work that may exceed the default 1800
-seconds; `--heartbeat-interval` remains 3600 seconds by default.
+That is the complete automatic round trip: the sender names the next objective,
+the receiving account continues the same session, and the returned result stays
+linked to it. For manual receivers, identity fields, timeouts, heartbeats, and
+the Hermes boundary, continue with
+[`Hand off a tracked task`](HANDOFF.md).
 
 At this point you have a working local memory store that can be used from the
 CLI, MCP, or SDK.
