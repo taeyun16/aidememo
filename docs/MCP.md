@@ -192,7 +192,9 @@ rendered from the current session plus a structured resume environment. The
 receiver persists its evidence fact and calls `action: "return"` with
 `result_fact_id` and `outcome`. The sender uses `action: "outbox"` or
 `action: "status"` to recover that link. `outcome: "failed"` remains accepted;
-no retry is scheduled by AideMemo. Legacy `action: "complete"` is an evidence-free
+no retry is scheduled by AideMemo. Return fails closed unless the fact belongs
+to the handed-off session and exact source scope and carries the receiving actor
+as writer provenance. Legacy `action: "complete"` is an evidence-free
 acknowledgement and does not prove task success.
 
 `session_id` identifies task continuity, `source_id` scopes retrieval,

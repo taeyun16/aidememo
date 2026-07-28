@@ -309,7 +309,10 @@ SkillOpt-inspired loop, and `scripts/skillopt-lite-check.sh` gates candidate
 ## Tracked Workflow Handoff
 
 > This section documents the unreleased `main` branch. Public v0.1.0 artifacts
-> do not expose these commands or SDK methods yet.
+> do not expose these commands or SDK methods yet. The automatic receiver path
+> needs both `cargo install --path crates/aidememo-cli` and
+> `python -m pip install -e ./packages/aidememo-agent-sdk`; verify it with
+> `aidememo-worker-lane --help`.
 
 The unit of continuity is a tracked workflow, not a static profile or copied
 chat. Shared memory is always available; use handoff deliberately when a named

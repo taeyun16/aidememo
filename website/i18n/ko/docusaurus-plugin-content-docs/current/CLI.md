@@ -149,7 +149,10 @@ aidememo handoff show handoff-...
 저장하지 않습니다. `config_home`은 Codex의 `CODEX_HOME` 또는 Claude의
 `CLAUDE_CONFIG_DIR`가 되며 기본 `core` 정책을 사용합니다. 추가 환경 변수는
 `--pass-env NAME`으로 허용합니다. `outcome=succeeded`는 완료 acknowledgement,
-`failed`는 accepted 유지이며 `return`은 결과 fact를 연결합니다.
+`failed`는 accepted 유지입니다. `return`은 결과 fact가 같은 세션과 정확한
+source 범위에 속하고 수신 actor가 작성했는지 검증한 뒤 연결합니다.
+수동 CLI 결과에는 `fact add --source-id ... --actor-id ...`로 핸드오프 값을
+명시하세요.
 완료 결과는 outbox에 기본 포함되며 `--pending-only`로 숨길 수 있습니다.
 기존 `installation` 및 `handoff run --installation ALIAS --next` 표기도 계속
 지원합니다.
