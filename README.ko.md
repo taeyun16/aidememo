@@ -299,7 +299,10 @@ MCP, 기능별 스킬, 훅을 묶은 Claude 플러그인 설치 방법은
 ## 추적 워크플로 핸드오프
 
 > 이 절은 아직 릴리스되지 않은 `main` 브랜치를 설명합니다. 공개 v0.1.0
-> 산출물에는 이 명령과 SDK 메서드가 없습니다.
+> 산출물에는 이 명령과 SDK 메서드가 없습니다. 자동 수신 경로에는
+> `cargo install --path crates/aidememo-cli`와
+> `python -m pip install -e ./packages/aidememo-agent-sdk`가 모두 필요합니다.
+> `aidememo-worker-lane --help`로 설치를 확인하세요.
 
 연속성의 단위는 정적 프로필이나 복사한 채팅이 아니라 추적 워크플로입니다.
 공유 메모리는 항상 사용할 수 있고, 지정한 작업자가 소유권을 이어받아 근거를

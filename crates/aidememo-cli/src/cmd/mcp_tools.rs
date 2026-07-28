@@ -4163,7 +4163,7 @@ pub fn list_tools() -> Vec<Tool> {
                     "action": {"type": "string", "enum": ["list", "outbox", "show", "heartbeat", "board", "status", "accept", "return", "complete"], "default": "list"},
                     "actor_id": {"type": "string", "description": "Current account/installation alias, e.g. codex-two. Falls back to AIDEMEMO_ACTOR_ID."},
                     "handoff_id": {"type": "string", "description": "Required for show, heartbeat, status, accept, return, or complete. show and board do not require actor_id."},
-                    "result_fact_id": {"type": "string", "description": "For return, the persisted fact containing worker result or failure evidence."},
+                    "result_fact_id": {"type": "string", "description": "For return, a receiver-written fact attached to this handoff's session and source."},
                     "outcome": {"type": "string", "enum": ["succeeded", "failed"], "description": "For return. succeeded completes the acknowledgement; failed preserves accepted state for orchestrator policy."},
                     "source_id": {"type": "string", "description": "For list, restrict assignments to one shared memory namespace. Falls back to AIDEMEMO_SOURCE_ID."},
                     "stale_after": {"type": "string", "default": "1h", "description": "For board, inactivity window before work moves to attention."},
@@ -4822,12 +4822,41 @@ mod tests {
             Some("hermes_kanban")
         );
 
+        let wrong_actor_result = tool_fact_add(
+            &json!({
+                "content": "Result from another actor",
+                "fact_type": "note",
+                "entities": ["Release"],
+                "source_id": "alpha",
+                "actor_id": "claude-main",
+                "session_id": session_id
+            }),
+            &wiki,
+        )
+        .unwrap();
+        let wrong_actor_payload: Value =
+            serde_json::from_str(wrong_actor_result.content[0].text.as_deref().unwrap()).unwrap();
+        let wrong_actor_fact_id = wrong_actor_payload["id"].as_str().unwrap();
+        let error = tool_handoff_inbox(
+            &json!({
+                "action": "return",
+                "actor_id": "codex-two",
+                "handoff_id": handoff_id,
+                "result_fact_id": wrong_actor_fact_id,
+                "outcome": "succeeded"
+            }),
+            &wiki,
+        )
+        .expect_err("foreign actor result must be rejected");
+        assert!(error.contains("receiving actor"));
+
         let result = tool_fact_add(
             &json!({
                 "content": "Focused tests pass",
                 "fact_type": "note",
                 "entities": ["Release"],
                 "source_id": "alpha",
+                "actor_id": "codex-two",
                 "session_id": session_id
             }),
             &wiki,

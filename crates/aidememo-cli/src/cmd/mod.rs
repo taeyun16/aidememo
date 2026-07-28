@@ -1238,7 +1238,7 @@ fn handoff_command() -> impl Parser<Command> {
         .help("Worker outcome: succeeded completes the acknowledgement; failed stays accepted")
         .argument::<String>("succeeded|failed");
     let result_fact_id = long("result-fact-id")
-        .help("Fact containing the worker result or failure evidence")
+        .help("Receiver-written fact attached to this handoff's session and source")
         .argument::<String>("FACT_ID");
     let handoff_id = positional::<String>("HANDOFF_ID");
     let return_result = construct!(HandoffSub::Return {
@@ -1249,7 +1249,7 @@ fn handoff_command() -> impl Parser<Command> {
     })
     .to_options()
     .command("return")
-    .help("Link worker evidence to an accepted assignment and return it to the sender");
+    .help("Validate and link receiver evidence, then return the assignment to the sender");
 
     let next = long("next")
         .help("Run the oldest pending assignment for the selected installation")

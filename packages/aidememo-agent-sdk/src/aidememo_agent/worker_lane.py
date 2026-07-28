@@ -738,6 +738,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         client = AideMemoClient(
             store_path=args.store,
             source_id=source_id,
+            actor_id=actor_id,
             storage_backend=args.storage_backend,
             lock_retry_ms=args.lock_retry_ms,
         )

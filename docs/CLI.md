@@ -147,10 +147,13 @@ aidememo handoff show handoff-...
 ```
 
 `accept` returns a fresh packet and resume environment. `return` links a
-persisted result/error fact. `outcome=succeeded` completes the acknowledgement;
-`failed` leaves it accepted so the caller can retry or block. Legacy `complete`
-still updates the ledger without result evidence and does not assert that tests
-passed. Configure a stable default per MCP installation with
+persisted result/error fact only after verifying that it belongs to the same
+session and exact source scope and carries the receiving actor as writer
+provenance. For a manual CLI result, pass the handoff values explicitly to
+`fact add --source-id ... --actor-id ...`. `outcome=succeeded` completes the
+acknowledgement; `failed` leaves it accepted so the caller can retry or block.
+Legacy `complete` still updates the ledger without result evidence and does not
+assert that tests passed. Configure a stable default per MCP installation with
 `mcp-install --actor-id codex-two`, or set
 `AIDEMEMO_ACTOR_ID`. The alias is non-secret routing metadata, not an
 authenticated vendor account id.

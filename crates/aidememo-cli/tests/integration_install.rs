@@ -295,8 +295,63 @@ fn account_handoff_cli_dispatch_accept_return_outbox_is_json_stable() {
         "hermes_kanban"
     );
 
+    let wrong_actor_fact = Command::new(aidememo_bin())
+        .env("AIDEMEMO_SESSION_ID", session_id)
+        .env("AIDEMEMO_SOURCE_ID", "team-a")
+        .env("AIDEMEMO_ACTOR_ID", "claude-main")
+        .args([
+            "--store",
+            store,
+            "--json",
+            "fact",
+            "add",
+            "Result from another actor",
+            "--entities",
+            "Release",
+            "--type",
+            "note",
+            "--source-id",
+            "team-a",
+            "--actor-id",
+            "claude-main",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        wrong_actor_fact.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&wrong_actor_fact.stderr)
+    );
+    let wrong_actor_json: serde_json::Value =
+        serde_json::from_slice(&wrong_actor_fact.stdout).unwrap();
+    let wrong_actor_fact_id = wrong_actor_json["id"].as_str().unwrap();
+    let rejected_return = Command::new(aidememo_bin())
+        .env("AIDEMEMO_ACTOR_ID", "codex-two")
+        .args([
+            "--store",
+            store,
+            "--json",
+            "handoff",
+            "return",
+            "--outcome",
+            "succeeded",
+            "--result-fact-id",
+            wrong_actor_fact_id,
+            handoff_id,
+        ])
+        .output()
+        .unwrap();
+    assert!(!rejected_return.status.success());
+    assert!(
+        String::from_utf8_lossy(&rejected_return.stderr).contains("receiving actor"),
+        "stderr: {}",
+        String::from_utf8_lossy(&rejected_return.stderr)
+    );
+
     let result_fact = Command::new(aidememo_bin())
         .env("AIDEMEMO_SESSION_ID", session_id)
+        .env("AIDEMEMO_SOURCE_ID", "team-a")
+        .env("AIDEMEMO_ACTOR_ID", "codex-two")
         .args([
             "--store",
             store,
@@ -308,6 +363,10 @@ fn account_handoff_cli_dispatch_accept_return_outbox_is_json_stable() {
             "Release",
             "--type",
             "note",
+            "--source-id",
+            "team-a",
+            "--actor-id",
+            "codex-two",
         ])
         .output()
         .unwrap();

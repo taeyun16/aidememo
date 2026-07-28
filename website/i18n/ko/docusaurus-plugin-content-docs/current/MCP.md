@@ -186,6 +186,8 @@ dispatch가 없으면 읽기 전용 preview입니다. dispatch한 수신자는
 `aidememo_handoff_inbox`의 `list`, `accept`, `return`, `outbox`, `status`
 action을 사용합니다. `return`은 결과 fact id와 outcome을 연결합니다. 실패는
 accepted 상태로 남으며 AideMemo가 자동 재시도하지 않습니다.
+결과 fact가 전달된 세션과 정확한 source 범위에 속하지 않거나 수신 actor가
+작성하지 않았다면 `return`은 fail-closed로 거절됩니다.
 `session_id`는 연속성, `source_id`는 검색 범위, `actor_id`는 사용자 지정
 계정/설치 주소, agent/profile은 역할입니다. actor는 인증이 아닙니다. 할당
 레코드에는 topic, offset, consumer group, retry state, 복제 content payload가 없습니다.

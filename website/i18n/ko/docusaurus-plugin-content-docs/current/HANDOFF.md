@@ -11,15 +11,24 @@ description: 채팅 기록을 복사하지 않고 하나의 AideMemo 워크플�
 그 세션에 연결합니다.
 
 > Handoff는 현재 아직 릴리스되지 않은 `main` 기능입니다. 공개 v0.1.0
-> 산출물에는 이 명령이 없습니다. 이 가이드를 진행하기 전에 현재 checkout에서
-> `cargo install --path crates/aidememo-cli`로 빌드하세요.
+> 산출물에는 이 명령이 없습니다. 자동 경로를 진행하기 전에 현재 `main`의
+> 두 진입점을 모두 설치하세요.
+>
+> ```bash
+> cargo install --path crates/aidememo-cli
+> python -m pip install -e ./packages/aidememo-agent-sdk
+> aidememo-worker-lane --help
+> ```
+>
+> `aidememo handoff run`은 SDK가 설치한 `aidememo-worker-lane`에 실행을
+> 위임합니다. 마지막 명령은 설치 사전 점검입니다.
 
 ## 가장 짧은 경로
 
 ### 1. 추적 작업 시작
 
 ```bash
-eval "$(aidememo session new 'Redis timeout 패치 검토')"
+eval "$(aidememo session new --source-id release-team 'Redis timeout 패치 검토')"
 export AIDEMEMO_ACTOR_ID=codex-one
 ```
 
@@ -92,21 +101,28 @@ fact를 확인합니다.
 수동 흐름을 사용합니다.
 
 ```bash
-aidememo agent add cursor-review --type manual --workspace "$PWD"
+aidememo agent add cursor-review --type manual --workspace "$PWD" \
+  --source-id release-team
 aidememo handoff send cursor-review --focus "패치 검토"
 
 AIDEMEMO_ACTOR_ID=cursor-review aidememo handoff inbox
 AIDEMEMO_ACTOR_ID=cursor-review aidememo handoff accept handoff-...
 
-# 반환된 세션에 결과 fact를 기록한 뒤:
-AIDEMEMO_ACTOR_ID=cursor-review aidememo handoff return \
+# accept가 출력한 세션 ID를 재개한 뒤 수신자 소유 근거를 기록합니다.
+eval "$(aidememo session resume --source-id release-team session-...)"
+export AIDEMEMO_ACTOR_ID=cursor-review
+aidememo fact add "리뷰 통과" --type note --entities Release \
+  --source-id release-team --actor-id cursor-review
+aidememo handoff return \
   --outcome succeeded \
   --result-fact-id 01... \
   handoff-...
 ```
 
 수동 프로필에는 process adapter가 없으므로 `handoff run cursor-review`는
-의도적으로 거절됩니다.
+의도적으로 거절됩니다. 결과 fact가 전달된 세션에 연결되지 않았거나 정확한
+`source_id`를 사용하지 않거나 수신 actor가 작성하지 않았다면 `return`도
+fail-closed로 거절됩니다.
 
 ## 라우팅 모델
 
@@ -134,6 +150,8 @@ dispatch하지 않으면 `aidememo session handoff`는 읽기 전용 packet 미�
   소유합니다. AideMemo는 외부 session pointer와 결과 근거를 전달합니다.
 - assignment ledger는 메시지 broker가 아닙니다. topic, offset, consumer group,
   delivery retry, exactly-once 실행 보장이 없습니다.
+- 결과 반환은 fail-closed입니다. fact는 전달된 세션과 정확한 source 범위에
+  속하고 수신 actor의 작성 provenance를 가져야 합니다.
 - 반환 결과는 연결된 근거이지 downstream 모델이 작업을 올바르게 완료했다는
   자동 증명이 아닙니다. `done_when`은 별도로 검증해야 합니다.
 

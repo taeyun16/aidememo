@@ -11,15 +11,24 @@ same tracked session to a named agent account with a clear focus and definition
 of done, then links the returned evidence to that session.
 
 > Handoff is currently an unreleased `main` feature. Public v0.1.0 artifacts do
-> not include these commands. Build the current checkout with
-> `cargo install --path crates/aidememo-cli` before following this guide.
+> not include these commands. Install both current-main entry points before
+> following the automatic path:
+>
+> ```bash
+> cargo install --path crates/aidememo-cli
+> python -m pip install -e ./packages/aidememo-agent-sdk
+> aidememo-worker-lane --help
+> ```
+>
+> `aidememo handoff run` delegates to the SDK-installed
+> `aidememo-worker-lane`; the final command is the setup preflight.
 
 ## The short path
 
 ### 1. Start tracked work
 
 ```bash
-eval "$(aidememo session new 'Review the Redis timeout patch')"
+eval "$(aidememo session new --source-id release-team 'Review the Redis timeout patch')"
 export AIDEMEMO_ACTOR_ID=codex-one
 ```
 
@@ -93,21 +102,28 @@ Use the manual lifecycle when the receiving runtime has no verified automatic
 adapter or an orchestrator needs explicit control:
 
 ```bash
-aidememo agent add cursor-review --type manual --workspace "$PWD"
+aidememo agent add cursor-review --type manual --workspace "$PWD" \
+  --source-id release-team
 aidememo handoff send cursor-review --focus "Review the patch"
 
 AIDEMEMO_ACTOR_ID=cursor-review aidememo handoff inbox
 AIDEMEMO_ACTOR_ID=cursor-review aidememo handoff accept handoff-...
 
-# Record the result as a fact on the returned session, then:
-AIDEMEMO_ACTOR_ID=cursor-review aidememo handoff return \
+# Resume the session id printed by accept, then record receiver-owned evidence:
+eval "$(aidememo session resume --source-id release-team session-...)"
+export AIDEMEMO_ACTOR_ID=cursor-review
+aidememo fact add "Review passed" --type note --entities Release \
+  --source-id release-team --actor-id cursor-review
+aidememo handoff return \
   --outcome succeeded \
   --result-fact-id 01... \
   handoff-...
 ```
 
 `handoff run cursor-review` intentionally refuses because a manual profile has
-no process adapter.
+no process adapter. `return` also fails closed unless the result fact is
+attached to the handed-off session, uses its exact `source_id`, and was written
+by the receiving actor.
 
 ## Routing model
 
@@ -137,6 +153,8 @@ reconstructs the packet from current session evidence.
   evidence.
 - The assignment ledger is not a message broker. It has no topics, offsets,
   consumer groups, delivery retries, or exactly-once execution guarantee.
+- Result return is fail-closed: the fact must belong to the handed-off session
+  and exact source scope and carry the receiving actor as writer provenance.
 - A returned result is linked evidence, not automatic proof that the downstream
   model completed the task correctly. Validate `done_when` separately.
 

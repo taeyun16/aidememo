@@ -75,6 +75,16 @@
   authentication, exactly-once execution, live-model task success, or Hermes
   `spawn_fn` registration.
 
+### Fixed
+
+- **Fail-closed handoff result links** — `handoff return` now accepts evidence
+  only when the fact is attached to the handed-off session, uses the exact
+  assignment `source_id`, and carries the receiving actor as writer provenance.
+  Automatic worker-lane runs persist that actor, while CLI/MCP negative tests
+  cover foreign session, source, and actor results. The English/Korean
+  onboarding path now installs and verifies both the current-main CLI and
+  `aidememo-worker-lane` entry point before automatic execution.
+
 ## [0.1.0] - 2026-07-09
 
 ### Added

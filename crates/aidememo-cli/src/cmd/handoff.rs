@@ -292,12 +292,6 @@ pub fn return_result(
             "outcome must be succeeded or failed".into(),
         ));
     }
-    let fact_id = result_fact_id
-        .trim()
-        .parse::<aidememo_core::ulid::Ulid>()
-        .map(aidememo_core::FactId)
-        .map_err(|_| AideMemoError::InvalidInput("result_fact_id must be a valid ULID".into()))?;
-    wiki.fact_get(&fact_id)?;
 
     let mut record = get(wiki, handoff_id)?;
     if record.to_actor != actor {
@@ -321,6 +315,30 @@ pub fn return_result(
         return Err(AideMemoError::InvalidInput(format!(
             "handoff {} is already completed with a different result",
             record.handoff_id
+        )));
+    }
+
+    let fact_id = result_fact_id
+        .trim()
+        .parse::<aidememo_core::ulid::Ulid>()
+        .map(aidememo_core::FactId)
+        .map_err(|_| AideMemoError::InvalidInput("result_fact_id must be a valid ULID".into()))?;
+    let fact = wiki.fact_get(&fact_id)?;
+    let session = wiki.entity_get(&record.session_id)?;
+    if !fact.entity_ids.contains(&session.id) {
+        return Err(AideMemoError::InvalidInput(format!(
+            "result fact {fact_id} must be attached to handoff session {}",
+            record.session_id
+        )));
+    }
+    if fact.source_id.as_deref() != record.source_id.as_deref() {
+        return Err(AideMemoError::InvalidInput(format!(
+            "result fact {fact_id} must use the handoff source_id"
+        )));
+    }
+    if fact.actor_id.as_deref() != Some(actor) {
+        return Err(AideMemoError::InvalidInput(format!(
+            "result fact {fact_id} must be written by receiving actor {actor}"
         )));
     }
 
@@ -641,10 +659,14 @@ mod tests {
         )
         .expect("accept");
         assert_eq!(accepted.status, HandoffStatus::Accepted);
+        let session = wiki.entity_get("session-test").expect("session");
         let result_fact = wiki
             .fact_add(aidememo_core::FactInput {
                 content: "Focused tests pass".to_string(),
                 fact_type: Some(aidememo_core::FactType::Note),
+                entity_ids: Some(vec![session.id]),
+                source_id: Some("project-a".to_string()),
+                actor_id: Some("codex-two".to_string()),
                 ..Default::default()
             })
             .expect("result fact");
@@ -704,10 +726,13 @@ mod tests {
             HandoffTransition::Accept,
         )
         .expect("accept");
+        let session = wiki.entity_get("session-test").expect("session");
         let error_fact = wiki
             .fact_add(aidememo_core::FactInput {
                 content: "Focused test failed".to_string(),
                 fact_type: Some(aidememo_core::FactType::Error),
+                entity_ids: Some(vec![session.id]),
+                actor_id: Some("codex-two".to_string()),
                 ..Default::default()
             })
             .expect("error fact");
@@ -722,6 +747,111 @@ mod tests {
         assert_eq!(returned.status, HandoffStatus::Accepted);
         assert_eq!(returned.outcome.as_deref(), Some("failed"));
         assert!(returned.completed_at.is_none());
+    }
+
+    #[test]
+    fn returned_fact_must_match_session_source_and_receiving_actor() {
+        let (wiki, _temp) = wiki();
+        let sent = dispatch(
+            &wiki,
+            NewHandoffAssignment {
+                session_id: "session-test".to_string(),
+                source_id: Some("project-a".to_string()),
+                from_actor: "codex-one".to_string(),
+                to_actor: "codex-two".to_string(),
+                from_agent: Some("codex".to_string()),
+                from_profile: None,
+                to_agent: Some("codex".to_string()),
+                to_profile: None,
+                focus: None,
+                done_when: None,
+                upstream_system: None,
+                upstream_task_id: None,
+                upstream_board_id: None,
+            },
+        )
+        .expect("dispatch");
+        transition(
+            &wiki,
+            &sent.handoff_id,
+            "codex-two",
+            HandoffTransition::Accept,
+        )
+        .expect("accept");
+        let session = wiki.entity_get("session-test").expect("session");
+        let other_session_id = wiki
+            .entity_add(EntityInput {
+                name: "session-other".to_string(),
+                entity_type: Some(EntityType::parse("session")),
+                source_page: Some("other workflow".to_string()),
+                ..Default::default()
+            })
+            .expect("other session");
+
+        let wrong_session = wiki
+            .fact_add(aidememo_core::FactInput {
+                content: "Result from another session".to_string(),
+                fact_type: Some(aidememo_core::FactType::Note),
+                entity_ids: Some(vec![other_session_id]),
+                source_id: Some("project-a".to_string()),
+                actor_id: Some("codex-two".to_string()),
+                ..Default::default()
+            })
+            .expect("wrong session fact");
+        let error = return_result(
+            &wiki,
+            &sent.handoff_id,
+            "codex-two",
+            &wrong_session.0.to_string(),
+            "succeeded",
+        )
+        .expect_err("foreign session must be rejected");
+        assert!(error.to_string().contains("handoff session"));
+
+        let wrong_source = wiki
+            .fact_add(aidememo_core::FactInput {
+                content: "Result from another source".to_string(),
+                fact_type: Some(aidememo_core::FactType::Note),
+                entity_ids: Some(vec![session.id]),
+                source_id: Some("project-b".to_string()),
+                actor_id: Some("codex-two".to_string()),
+                ..Default::default()
+            })
+            .expect("wrong source fact");
+        let error = return_result(
+            &wiki,
+            &sent.handoff_id,
+            "codex-two",
+            &wrong_source.0.to_string(),
+            "succeeded",
+        )
+        .expect_err("foreign source must be rejected");
+        assert!(error.to_string().contains("source_id"));
+
+        let wrong_actor = wiki
+            .fact_add(aidememo_core::FactInput {
+                content: "Result from another actor".to_string(),
+                fact_type: Some(aidememo_core::FactType::Note),
+                entity_ids: Some(vec![session.id]),
+                source_id: Some("project-a".to_string()),
+                actor_id: Some("claude-main".to_string()),
+                ..Default::default()
+            })
+            .expect("wrong actor fact");
+        let error = return_result(
+            &wiki,
+            &sent.handoff_id,
+            "codex-two",
+            &wrong_actor.0.to_string(),
+            "succeeded",
+        )
+        .expect_err("foreign actor must be rejected");
+        assert!(error.to_string().contains("receiving actor"));
+
+        assert_eq!(
+            get(&wiki, &sent.handoff_id).expect("assignment").status,
+            HandoffStatus::Accepted
+        );
     }
 
     #[test]
