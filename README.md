@@ -404,7 +404,11 @@ offsets, consumer groups, leases, delivery retries, or exactly-once claim. The
 ledger only stores a session pointer, routing labels, focus, `done_when`,
 acknowledgement state, and an optional linked result fact. A successful return
 completes the acknowledgement; a failed return stays accepted for orchestrator
-policy. Neither state is a distributed task-success proof.
+policy. Concurrent state writers use compare-and-swap revisions, and automatic
+workers carry a unique claim token so a different worker cannot reuse an
+active claim. A fact-linked failed assignment may be reclaimed with a new token
+and incremented `attempt_count`. This does not add a renewable lease, automatic
+crash recovery, or distributed task-success proof.
 
 MCP and SDK consumers can keep the envelope structured instead of parsing the
 Markdown: `Memory.handoff_packet(...)` returns route, focus, `done_when`,
@@ -444,7 +448,9 @@ result.
 
 Scenario S closes that receiver-side gap with the installable
 `aidememo-worker-lane` SDK command. Its zero-token fake Codex/Claude gate passes
-`14/14`: the success path receives the packet and resume environment, returns a
+`16/16`: automatic workers persist distinct exclusive claim tokens and a failed
+assignment accepts a new worker claim; the success
+path receives the packet and resume environment, returns a
 fact on the same session, then completes the acknowledgement; the failure path
 records an error on the same session and remains accepted for the scheduler.
 Sender outbox/status links both returned facts without scanning the session.

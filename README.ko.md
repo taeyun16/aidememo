@@ -375,7 +375,11 @@ pulse를 `hermes kanban heartbeat`로 전달하지만 claim, retry, dependency, 
 사용하며, 검증된 실행 adapter가 없으므로 `handoff run`은 의도적으로 거절됩니다.
 
 이는 Kafka나 작업 큐가 아닙니다. 토픽, 오프셋, consumer group, lease, 재전송,
-exactly-once 보장이 없습니다. 저장하는 것은 세션 포인터, route, focus,
+exactly-once 보장이 없습니다. 동시 상태 writer는 compare-and-swap revision으로
+경쟁하고 자동 worker는 고유 claim token을 사용하므로 다른 worker가 이미 accepted된
+활성 claim을 재사용할 수 없습니다. fact가 연결된 실패 assignment는 새 token으로
+재claim하며 `attempt_count`를 증가시킬 수 있습니다. 하지만 renewable lease나 자동
+crash recovery가 추가되는 것은 아닙니다. 저장하는 것은 세션 포인터, route, focus,
 `done_when`, 확인 상태, 선택형 연결 결과 fact입니다. 성공한 `return`은 확인을
 완료하고 실패한 `return`은 오케스트레이터 정책을 위해 accepted로 남습니다.
 기존 `complete`는 근거를 연결하지 않는 legacy 상태 변경이며 downstream 모델
@@ -415,7 +419,9 @@ Scenario R은 실제 임시 Hermes Kanban DB를 사용해 `12/12` gate를
 이는 protocol 근거이며 외부 CLI worker spawner나 모델 성공률 결과는 아닙니다.
 
 Scenario S는 설치 가능한 SDK 명령 `aidememo-worker-lane`으로 수신자 측 공백을
-메웁니다. 토큰 없는 fake Codex/Claude gate는 `14/14`를 통과합니다. 성공 경로는
+메웁니다. 토큰 없는 fake Codex/Claude gate는 `16/16`을 통과하며 자동 worker의
+서로 다른 전용 claim token과 실패 assignment의 새 worker 재claim도 검증합니다.
+성공 경로는
 packet과 resume 환경을 받고 같은 session에 fact를 반환한 다음 acknowledgement를
 완료하며, 실패 경로는 같은 session에 error를 기록하고 scheduler를 위해
 accepted 상태를 유지합니다. 발신자의 outbox/status는 두 결과 fact를 직접

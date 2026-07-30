@@ -4,7 +4,7 @@
 //! tracked session and carry routing/acknowledgement metadata only. There are
 //! no topics, offsets, consumer groups, delivery retries, or payload copies.
 
-use aidememo_core::types::{EntityInput, EntitySort, EntityType, EntityUpdate, ListOpts};
+use aidememo_core::types::{EntityInput, EntityType, EntityUpdate};
 use aidememo_core::{AideMemo, AideMemoError, Result};
 use serde::{Deserialize, Serialize};
 
@@ -43,6 +43,12 @@ pub struct HandoffAssignment {
     pub focus: Option<String>,
     pub done_when: Option<String>,
     pub status: HandoffStatus,
+    #[serde(default)]
+    pub revision: u64,
+    #[serde(default)]
+    pub claim_id: Option<String>,
+    #[serde(default)]
+    pub attempt_count: u64,
     pub created_at: u64,
     pub accepted_at: Option<u64>,
     pub completed_at: Option<u64>,
@@ -153,6 +159,9 @@ pub fn dispatch(wiki: &AideMemo, input: NewHandoffAssignment) -> Result<HandoffA
         focus: input.focus,
         done_when: input.done_when,
         status: HandoffStatus::Pending,
+        revision: 0,
+        claim_id: None,
+        attempt_count: 0,
         created_at: now_ms(),
         accepted_at: None,
         completed_at: None,
@@ -184,18 +193,17 @@ pub fn inbox(
     limit: usize,
 ) -> Result<Vec<HandoffAssignment>> {
     validate_actor("actor_id", actor)?;
-    let summaries = wiki.entity_list(ListOpts {
-        entity_type: Some(EntityType::parse(HANDOFF_ENTITY_TYPE)),
-        sort_by: EntitySort::UpdatedAt,
-        limit: None,
-        ..Default::default()
-    })?;
+    let mut required_tags = vec![HANDOFF_ENTITY_TAG.to_string(), format!("to_actor:{actor}")];
+    if let Some(source_id) = source_id {
+        required_tags.push(format!("source_id:{source_id}"));
+    }
+    let entities = wiki
+        .entity_records_by_type_and_tags(&EntityType::parse(HANDOFF_ENTITY_TYPE), &required_tags)?;
     let mut records = Vec::new();
-    for summary in summaries {
-        if !summary.tags.iter().any(|tag| tag == HANDOFF_ENTITY_TAG) {
+    for entity in entities {
+        if !entity.tags.iter().any(|tag| tag == HANDOFF_ENTITY_TAG) {
             continue;
         }
-        let entity = wiki.entity_get_by_id(summary.id)?;
         let record = parse_record(&entity.name, entity.source_page.as_deref())?;
         if record.to_actor != actor {
             continue;
@@ -232,18 +240,18 @@ fn assignments_for_actor(
     sent: bool,
 ) -> Result<Vec<HandoffAssignment>> {
     validate_actor("actor_id", actor)?;
-    let summaries = wiki.entity_list(ListOpts {
-        entity_type: Some(EntityType::parse(HANDOFF_ENTITY_TYPE)),
-        sort_by: EntitySort::UpdatedAt,
-        limit: None,
-        ..Default::default()
-    })?;
+    let route = if sent { "from_actor" } else { "to_actor" };
+    let mut required_tags = vec![HANDOFF_ENTITY_TAG.to_string(), format!("{route}:{actor}")];
+    if let Some(source_id) = source_id {
+        required_tags.push(format!("source_id:{source_id}"));
+    }
+    let entities = wiki
+        .entity_records_by_type_and_tags(&EntityType::parse(HANDOFF_ENTITY_TYPE), &required_tags)?;
     let mut records = Vec::new();
-    for summary in summaries {
-        if !summary.tags.iter().any(|tag| tag == HANDOFF_ENTITY_TAG) {
+    for entity in entities {
+        if !entity.tags.iter().any(|tag| tag == HANDOFF_ENTITY_TAG) {
             continue;
         }
-        let entity = wiki.entity_get_by_id(summary.id)?;
         let record = parse_record(&entity.name, entity.source_page.as_deref())?;
         let routed_actor = if sent {
             &record.from_actor
@@ -293,7 +301,7 @@ pub fn return_result(
         ));
     }
 
-    let mut record = get(wiki, handoff_id)?;
+    let (mut record, expected_updated_at) = get_versioned(wiki, handoff_id)?;
     if record.to_actor != actor {
         return Err(AideMemoError::InvalidInput(format!(
             "handoff {} is assigned to {}, not {}",
@@ -350,11 +358,16 @@ pub fn return_result(
         record.status = HandoffStatus::Completed;
         record.completed_at = Some(now);
     }
-    persist_record(wiki, &record)?;
+    record.revision = record.revision.saturating_add(1);
+    persist_record(wiki, &record, expected_updated_at)?;
     Ok(record)
 }
 
 pub fn get(wiki: &AideMemo, handoff_id: &str) -> Result<HandoffAssignment> {
+    get_versioned(wiki, handoff_id).map(|(record, _)| record)
+}
+
+fn get_versioned(wiki: &AideMemo, handoff_id: &str) -> Result<(HandoffAssignment, u64)> {
     let entity = wiki.entity_get(handoff_id.trim())?;
     if entity.entity_type.to_string() != HANDOFF_ENTITY_TYPE {
         return Err(AideMemoError::InvalidInput(format!(
@@ -362,12 +375,13 @@ pub fn get(wiki: &AideMemo, handoff_id: &str) -> Result<HandoffAssignment> {
             entity.name, entity.entity_type
         )));
     }
-    parse_record(&entity.name, entity.source_page.as_deref())
+    let record = parse_record(&entity.name, entity.source_page.as_deref())?;
+    Ok((record, entity.updated_at))
 }
 
 pub fn heartbeat(wiki: &AideMemo, handoff_id: &str, actor: &str) -> Result<HandoffAssignment> {
     validate_actor("actor_id", actor)?;
-    let mut record = get(wiki, handoff_id)?;
+    let (mut record, expected_updated_at) = get_versioned(wiki, handoff_id)?;
     if record.to_actor != actor {
         return Err(AideMemoError::InvalidInput(format!(
             "handoff {} is assigned to {}, not {}",
@@ -382,7 +396,8 @@ pub fn heartbeat(wiki: &AideMemo, handoff_id: &str, actor: &str) -> Result<Hando
     }
     record.last_heartbeat_at = Some(now_ms());
     record.heartbeat_count = record.heartbeat_count.saturating_add(1);
-    persist_record(wiki, &record)?;
+    record.revision = record.revision.saturating_add(1);
+    persist_record(wiki, &record, expected_updated_at)?;
     Ok(record)
 }
 
@@ -403,18 +418,29 @@ pub fn board(
         validate_actor("actor_id", actor)?;
     }
     let generated_at = now_ms();
-    let summaries = wiki.entity_list(ListOpts {
-        entity_type: Some(EntityType::parse(HANDOFF_ENTITY_TYPE)),
-        sort_by: EntitySort::UpdatedAt,
-        limit: None,
-        ..Default::default()
-    })?;
+    let mut base_tags = vec![HANDOFF_ENTITY_TAG.to_string()];
+    if let Some(source_id) = source_id {
+        base_tags.push(format!("source_id:{source_id}"));
+    }
+    let handoff_type = EntityType::parse(HANDOFF_ENTITY_TYPE);
+    let entities = if let Some(actor) = actor {
+        let mut to_tags = base_tags.clone();
+        to_tags.push(format!("to_actor:{actor}"));
+        let mut from_tags = base_tags;
+        from_tags.push(format!("from_actor:{actor}"));
+        let mut routed = wiki.entity_records_by_type_and_tags(&handoff_type, &to_tags)?;
+        routed.extend(wiki.entity_records_by_type_and_tags(&handoff_type, &from_tags)?);
+        routed.sort_by(|a, b| a.name.cmp(&b.name));
+        routed.dedup_by(|a, b| a.name == b.name);
+        routed
+    } else {
+        wiki.entity_records_by_type_and_tags(&handoff_type, &base_tags)?
+    };
     let mut assignments = Vec::new();
-    for summary in summaries {
-        if !summary.tags.iter().any(|tag| tag == HANDOFF_ENTITY_TAG) {
+    for entity in entities {
+        if !entity.tags.iter().any(|tag| tag == HANDOFF_ENTITY_TAG) {
             continue;
         }
-        let entity = wiki.entity_get_by_id(summary.id)?;
         let record = parse_record(&entity.name, entity.source_page.as_deref())?;
         if actor.is_some_and(|value| record.from_actor != value && record.to_actor != value) {
             continue;
@@ -492,8 +518,11 @@ pub fn transition(
     actor: &str,
     transition: HandoffTransition,
 ) -> Result<HandoffAssignment> {
+    if matches!(transition, HandoffTransition::Accept) {
+        return accept(wiki, handoff_id, actor, None);
+    }
     validate_actor("actor_id", actor)?;
-    let mut record = get(wiki, handoff_id)?;
+    let (mut record, expected_updated_at) = get_versioned(wiki, handoff_id)?;
     if record.to_actor != actor {
         return Err(AideMemoError::InvalidInput(format!(
             "handoff {} is assigned to {}, not {}",
@@ -501,24 +530,13 @@ pub fn transition(
         )));
     }
     let now = now_ms();
-    match (transition, record.status) {
-        (HandoffTransition::Accept, HandoffStatus::Pending) => {
-            record.status = HandoffStatus::Accepted;
-            record.accepted_at = Some(now);
-        }
-        (HandoffTransition::Accept, HandoffStatus::Accepted) => return Ok(record),
-        (HandoffTransition::Accept, HandoffStatus::Completed) => {
-            return Err(AideMemoError::InvalidInput(format!(
-                "handoff {} is already completed",
-                record.handoff_id
-            )));
-        }
-        (HandoffTransition::Complete, HandoffStatus::Accepted) => {
+    match record.status {
+        HandoffStatus::Accepted => {
             record.status = HandoffStatus::Completed;
             record.completed_at = Some(now);
         }
-        (HandoffTransition::Complete, HandoffStatus::Completed) => return Ok(record),
-        (HandoffTransition::Complete, HandoffStatus::Pending) => {
+        HandoffStatus::Completed => return Ok(record),
+        HandoffStatus::Pending => {
             return Err(AideMemoError::InvalidInput(format!(
                 "accept handoff {} before completing it",
                 record.handoff_id
@@ -526,16 +544,79 @@ pub fn transition(
         }
     }
 
-    persist_record(wiki, &record)?;
+    record.revision = record.revision.saturating_add(1);
+    persist_record(wiki, &record, expected_updated_at)?;
     Ok(record)
 }
 
-fn persist_record(wiki: &AideMemo, record: &HandoffAssignment) -> Result<()> {
+pub fn accept(
+    wiki: &AideMemo,
+    handoff_id: &str,
+    actor: &str,
+    claim_id: Option<&str>,
+) -> Result<HandoffAssignment> {
+    validate_actor("actor_id", actor)?;
+    let claim_id = claim_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    if let Some(claim_id) = claim_id.as_deref() {
+        validate_actor("claim_id", claim_id)?;
+    }
+    let (mut record, expected_updated_at) = get_versioned(wiki, handoff_id)?;
+    if record.to_actor != actor {
+        return Err(AideMemoError::InvalidInput(format!(
+            "handoff {} is assigned to {}, not {}",
+            record.handoff_id, record.to_actor, actor
+        )));
+    }
+    match record.status {
+        HandoffStatus::Pending => {
+            record.status = HandoffStatus::Accepted;
+            record.accepted_at = Some(now_ms());
+            record.claim_id = claim_id;
+            record.attempt_count = record.attempt_count.saturating_add(1);
+        }
+        HandoffStatus::Accepted if record.claim_id == claim_id => return Ok(record),
+        HandoffStatus::Accepted
+            if record.outcome.as_deref() == Some("failed") && claim_id.is_some() =>
+        {
+            record.claim_id = claim_id;
+            record.attempt_count = record.attempt_count.saturating_add(1);
+            record.accepted_at = Some(now_ms());
+            record.result_fact_id = None;
+            record.outcome = None;
+            record.returned_at = None;
+        }
+        HandoffStatus::Accepted => {
+            return Err(AideMemoError::InvalidInput(format!(
+                "handoff {} is already claimed by another worker",
+                record.handoff_id
+            )));
+        }
+        HandoffStatus::Completed => {
+            return Err(AideMemoError::InvalidInput(format!(
+                "handoff {} is already completed",
+                record.handoff_id
+            )));
+        }
+    }
+    record.revision = record.revision.saturating_add(1);
+    persist_record(wiki, &record, expected_updated_at)?;
+    Ok(record)
+}
+
+fn persist_record(
+    wiki: &AideMemo,
+    record: &HandoffAssignment,
+    expected_updated_at: u64,
+) -> Result<()> {
     wiki.entity_update(
         &record.handoff_id,
         EntityUpdate {
             tags: Some(record_tags(record)),
             source_page: Some(serialize_record(record)?),
+            expected_updated_at: Some(expected_updated_at),
             ..Default::default()
         },
     )?;
@@ -852,6 +933,125 @@ mod tests {
             get(&wiki, &sent.handoff_id).expect("assignment").status,
             HandoffStatus::Accepted
         );
+    }
+
+    #[test]
+    fn stale_assignment_write_is_rejected_by_compare_and_swap() {
+        let (wiki, _temp) = wiki();
+        let sent = dispatch(
+            &wiki,
+            NewHandoffAssignment {
+                session_id: "session-test".to_string(),
+                source_id: Some("project-a".to_string()),
+                from_actor: "codex-one".to_string(),
+                to_actor: "codex-two".to_string(),
+                from_agent: Some("codex".to_string()),
+                from_profile: None,
+                to_agent: Some("codex".to_string()),
+                to_profile: None,
+                focus: None,
+                done_when: None,
+                upstream_system: None,
+                upstream_task_id: None,
+                upstream_board_id: None,
+            },
+        )
+        .expect("dispatch");
+        let (mut winner, expected_updated_at) =
+            get_versioned(&wiki, &sent.handoff_id).expect("versioned assignment");
+        let mut stale = winner.clone();
+
+        winner.status = HandoffStatus::Accepted;
+        winner.accepted_at = Some(now_ms());
+        winner.revision = 1;
+        persist_record(&wiki, &winner, expected_updated_at).expect("first writer");
+
+        stale.status = HandoffStatus::Accepted;
+        stale.accepted_at = Some(now_ms());
+        stale.revision = 1;
+        let error =
+            persist_record(&wiki, &stale, expected_updated_at).expect_err("stale writer must fail");
+        assert!(matches!(error, AideMemoError::TransactionConflict));
+
+        let (stored, new_updated_at) =
+            get_versioned(&wiki, &sent.handoff_id).expect("stored assignment");
+        assert_eq!(stored.status, HandoffStatus::Accepted);
+        assert_eq!(stored.revision, 1);
+        assert!(new_updated_at > expected_updated_at);
+    }
+
+    #[test]
+    fn automatic_worker_claim_is_exclusive_and_idempotent_by_token() {
+        let (wiki, _temp) = wiki();
+        let sent = dispatch(
+            &wiki,
+            NewHandoffAssignment {
+                session_id: "session-test".to_string(),
+                source_id: Some("project-a".to_string()),
+                from_actor: "codex-one".to_string(),
+                to_actor: "codex-two".to_string(),
+                from_agent: Some("codex".to_string()),
+                from_profile: None,
+                to_agent: Some("codex".to_string()),
+                to_profile: None,
+                focus: None,
+                done_when: None,
+                upstream_system: None,
+                upstream_task_id: None,
+                upstream_board_id: None,
+            },
+        )
+        .expect("dispatch");
+
+        let claimed = accept(&wiki, &sent.handoff_id, "codex-two", Some("worker-claim-a"))
+            .expect("first claim");
+        assert_eq!(claimed.claim_id.as_deref(), Some("worker-claim-a"));
+        assert_eq!(claimed.revision, 1);
+
+        let retried = accept(&wiki, &sent.handoff_id, "codex-two", Some("worker-claim-a"))
+            .expect("same claim retry");
+        assert_eq!(retried.revision, 1);
+
+        let error = accept(&wiki, &sent.handoff_id, "codex-two", Some("worker-claim-b"))
+            .expect_err("different worker claim must fail");
+        assert!(error.to_string().contains("already claimed"));
+        let manual_error = transition(
+            &wiki,
+            &sent.handoff_id,
+            "codex-two",
+            HandoffTransition::Accept,
+        )
+        .expect_err("manual accept must not take an automatic claim");
+        assert!(manual_error.to_string().contains("already claimed"));
+
+        let session = wiki.entity_get("session-test").expect("session");
+        let failure_fact = wiki
+            .fact_add(aidememo_core::FactInput {
+                content: "Worker validation failed".to_string(),
+                fact_type: Some(aidememo_core::FactType::Error),
+                entity_ids: Some(vec![session.id]),
+                source_id: Some("project-a".to_string()),
+                actor_id: Some("codex-two".to_string()),
+                ..Default::default()
+            })
+            .expect("failure fact");
+        let failed = return_result(
+            &wiki,
+            &sent.handoff_id,
+            "codex-two",
+            &failure_fact.0.to_string(),
+            "failed",
+        )
+        .expect("failed return");
+        assert_eq!(failed.attempt_count, 1);
+        assert_eq!(failed.outcome.as_deref(), Some("failed"));
+
+        let reclaimed = accept(&wiki, &sent.handoff_id, "codex-two", Some("worker-claim-b"))
+            .expect("failed assignment can be reclaimed");
+        assert_eq!(reclaimed.claim_id.as_deref(), Some("worker-claim-b"));
+        assert_eq!(reclaimed.attempt_count, 2);
+        assert!(reclaimed.outcome.is_none());
+        assert!(reclaimed.result_fact_id.is_none());
     }
 
     #[test]

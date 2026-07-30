@@ -153,6 +153,12 @@ reconstructs the packet from current session evidence.
   evidence.
 - The assignment ledger is not a message broker. It has no topics, offsets,
   consumer groups, delivery retries, or exactly-once execution guarantee.
+- Concurrent accept, heartbeat, and return writers use compare-and-swap
+  revisions. Automatic workers also use a unique claim token, so an active
+  assignment rejects competing claims. A fact-linked failed assignment may be
+  reclaimed by a new token and increments `attempt_count`. A stale writer fails
+  with `transaction_conflict`; this prevents lost updates and duplicate active
+  claims but does not provide a renewable worker lease or crash retry.
 - Result return is fail-closed: the fact must belong to the handed-off session
   and exact source scope and carry the receiving actor as writer provenance.
 - A returned result is linked evidence, not automatic proof that the downstream

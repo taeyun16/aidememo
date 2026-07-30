@@ -184,7 +184,10 @@ aidememo_fact_add
 
 dispatch가 없으면 읽기 전용 preview입니다. dispatch한 수신자는
 `aidememo_handoff_inbox`의 `list`, `accept`, `return`, `outbox`, `status`
-action을 사용합니다. `return`은 결과 fact id와 outcome을 연결합니다. 실패는
+action을 사용합니다. 설치형 worker는 고유 `claim_id`도 전달하며 이미 accepted된
+활성 assignment는 동일 claim만 재시도할 수 있습니다. fact가 연결된 실패
+assignment는 새 claim으로 재시도하며 `attempt_count`를 증가시킵니다. `return`은
+결과 fact id와 outcome을 연결합니다. 실패는
 accepted 상태로 남으며 AideMemo가 자동 재시도하지 않습니다.
 결과 fact가 전달된 세션과 정확한 source 범위에 속하지 않거나 수신 actor가
 작성하지 않았다면 `return`은 fail-closed로 거절됩니다.

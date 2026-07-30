@@ -23,7 +23,7 @@ agents installed on this machine: Claude Code, Codex, and Hermes.
 | `scenario_p_cross_agent_handoff.py` | Routes one verbose workflow from Codex/coding to Hermes/reviewer; verifies critical evidence, route, source isolation, CLI/MCP/SDK content parity, structured SDK metadata, observable `done_when`, and receiver resume separately from raw-thread/canvas context reduction. | 0 |
 | `scenario_q_multi_account_handoff.py` | Runs three independent MCP processes as `codex-one`, `codex-two`, and `claude-main`; verifies pull/accept/complete routing, same-session continuation, source/actor isolation, pointer-only persistence, and absence of broker/payload fields. | 0 |
 | `scenario_r_hermes_kanban_boundary.py` | Uses a real temporary Hermes Kanban DB: internal `coding -> reviewer` reassignment stays in Kanban with zero AideMemo assignment, while an external `codex-two` boundary creates one pointer, returns fact-linked evidence on the same session, and leaves final card completion to Hermes. Requires the Hermes CLI, but no model call or authentication. | 0 |
-| `scenario_s_external_worker_lane.py` | Runs the installable worker-lane module against fake Codex and Claude CLIs; verifies shell-free command defaults, workspace/resume environment injection, same-session success/error facts, completion only on success, and no Hermes lifecycle mutation. | 0 |
+| `scenario_s_external_worker_lane.py` | Runs the installable worker-lane module against fake Codex and Claude CLIs; verifies exclusive automatic-worker claim tokens, shell-free command defaults, workspace/resume environment injection, same-session success/error facts, completion only on success, and no Hermes lifecycle mutation. | 0 |
 
 ## Running locally
 

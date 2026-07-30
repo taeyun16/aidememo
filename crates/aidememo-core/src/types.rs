@@ -218,7 +218,9 @@ impl EntityRecord {
 
     /// Update the record with new data.
     pub fn update(&mut self, input: EntityUpdate) {
-        let now = crate::time::current_epoch_ms();
+        // Keep this value usable as an optimistic-concurrency token even when
+        // several updates land inside the same millisecond.
+        let now = crate::time::current_epoch_ms().max(self.updated_at.saturating_add(1));
         if let Some(name) = input.name {
             self.name = name.clone();
             self.name_lower = name.to_lowercase();
@@ -271,6 +273,12 @@ pub struct EntityUpdate {
     pub aliases: Option<Vec<String>>,
     pub tags: Option<Vec<String>>,
     pub source_page: Option<String>,
+    /// Apply this update only when the persisted entity still has this
+    /// `updated_at` value. Backends return `TransactionConflict` otherwise.
+    /// This is intentionally transport-neutral so higher-level state machines
+    /// can perform compare-and-swap transitions without backend-specific code.
+    #[serde(default)]
+    pub expected_updated_at: Option<u64>,
     /// "Compiled truth" prose summary. `Some("")` clears it, `Some(text)` sets
     /// it (and bumps `summary_updated_at`), `None` leaves it unchanged.
     #[serde(default)]

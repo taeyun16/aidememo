@@ -150,6 +150,12 @@ dispatch하지 않으면 `aidememo session handoff`는 읽기 전용 packet 미�
   소유합니다. AideMemo는 외부 session pointer와 결과 근거를 전달합니다.
 - assignment ledger는 메시지 broker가 아닙니다. topic, offset, consumer group,
   delivery retry, exactly-once 실행 보장이 없습니다.
+- 동시에 실행되는 accept, heartbeat, return writer는 compare-and-swap revision을
+  사용합니다. 자동 worker는 고유 claim token도 사용하므로 활성 assignment는 경쟁
+  claim을 거절합니다. fact가 연결된 실패 assignment는 새 token으로 재claim하고
+  `attempt_count`를 증가시킬 수 있습니다. stale writer는
+  `transaction_conflict`로 실패합니다. 이는 lost update와 경쟁 worker의 중복 활성
+  claim을 막지만 renewable worker lease나 crash retry를 제공하지는 않습니다.
 - 결과 반환은 fail-closed입니다. fact는 전달된 세션과 정확한 source 범위에
   속하고 수신 actor의 작성 provenance를 가져야 합니다.
 - 반환 결과는 연결된 근거이지 downstream 모델이 작업을 올바르게 완료했다는

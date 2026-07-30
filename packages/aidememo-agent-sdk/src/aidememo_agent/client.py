@@ -770,13 +770,19 @@ class AideMemoClient:
         return payload if isinstance(payload, dict) else {"content": str(payload)}
 
     def handoff_accept(
-        self, handoff_id: str, *, actor_id: str | None = None
+        self,
+        handoff_id: str,
+        *,
+        actor_id: str | None = None,
+        claim_id: str | None = None,
     ) -> dict[str, Any]:
         """Acknowledge an assignment and return its current session packet."""
 
         args: dict[str, Any] = {"action": "accept", "handoff_id": handoff_id}
         if actor_id:
             args["actor_id"] = actor_id
+        if claim_id:
+            args["claim_id"] = claim_id
         payload = self._mcp_tool("aidememo_handoff_inbox", args)
         return payload if isinstance(payload, dict) else {"content": str(payload)}
 

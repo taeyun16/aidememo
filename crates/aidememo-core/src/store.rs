@@ -874,20 +874,59 @@ impl Store {
 
     /// Update an entity.
     pub fn entity_update(&mut self, name: &str, input: EntityUpdate) -> Result<()> {
-        let _read_txn = self
-            .db
-            .begin_read()
-            .map_err(|e| AideMemoError::TransactionBegin {
-                source: Box::new(e),
+        let write_txn = self.begin_write()?;
+        let id = {
+            let by_name = write_txn.open_table(ENTITY_BY_NAME_TABLE).map_err(|e| {
+                AideMemoError::StoreRead {
+                    table: "entity_by_name",
+                    key: name.to_lowercase(),
+                    source: Box::new(e),
+                }
             })?;
-
-        // Get current record
-        let record = self.entity_get(name)?;
-
+            let id_bytes = by_name
+                .get(name.to_lowercase().as_str())
+                .map_err(|e| AideMemoError::StoreRead {
+                    table: "entity_by_name",
+                    key: name.to_lowercase(),
+                    source: Box::new(e),
+                })?
+                .ok_or_else(|| AideMemoError::entity_not_found(name.to_string(), Vec::new()))?;
+            EntityId(Ulid::from_bytes(id_bytes.value().try_into().map_err(
+                |_| AideMemoError::Internal("invalid entity id bytes".to_string()),
+            )?))
+        };
+        let record = {
+            let entities =
+                write_txn
+                    .open_table(ENTITIES_TABLE)
+                    .map_err(|e| AideMemoError::StoreRead {
+                        table: "entities",
+                        key: id.to_string(),
+                        source: Box::new(e),
+                    })?;
+            let record_bytes = entities
+                .get(id.as_bytes().as_slice())
+                .map_err(|e| AideMemoError::StoreRead {
+                    table: "entities",
+                    key: id.to_string(),
+                    source: Box::new(e),
+                })?
+                .ok_or_else(|| AideMemoError::EntityIdNotFound(id.to_string()))?;
+            serde_json::from_slice::<EntityRecord>(record_bytes.value()).map_err(|e| {
+                AideMemoError::Deserialize {
+                    context: format!("entity {:?}", id),
+                    source: e,
+                }
+            })?
+        };
+        if input
+            .expected_updated_at
+            .is_some_and(|expected| expected != record.updated_at)
+        {
+            return Err(AideMemoError::TransactionConflict);
+        }
         let mut updated = record.clone();
         updated.update(input);
-
-        let write_txn = self.begin_write()?;
 
         // Serialize updated record
         let record_bytes = serde_json::to_vec(&updated).map_err(|e| AideMemoError::Serialize {
@@ -1048,6 +1087,65 @@ impl Store {
         results = results.into_iter().skip(offset).take(limit).collect();
 
         Ok(results)
+    }
+
+    /// Load full entity records matching one type and every required tag.
+    ///
+    /// redb has no persisted tag index yet, but this keeps the operation to one
+    /// table scan without the generic list path's fact counts and point reads.
+    pub fn entity_records_by_type_and_tags(
+        &self,
+        entity_type: &EntityType,
+        required_tags: &[String],
+    ) -> Result<Vec<EntityRecord>> {
+        let read_txn = self
+            .db
+            .begin_read()
+            .map_err(|e| AideMemoError::TransactionBegin {
+                source: Box::new(e),
+            })?;
+        let entities =
+            read_txn
+                .open_table(ENTITIES_TABLE)
+                .map_err(|e| AideMemoError::StoreRead {
+                    table: "entities",
+                    key: "<type-and-tags>".to_string(),
+                    source: Box::new(e),
+                })?;
+        let mut records = Vec::new();
+        for entry in entities.iter().map_err(|e| AideMemoError::StoreRead {
+            table: "entities",
+            key: "<type-and-tags iter>".to_string(),
+            source: Box::new(e),
+        })? {
+            let (key, value) = entry.map_err(|e| AideMemoError::StoreRead {
+                table: "entities",
+                key: "<type-and-tags entry>".to_string(),
+                source: Box::new(e),
+            })?;
+            let mut record: EntityRecord =
+                serde_json::from_slice(value.value()).map_err(|e| AideMemoError::Deserialize {
+                    context: "entity type/tag query".to_string(),
+                    source: e,
+                })?;
+            if let Ok(bytes) = key.value().try_into() {
+                record.id = EntityId(Ulid::from_bytes(bytes));
+            }
+            if &record.entity_type != entity_type
+                || !required_tags
+                    .iter()
+                    .all(|required| record.tags.iter().any(|tag| tag == required))
+            {
+                continue;
+            }
+            records.push(record);
+        }
+        records.sort_by(|a, b| {
+            b.updated_at
+                .cmp(&a.updated_at)
+                .then_with(|| b.id.to_string().cmp(&a.id.to_string()))
+        });
+        Ok(records)
     }
 
     fn count_entity_facts_internal(
@@ -3182,6 +3280,32 @@ mod tests {
         let entities = store.entity_list(ListOpts::default()).unwrap();
         assert_eq!(entities.len(), 1);
         assert_eq!(entities[0].name, "Redis");
+        let tagged = store
+            .entity_records_by_type_and_tags(&EntityType::Technology, &["infra".to_string()])
+            .unwrap();
+        assert_eq!(tagged.len(), 1);
+        assert_eq!(tagged[0].name, "Redis");
+
+        // Compare-and-swap updates reject a stale entity version.
+        store
+            .entity_update(
+                "Redis",
+                EntityUpdate {
+                    source_page: Some("entities/redis-v2.md".to_string()),
+                    expected_updated_at: Some(record2.updated_at),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let conflict = store.entity_update(
+            "Redis",
+            EntityUpdate {
+                tags: Some(vec!["stale".to_string()]),
+                expected_updated_at: Some(record2.updated_at),
+                ..Default::default()
+            },
+        );
+        assert!(matches!(conflict, Err(AideMemoError::TransactionConflict)));
 
         // Update entity
         store

@@ -189,6 +189,9 @@ dispatch, AideMemo additionally stores a pending pointer that the receiving
 account pulls through `aidememo_handoff_inbox`. Use `action: "list"`, then
 `action: "accept"` with the returned `handoff_id`; accept returns the packet
 rendered from the current session plus a structured resume environment. The
+installable worker also passes a unique `claim_id`; only that claim may retry
+an active automatic assignment. After a fact-linked failed return, a new claim
+may reclaim it and increments `attempt_count`. The
 receiver persists its evidence fact and calls `action: "return"` with
 `result_fact_id` and `outcome`. The sender uses `action: "outbox"` or
 `action: "status"` to recover that link. `outcome: "failed"` remains accepted;

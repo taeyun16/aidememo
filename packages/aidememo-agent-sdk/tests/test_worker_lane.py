@@ -15,7 +15,7 @@ from aidememo_agent.worker_lane import (
 class FakeClient:
     def __init__(self) -> None:
         self.default_source_id = "project-a"
-        self.accepted: list[tuple[str, str | None]] = []
+        self.accepted: list[tuple[str, str | None, str | None]] = []
         self.facts: list[dict[str, Any]] = []
         self.returned: list[tuple[str, str, str, str | None]] = []
         self.heartbeats: list[tuple[str, str | None]] = []
@@ -26,8 +26,14 @@ class FakeClient:
             {"handoff_id": "handoff-old", "status": "pending", "created_at": 10},
         ]
 
-    def handoff_accept(self, handoff_id: str, *, actor_id: str | None = None) -> dict:
-        self.accepted.append((handoff_id, actor_id))
+    def handoff_accept(
+        self,
+        handoff_id: str,
+        *,
+        actor_id: str | None = None,
+        claim_id: str | None = None,
+    ) -> dict:
+        self.accepted.append((handoff_id, actor_id, claim_id))
         return {
             "assignment": {
                 "handoff_id": handoff_id,
@@ -400,7 +406,9 @@ out.write_text("Oldest pending assignment completed.", encoding="utf-8")
 
     child = __import__("json").loads(capture.read_text(encoding="utf-8"))
     assert result.handoff_id == "handoff-old"
-    assert client.accepted[0] == ("handoff-old", "codex-two")
+    assert client.accepted[0][:2] == ("handoff-old", "codex-two")
+    assert client.accepted[0][2] is not None
+    assert client.accepted[0][2].startswith("worker-")
     assert child["codex_home"] == str(config_home)
     assert child["session"] == "session-1"
     assert child["source"] == "project-a"

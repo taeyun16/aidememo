@@ -2884,11 +2884,11 @@ fn tool_handoff_inbox(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, S
                 .get("handoff_id")
                 .and_then(|value| value.as_str())
                 .ok_or("handoff_id required for action=accept")?;
-            let record = crate::cmd::handoff::transition(
+            let record = crate::cmd::handoff::accept(
                 wiki,
                 handoff_id,
                 actor_id,
-                crate::cmd::handoff::HandoffTransition::Accept,
+                args.get("claim_id").and_then(|value| value.as_str()),
             )
             .map_err(|e| e.to_string())?;
             handoff_assignment_packet(wiki, &record)?
@@ -4163,6 +4163,7 @@ pub fn list_tools() -> Vec<Tool> {
                     "action": {"type": "string", "enum": ["list", "outbox", "show", "heartbeat", "board", "status", "accept", "return", "complete"], "default": "list"},
                     "actor_id": {"type": "string", "description": "Current account/installation alias, e.g. codex-two. Falls back to AIDEMEMO_ACTOR_ID."},
                     "handoff_id": {"type": "string", "description": "Required for show, heartbeat, status, accept, return, or complete. show and board do not require actor_id."},
+                    "claim_id": {"type": "string", "description": "Optional unique automatic-worker claim token for accept. Only the same token may retry an accepted claim."},
                     "result_fact_id": {"type": "string", "description": "For return, a receiver-written fact attached to this handoff's session and source."},
                     "outcome": {"type": "string", "enum": ["succeeded", "failed"], "description": "For return. succeeded completes the acknowledgement; failed preserves accepted state for orchestrator policy."},
                     "source_id": {"type": "string", "description": "For list, restrict assignments to one shared memory namespace. Falls back to AIDEMEMO_SOURCE_ID."},
