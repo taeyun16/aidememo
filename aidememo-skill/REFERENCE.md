@@ -174,7 +174,7 @@ pub fn relations_get_by_id(...) -> Result<Vec<RelationRecord>> // used by graph 
 
 ```rust
 pub struct EntityInput { pub name: String, pub entity_type: Option<EntityType>, pub aliases: Option<Vec<String>>, pub tags: Option<Vec<String>>, pub source_page: Option<String> }
-pub struct EntityUpdate { pub name: Option<String>, pub entity_type: Option<EntityType>, pub aliases: Option<Vec<String>>, pub tags: Option<Vec<String>>, pub source_page: Option<String> }
+pub struct EntityUpdate { pub name: Option<String>, pub entity_type: Option<EntityType>, pub aliases: Option<Vec<String>>, pub tags: Option<Vec<String>>, pub source_page: Option<String>, pub expected_updated_at: Option<u64> }
 pub enum EntityType { Technology, Concept, Comparison, Query, Person, Team, Unknown }
 pub struct FactInput { pub content: String, pub fact_type: Option<FactType>, pub entity_ids: Option<Vec<EntityId>>, pub tags: Option<Vec<String>>, pub source: Option<String>, pub source_confidence: Option<f32> }
 pub struct FactUpdate { pub content: Option<String>, pub fact_type: Option<FactType>, pub tags: Option<Vec<String>>, pub source: Option<String> }
