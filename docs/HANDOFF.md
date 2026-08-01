@@ -164,6 +164,34 @@ reconstructs the packet from current session evidence.
 - A returned result is linked evidence, not automatic proof that the downstream
   model completed the task correctly. Validate `done_when` separately.
 
+## Hermes project and tenant scopes
+
+The Hermes plugin can derive a default AideMemo scope from dispatcher metadata
+without copying Kanban lifecycle state into the handoff ledger:
+
+```yaml
+plugins:
+  aidememo:
+    store_path: ~/.aidememo/hermes-shared.sqlite
+    source_from_hermes: board_tenant
+    actor_from_hermes_profile: true
+    lock_retry_ms: 5000
+```
+
+`board` maps `HERMES_KANBAN_BOARD=aidememo` to
+`source_id=hermes:board:aidememo`. The recommended `board_tenant` mode appends
+the task tenant when `HERMES_TENANT` is present, while non-tenant cards share
+the board scope. An explicit plugin `source_id` or `AIDEMEMO_SOURCE_ID` always
+wins. Likewise, an explicit actor wins before the optional
+`hermes:<HERMES_PROFILE>` provenance mapping.
+
+This mapping is a trusted-process convenience. It does not authenticate a
+gateway user or channel. A single gateway process with one fixed plugin source
+shares that memory across its sessions. For mutually untrusted gateway clients,
+run separate Hermes profiles/gateways and stores, or use AideMemo HTTP MCP with
+`--auth-bindings-file` so bearer tokens are bound to fixed `source_id` and
+`actor_id` values.
+
 For tool-level schemas, read [`MCP setup`](MCP.md). For SDK and lower-level
 orchestrator patterns, read [`Agent workflows`](AGENT_WORKFLOWS.md). Run
 `scripts/demo-agent-handoff.sh` for the zero-token protocol smoke.

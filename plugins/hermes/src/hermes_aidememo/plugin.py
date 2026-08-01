@@ -24,6 +24,7 @@ import logging
 import os
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from . import cli, hooks, slash, tools
 from .client import (
@@ -34,6 +35,58 @@ from .client import (
 )
 
 log = logging.getLogger("hermes_aidememo")
+
+
+def _scope_component(value: str) -> str:
+    """Encode an operator-controlled Hermes slug without alias collisions."""
+    return quote(value.strip(), safe="-._~")
+
+
+def _resolve_source_id(config: dict) -> str | None:
+    """Resolve the default retrieval scope, keeping explicit values dominant.
+
+    Hermes board/tenant mapping is opt-in because a gateway-wide environment
+    value is routing metadata, not an authenticated tenant boundary.
+    """
+    explicit = config.get("source_id") or os.environ.get("AIDEMEMO_SOURCE_ID")
+    if explicit:
+        return str(explicit)
+
+    source_from = str(config.get("source_from_hermes") or "none").strip().lower()
+    if source_from in {"", "none"}:
+        return None
+    if source_from not in {"board", "board_tenant"}:
+        log.warning(
+            "invalid aidememo source_from_hermes=%r; expected board, board_tenant, or none",
+            config.get("source_from_hermes"),
+        )
+        return None
+
+    board = os.environ.get("HERMES_KANBAN_BOARD", "").strip()
+    if not board:
+        log.warning(
+            "aidememo source_from_hermes=%s requires HERMES_KANBAN_BOARD; leaving source unset",
+            source_from,
+        )
+        return None
+
+    source_id = f"hermes:board:{_scope_component(board)}"
+    if source_from == "board_tenant":
+        tenant = os.environ.get("HERMES_TENANT", "").strip()
+        if tenant:
+            source_id += f":tenant:{_scope_component(tenant)}"
+    return source_id
+
+
+def _resolve_actor_id(config: dict) -> str | None:
+    explicit = config.get("actor_id") or os.environ.get("AIDEMEMO_ACTOR_ID")
+    if explicit:
+        return str(explicit)
+    if config.get("actor_from_hermes_profile") is True:
+        profile = os.environ.get("HERMES_PROFILE", "").strip()
+        if profile:
+            return f"hermes:{_scope_component(profile)}"
+    return None
 
 
 def _load_config(ctx: Any) -> dict:
@@ -82,8 +135,8 @@ def register(ctx: Any) -> None:
     config = _load_config(ctx)
 
     store_path = config.get("store_path") or os.environ.get("AIDEMEMO_STORE")
-    source_id = config.get("source_id") or os.environ.get("AIDEMEMO_SOURCE_ID")
-    actor_id = config.get("actor_id") or os.environ.get("AIDEMEMO_ACTOR_ID")
+    source_id = _resolve_source_id(config)
+    actor_id = _resolve_actor_id(config)
     try:
         lock_retry_ms = int(config.get("lock_retry_ms", 5000))
     except (TypeError, ValueError):

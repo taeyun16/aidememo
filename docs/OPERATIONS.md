@@ -203,9 +203,11 @@ not provide queue topics, retries, leases, or exactly-once delivery.
 SQLite is the default backend. It uses WAL mode, starts writes with
 `BEGIN IMMEDIATE`, keeps each SQLite busy wait at most one second, and
 retries collisions with 20–150 ms jitter until the total
-`store.lock_retry_ms` budget is exhausted. The optional redb backend uses the
-same total budget to retry opening the store when another process holds redb's
-exclusive file lock.
+`store.lock_retry_ms` budget is exhausted. The same budget also covers SQLite
+PRAGMA/schema initialization, so several fresh Codex/Hermes processes can open
+one new store without failing immediately on `database is locked`. The optional
+redb backend uses the total budget to retry opening the store when another
+process holds redb's exclusive file lock.
 
 For shared writes, run one daemon:
 

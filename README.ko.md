@@ -408,15 +408,18 @@ context envelope 검증이며 downstream 모델의 작업 성공률은 별도 �
 평가로 남습니다.
 
 Scenario Q는 독립 MCP 프로세스 세 개를 `codex-one`, `codex-two`,
-`claude-main`으로 실행합니다. `10/10` gate에서 actor/source 격리, 같은 세션
-연속성, 명시적 확인, dispatch당 포인터 엔티티 하나, 팩트 복제 0,
-broker/payload 키 0을 검증했습니다.
+`claude-main`으로 실행합니다. `11/11` gate에는
+`codex-one -> codex-two -> codex-one` 왕복 경로가 포함되며 actor/source 격리,
+같은 세션 연속성, 명시적 확인, dispatch당 포인터 엔티티 하나, 팩트 복제 0,
+broker/payload 키 0을 검증합니다.
 
-Scenario R은 실제 임시 Hermes Kanban DB를 사용해 `12/12` gate를
+Scenario R은 실제 임시 Hermes Kanban DB를 사용해 `13/13` gate를
 통과했습니다. 내부 `coding -> reviewer` 전환에는 AideMemo assignment가
 생기지 않고, 외부 `codex-two` 경계에서만 pointer 하나가 생성됩니다. 반환
 근거는 같은 session에 남고 최종 card 완료는 Hermes가 명시적으로 소유합니다.
-이는 protocol 근거이며 외부 CLI worker spawner나 모델 성공률 결과는 아닙니다.
+플러그인은 dispatcher metadata에서 `hermes:board:default:tenant:release-team`
+범위와 `hermes:orchestrator` provenance도 파생합니다. 이는 protocol 근거이며
+외부 CLI worker spawner, gateway 인증, 모델 성공률 결과는 아닙니다.
 
 Scenario S는 설치 가능한 SDK 명령 `aidememo-worker-lane`으로 수신자 측 공백을
 메웁니다. 토큰 없는 fake Codex/Claude gate는 `16/16`을 통과하며 자동 worker의
@@ -477,6 +480,12 @@ Hermes는 플러그인 도구와 슬래시 명령을 통해 동일한 `source_id
 사용합니다. SQLite가 기본 공유 저장소 경로입니다. 선택형 redb 백엔드를
 사용하면 CLI 폴백이 짧은 잠금 충돌을 재시도합니다. 더 많은 에이전트가
 redb에 쓰는 경우 하나의 `aidememo mcp-serve`를 실행하고 에이전트를 연결하세요.
+Hermes dispatcher worker는 `source_from_hermes: board_tenant`와
+`actor_from_hermes_profile: true`를 선택할 수 있습니다. 고정된 Kanban board와
+선택형 tenant를 project scope로 매핑하고 profile provenance를 유지합니다.
+명시적인 plugin/environment source와 actor가 항상 우선합니다. 이 매핑은 신뢰된
+프로세스 편의 기능이지 gateway 사용자 인증이 아닙니다. 신뢰하지 않는 gateway
+client 사이에는 별도 profile/store 또는 HTTP token binding을 사용하세요.
 
 MCP 에이전트는 `--source-id`와 함께 설치하여 서버 환경에
 `AIDEMEMO_SOURCE_ID`를 한 번 설정할 수 있습니다. 설치된 MCP 명령에 동일한

@@ -43,6 +43,9 @@ plugins:
     store_path: ~/.aidememo/wiki.sqlite   # optional; uses aidememo config default otherwise
     source_id: team-a               # optional default namespace for reads/writes
     actor_id: hermes:account-a      # optional writer provenance for new facts
+    # Instead of fixed IDs, dispatcher workers can opt into Hermes metadata:
+    # source_from_hermes: board_tenant  # board | board_tenant | none
+    # actor_from_hermes_profile: true   # hermes:<HERMES_PROFILE>
     recent_window: 7d               # session_start auto-context window
     recent_limit: 10
     auto_capture:
@@ -227,6 +230,8 @@ floor, modest 7-day window, auto-capture off).
 | `store_path` | AideMemo config resolution | Override the local store location. SQLite is the default; redb requires an explicit redb build/config. |
 | `source_id` | unset | Default namespace for scoped tool reads/writes. Explicit tool `source_id` values override it; `AIDEMEMO_SOURCE_ID` is also honored when config is unset. |
 | `actor_id` | unset | Default writer identity stored with new facts. Explicit write `actor_id` values override it; `AIDEMEMO_ACTOR_ID` is also honored when config is unset. |
+| `source_from_hermes` | `none` | Opt-in fallback when `source_id` and `AIDEMEMO_SOURCE_ID` are unset. `board` maps `HERMES_KANBAN_BOARD` to `hermes:board:<slug>`; `board_tenant` appends `:tenant:<tenant>` when `HERMES_TENANT` is present. Explicit source values always win. |
+| `actor_from_hermes_profile` | `false` | When true and no explicit actor is set, maps `HERMES_PROFILE` to `hermes:<profile>`. This preserves worker provenance but is routing metadata, not authentication. |
 | `recent_window` | `7d` | How far back the session-start preamble looks. |
 | `recent_limit` | `10` | Max facts in the preamble. |
 | `auto_capture.enabled` | `false` | Opt into the capture adapter. Without this, the hook does not write facts or pending entries. Legacy explicit `auto_record: true` is still honored. |
@@ -234,7 +239,7 @@ floor, modest 7-day window, auto-capture off).
 | `auto_capture.detect_in` | `both` | Scan `user`, `assistant`, or `both` sides of each turn. |
 | `dry_run` | unset | Legacy alias: explicit `dry_run: true` enables pending capture for old configs. |
 | `confidence_floor` | `0.85` | 0.7–1.0; lower = more captures (and more noise). |
-| `lock_retry_ms` | `5000` | CLI fallback waits this long for short local-store write collisions. For SQLite this is the busy timeout; for redb this retries the exclusive open lock. Set `0` for fail-fast debugging. |
+| `lock_retry_ms` | `5000` | CLI fallback waits this long for short local-store write collisions. SQLite schema initialization and writes retry with jitter inside this budget; redb retries the exclusive open lock. Set `0` for fail-fast debugging. |
 | `default_entities` | `[]` | Legacy alias for entities to attach when direct capture is explicitly enabled. |
 | `pending_log` | `~/.hermes/state/aidememo-pending.jsonl` | Override the dry-run audit log path. |
 

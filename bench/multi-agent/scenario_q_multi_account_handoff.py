@@ -28,6 +28,7 @@ SOURCE_ID = "account-handoff-project"
 OTHER_SOURCE_ID = "unrelated-project"
 ACTORS = ("codex-one", "codex-two", "claude-main")
 RECEIVER_FACT = "Review result: the account handoff keeps one tracked session."
+REVERSE_RECEIVER_FACT = "Implementation follow-up: codex-one received the reviewed session back."
 FORBIDDEN_RECORD_KEYS = {
     "content",
     "payload",
@@ -277,8 +278,64 @@ def main() -> int:
         "aidememo_handoff_inbox",
         {"action": "complete", "handoff_id": second_id},
     )
+    before_reverse_dispatch = stats()
+    reverse = mcp_tool(
+        "codex-two",
+        "aidememo_handoff",
+        {
+            "session_id": session_id,
+            "to_actor": "codex-one",
+            "from": "codex/reviewer",
+            "to": "codex/coding",
+            "focus": "Apply the reviewed follow-up in the original account.",
+            "done_when": "Codex one records receipt on the same session.",
+            "dispatch": True,
+        },
+    )
+    reverse_id = str(reverse["handoff_id"])
+    after_reverse_dispatch = stats()
+    codex_one_reverse_inbox = mcp_tool(
+        "codex-one", "aidememo_handoff_inbox", {"action": "list"}
+    )
+    accepted_reverse = mcp_tool(
+        "codex-one",
+        "aidememo_handoff_inbox",
+        {"action": "accept", "handoff_id": reverse_id},
+    )
+    reverse_session_id = str(accepted_reverse["resume"]["env"]["AIDEMEMO_SESSION_ID"])
+    mcp_tool(
+        "codex-one",
+        "aidememo_fact_add",
+        {
+            "content": REVERSE_RECEIVER_FACT,
+            "fact_type": "lesson",
+            "entities": ["AccountHandoff"],
+            "session_id": reverse_session_id,
+        },
+    )
+    reverse_preview = mcp_tool(
+        "codex-one",
+        "aidememo_handoff",
+        {
+            "session_id": session_id,
+            "to_actor": "codex-two",
+            "from": "codex/coding",
+            "to": "codex/reviewer",
+            "focus": "Confirm the bidirectional account route.",
+            "done_when": "The returned session fact is visible.",
+            "dispatch": False,
+        },
+    )
+    reverse_complete = mcp_tool(
+        "codex-one",
+        "aidememo_handoff_inbox",
+        {"action": "complete", "handoff_id": reverse_id},
+    )
     codex_two_after = mcp_tool(
         "codex-two", "aidememo_handoff_inbox", {"action": "list"}
+    )
+    codex_one_after = mcp_tool(
+        "codex-one", "aidememo_handoff_inbox", {"action": "list"}
     )
     claude_after = mcp_tool(
         "claude-main", "aidememo_handoff_inbox", {"action": "list"}
@@ -305,11 +362,22 @@ def main() -> int:
             [item["handoff_id"] for item in claude_assignments] == [second_id]
             and claude_assignments[0]["session_id"] == session_id
         ),
+        "codex_profiles_route_bidirectionally": (
+            [item["handoff_id"] for item in codex_one_reverse_inbox["assignments"]]
+            == [reverse_id]
+            and accepted_reverse["resume"]["env"]["AIDEMEMO_ACTOR_ID"] == "codex-one"
+            and reverse_session_id == session_id
+            and REVERSE_RECEIVER_FACT in reverse_preview["content"]
+        ),
         "dispatch_adds_pointer_entity_not_fact": (
             after_first_dispatch["entity_count"] == before_dispatch["entity_count"] + 1
             and after_first_dispatch["fact_count"] == before_dispatch["fact_count"]
             and after_second_dispatch["entity_count"] == after_receiver_write["entity_count"] + 1
             and after_second_dispatch["fact_count"] == after_receiver_write["fact_count"]
+            and after_reverse_dispatch["entity_count"]
+            == before_reverse_dispatch["entity_count"] + 1
+            and after_reverse_dispatch["fact_count"]
+            == before_reverse_dispatch["fact_count"]
         ),
         "assignment_has_no_broker_or_payload_keys": forbidden_keys == [],
         "receiver_write_is_one_new_fact": (
@@ -318,6 +386,8 @@ def main() -> int:
         "completion_is_explicit_and_inbox_hides_completed": (
             first_complete["assignment"]["status"] == "completed"
             and second_complete["assignment"]["status"] == "completed"
+            and reverse_complete["assignment"]["status"] == "completed"
+            and codex_one_after["assignments"] == []
             and codex_two_after["assignments"] == []
             and claude_after["assignments"] == []
         ),
@@ -334,7 +404,7 @@ def main() -> int:
         "actors": list(ACTORS),
         "source_id": SOURCE_ID,
         "session_id": session_id,
-        "handoff_ids": [first_id, second_id],
+        "handoff_ids": [first_id, second_id, reverse_id],
         "persisted_assignment_keys": sorted(record_keys(stored_first)),
         "forbidden_persisted_keys": forbidden_keys,
         "counts": {
@@ -342,6 +412,8 @@ def main() -> int:
             "after_first_dispatch": after_first_dispatch,
             "after_receiver_write": after_receiver_write,
             "after_second_dispatch": after_second_dispatch,
+            "before_reverse_dispatch": before_reverse_dispatch,
+            "after_reverse_dispatch": after_reverse_dispatch,
         },
         "timing_ms": round(elapsed_ms, 2),
         "gates": gates,

@@ -435,16 +435,19 @@ canvas. This validates the handoff protocol and context envelope; downstream
 model task success remains a separate opt-in evaluation.
 
 Scenario Q additionally runs three independent MCP processes as `codex-one`,
-`codex-two`, and `claude-main`. Its `10/10` gates verify actor and source
+`codex-two`, and `claude-main`. Its `11/11` gates include a
+`codex-one -> codex-two -> codex-one` round trip and verify actor/source
 isolation, same-session continuation, explicit acknowledgement, one pointer
 entity per dispatch, zero copied facts, and zero broker/payload keys.
 
-Scenario R uses a real temporary Hermes Kanban DB and passes `12/12` gates.
+Scenario R uses a real temporary Hermes Kanban DB and passes `13/13` gates.
 The internal `coding -> reviewer` transition creates no AideMemo assignment;
 only the external `codex-two` boundary creates one pointer, returned evidence
 stays on the same session, and Hermes explicitly owns final card completion.
-It is protocol evidence, not an external CLI worker spawner or model-success
-result.
+The plugin derives `hermes:board:default:tenant:release-team` plus
+`hermes:orchestrator` provenance from dispatcher metadata. It is protocol
+evidence, not an external CLI worker spawner, gateway authentication, or
+model-success result.
 
 Scenario S closes that receiver-side gap with the installable
 `aidememo-worker-lane` SDK command. Its zero-token fake Codex/Claude gate passes
@@ -529,6 +532,12 @@ Hermes uses the same `source_id` field through its plugin tools and slash
 commands. SQLite is the default shared-store path. If the optional redb backend
 is selected, the CLI fallback retries short lock collisions; for heavier
 multi-agent redb writes, run one `aidememo mcp-serve` and point agents at it.
+Hermes dispatcher workers may opt into `source_from_hermes: board_tenant` and
+`actor_from_hermes_profile: true`: this maps the pinned Kanban board plus
+optional tenant to a project scope and retains profile provenance. Explicit
+plugin/environment source and actor values remain higher priority. The mapping
+is a trusted-process convenience, not gateway-user authentication; use separate
+profiles/stores or HTTP token bindings across untrusted gateway clients.
 
 For MCP agents, install with `--source-id` to set `AIDEMEMO_SOURCE_ID` once in
 the server environment. Pass `--backend` before `mcp-install` to pin the same

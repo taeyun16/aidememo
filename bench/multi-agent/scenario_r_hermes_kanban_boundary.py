@@ -36,7 +36,9 @@ BASE = Path(
 )
 STORE = BASE / "hermes-kanban-boundary.sqlite"
 HERMES_HOME = BASE / "hermes-home"
-SOURCE_ID = "hermes-kanban-release"
+HERMES_BOARD = "default"
+HERMES_TENANT = "release-team"
+SOURCE_ID = f"hermes:board:{HERMES_BOARD}:tenant:{HERMES_TENANT}"
 EXTERNAL_ACTOR = "codex-two"
 EXTERNAL_RESULT = "External review result: the release retry race is covered."
 
@@ -86,7 +88,8 @@ def reset_base() -> None:
 def hermes_env(task_id: str | None = None) -> dict[str, str]:
     env = {
         "HERMES_HOME": str(HERMES_HOME),
-        "HERMES_KANBAN_BOARD": "default",
+        "HERMES_KANBAN_BOARD": HERMES_BOARD,
+        "HERMES_TENANT": HERMES_TENANT,
     }
     if task_id:
         env["HERMES_KANBAN_TASK"] = task_id
@@ -167,7 +170,7 @@ class ToolCtx:
         self.tools[name] = handler
 
 
-def prepare_hermes_plugin() -> tuple[Any, ToolCtx, Any]:
+def prepare_hermes_plugin() -> tuple[Any, ToolCtx, Any, str | None, str | None]:
     sys.path.insert(0, str(REPO / "packages" / "aidememo-agent-sdk" / "src"))
     sys.path.insert(0, str(REPO / "plugins" / "hermes" / "src"))
     binary_dir = str(Path(AM).resolve().parent)
@@ -175,11 +178,30 @@ def prepare_hermes_plugin() -> tuple[Any, ToolCtx, Any]:
 
     from aidememo_agent import AideMemoClient  # noqa: PLC0415
     from hermes_aidememo.hooks import make_pre_llm_call  # noqa: PLC0415
+    from hermes_aidememo.plugin import (  # noqa: PLC0415
+        _resolve_actor_id,
+        _resolve_source_id,
+    )
     from hermes_aidememo.tools import register_all  # noqa: PLC0415
+
+    previous_env = {
+        key: os.environ.get(key)
+        for key in ("HERMES_KANBAN_BOARD", "HERMES_TENANT", "HERMES_PROFILE")
+    }
+    os.environ.update(hermes_env())
+    os.environ["HERMES_PROFILE"] = "orchestrator"
+    source_id = _resolve_source_id({"source_from_hermes": "board_tenant"})
+    actor_id = _resolve_actor_id({"actor_from_hermes_profile": True})
+    for key, value in previous_env.items():
+        if value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = value
 
     client = AideMemoClient(
         store_path=str(STORE),
-        source_id=SOURCE_ID,
+        source_id=source_id,
+        actor_id=actor_id,
         storage_backend="libsqlite",
     )
     # Exercise the universal CLI/MCP fallback used by a wheel without the
@@ -187,7 +209,7 @@ def prepare_hermes_plugin() -> tuple[Any, ToolCtx, Any]:
     client._py = None
     ctx = ToolCtx()
     register_all(ctx, client)
-    return client, ctx, make_pre_llm_call
+    return client, ctx, make_pre_llm_call, source_id, actor_id
 
 
 def call_plugin(ctx: ToolCtx, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -212,6 +234,8 @@ def main() -> int:
             "Hermes owns the card; durable evidence may cross to Codex.",
             "--assignee",
             "coding",
+            "--tenant",
+            HERMES_TENANT,
             "--idempotency-key",
             "scenario-r-card",
             "--json",
@@ -232,7 +256,9 @@ def main() -> int:
         },
     )
     session_id = str(workflow["session_id"])
-    client, plugin, make_pre_llm_call = prepare_hermes_plugin()
+    client, plugin, make_pre_llm_call, plugin_source_id, plugin_actor_id = (
+        prepare_hermes_plugin()
+    )
 
     previous_env = {
         key: os.environ.get(key)
@@ -396,6 +422,9 @@ def main() -> int:
             and "Kanban is the canonical owner" in hook_context
             and "call `aidememo_workflow_start`" not in hook_context
         ),
+        "plugin_derives_board_tenant_scope_and_profile_actor": (
+            plugin_source_id == SOURCE_ID and plugin_actor_id == "hermes:orchestrator"
+        ),
         "kanban_hook_creates_no_second_workflow": before_hook == after_hook,
         "single_fact_write_preserves_session": (
             "Hermes Kanban remains the canonical task lifecycle" in internal_preview["content"]
@@ -445,6 +474,7 @@ def main() -> int:
         "session_id": session_id,
         "handoff_id": handoff_id,
         "source_id": SOURCE_ID,
+        "plugin_actor_id": plugin_actor_id,
         "external_actor": EXTERNAL_ACTOR,
         "kanban_states": {
             "created": {"status": card["status"], "assignee": card["assignee"]},

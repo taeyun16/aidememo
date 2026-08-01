@@ -64,7 +64,8 @@ impl SqliteStore {
             config: Arc::new(config),
             path: path.to_path_buf(),
         };
-        store.init_schema()?;
+        let lock_retry_ms = store.config.store.lock_retry_ms;
+        sqlite_lock_retry(lock_retry_ms, || store.init_schema())?;
         Ok(store)
     }
 
@@ -2097,6 +2098,33 @@ mod tests {
             .query_row("PRAGMA busy_timeout", [], |row| row.get(0))
             .expect("busy timeout");
         assert_eq!(busy_timeout, 1000);
+    }
+
+    #[test]
+    fn sqlite_open_retries_schema_initialization_during_write_contention() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("wiki.sqlite");
+        drop(SqliteStore::open(&path, Config::default()).expect("initialize sqlite"));
+
+        let blocker = Connection::open(&path).expect("open blocker");
+        blocker
+            .execute_batch("BEGIN IMMEDIATE; INSERT INTO meta (key, value) VALUES ('lock', X'01');")
+            .expect("hold sqlite write lock");
+
+        let open_path = path.clone();
+        let opener = std::thread::spawn(move || {
+            let mut config = Config::default();
+            config.store.lock_retry_ms = 1_500;
+            SqliteStore::open(&open_path, config)
+        });
+
+        std::thread::sleep(Duration::from_millis(100));
+        blocker
+            .execute_batch("COMMIT")
+            .expect("release sqlite write lock");
+
+        let reopened = opener.join().expect("join opener");
+        let _store = reopened.expect("schema initialization should retry");
     }
 
     #[test]

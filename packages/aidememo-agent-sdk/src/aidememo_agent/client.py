@@ -1086,7 +1086,11 @@ class AideMemoClient:
             stderr = completed.stderr.strip()
             if not _is_lock_error(stderr) or self.lock_retry_ms == 0 or time.monotonic() >= deadline:
                 break
-            time.sleep(0.1)
+            # Match the Rust store's bounded 20-150 ms jitter. Fixed sleeps
+            # make concurrent Codex/Hermes profiles wake and collide again in
+            # lockstep when they share one local SQLite store.
+            jitter_ms = 20 + ((time.monotonic_ns() // 1_000_000) + attempts * 73) % 131
+            time.sleep(jitter_ms / 1000.0)
 
         assert last is not None
         retry_note = f" after {attempts} attempt(s)" if attempts > 1 else ""
@@ -1188,7 +1192,17 @@ _WINDOW_UNITS = {
 
 def _is_lock_error(stderr: str) -> bool:
     lowered = stderr.lower()
-    return "cannot acquire lock" in lowered or "database already open" in lowered
+    return any(
+        marker in lowered
+        for marker in (
+            "cannot acquire lock",
+            "database already open",
+            "database is locked",
+            "database table is locked",
+            "database schema is locked",
+            "database is busy",
+        )
+    )
 
 
 def _take_fact_type(hits: list[dict], fact_type: str, limit: int) -> list[dict]:
