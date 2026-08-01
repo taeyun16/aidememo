@@ -1,8 +1,8 @@
 //! Portable canonical command ledger boundary.
 
 use crate::{
-    CanonicalResource, ChangeBatch, ChangeCursor, CommandId, CommandReceipt, DomainError,
-    MutationCommand, ProjectScope, ResourceRef,
+    ActorId, CanonicalResource, ChangeBatch, ChangeCursor, CommandId, CommandReceipt, DomainError,
+    HandoffPage, HandoffQuery, MutationCommand, ProjectScope, ResourceRef,
 };
 
 /// Atomic receipt, resource-revision, audit, and change-feed persistence.
@@ -53,4 +53,22 @@ pub trait CommandStore {
         scope: &ProjectScope,
         resource: &ResourceRef,
     ) -> Result<Option<CanonicalResource>, DomainError>;
+}
+
+/// Indexed typed-handoff query boundary for canonical adapters.
+///
+/// The authenticated actor is a separate argument so an untrusted query cannot
+/// select another actor's inbox or outbox.
+pub trait HandoffStore: CommandStore {
+    /// Read one newest-first mailbox page from a transactional handoff index.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stable [`DomainError`] when the query cannot complete.
+    fn handoffs(
+        &self,
+        scope: &ProjectScope,
+        actor_id: &ActorId,
+        query: &HandoffQuery,
+    ) -> Result<HandoffPage, DomainError>;
 }

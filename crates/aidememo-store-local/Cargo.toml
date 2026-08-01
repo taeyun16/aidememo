@@ -12,10 +12,10 @@ publish = false
 [dependencies]
 aidememo-domain = { version = "0.1.0", path = "../aidememo-domain" }
 rusqlite = { version = "0.40.1", default-features = false, features = ["bundled"] }
+serde_json = "1.0"
 
 [dev-dependencies]
 aidememo-service = { version = "0.1.0", path = "../aidememo-service" }
-serde_json = "1.0"
 tempfile = "3.10"
 
 [lints]

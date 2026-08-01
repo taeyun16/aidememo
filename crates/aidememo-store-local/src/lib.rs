@@ -7,15 +7,16 @@
 use aidememo_domain::{
     ActorId, ActorKind, ActorRecord, AuthenticatedActor, CanonicalResource, ChangeBatch,
     ChangeCursor, ChangeEntry, ChangeOperation, CommandFingerprint, CommandId, CommandReceipt,
-    CommandStore, DomainError, MembershipRole, MembershipStatus, MutationCommand, OperationName,
-    ProjectEpoch, ProjectId, ProjectMembership, ProjectRecord, ProjectScope, ProjectSequence,
-    RecordStatus, ResourceId, ResourceKind, ResourceRef, ResourceState, Revision, TenantId,
-    TenantRecord,
+    CommandStore, DomainError, HandoffListEntry, HandoffMailbox, HandoffPage, HandoffQuery,
+    HandoffRecord, HandoffStatus, HandoffStore, MembershipRole, MembershipStatus, MutationCommand,
+    OperationName, ProjectEpoch, ProjectId, ProjectMembership, ProjectRecord, ProjectScope,
+    ProjectSequence, RecordStatus, ResourceId, ResourceKind, ResourceRef, ResourceState, Revision,
+    SourceId, TenantId, TenantRecord,
 };
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use std::{path::Path, time::Duration};
 
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 const DEFAULT_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_CHANGE_LIMIT: usize = 10_000;
 
@@ -493,6 +494,15 @@ impl SqliteCommandStore {
             ],
         )
         .map_err(|error| storage("resource_write", error))?;
+        update_handoff_index(
+            tx,
+            &scope,
+            &command.resource,
+            command.change,
+            command.resource_body.as_deref(),
+            revision,
+            sequence,
+        )?;
 
         let receipt = CommandReceipt {
             command_id: envelope.command_id.clone(),
@@ -674,6 +684,221 @@ impl CommandStore for SqliteCommandStore {
     }
 }
 
+impl HandoffStore for SqliteCommandStore {
+    fn handoffs(
+        &self,
+        scope: &ProjectScope,
+        actor_id: &ActorId,
+        query: &HandoffQuery,
+    ) -> Result<HandoffPage, DomainError> {
+        let fetch_limit = query.limit().checked_add(1).ok_or_else(|| {
+            DomainError::InvalidCommand("handoff mailbox limit overflow".to_owned())
+        })?;
+        let sql = match query.mailbox() {
+            HandoffMailbox::Inbox => {
+                "SELECT idx.updated_seq, idx.revision, idx.handoff_id,
+                        idx.from_actor, idx.to_actor, idx.source_id, idx.status,
+                        resource.revision, resource.body_json
+                 FROM ssot_handoff_index AS idx
+                 JOIN ssot_resources AS resource
+                   ON resource.tenant_id = idx.tenant_id
+                  AND resource.project_id = idx.project_id
+                  AND resource.resource_kind = 'handoff'
+                  AND resource.resource_id = idx.handoff_id
+                 WHERE idx.tenant_id = ?1 AND idx.project_id = ?2
+                   AND idx.to_actor = ?3
+                   AND (?4 IS NULL OR idx.source_id = ?4)
+                   AND (?5 = 1 OR idx.status != 'completed')
+                   AND (?6 IS NULL OR idx.updated_seq < ?6)
+                   AND resource.deleted = 0
+                 ORDER BY idx.updated_seq DESC LIMIT ?7"
+            }
+            HandoffMailbox::Outbox => {
+                "SELECT idx.updated_seq, idx.revision, idx.handoff_id,
+                        idx.from_actor, idx.to_actor, idx.source_id, idx.status,
+                        resource.revision, resource.body_json
+                 FROM ssot_handoff_index AS idx
+                 JOIN ssot_resources AS resource
+                   ON resource.tenant_id = idx.tenant_id
+                  AND resource.project_id = idx.project_id
+                  AND resource.resource_kind = 'handoff'
+                  AND resource.resource_id = idx.handoff_id
+                 WHERE idx.tenant_id = ?1 AND idx.project_id = ?2
+                   AND idx.from_actor = ?3
+                   AND (?4 IS NULL OR idx.source_id = ?4)
+                   AND (?5 = 1 OR idx.status != 'completed')
+                   AND (?6 IS NULL OR idx.updated_seq < ?6)
+                   AND resource.deleted = 0
+                 ORDER BY idx.updated_seq DESC LIMIT ?7"
+            }
+        };
+        let mut statement = self
+            .connection
+            .prepare(sql)
+            .map_err(|error| storage("handoff_mailbox_prepare", error))?;
+        let source_id = query.source_id().map(SourceId::as_str);
+        let before_seq = query
+            .before_seq()
+            .map(|sequence| to_i64(sequence.get(), "handoff_before_seq"))
+            .transpose()?;
+        let rows = statement
+            .query_map(
+                params![
+                    scope.tenant_id.as_str(),
+                    scope.project_id.as_str(),
+                    actor_id.as_str(),
+                    source_id,
+                    i64::from(query.include_completed()),
+                    before_seq,
+                    to_i64(fetch_limit as u64, "handoff_limit")?,
+                ],
+                |row| {
+                    Ok(HandoffIndexRow {
+                        updated_seq: row.get(0)?,
+                        index_revision: row.get(1)?,
+                        handoff_id: row.get(2)?,
+                        from_actor: row.get(3)?,
+                        to_actor: row.get(4)?,
+                        source_id: row.get(5)?,
+                        status: row.get(6)?,
+                        resource_revision: row.get(7)?,
+                        body: row.get(8)?,
+                    })
+                },
+            )
+            .map_err(|error| storage("handoff_mailbox_query", error))?;
+        let mut assignments = Vec::with_capacity(fetch_limit);
+        for row in rows {
+            let row = row.map_err(|error| storage("handoff_mailbox_row", error))?;
+            let record: HandoffRecord =
+                serde_json::from_slice(&row.body).map_err(|error| DomainError::StorageFailure {
+                    operation: "handoff_mailbox_decode",
+                    detail: error.to_string(),
+                })?;
+            row.validate(&record)?;
+            assignments.push(HandoffListEntry {
+                project_seq: ProjectSequence::new(from_i64(
+                    row.updated_seq,
+                    "handoff_project_sequence",
+                )?),
+                revision: Revision::new(from_i64(row.resource_revision, "handoff_revision")?)?,
+                record,
+            });
+        }
+        let has_more = assignments.len() > query.limit();
+        if has_more {
+            assignments.truncate(query.limit());
+        }
+        let next_before_seq = has_more
+            .then(|| assignments.last().map(|entry| entry.project_seq))
+            .flatten();
+        Ok(HandoffPage {
+            assignments,
+            next_before_seq,
+        })
+    }
+}
+
+struct HandoffIndexRow {
+    updated_seq: i64,
+    index_revision: i64,
+    handoff_id: String,
+    from_actor: String,
+    to_actor: String,
+    source_id: Option<String>,
+    status: String,
+    resource_revision: i64,
+    body: Vec<u8>,
+}
+
+impl HandoffIndexRow {
+    fn validate(&self, record: &HandoffRecord) -> Result<(), DomainError> {
+        let consistent = self.index_revision == self.resource_revision
+            && self.handoff_id == record.handoff_id.as_str()
+            && self.from_actor == record.from_actor.as_str()
+            && self.to_actor == record.to_actor.as_str()
+            && self.source_id.as_deref() == record.source_id.as_ref().map(SourceId::as_str)
+            && self.status == handoff_status_text(record.status);
+        if consistent {
+            Ok(())
+        } else {
+            Err(DomainError::StorageFailure {
+                operation: "handoff_mailbox_decode",
+                detail: "handoff index does not match canonical resource state".to_owned(),
+            })
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn update_handoff_index(
+    tx: &Transaction<'_>,
+    scope: &ProjectScope,
+    resource: &ResourceRef,
+    change: ChangeOperation,
+    body: Option<&[u8]>,
+    revision: Revision,
+    sequence: ProjectSequence,
+) -> Result<(), DomainError> {
+    if resource.kind.as_str() != "handoff" {
+        return Ok(());
+    }
+    if change == ChangeOperation::Delete {
+        tx.execute(
+            "DELETE FROM ssot_handoff_index
+             WHERE tenant_id = ?1 AND project_id = ?2 AND handoff_id = ?3",
+            params![
+                scope.tenant_id.as_str(),
+                scope.project_id.as_str(),
+                resource.id.as_str(),
+            ],
+        )
+        .map_err(|error| storage("handoff_index_delete", error))?;
+        return Ok(());
+    }
+    let body = body.ok_or_else(|| DomainError::StorageFailure {
+        operation: "handoff_index_decode",
+        detail: "handoff upsert is missing its canonical body".to_owned(),
+    })?;
+    let record: HandoffRecord =
+        serde_json::from_slice(body).map_err(|error| DomainError::StorageFailure {
+            operation: "handoff_index_decode",
+            detail: error.to_string(),
+        })?;
+    if record.handoff_id.as_str() != resource.id.as_str() {
+        return Err(DomainError::StorageFailure {
+            operation: "handoff_index_decode",
+            detail: "handoff body identity does not match its resource coordinate".to_owned(),
+        });
+    }
+    tx.execute(
+        "INSERT INTO ssot_handoff_index
+            (tenant_id, project_id, handoff_id, from_actor, to_actor, source_id,
+             status, revision, updated_seq)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+         ON CONFLICT (tenant_id, project_id, handoff_id)
+         DO UPDATE SET from_actor = excluded.from_actor,
+                       to_actor = excluded.to_actor,
+                       source_id = excluded.source_id,
+                       status = excluded.status,
+                       revision = excluded.revision,
+                       updated_seq = excluded.updated_seq",
+        params![
+            scope.tenant_id.as_str(),
+            scope.project_id.as_str(),
+            record.handoff_id.as_str(),
+            record.from_actor.as_str(),
+            record.to_actor.as_str(),
+            record.source_id.as_ref().map(SourceId::as_str),
+            handoff_status_text(record.status),
+            to_i64(revision.get(), "handoff_revision")?,
+            to_i64(sequence.get(), "handoff_project_sequence")?,
+        ],
+    )
+    .map_err(|error| storage("handoff_index_write", error))?;
+    Ok(())
+}
+
 fn migrate(connection: &Connection) -> Result<(), DomainError> {
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
@@ -685,8 +910,12 @@ fn migrate(connection: &Connection) -> Result<(), DomainError> {
         });
     }
     match version {
-        0 => create_schema_v2(connection),
-        1 => migrate_v1_to_v2(connection),
+        0 => create_schema_v3(connection),
+        1 => {
+            migrate_v1_to_v2(connection)?;
+            migrate_v2_to_v3(connection)
+        }
+        2 => migrate_v2_to_v3(connection),
         SCHEMA_VERSION => Ok(()),
         _ => Err(DomainError::StorageFailure {
             operation: "schema_version",
@@ -695,7 +924,7 @@ fn migrate(connection: &Connection) -> Result<(), DomainError> {
     }
 }
 
-fn create_schema_v2(connection: &Connection) -> Result<(), DomainError> {
+fn create_schema_v3(connection: &Connection) -> Result<(), DomainError> {
     connection
         .execute_batch(
             "BEGIN IMMEDIATE;
@@ -813,7 +1042,31 @@ fn create_schema_v2(connection: &Connection) -> Result<(), DomainError> {
                 FOREIGN KEY (tenant_id, project_id)
                     REFERENCES ssot_projects (tenant_id, project_id)
              ) STRICT;
-             PRAGMA user_version = 2;
+             CREATE TABLE ssot_handoff_index (
+                tenant_id TEXT NOT NULL,
+                project_id TEXT NOT NULL,
+                handoff_id TEXT NOT NULL,
+                resource_kind TEXT NOT NULL DEFAULT 'handoff'
+                    CHECK (resource_kind = 'handoff'),
+                from_actor TEXT NOT NULL,
+                to_actor TEXT NOT NULL,
+                source_id TEXT,
+                status TEXT NOT NULL
+                    CHECK (status IN ('pending', 'accepted', 'completed')),
+                revision INTEGER NOT NULL CHECK (revision > 0),
+                updated_seq INTEGER NOT NULL CHECK (updated_seq > 0),
+                PRIMARY KEY (tenant_id, project_id, handoff_id),
+                FOREIGN KEY (tenant_id, project_id, resource_kind, handoff_id)
+                    REFERENCES ssot_resources
+                        (tenant_id, project_id, resource_kind, resource_id)
+             ) STRICT;
+             CREATE INDEX ssot_handoff_inbox_idx
+                ON ssot_handoff_index
+                    (tenant_id, project_id, to_actor, updated_seq DESC);
+             CREATE INDEX ssot_handoff_outbox_idx
+                ON ssot_handoff_index
+                    (tenant_id, project_id, from_actor, updated_seq DESC);
+             PRAGMA user_version = 3;
              COMMIT;",
         )
         .map_err(|error| storage("schema_create", error))
@@ -877,6 +1130,78 @@ fn migrate_v1_to_v2(connection: &Connection) -> Result<(), DomainError> {
              COMMIT;",
         )
         .map_err(|error| storage("schema_migrate_v1_v2", error))
+}
+
+fn migrate_v2_to_v3(connection: &Connection) -> Result<(), DomainError> {
+    let can_backfill = table_exists(connection, "ssot_changes")?;
+    let backfill = if can_backfill {
+        "INSERT INTO ssot_handoff_index
+            (tenant_id, project_id, handoff_id, from_actor, to_actor,
+             source_id, status, revision, updated_seq)
+         SELECT resource.tenant_id,
+                resource.project_id,
+                resource.resource_id,
+                json_extract(CAST(resource.body_json AS TEXT), '$.from_actor'),
+                json_extract(CAST(resource.body_json AS TEXT), '$.to_actor'),
+                json_extract(CAST(resource.body_json AS TEXT), '$.source_id'),
+                json_extract(CAST(resource.body_json AS TEXT), '$.status'),
+                resource.revision,
+                MAX(change.seq)
+         FROM ssot_resources AS resource
+         JOIN ssot_changes AS change
+           ON change.tenant_id = resource.tenant_id
+          AND change.project_id = resource.project_id
+          AND change.resource_kind = resource.resource_kind
+          AND change.resource_id = resource.resource_id
+         WHERE resource.resource_kind = 'handoff' AND resource.deleted = 0
+         GROUP BY resource.tenant_id, resource.project_id, resource.resource_id;"
+    } else {
+        ""
+    };
+    let migration = format!(
+        "BEGIN IMMEDIATE;
+         CREATE TABLE ssot_handoff_index (
+            tenant_id TEXT NOT NULL,
+            project_id TEXT NOT NULL,
+            handoff_id TEXT NOT NULL,
+            resource_kind TEXT NOT NULL DEFAULT 'handoff'
+                CHECK (resource_kind = 'handoff'),
+            from_actor TEXT NOT NULL,
+            to_actor TEXT NOT NULL,
+            source_id TEXT,
+            status TEXT NOT NULL
+                CHECK (status IN ('pending', 'accepted', 'completed')),
+            revision INTEGER NOT NULL CHECK (revision > 0),
+            updated_seq INTEGER NOT NULL CHECK (updated_seq > 0),
+            PRIMARY KEY (tenant_id, project_id, handoff_id),
+            FOREIGN KEY (tenant_id, project_id, resource_kind, handoff_id)
+                REFERENCES ssot_resources
+                    (tenant_id, project_id, resource_kind, resource_id)
+         ) STRICT;
+         {backfill}
+         CREATE INDEX ssot_handoff_inbox_idx
+            ON ssot_handoff_index
+                (tenant_id, project_id, to_actor, updated_seq DESC);
+         CREATE INDEX ssot_handoff_outbox_idx
+            ON ssot_handoff_index
+                (tenant_id, project_id, from_actor, updated_seq DESC);
+         PRAGMA user_version = 3;
+         COMMIT;"
+    );
+    connection
+        .execute_batch(&migration)
+        .map_err(|error| storage("schema_migrate_v2_v3", error))
+}
+
+fn table_exists(connection: &Connection, table: &str) -> Result<bool, DomainError> {
+    let count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name = ?1",
+            params![table],
+            |row| row.get(0),
+        )
+        .map_err(|error| storage("schema_table_lookup", error))?;
+    Ok(count == 1)
 }
 
 fn validate_tenant_project(
@@ -1110,6 +1435,14 @@ fn membership_status_text(status: MembershipStatus) -> &'static str {
     match status {
         MembershipStatus::Active => "active",
         MembershipStatus::Suspended => "suspended",
+    }
+}
+
+fn handoff_status_text(status: HandoffStatus) -> &'static str {
+    match status {
+        HandoffStatus::Pending => "pending",
+        HandoffStatus::Accepted => "accepted",
+        HandoffStatus::Completed => "completed",
     }
 }
 

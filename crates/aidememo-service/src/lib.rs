@@ -8,7 +8,8 @@
 use aidememo_domain::{
     AuthenticatedActor, AuthorizedCommand, CanonicalResource, ChangeBatch, ChangeCursor,
     ChangeOperation, CommandEnvelope, CommandFingerprint, CommandReceipt, CommandStore,
-    DomainError, MutationCommand, ProjectAccess, ProjectId, ProjectMembership, ResourceRef,
+    DomainError, HandoffPage, HandoffQuery, HandoffStore, MutationCommand, ProjectAccess,
+    ProjectId, ProjectMembership, ResourceRef,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -234,6 +235,35 @@ impl<S: CommandStore> CommandService<S> {
         }
         let access = ProjectAccess::authorize(authenticated, membership)?;
         self.store.resource(&access.scope(), resource)
+    }
+}
+
+impl<S: HandoffStore> CommandService<S> {
+    /// Read an authenticated actor's indexed inbox or outbox.
+    ///
+    /// Actor identity is derived from the authenticated context and is never a
+    /// caller-selected filter.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stable [`DomainError`] for identity, project authorization,
+    /// query, or storage failures.
+    pub fn handoffs(
+        &self,
+        authenticated: &AuthenticatedActor,
+        membership: &ProjectMembership,
+        project_id: &ProjectId,
+        query: &HandoffQuery,
+    ) -> Result<HandoffPage, DomainError> {
+        if &membership.project_id != project_id {
+            return Err(DomainError::ProjectScopeMismatch {
+                requested: project_id.clone(),
+                authorized: membership.project_id.clone(),
+            });
+        }
+        let access = ProjectAccess::authorize(authenticated, membership)?;
+        self.store
+            .handoffs(&access.scope(), authenticated.actor_id(), query)
     }
 }
 

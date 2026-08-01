@@ -1,9 +1,10 @@
 use aidememo_domain::{
     ActorId, ActorKind, ActorRecord, AuthenticatedActor, ChangeCursor, ChangeOperation,
-    CommandEnvelope, CommandId, CommandStore, MembershipRole, MembershipStatus, OperationName,
-    ProjectEpoch, ProjectId, ProjectMembership, ProjectRecord, ProjectScope, ProjectSequence,
-    RecordStatus, ResourceId, ResourceKind, ResourceRef, Revision, TenantId, TenantRecord,
-    conformance,
+    CommandEnvelope, CommandId, CommandStore, HandoffId, HandoffMailbox, HandoffQuery,
+    HandoffRecord, HandoffStore, MembershipRole, MembershipStatus, OperationName, ProjectEpoch,
+    ProjectId, ProjectMembership, ProjectRecord, ProjectScope, ProjectSequence, RecordStatus,
+    ResourceId, ResourceKind, ResourceRef, Revision, SessionId, SessionRecord, SourceId, TenantId,
+    TenantRecord, conformance,
 };
 use aidememo_service::CommandService;
 use aidememo_store_local::SqliteCommandStore;
@@ -363,7 +364,7 @@ fn bootstrap_persists_token_identity_and_membership() -> Result<(), Box<dyn std:
         ))?,
         Some(project.project_epoch)
     );
-    assert_eq!(store.schema_version()?, 2);
+    assert_eq!(store.schema_version()?, 3);
     Ok(())
 }
 
@@ -414,7 +415,104 @@ fn v1_ledger_migrates_and_adopts_bootstrap_metadata() -> Result<(), Box<dyn std:
         updated_at_ms: timestamp,
     };
     let mut store = SqliteCommandStore::open(path)?;
-    assert_eq!(store.schema_version()?, 2);
+    assert_eq!(store.schema_version()?, 3);
     store.bootstrap_project(&tenant, &project)?;
+    Ok(())
+}
+
+#[test]
+fn v2_ledger_backfills_transactional_handoff_index() -> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("v2.sqlite");
+    let scope = ProjectScope::new(
+        TenantId::try_from("tenant_v2")?,
+        ProjectId::try_from("project_v2")?,
+    );
+    let actor = AuthenticatedActor::new(scope.tenant_id.clone(), ActorId::try_from("codex-p1")?);
+    let membership = ProjectMembership {
+        tenant_id: scope.tenant_id.clone(),
+        project_id: scope.project_id.clone(),
+        actor_id: actor.actor_id().clone(),
+        role: MembershipRole::Writer,
+        status: MembershipStatus::Active,
+    };
+    let session = SessionRecord::new(
+        SessionId::try_from("session_v2")?,
+        Some(SourceId::try_from("source_v2")?),
+        "Migrate indexed mailbox".to_owned(),
+        actor.actor_id().clone(),
+    )?;
+    let handoff = HandoffRecord::new(
+        HandoffId::try_from("handoff_v2")?,
+        &session,
+        actor.actor_id().clone(),
+        ActorId::try_from("codex-p2")?,
+        None,
+        None,
+    )?;
+    {
+        let mut store = SqliteCommandStore::open(&path)?;
+        store.initialize_project(&scope, &ProjectEpoch::try_from("epoch_v2")?)?;
+        let mut service = CommandService::new(store);
+        service.execute_with_body(
+            &actor,
+            &membership,
+            CommandEnvelope {
+                command_id: CommandId::try_from("command_handoff_v2")?,
+                project_id: scope.project_id.clone(),
+                expected_revision: None,
+                operation: OperationName::try_from("handoff.send")?,
+                payload: json!({"handoff_id": "handoff_v2"}),
+            },
+            ResourceRef {
+                kind: ResourceKind::try_from("handoff")?,
+                id: ResourceId::try_from("handoff_v2")?,
+            },
+            ChangeOperation::Upsert,
+            &handoff,
+        )?;
+    }
+    {
+        let connection = rusqlite::Connection::open(&path)?;
+        connection.execute_batch(
+            "DROP TABLE ssot_handoff_index;
+             PRAGMA user_version = 2;",
+        )?;
+    }
+
+    let store = SqliteCommandStore::open(&path)?;
+    assert_eq!(store.schema_version()?, 3);
+    let page = store.handoffs(
+        &scope,
+        &ActorId::try_from("codex-p2")?,
+        &HandoffQuery::new(HandoffMailbox::Inbox, None, false, None, 20)?,
+    )?;
+    assert_eq!(page.assignments.len(), 1);
+    assert_eq!(page.assignments[0].record, handoff);
+    assert!(page.next_before_seq.is_none());
+    drop(store);
+
+    let connection = rusqlite::Connection::open(&path)?;
+    let mut plan = connection.prepare(
+        "EXPLAIN QUERY PLAN
+         SELECT updated_seq FROM ssot_handoff_index
+         WHERE tenant_id = ?1 AND project_id = ?2 AND to_actor = ?3
+         ORDER BY updated_seq DESC LIMIT 20",
+    )?;
+    let rows = plan.query_map(
+        rusqlite::params![
+            scope.tenant_id.as_str(),
+            scope.project_id.as_str(),
+            "codex-p2"
+        ],
+        |row| row.get::<_, String>(3),
+    )?;
+    let details = rows.collect::<Result<Vec<_>, _>>()?;
+    assert!(
+        details
+            .iter()
+            .any(|detail| detail.contains("ssot_handoff_inbox_idx")),
+        "mailbox query plan did not use inbox index: {details:?}"
+    );
     Ok(())
 }

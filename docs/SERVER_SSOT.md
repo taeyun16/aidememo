@@ -143,8 +143,9 @@ A delete payload must be JSON `null`, and the resource kind must use the
 `session`, `handoff`, and `artifact` are rejected on the raw endpoint. Product
 operations are never aliases accepted by this endpoint. The separate typed
 routes now cover session creation, session-attached fact creation, and handoff
-send/accept/return/status; search, inbox/outbox, heartbeat, and MCP integration
-remain open. This prevents the raw route from bypassing product semantics.
+send/indexed inbox/outbox/accept/return/status; search, heartbeat, and MCP
+integration remain open. This prevents the raw route from bypassing product
+semantics.
 
 The idempotency fingerprint binds project, revision precondition, operation,
 payload, full resource coordinate, and upsert/delete change kind. Consequently,
@@ -276,6 +277,7 @@ The current HTTP surface is intentionally small:
 | `POST /v1/projects/{project}/sessions` | Create one typed session; `source_id` is fixed here |
 | `POST /v1/projects/{project}/facts` | Create one fact attached to an existing session; source and actor are inherited server-side |
 | `POST /v1/projects/{project}/handoffs` | Send the session pointer to another active writer |
+| `GET /v1/projects/{project}/handoffs?box=inbox\|outbox` | Authenticated actor's indexed mailbox; optional `source_id`, `include_completed`, `before_seq`, and bounded `limit` |
 | `POST .../handoffs/{id}/accept` | Claim with `expected_revision` and an exclusive `claim_id` |
 | `POST .../handoffs/{id}/return` | Validate claim plus result fact session/source/actor and return an outcome |
 | `GET .../handoffs/{id}` | Sender/receiver-only typed status |
@@ -297,6 +299,15 @@ replays an existing receipt. This means a delayed accept retry still returns
 its original receipt even if the handoff has since completed. A different actor
 cannot replay the first actor's command ID.
 
+Mailbox actor identity is always taken from the bearer binding; an `actor_id`
+query parameter is rejected. Results are newest-first and include each
+handoff's current resource `revision` plus latest `project_seq`. When another
+page exists, `next_before_seq` is the exclusive cursor for the next request.
+Inbox excludes completed work by default; outbox includes it by default. The
+SQLite schema v3 mailbox index is updated in the same transaction as canonical
+handoff state, receipt, change, and audit rows. Opening a v2 ledger backfills
+the index from canonical handoff resources and their latest change sequence.
+
 Every protected request hashes the bearer value, resolves the persisted tenant
 and actor, and reloads active project membership. Command JSON uses
 `deny_unknown_fields`; tenant or actor identity in the body is rejected rather
@@ -305,8 +316,8 @@ sequence, change entry, and audit row commit in one SQLite transaction.
 
 This process supports one application replica and has no built-in TLS, token
 rotation/revocation command, rate limits, artifact directory, PostgreSQL,
-search, handoff inbox/outbox index, heartbeat, MCP remote profile, local read
-replica, or offline outbox yet. Typed facts are result evidence in the canonical
+search, heartbeat, MCP remote profile, local read replica, or offline outbox
+yet. Typed facts are result evidence in the canonical
 ledger and are not indexed by the existing embedded retrieval engine. This is a
 server contract executable, not a released SaaS or a replacement for
 `aidememo mcp-serve`.
@@ -350,10 +361,10 @@ intended boundaries and do not exist yet:
 ```text
 aidememo-domain          portable IDs, commands, records, invariants
 aidememo-service         command/query orchestration and authorization context
-aidememo-store-local     separate single-node SQLite command ledger
+aidememo-store-local     SQLite command ledger and transactional handoff index
 aidememo-store-postgres  server canonical adapter
 aidememo-artifacts       local and S3-compatible reservation/commit contract
-aidememo-server          bounded authenticated HTTP resource/change/health surface
+aidememo-server          bounded authenticated HTTP resource/change/handoff surface
 aidememo-client          remote transport, local replica, and offline outbox
 ```
 
@@ -370,12 +381,12 @@ Every lookup and feed batch carries the composite tenant-project scope.
 `aidememo-service` binds authenticated identity and membership to the untrusted
 envelope, recursively canonicalizes its JSON fields, and computes the command
 fingerprint. `aidememo-store-local` persists receipt, resource revision, change,
-audit, and project sequence in one SQLite transaction in a database separate
-from the existing embedded store. `aidememo-server` persists token bindings and
-memberships in that ledger, derives identity outside the request body, and
-exposes bootstrap, exact resource reads, extension resource commands, typed
-session/fact/handoff routes, a change feed, and health over a loopback-first
-Axum process.
+audit, project sequence, and actor-relative handoff index in one SQLite
+transaction in a database separate from the existing embedded store.
+`aidememo-server` persists token bindings and memberships in that ledger,
+derives identity outside the request body, and exposes bootstrap, exact
+resource reads, extension resource commands, typed session/fact/handoff and
+mailbox routes, a change feed, and health over a loopback-first Axum process.
 
 The backend-neutral `conformance::run` fixture checks exact idempotent receipt
 replay, command-ID conflicts, stale revision rejection, monotonic project
@@ -387,8 +398,8 @@ connections, and identical project IDs isolated under two tenants. HTTP tests
 cover missing and unknown bearer rejection, identity-field injection, writer
 replay/conflict behavior, reader-only sync, role enforcement, and a
 `codex-p1 -> codex-p2 -> Hermes` typed handoff chain. No PostgreSQL, Durable
-Object, artifact body, handoff inbox index, search adapter, MCP remote profile,
-or local replica adapter is wired yet. All four foundation crates are
+Object, artifact body, search adapter, MCP remote profile, or local replica
+adapter is wired yet. All four foundation crates are
 `publish = false` until a server-facing public API and release order are
 approved, so they do not silently enter the existing v0.1.0 crate publication
 workflow.
@@ -428,10 +439,11 @@ resources, persisted bearer identity/membership, exact reads, incremental
 change retrieval, and typed session/fact/handoff commands. An HTTP integration
 test completes a `codex-p1 -> codex-p2 -> Hermes` chain. Combined domain and
 HTTP tests reject wrong actor, claim, source/session evidence, read-only
-receiver, and non-participant reads.
-Actual CLI/MCP profile wiring, inbox/outbox indexes, local artifacts, replica
-bootstrap/reset, and unavailable-server offline behavior remain open, so the
-full Phase 1 exit gate is not yet closed.
+receiver, non-participant reads, and mailbox actor-filter injection. Indexed
+inbox/outbox queries support completed/source filters and exclusive sequence
+pagination; schema v2 migration backfill is tested. Actual CLI/MCP profile
+wiring, local artifacts, replica bootstrap/reset, and unavailable-server
+offline behavior remain open, so the full Phase 1 exit gate is not yet closed.
 
 ### Phase 2 — portable production backend
 

@@ -380,20 +380,20 @@ crates/aidememo-domain/src/
   identity.rs   tenant/project/actor scope, membership, revisions
   command.rs    envelope, authorization guard, receipt, audit
   change.rs     ordered project change feed + tombstones
-  storage.rs    portable CommandStore adapter contract
-  handoff.rs    typed session/fact records + exclusive handoff claim/return invariants
+  storage.rs    portable CommandStore + indexed HandoffStore adapter contracts
+  handoff.rs    typed session/fact records, claim/return invariants, mailbox pages
   conformance.rs backend-neutral idempotency/CAS/epoch fixture
 
 crates/aidememo-service/src/lib.rs
   authenticated orchestration + canonical command fingerprint
 
 crates/aidememo-store-local/src/lib.rs
-  separate SQLite receipt/revision/change/audit transaction ledger
+  separate SQLite receipt/revision/change/audit ledger + transactional handoff index
 
 crates/aidememo-server/src/
   lib.rs        authenticated resource command, exact-read, change-feed, and health routes
   main.rs       retry-safe identity bootstrap and loopback-first server process
-  product.rs    typed session/fact/handoff send, accept, return, and status routes
+  product.rs    typed session/fact/handoff send, mailbox, accept, return, and status routes
 
 crates/aidememo-core/src/
   lib.rs        AideMemo public API (re-exports)
@@ -482,9 +482,9 @@ crates/aidememo-cli/src/
   product routes. Reserved product kinds such as `fact`, `session`, and
   `handoff` are writable only through typed APIs; the raw endpoint must not
   bypass their invariants. The first typed slice supports session create,
-  session-attached fact create, and handoff
-  send/accept/return/status. It does not yet provide inbox/outbox indexes,
-  heartbeat, search, MCP remote profiles, or local replicas.
+  session-attached fact create, and handoff send/indexed inbox/outbox/accept/
+  return/status. Mailbox actor identity is always derived from authentication;
+  it does not yet provide heartbeat, search, MCP remote profiles, or local replicas.
 - Typed handoff return must match the canonical session, inherited `source_id`,
   authenticated receiving actor, active `claim_id`, and result fact. The
   receiver must be an active writable project member.

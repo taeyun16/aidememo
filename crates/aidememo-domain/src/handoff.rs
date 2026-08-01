@@ -1,11 +1,117 @@
 //! Typed session, fact, and handoff records for the remote SSOT boundary.
 
-use crate::{ActorId, ClaimId, DomainError, FactId, HandoffId, SessionId, SourceId};
+use crate::{
+    ActorId, ClaimId, DomainError, FactId, HandoffId, ProjectSequence, Revision, SessionId,
+    SourceId,
+};
 use serde::{Deserialize, Serialize};
 
 const MAX_TOPIC_BYTES: usize = 512;
 const MAX_FACT_BYTES: usize = 65_536;
 const MAX_HANDOFF_TEXT_BYTES: usize = 4_096;
+const MAX_MAILBOX_LIMIT: usize = 100;
+
+/// Actor-relative handoff mailbox.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HandoffMailbox {
+    /// Assignments addressed to the authenticated actor.
+    Inbox,
+    /// Assignments sent by the authenticated actor.
+    Outbox,
+}
+
+/// Bounded mailbox query independent of any storage backend.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HandoffQuery {
+    mailbox: HandoffMailbox,
+    source_id: Option<SourceId>,
+    include_completed: bool,
+    before_seq: Option<ProjectSequence>,
+    limit: usize,
+}
+
+impl HandoffQuery {
+    /// Build a validated newest-first mailbox query.
+    ///
+    /// `before_seq` is an exclusive project-sequence cursor returned by the
+    /// previous page.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DomainError::InvalidCommand`] when `limit` is outside
+    /// `1..=100`.
+    pub fn new(
+        mailbox: HandoffMailbox,
+        source_id: Option<SourceId>,
+        include_completed: bool,
+        before_seq: Option<ProjectSequence>,
+        limit: usize,
+    ) -> Result<Self, DomainError> {
+        if limit == 0 || limit > MAX_MAILBOX_LIMIT {
+            return Err(DomainError::InvalidCommand(format!(
+                "handoff mailbox limit must be between 1 and {MAX_MAILBOX_LIMIT}"
+            )));
+        }
+        Ok(Self {
+            mailbox,
+            source_id,
+            include_completed,
+            before_seq,
+            limit,
+        })
+    }
+
+    /// Requested actor-relative mailbox.
+    #[must_use]
+    pub const fn mailbox(&self) -> HandoffMailbox {
+        self.mailbox
+    }
+
+    /// Optional application source namespace.
+    #[must_use]
+    pub const fn source_id(&self) -> Option<&SourceId> {
+        self.source_id.as_ref()
+    }
+
+    /// Whether completed assignments remain visible.
+    #[must_use]
+    pub const fn include_completed(&self) -> bool {
+        self.include_completed
+    }
+
+    /// Exclusive newest-first project-sequence cursor.
+    #[must_use]
+    pub const fn before_seq(&self) -> Option<ProjectSequence> {
+        self.before_seq
+    }
+
+    /// Maximum assignments returned in one page.
+    #[must_use]
+    pub const fn limit(&self) -> usize {
+        self.limit
+    }
+}
+
+/// Revisioned handoff plus the sequence that last updated its mailbox index.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct HandoffListEntry {
+    /// Project sequence of the latest handoff state transition.
+    pub project_seq: ProjectSequence,
+    /// Current canonical resource revision.
+    pub revision: Revision,
+    /// Typed canonical handoff record.
+    pub record: HandoffRecord,
+}
+
+/// Newest-first page from one actor-relative handoff mailbox.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct HandoffPage {
+    /// Current assignments in deterministic order.
+    pub assignments: Vec<HandoffListEntry>,
+    /// Exclusive cursor for the next page, or `None` at the end.
+    pub next_before_seq: Option<ProjectSequence>,
+}
 
 /// Minimal canonical session record used for remote continuity.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -420,6 +526,25 @@ mod tests {
             ),
             Err(DomainError::HandoffActorMismatch)
         );
+        Ok(())
+    }
+
+    #[test]
+    fn mailbox_query_bounds_limit_and_preserves_cursor() -> Result<(), DomainError> {
+        assert!(HandoffQuery::new(HandoffMailbox::Inbox, None, false, None, 0).is_err());
+        assert!(HandoffQuery::new(HandoffMailbox::Inbox, None, false, None, 101).is_err());
+        let query = HandoffQuery::new(
+            HandoffMailbox::Outbox,
+            Some(SourceId::try_from("source_a")?),
+            true,
+            Some(ProjectSequence::new(42)),
+            20,
+        )?;
+        assert_eq!(query.mailbox(), HandoffMailbox::Outbox);
+        assert_eq!(query.source_id().map(SourceId::as_str), Some("source_a"));
+        assert!(query.include_completed());
+        assert_eq!(query.before_seq(), Some(ProjectSequence::new(42)));
+        assert_eq!(query.limit(), 20);
         Ok(())
     }
 }

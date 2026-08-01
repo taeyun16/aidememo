@@ -22,7 +22,10 @@ pub use command::{
     CommandReceipt, MutationCommand, OperationName, ResourceKind, ResourceRef, ResourceState,
 };
 pub use error::{DomainError, ErrorCode};
-pub use handoff::{FactRecord, HandoffOutcome, HandoffRecord, HandoffStatus, SessionRecord};
+pub use handoff::{
+    FactRecord, HandoffListEntry, HandoffMailbox, HandoffOutcome, HandoffPage, HandoffQuery,
+    HandoffRecord, HandoffStatus, SessionRecord,
+};
 pub use identity::{
     ActorId, ArtifactId, AuthenticatedActor, ClaimId, CommandId, FactId, HandoffId, MembershipRole,
     MembershipStatus, ProjectAccess, ProjectAuthorization, ProjectEpoch, ProjectId,
@@ -30,4 +33,4 @@ pub use identity::{
     TenantId,
 };
 pub use record::{ActorKind, ActorRecord, ProjectRecord, RecordStatus, TenantRecord};
-pub use storage::CommandStore;
+pub use storage::{CommandStore, HandoffStore};

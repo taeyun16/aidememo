@@ -139,8 +139,9 @@ payload는 JSON `null`이어야 하고 resource kind는 `custom.*` 확장 namesp
 사용해야 합니다. `fact`, `session`, `handoff`, `artifact` 같은 예약 제품 kind는
 원시 endpoint에서 거부합니다. 제품 작업은 이 endpoint의 alias로 받지 않습니다.
 별도의 typed route는 이제 session 생성, session에 연결된 fact 생성, handoff
-send/accept/return/status를 지원합니다. Search, inbox/outbox, heartbeat, MCP 연결은
-아직 열려 있습니다. 이 경계는 원시 route가 제품 의미론을 우회하지 못하게 합니다.
+send/indexed inbox/outbox/accept/return/status를 지원합니다. Search, heartbeat, MCP
+연결은 아직 열려 있습니다. 이 경계는 원시 route가 제품 의미론을 우회하지 못하게
+합니다.
 
 Idempotency fingerprint는 project, revision precondition, operation, payload,
 전체 resource 좌표, upsert/delete change kind를 결합합니다. 따라서 하나의
@@ -269,6 +270,7 @@ membership role, token 소유권 충돌은 fail closed로 처리합니다. 서�
 | `POST /v1/projects/{project}/sessions` | Typed session 하나를 생성하고 `source_id`를 고정 |
 | `POST /v1/projects/{project}/facts` | 기존 session에 fact를 생성하며 source와 actor는 서버에서 상속 |
 | `POST /v1/projects/{project}/handoffs` | Session pointer를 다른 활성 writer에게 전달 |
+| `GET /v1/projects/{project}/handoffs?box=inbox\|outbox` | 인증 actor의 indexed mailbox, 선택형 `source_id`, `include_completed`, `before_seq`, 제한된 `limit` |
 | `POST .../handoffs/{id}/accept` | `expected_revision`과 exclusive `claim_id`로 claim |
 | `POST .../handoffs/{id}/return` | Claim과 결과 fact의 session/source/actor를 검증하고 outcome 반환 |
 | `GET .../handoffs/{id}` | 송신자/수신자 전용 typed status |
@@ -290,6 +292,14 @@ membership role, token 소유권 충돌은 fail closed로 처리합니다. 서�
 재시도는 원래 receipt를 반환합니다. 다른 actor는 최초 actor의 command ID를
 replay할 수 없습니다.
 
+Mailbox actor identity는 항상 bearer binding에서 가져오며 `actor_id` query parameter는
+거부합니다. 결과는 최신순이고 각 handoff의 현재 resource `revision`과 최신
+`project_seq`를 포함합니다. 다음 page가 있으면 `next_before_seq`가 다음 요청의
+exclusive cursor입니다. Inbox는 기본적으로 completed 작업을 제외하고 outbox는
+기본적으로 포함합니다. SQLite schema v3 mailbox index는 정본 handoff 상태,
+receipt, change, audit row와 같은 transaction에서 갱신됩니다. V2 ledger를 열면 정본
+handoff resource와 최신 change sequence에서 index를 backfill합니다.
+
 보호된 모든 요청은 bearer 값을 hash하고 저장된 tenant와 actor를 찾은 뒤 활성
 project membership을 다시 읽습니다. Command JSON은 `deny_unknown_fields`를
 사용하므로 body의 tenant 또는 actor identity를 무시하지 않고 거부합니다. 정본
@@ -298,8 +308,8 @@ row는 한 SQLite transaction으로 commit됩니다.
 
 현재 process는 application replica 하나만 지원하며 내장 TLS, token
 rotation/revocation command, rate limit, artifact directory, PostgreSQL, search,
-handoff inbox/outbox index, heartbeat, MCP remote profile, 로컬 read replica,
-offline outbox가 아직 없습니다. Typed fact는 정본 ledger의 결과 증거이며 기존
+heartbeat, MCP remote profile, 로컬 read replica, offline outbox가 아직 없습니다.
+Typed fact는 정본 ledger의 결과 증거이며 기존
 embedded retrieval engine에 index되지 않습니다. 서버 계약 실행 파일이지 출시된
 SaaS나 `aidememo mcp-serve`의 대체물이 아닙니다.
 
@@ -342,10 +352,10 @@ API replica는 read-write-many volume을 통해 live embedded SQLite 파일을 �
 ```text
 aidememo-domain          portable ID, command, record, invariant
 aidememo-service         command/query orchestration과 authorization context
-aidememo-store-local     별도 single-node SQLite command ledger
+aidememo-store-local     SQLite command ledger와 transactional handoff index
 aidememo-store-postgres  서버 정본 adapter
 aidememo-artifacts       local 및 S3 호환 reservation/commit 계약
-aidememo-server          제한된 인증 HTTP resource/change/typed handoff surface
+aidememo-server          제한된 인증 HTTP resource/change/handoff surface
 aidememo-client          remote transport, local replica, offline outbox
 ```
 
@@ -360,11 +370,12 @@ machine type을 제공합니다. 모든 lookup과 feed batch는 tenant-project �
 가집니다. `aidememo-service`는 인증 identity와 membership을 untrusted envelope에
 결합하고 JSON field를 재귀적으로 canonicalize하여 command fingerprint를
 계산합니다. `aidememo-store-local`은 기존 embedded store와 분리된 SQLite
-database에서 receipt, resource revision, change, audit, project sequence를 한
-transaction으로 저장합니다. `aidememo-server`는 token binding과 membership을 그
-ledger에 저장하고 request body 밖에서 identity를 결정하며, loopback 우선 Axum
-process로 bootstrap, exact resource read, extension resource command, typed
-session/fact/handoff route, change feed, health를 노출합니다.
+database에서 receipt, resource revision, change, audit, project sequence,
+actor-relative handoff index를 한 transaction으로 저장합니다. `aidememo-server`는
+token binding과 membership을 그 ledger에 저장하고 request body 밖에서 identity를
+결정하며, loopback 우선 Axum process로 bootstrap, exact resource read, extension
+resource command, typed session/fact/handoff와 mailbox route, change feed, health를
+노출합니다.
 
 Backend 중립 `conformance::run` fixture는 정확한 idempotent receipt replay, command ID
 충돌, stale revision 거부, 단조 증가 project sequence, 삭제 tombstone, fail-closed
@@ -374,8 +385,8 @@ epoch 변경, 정본 이력보다 앞선 cursor 거부를 검사합니다. In-me
 격리도 검증합니다. HTTP test는 누락·미등록 bearer 거부, identity field injection,
 writer replay/conflict, reader 전용 sync, role 강제와 `codex-p1 -> codex-p2 ->
 Hermes` typed handoff chain도 검사합니다. PostgreSQL, Durable Object, artifact
-body, handoff inbox index, search adapter, MCP remote profile, 로컬 replica adapter는
-아직 연결되지 않았습니다. 네 기반 crate는 server-facing 공개 API와 release
+body, search adapter, MCP remote profile, 로컬 replica adapter는 아직 연결되지
+않았습니다. 네 기반 crate는 server-facing 공개 API와 release
 순서를 승인할 때까지 모두 `publish = false`이며 기존 v0.1.0 crate 배포 흐름에
 조용히 포함되지 않습니다.
 
@@ -412,9 +423,11 @@ multi-primary write는 만들지 않습니다.
 read, incremental change 조회, typed session/fact/handoff command에 대해서는 첫
 항목이 일부 완료됐습니다. HTTP integration test는 `codex-p1 -> codex-p2 ->
 Hermes` chain을 완료합니다. 도메인과 HTTP test를 합쳐 잘못된 actor, claim,
-source/session 증거, read-only 수신자, 비참여자 read를 거부합니다. 실제 CLI/MCP
-profile 연결, inbox/outbox index, 로컬 artifact, replica bootstrap/reset, 서버 중단
-시 offline 동작은 아직 열려 있으므로 Phase 1 종료 gate 전체는 닫히지 않았습니다.
+source/session 증거, read-only 수신자, 비참여자 read, mailbox actor filter 주입을
+거부합니다. Indexed inbox/outbox query는 completed/source filter와 exclusive
+sequence pagination을 지원하며 schema v2 migration backfill도 검사합니다. 실제
+CLI/MCP profile 연결, 로컬 artifact, replica bootstrap/reset, 서버 중단 시 offline
+동작은 아직 열려 있으므로 Phase 1 종료 gate 전체는 닫히지 않았습니다.
 
 ### Phase 2 — 이식 가능한 프로덕션 backend
 

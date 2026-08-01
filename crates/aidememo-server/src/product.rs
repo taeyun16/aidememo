@@ -3,15 +3,16 @@
 use super::{ApiError, ServerState, bearer_digest_from_headers};
 use aidememo_domain::{
     ActorId, AuthenticatedActor, CanonicalResource, ChangeOperation, ClaimId, CommandEnvelope,
-    CommandId, DomainError, FactId, FactRecord, HandoffId, HandoffOutcome, HandoffRecord,
-    OperationName, ProjectId, ProjectMembership, ProjectScope, ResourceId, ResourceKind,
-    ResourceRef, ResourceState, Revision, SessionId, SessionRecord, SourceId,
+    CommandId, DomainError, FactId, FactRecord, HandoffId, HandoffMailbox, HandoffOutcome,
+    HandoffQuery, HandoffRecord, OperationName, ProjectId, ProjectMembership, ProjectScope,
+    ProjectSequence, ResourceId, ResourceKind, ResourceRef, ResourceState, Revision, SessionId,
+    SessionRecord, SourceId,
 };
 use aidememo_service::CommandService;
 use aidememo_store_local::SqliteCommandStore;
 use axum::{
     Json, Router,
-    extract::{Path, State, rejection::JsonRejection},
+    extract::{Path, Query, State, rejection::JsonRejection},
     http::HeaderMap,
     routing::{get, post},
 };
@@ -25,7 +26,10 @@ pub(super) fn routes() -> Router<ServerState> {
     Router::new()
         .route("/v1/projects/{project_id}/sessions", post(create_session))
         .route("/v1/projects/{project_id}/facts", post(create_fact))
-        .route("/v1/projects/{project_id}/handoffs", post(send_handoff))
+        .route(
+            "/v1/projects/{project_id}/handoffs",
+            post(send_handoff).get(list_handoffs),
+        )
         .route(
             "/v1/projects/{project_id}/handoffs/{handoff_id}",
             get(get_handoff),
@@ -95,10 +99,50 @@ struct HandoffReturnPayload {
     outcome: HandoffOutcome,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct HandoffListQuery {
+    #[serde(rename = "box")]
+    mailbox: HandoffMailbox,
+    source_id: Option<SourceId>,
+    include_completed: Option<bool>,
+    before_seq: Option<u64>,
+    limit: Option<usize>,
+}
+
 #[derive(Serialize)]
 struct TypedRecordResponse<T> {
     revision: Revision,
     record: T,
+}
+
+async fn list_handoffs(
+    State(state): State<ServerState>,
+    headers: HeaderMap,
+    Path(project_id): Path<String>,
+    query: Result<Query<HandoffListQuery>, axum::extract::rejection::QueryRejection>,
+) -> Result<impl axum::response::IntoResponse, ApiError> {
+    let project_id = ProjectId::try_from(project_id)?;
+    let Query(query) =
+        query.map_err(|error| ApiError(DomainError::InvalidCommand(error.body_text())))?;
+    let include_completed = query
+        .include_completed
+        .unwrap_or(matches!(query.mailbox, HandoffMailbox::Outbox));
+    let query = HandoffQuery::new(
+        query.mailbox,
+        query.source_id,
+        include_completed,
+        query.before_seq.map(ProjectSequence::new),
+        query.limit.unwrap_or(20),
+    )?;
+    let service = state.service.lock().await;
+    let (authenticated, membership) = request_context(&service, &headers, &project_id)?;
+    Ok(Json(service.handoffs(
+        &authenticated,
+        &membership,
+        &project_id,
+        &query,
+    )?))
 }
 
 async fn create_session(

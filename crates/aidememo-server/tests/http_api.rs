@@ -126,6 +126,14 @@ fn post_request(
     builder.body(Body::from(body.to_string()))
 }
 
+fn get_request(uri: &str, token: Option<&str>) -> Result<Request<Body>, axum::http::Error> {
+    let mut builder = Request::builder().method("GET").uri(uri);
+    if let Some(token) = token {
+        builder = builder.header("authorization", format!("Bearer {token}"));
+    }
+    builder.body(Body::empty())
+}
+
 async fn response_json(response: axum::response::Response) -> Result<Value, axum::Error> {
     let bytes = response.into_body().collect().await?.to_bytes();
     serde_json::from_slice(&bytes).map_err(axum::Error::new)
@@ -141,7 +149,7 @@ async fn authentication_and_identity_override_fail_closed() -> Result<(), Box<dy
         .await?;
     assert_eq!(health.status(), 200);
     let health_body = response_json(health).await?;
-    assert_eq!(health_body["schema_version"], 2);
+    assert_eq!(health_body["schema_version"], 3);
 
     let body = json!({
         "command_id": "command_auth",
@@ -271,6 +279,106 @@ async fn codex_profiles_and_hermes_complete_typed_remote_handoffs()
         )?)
         .await?;
     assert_eq!(response_json(sent).await?["revision"], 1);
+
+    let sent_second = app
+        .clone()
+        .oneshot(post_request(
+            "/v1/projects/project_http/handoffs",
+            Some(WRITER_TOKEN),
+            json!({
+                "command_id": "command_send_p2_second",
+                "payload": {
+                    "handoff_id": "handoff_p2_second",
+                    "session_id": "session_remote",
+                    "to_actor": "codex-p2",
+                    "focus": "Keep pagination deterministic",
+                    "done_when": null
+                }
+            }),
+        )?)
+        .await?;
+    assert_eq!(response_json(sent_second).await?["revision"], 1);
+
+    let first_inbox_page = app
+        .clone()
+        .oneshot(get_request(
+            "/v1/projects/project_http/handoffs?box=inbox&limit=1",
+            Some(RECEIVER_TOKEN),
+        )?)
+        .await?;
+    assert_eq!(first_inbox_page.status(), 200);
+    let first_inbox_page = response_json(first_inbox_page).await?;
+    assert_eq!(
+        first_inbox_page["assignments"][0]["record"]["handoff_id"],
+        "handoff_p2_second"
+    );
+    let before_seq = first_inbox_page["next_before_seq"]
+        .as_u64()
+        .ok_or_else(|| std::io::Error::other("missing mailbox cursor"))?;
+    let second_inbox_page = app
+        .clone()
+        .oneshot(get_request(
+            &format!(
+                "/v1/projects/project_http/handoffs?box=inbox&limit=1&before_seq={before_seq}"
+            ),
+            Some(RECEIVER_TOKEN),
+        )?)
+        .await?;
+    let second_inbox_page = response_json(second_inbox_page).await?;
+    assert_eq!(
+        second_inbox_page["assignments"][0]["record"]["handoff_id"],
+        "handoff_p2"
+    );
+    assert!(second_inbox_page["next_before_seq"].is_null());
+
+    let actor_override = app
+        .clone()
+        .oneshot(get_request(
+            "/v1/projects/project_http/handoffs?box=inbox&actor_id=hermes",
+            Some(RECEIVER_TOKEN),
+        )?)
+        .await?;
+    assert_eq!(actor_override.status(), 400);
+
+    let p1_inbox = app
+        .clone()
+        .oneshot(get_request(
+            "/v1/projects/project_http/handoffs?box=inbox",
+            Some(WRITER_TOKEN),
+        )?)
+        .await?;
+    assert!(
+        response_json(p1_inbox).await?["assignments"]
+            .as_array()
+            .is_some_and(Vec::is_empty)
+    );
+
+    let p1_outbox = app
+        .clone()
+        .oneshot(get_request(
+            "/v1/projects/project_http/handoffs?box=outbox",
+            Some(WRITER_TOKEN),
+        )?)
+        .await?;
+    assert_eq!(
+        response_json(p1_outbox).await?["assignments"]
+            .as_array()
+            .map(Vec::len),
+        Some(2)
+    );
+
+    let wrong_source = app
+        .clone()
+        .oneshot(get_request(
+            "/v1/projects/project_http/handoffs?box=inbox&source_id=project%3Aother",
+            Some(RECEIVER_TOKEN),
+        )?)
+        .await?;
+    assert!(
+        response_json(wrong_source).await?["assignments"]
+            .as_array()
+            .is_some_and(Vec::is_empty)
+    );
 
     let read_only_receiver = app
         .clone()
@@ -439,6 +547,37 @@ async fn codex_profiles_and_hermes_complete_typed_remote_handoffs()
     let p2_status = response_json(p2_status).await?;
     assert_eq!(p2_status["record"]["status"], "completed");
     assert_eq!(p2_status["record"]["result_fact_id"], "fact_p2_result");
+
+    let open_p2_inbox = app
+        .clone()
+        .oneshot(get_request(
+            "/v1/projects/project_http/handoffs?box=inbox",
+            Some(RECEIVER_TOKEN),
+        )?)
+        .await?;
+    let open_p2_inbox = response_json(open_p2_inbox).await?;
+    assert_eq!(
+        open_p2_inbox["assignments"].as_array().map(Vec::len),
+        Some(1)
+    );
+    assert_eq!(
+        open_p2_inbox["assignments"][0]["record"]["handoff_id"],
+        "handoff_p2_second"
+    );
+
+    let complete_p2_inbox = app
+        .clone()
+        .oneshot(get_request(
+            "/v1/projects/project_http/handoffs?box=inbox&include_completed=true",
+            Some(RECEIVER_TOKEN),
+        )?)
+        .await?;
+    assert_eq!(
+        response_json(complete_p2_inbox).await?["assignments"]
+            .as_array()
+            .map(Vec::len),
+        Some(2)
+    );
 
     let hidden_from_reader = app
         .clone()
