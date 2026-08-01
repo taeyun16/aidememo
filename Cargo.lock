@@ -62,6 +62,7 @@ dependencies = [
 name = "aidememo-cli"
 version = "0.1.0"
 dependencies = [
+ "aidememo-client",
  "aidememo-core",
  "aidememo-domain",
  "aidememo-server",
@@ -92,6 +93,20 @@ dependencies = [
  "ulid",
  "ureq 2.12.1",
  "walkdir",
+]
+
+[[package]]
+name = "aidememo-client"
+version = "0.1.0"
+dependencies = [
+ "aidememo-domain",
+ "percent-encoding",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "ureq 2.12.1",
 ]
 
 [[package]]
@@ -197,6 +212,7 @@ dependencies = [
 name = "aidememo-server"
 version = "0.1.0"
 dependencies = [
+ "aidememo-client",
  "aidememo-domain",
  "aidememo-service",
  "aidememo-store-local",

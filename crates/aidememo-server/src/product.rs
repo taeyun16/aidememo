@@ -121,6 +121,7 @@ struct TypedRecordResponse<T> {
 struct IdentityResponse {
     tenant_id: aidememo_domain::TenantId,
     project_id: ProjectId,
+    project_epoch: aidememo_domain::ProjectEpoch,
     actor_id: ActorId,
     role: aidememo_domain::MembershipRole,
 }
@@ -133,9 +134,18 @@ async fn get_identity(
     let project_id = ProjectId::try_from(project_id)?;
     let service = state.service.lock().await;
     let (authenticated, membership) = request_context(&service, &headers, &project_id)?;
+    let scope = ProjectScope::new(authenticated.tenant_id().clone(), project_id.clone());
+    let project_epoch =
+        service
+            .store()
+            .project_epoch(&scope)?
+            .ok_or_else(|| DomainError::ProjectUnauthorized {
+                project_id: project_id.clone(),
+            })?;
     Ok(Json(IdentityResponse {
         tenant_id: authenticated.tenant_id().clone(),
         project_id,
+        project_epoch,
         actor_id: authenticated.actor_id().clone(),
         role: membership.role,
     }))

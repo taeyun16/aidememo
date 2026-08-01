@@ -335,12 +335,17 @@ aidememo auth login https://memory.example.com --profile codex-p2 \
   --project-id aidememo --token-file /secure/p2.token
 aidememo handoff --remote-profile codex-p1 send codex-p2 "$AIDEMEMO_SESSION_ID"
 aidememo handoff --remote-profile codex-p2 inbox
+aidememo --store ./wiki.sqlite replica pull --remote-profile codex-p1
+aidememo --store ./wiki.sqlite replica status
 ```
 
 서버가 각 token에서 actor identity를 결정하므로 원격 actor override flag는
 거부됩니다. `mcp-install`에 `--remote-profile codex-p1`을 추가하면 같은 route를
-stdio MCP 계정 하나에 고정합니다. Retrieval replica, HTTP MCP gateway routing,
-offline write는 SSOT roadmap에 남아 있습니다. 경계는
+stdio MCP 계정 하나에 고정합니다. `replica pull`은 별도
+`<store>.replica.sqlite` exact-read cache를 유지하며 서버 중단 중에도
+`replica get KIND ID`로 읽을 수 있습니다. 이 cache는 embedded search store를
+대체하지 않습니다. Retrieval indexing, HTTP MCP gateway routing, offline write는
+SSOT roadmap에 남아 있습니다. 경계는
 [서버 및 SSOT 아키텍처](website/i18n/ko/docusaurus-plugin-content-docs/current/SERVER_SSOT.md)를
 참고하세요.
 

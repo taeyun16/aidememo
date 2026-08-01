@@ -1,6 +1,8 @@
+use aidememo_client::{HttpReplicaClient, RemoteProfile, ReplicaStore, pull_to_current};
 use aidememo_domain::{
     ActorId, ActorKind, ActorRecord, MembershipRole, MembershipStatus, ProjectEpoch, ProjectId,
-    ProjectMembership, ProjectRecord, RecordStatus, Revision, TenantId, TenantRecord,
+    ProjectMembership, ProjectRecord, ProjectSequence, RecordStatus, ResourceId, ResourceKind,
+    ResourceRef, ResourceState, Revision, TenantId, TenantRecord,
 };
 use aidememo_server::{ServerState, bearer_token_digest, router};
 use aidememo_store_local::SqliteCommandStore;
@@ -162,6 +164,7 @@ async fn authentication_and_identity_override_fail_closed() -> Result<(), Box<dy
     let writer_identity = response_json(writer_identity).await?;
     assert_eq!(writer_identity["tenant_id"], "tenant_http");
     assert_eq!(writer_identity["project_id"], "project_http");
+    assert_eq!(writer_identity["project_epoch"], "epoch_http");
     assert_eq!(writer_identity["actor_id"], "codex-p1");
     assert_eq!(writer_identity["role"], "writer");
 
@@ -777,5 +780,90 @@ async fn writer_round_trip_and_reader_boundary() -> Result<(), Box<dyn std::erro
         response_json(forbidden).await?["error"]["code"],
         "project_unauthorized"
     );
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn authenticated_replica_bootstraps_pulls_incrementally_and_reads_offline()
+-> Result<(), Box<dyn std::error::Error>> {
+    let (app, _) = test_app()?;
+    let create = json!({
+        "command_id": "command_replica_create",
+        "project_id": "project_http",
+        "expected_revision": null,
+        "operation": "resource.put",
+        "payload": {"content": "replica-v1"},
+        "resource": {"kind": "custom.note", "id": "note_replica"},
+        "change": "upsert"
+    });
+    let created = app
+        .clone()
+        .oneshot(command_request(Some(WRITER_TOKEN), create)?)
+        .await?;
+    assert_eq!(created.status(), 200);
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let address = listener.local_addr()?;
+    let server_app = app.clone();
+    let server = tokio::spawn(async move { axum::serve(listener, server_app).await });
+    let profile = RemoteProfile::new(
+        format!("http://{address}"),
+        ProjectId::try_from("project_http")?,
+        READER_TOKEN,
+    )?;
+    let client = HttpReplicaClient::new(profile);
+    let dir = tempfile::tempdir()?;
+    let mut replica = ReplicaStore::open(dir.path().join("replica.sqlite"))?;
+    let first = pull_to_current(&client, &mut replica, 1)?;
+    assert!(first.bootstrapped);
+    assert_eq!(first.after_seq, ProjectSequence::new(1));
+    assert_eq!(first.changes, 1);
+
+    let coordinate = ResourceRef {
+        kind: ResourceKind::try_from("custom.note")?,
+        id: ResourceId::try_from("note_replica")?,
+    };
+    let cached = replica
+        .resource(&coordinate)?
+        .ok_or("missing replica body")?;
+    assert!(matches!(cached.state, ResourceState::Present { .. }));
+
+    let delete = json!({
+        "command_id": "command_replica_delete",
+        "project_id": "project_http",
+        "expected_revision": 1,
+        "operation": "resource.delete",
+        "payload": null,
+        "resource": {"kind": "custom.note", "id": "note_replica"},
+        "change": "delete"
+    });
+    let deleted = app
+        .clone()
+        .oneshot(command_request(Some(WRITER_TOKEN), delete)?)
+        .await?;
+    assert_eq!(deleted.status(), 200);
+
+    let second = pull_to_current(&client, &mut replica, 1)?;
+    assert!(!second.bootstrapped);
+    assert_eq!(second.after_seq, ProjectSequence::new(2));
+    assert_eq!(second.tombstone_count, 1);
+    assert!(matches!(
+        replica
+            .resource(&coordinate)?
+            .map(|resource| resource.state),
+        Some(ResourceState::Deleted)
+    ));
+
+    server.abort();
+    let _ = server.await;
+    let status_before = replica.status()?;
+    assert!(pull_to_current(&client, &mut replica, 1).is_err());
+    assert_eq!(replica.status()?, status_before);
+    assert!(matches!(
+        replica
+            .resource(&coordinate)?
+            .map(|resource| resource.state),
+        Some(ResourceState::Deleted)
+    ));
     Ok(())
 }

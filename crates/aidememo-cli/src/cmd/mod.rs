@@ -26,6 +26,7 @@ pub mod pending;
 pub mod project;
 pub mod recent;
 pub mod remote_handoff;
+pub mod replica;
 pub mod skill;
 pub mod watch;
 
@@ -45,6 +46,7 @@ pub use model::ModelSub;
 pub use pending::PendingSub;
 pub use project::ProjectSub;
 pub use recent::RecentSub;
+pub use replica::ReplicaSub;
 pub use skill::SkillSub;
 pub use watch::WatchSub;
 
@@ -80,6 +82,7 @@ pub enum Command {
     Stats(StatsSub),
     Ingest(IngestSub),
     Sync(SyncSub),
+    Replica(ReplicaSub),
     Config(ConfigSub),
     Model(ModelSub),
     Feedback(FeedbackSub),
@@ -643,6 +646,7 @@ pub fn build_cli() -> OptionParser<Args> {
     let bench_cmd = bench::bench_command();
     let skill_cmd = skill::skill_command();
     let daemon_cmd = daemon::daemon_command();
+    let replica_cmd = replica::replica_command();
 
     let command = construct!([
         entity_command(),
@@ -666,6 +670,7 @@ pub fn build_cli() -> OptionParser<Args> {
         stats_command(),
         ingest_command(),
         sync_command(),
+        replica_cmd,
         config_command(),
         model_cmd,
         feedback_cmd,

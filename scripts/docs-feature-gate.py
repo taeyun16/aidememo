@@ -43,6 +43,8 @@ MCP_STDIO_RS = ROOT / "crates" / "aidememo-cli" / "src" / "cmd" / "mcp_stdio.rs"
 MCP_INSTALL_RS = ROOT / "crates" / "aidememo-cli" / "src" / "cmd" / "mcp_install.rs"
 CLI_AUTH_RS = ROOT / "crates" / "aidememo-cli" / "src" / "cmd" / "auth.rs"
 CLI_REMOTE_HANDOFF_RS = ROOT / "crates" / "aidememo-cli" / "src" / "cmd" / "remote_handoff.rs"
+CLI_REPLICA_RS = ROOT / "crates" / "aidememo-cli" / "src" / "cmd" / "replica.rs"
+CLIENT_LIB_RS = ROOT / "crates" / "aidememo-client" / "src" / "lib.rs"
 DOMAIN_LIB_RS = ROOT / "crates" / "aidememo-domain" / "src" / "lib.rs"
 DOMAIN_CONFORMANCE_RS = ROOT / "crates" / "aidememo-domain" / "src" / "conformance.rs"
 DOMAIN_HANDOFF_RS = ROOT / "crates" / "aidememo-domain" / "src" / "handoff.rs"
@@ -213,6 +215,7 @@ DOC_CONTENT_REQUIREMENTS = [
             "HandoffListQuery",
             "before_seq",
             "project_membership",
+            "project_epoch",
             "return_result",
         ],
     ),
@@ -232,6 +235,26 @@ DOC_CONTENT_REQUIREMENTS = [
             "authenticated remote actor",
             "ensure_session",
             "ensure_fact",
+        ],
+    ),
+    (
+        CLIENT_LIB_RS,
+        [
+            "HttpReplicaClient",
+            "ReplicaStore",
+            "pull_to_current",
+            "EpochMismatch",
+            "validate_materializations",
+            "PRAGMA busy_timeout = 5000",
+        ],
+    ),
+    (
+        CLI_REPLICA_RS,
+        [
+            "--remote-profile",
+            "<store>.replica.sqlite",
+            "pull_to_current",
+            "replica reset removes cached scope",
         ],
     ),
     (
@@ -279,6 +302,7 @@ DOC_CONTENT_REQUIREMENTS = [
             "aidememo-service",
             "aidememo-store-local",
             "aidememo-server",
+            "aidememo-client",
             "conformance::run",
             "Phase 0 code exit gate passes",
             "resource.put",
@@ -289,6 +313,9 @@ DOC_CONTENT_REQUIREMENTS = [
             "/handoffs",
             "next_before_seq",
             "schema v3",
+            "replica pull --remote-profile",
+            "replica reset --force",
+            "monotonic exact-read cache",
             "codex-p1",
             "codex-p2",
             "Hermes",

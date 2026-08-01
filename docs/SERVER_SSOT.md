@@ -176,6 +176,14 @@ Each returned entry carries `seq`, resource kind and ID, operation, revision,
 actor provenance, and commit time. Deletions are durable tombstones. The next
 cursor is acknowledged only after the local replica commits the full batch.
 
+The current exact-read client fetches the latest state for each distinct
+resource named by a batch. A concurrent later mutation can therefore make that
+one cached resource newer than the durable feed cursor; the client accepts only
+equal-or-newer revisions and never downgrades it. This is a monotonic exact-read
+cache, not a globally sequence-consistent snapshot or retrieval index. A future
+snapshot/hydrated-feed contract must close that distinction before claiming
+point-in-time replica reads.
+
 `project_epoch` changes when an administrator restores or replaces canonical
 history in a way that invalidates existing cursors. A mismatched epoch causes a
 fail-closed snapshot refresh rather than a best-effort incremental merge.
@@ -317,12 +325,12 @@ sequence, change entry, and audit row commit in one SQLite transaction.
 
 This process supports one application replica and has no built-in TLS, token
 rotation/revocation command, rate limits, artifact directory, PostgreSQL,
-search, heartbeat, HTTP MCP gateway profile, local read replica, or offline
-outbox yet. The CLI and stdio MCP now support named connected handoff profiles,
-but this is not a general remote storage backend. Typed facts are result evidence in the canonical
-ledger and are not indexed by the existing embedded retrieval engine. This is a
-server contract executable, not a released SaaS or a replacement for
-`aidememo mcp-serve`.
+search, heartbeat, HTTP MCP gateway profile, retrieval-index replica, or offline
+outbox yet. The CLI and stdio MCP support named connected handoff profiles, and
+the client can maintain a separate exact-read replica, but this is not a general
+remote storage backend. Typed facts are result evidence in the canonical ledger
+and are not indexed by the existing embedded retrieval engine. This is a server
+contract executable, not a released SaaS or a replacement for `aidememo mcp-serve`.
 
 ### Hosted Cloudflare edge
 
@@ -357,17 +365,17 @@ file through a read-write-many volume.
 
 ## Code boundaries
 
-The first four foundation crates now exist. The remaining names still describe
-intended boundaries and do not exist yet:
+Five foundation crates now exist; the same boundary map also includes the next
+two planned crates:
 
 ```text
 aidememo-domain          portable IDs, commands, records, invariants
 aidememo-service         command/query orchestration and authorization context
 aidememo-store-local     SQLite command ledger and transactional handoff index
+aidememo-client          authenticated transport and isolated exact-read replica
 aidememo-store-postgres  server canonical adapter
 aidememo-artifacts       local and S3-compatible reservation/commit contract
 aidememo-server          bounded authenticated HTTP resource/change/handoff surface
-aidememo-client          remote transport, local replica, and offline outbox
 ```
 
 `aidememo-domain` must remain free of native model and filesystem assumptions so
@@ -389,6 +397,10 @@ transaction in a database separate from the existing embedded store.
 derives identity outside the request body, and exposes bootstrap, exact
 resource reads, extension resource commands, typed session/fact/handoff and
 mailbox routes, a change feed, and health over a loopback-first Axum process.
+`aidememo-client` authenticates that route, keeps a separate SQLite scope/epoch
+cursor and exact canonical resource cache, applies each fully materialized
+change batch atomically, and requires explicit reset on scope or epoch changes.
+It does not open or reinterpret the embedded search store.
 
 The backend-neutral `conformance::run` fixture checks exact idempotent receipt
 replay, command-ID conflicts, stale revision rejection, monotonic project
@@ -402,12 +414,13 @@ replay/conflict behavior, reader-only sync, role enforcement, and a
 `codex-p1 -> codex-p2 -> Hermes` typed handoff chain. A binary-level CLI test
 also stores two bearer profiles for one URL and completes both CLI and installed
 stdio MCP `codex-p1 -> codex-p2` flows through
-send/inbox/accept/return/outbox. No PostgreSQL, Durable Object, artifact body,
-search adapter, HTTP MCP gateway profile, or local replica
-adapter is wired yet. All four foundation crates are
-`publish = false` until a server-facing public API and release order are
-approved, so they do not silently enter the existing v0.1.0 crate publication
-workflow.
+send/inbox/accept/return/outbox, then bootstraps the exact-read replica, reads a
+completed handoff after the server stops, and exercises guarded reset. No
+PostgreSQL, Durable Object, artifact body, search adapter, HTTP MCP gateway
+profile, retrieval projection, or offline outbox is wired yet. All five
+foundation crates are `publish = false` until a server-facing public API and
+release order are approved, so they do not silently enter the existing v0.1.0
+crate publication workflow.
 
 ## Phased delivery gates
 
@@ -449,12 +462,17 @@ overrides and validating local result provenance against the authenticated
 server identity. `mcp-install --remote-profile` verifies that identity, pins the
 derived actor plus profile name to one agent config, and the binary integration
 test runs the installed arguments and environment through the same round trip.
-Combined domain and HTTP tests reject wrong actor, claim, source/session evidence, read-only
-receiver, non-participant reads, and mailbox actor-filter injection. Indexed
-inbox/outbox queries support completed/source filters and exclusive sequence
-pagination; schema v2 migration backfill is tested. HTTP MCP gateway wiring,
-local artifacts, replica bootstrap/reset, retrieval indexing, and unavailable-server
-offline behavior remain open, so the full Phase 1 exit gate is not yet closed.
+`replica pull --remote-profile` bootstraps from sequence zero and incrementally
+advances `<store>.replica.sqlite` only after materialized exact resources commit
+with the whole batch. Scope and epoch mismatches fail closed until
+`replica reset --force`; `replica status/get` are network-free and tested after
+server shutdown. Combined domain and HTTP tests reject wrong actor, claim,
+source/session evidence, read-only mutation, non-participant reads, and mailbox
+actor-filter injection. Indexed inbox/outbox queries support completed/source
+filters and exclusive sequence pagination; schema v2 migration backfill is
+tested. HTTP MCP gateway wiring, local artifacts, retrieval indexing, and
+offline write outbox remain open, so the full Phase 1 exit gate is not yet
+closed.
 
 ### Phase 2 — portable production backend
 

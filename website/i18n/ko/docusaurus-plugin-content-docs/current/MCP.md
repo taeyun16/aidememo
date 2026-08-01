@@ -75,8 +75,11 @@ home에 복사하지도 않습니다. 계정마다 한 번씩 실행한 뒤 agen
 outbox, show/status, accept, return은 인증 서버로 라우팅됩니다. 다른 memory tool은
 고정된 local store를 계속 사용하고, 수신자 result fact는 return 시 canonical
 evidence로 upload됩니다. 설치, MCP 시작, 원격 handoff 호출 시 서버가 연결돼 있어야
-합니다. HTTP `mcp-serve`, local read replica, offline write는 아직 이 profile
-경로에 포함되지 않습니다.
+합니다. Offline canonical exact-read cache가 필요하면 MCP process 밖에서
+`aidememo replica pull --remote-profile NAME`을 실행합니다. 생성되는
+`<store>.replica.sqlite`는 고정된 embedded search store와 별도이며 MCP 시작 시
+암묵적으로 갱신되지 않습니다. HTTP `mcp-serve`, retrieval-index replica,
+offline write는 아직 이 profile 경로에 포함되지 않습니다.
 
 ## HTTP MCP 서버
 

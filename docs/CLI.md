@@ -177,6 +177,23 @@ profile with `mcp-install --remote-profile NAME`; local execution adapters and
 the HTTP MCP gateway remain separate surfaces. See
 [`Hand off a tracked task`](HANDOFF.md).
 
+Maintain a separate canonical exact-read cache for connected SSOT profiles:
+
+```bash
+aidememo --store ./wiki.sqlite replica pull --remote-profile codex-p1
+aidememo --store ./wiki.sqlite replica status
+aidememo --store ./wiki.sqlite --json replica get handoff handoff_...
+aidememo --store ./wiki.sqlite replica reset --force
+```
+
+The default file is `<store>.replica.sqlite`. `pull` bootstraps from sequence
+zero, then advances the authenticated project cursor only after a complete
+batch and all exact resources commit locally. Scope or project-epoch changes
+fail closed until an explicit `reset --force`. `status` and `get` never contact
+the server, so cached canonical resources remain readable during an outage.
+This is not yet the BM25/HNSW retrieval replica and it never opens or rewrites
+the embedded store.
+
 For repeated local accounts, use the shorter agent-oriented surface:
 `agent add --type ... --home ...`, `handoff send ALIAS`, then
 `handoff run ALIAS`.

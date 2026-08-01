@@ -105,6 +105,7 @@ fn main() {
         cmd::Command::Stats(sub) => handle_stats(&store_path, config, sub, json),
         cmd::Command::Ingest(sub) => handle_ingest(&store_path, config, sub),
         cmd::Command::Sync(sub) => handle_sync(&store_path, config, sub, json),
+        cmd::Command::Replica(sub) => cmd::replica::run_replica(&store_path, sub, json),
         cmd::Command::Config(sub) => handle_config(config, sub),
         cmd::Command::Model(sub) => handle_model(config, sub),
         cmd::Command::Feedback(sub) => cmd::feedback::run_feedback(&store_path, config, sub),

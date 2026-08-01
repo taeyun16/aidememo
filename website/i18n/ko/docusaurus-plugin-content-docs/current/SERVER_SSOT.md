@@ -171,6 +171,13 @@ HTTP 구간은 이 검사를 강제하고, 수신자가 활성 writer membership
 commit 시각을 포함합니다. 삭제는 durable tombstone입니다. 로컬 replica가 batch
 전체를 commit한 뒤에만 다음 cursor를 확인합니다.
 
+현재 exact-read client는 batch에 이름이 나온 distinct resource마다 최신 상태를
+가져옵니다. 따라서 concurrent 후속 mutation이 있으면 개별 cached resource가 durable
+feed cursor보다 새로울 수 있습니다. Client는 같거나 더 새로운 revision만 받아들이고
+downgrade하지 않습니다. 이는 monotonic exact-read cache이지 전역 sequence-consistent
+snapshot이나 retrieval index가 아닙니다. Point-in-time replica read를 주장하기 전에
+향후 snapshot 또는 hydrated-feed 계약으로 이 차이를 닫아야 합니다.
+
 관리자가 기존 cursor를 무효화하는 방식으로 정본 history를 restore하거나
 교체하면 `project_epoch`가 바뀝니다. Epoch가 다르면 best-effort incremental
 merge가 아니라 fail-closed snapshot refresh를 수행합니다.
@@ -309,11 +316,12 @@ row는 한 SQLite transaction으로 commit됩니다.
 
 현재 process는 application replica 하나만 지원하며 내장 TLS, token
 rotation/revocation command, rate limit, artifact directory, PostgreSQL, search,
-heartbeat, HTTP MCP gateway profile, 로컬 read replica, offline outbox가 아직
-없습니다. CLI와 stdio MCP는 이제 named connected handoff profile을 지원하지만
-일반 원격 storage backend는 아닙니다. Typed fact는 정본 ledger의 결과 증거이며 기존
-embedded retrieval engine에 index되지 않습니다. 서버 계약 실행 파일이지 출시된
-SaaS나 `aidememo mcp-serve`의 대체물이 아닙니다.
+heartbeat, HTTP MCP gateway profile, retrieval-index replica, offline outbox가
+아직 없습니다. CLI와 stdio MCP는 named connected handoff profile을 지원하고
+client는 별도 exact-read replica를 유지할 수 있지만 일반 원격 storage backend는
+아닙니다. Typed fact는 정본 ledger의 결과 증거이며 기존 embedded retrieval
+engine에 index되지 않습니다. 서버 계약 실행 파일이지 출시된 SaaS나
+`aidememo mcp-serve`의 대체물이 아닙니다.
 
 ### Cloudflare edge 호스팅
 
@@ -348,17 +356,16 @@ API replica는 read-write-many volume을 통해 live embedded SQLite 파일을 �
 
 ## 코드 경계
 
-첫 네 개의 기반 crate가 이제 존재합니다. 나머지 이름은 여전히 의도한
-경계를 설명하며 아직 존재하지 않습니다.
+다섯 기반 crate가 존재하며 같은 경계 map에 다음 두 planned crate도 표시합니다.
 
 ```text
 aidememo-domain          portable ID, command, record, invariant
 aidememo-service         command/query orchestration과 authorization context
 aidememo-store-local     SQLite command ledger와 transactional handoff index
+aidememo-client          인증 transport와 격리된 exact-read replica
 aidememo-store-postgres  서버 정본 adapter
 aidememo-artifacts       local 및 S3 호환 reservation/commit 계약
 aidememo-server          제한된 인증 HTTP resource/change/handoff surface
-aidememo-client          remote transport, local replica, offline outbox
 ```
 
 `aidememo-domain`은 native model과 filesystem 가정이 없어야 하며 invariant
@@ -377,7 +384,10 @@ actor-relative handoff index를 한 transaction으로 저장합니다. `aidememo
 token binding과 membership을 그 ledger에 저장하고 request body 밖에서 identity를
 결정하며, loopback 우선 Axum process로 bootstrap, exact resource read, extension
 resource command, typed session/fact/handoff와 mailbox route, change feed, health를
-노출합니다.
+노출합니다. `aidememo-client`는 이 route에 인증하고 별도 SQLite scope/epoch
+cursor와 exact canonical resource cache를 유지하며 fully materialized change
+batch를 원자적으로 적용합니다. Scope 또는 epoch가 바뀌면 명시적 reset을
+요구하며 embedded search store를 열거나 재해석하지 않습니다.
 
 Backend 중립 `conformance::run` fixture는 정확한 idempotent receipt replay, command ID
 충돌, stale revision 거부, 단조 증가 project sequence, 삭제 tombstone, fail-closed
@@ -388,10 +398,11 @@ epoch 변경, 정본 이력보다 앞선 cursor 거부를 검사합니다. In-me
 writer replay/conflict, reader 전용 sync, role 강제와 `codex-p1 -> codex-p2 ->
 Hermes` typed handoff chain도 검사합니다. Binary 수준 test도 URL 하나에 bearer
 profile 두 개를 저장하고 CLI와 설치된 stdio MCP 모두에서
-send/inbox/accept/return/outbox `codex-p1 -> codex-p2` 흐름을 완료합니다.
-PostgreSQL, Durable Object, artifact body, search adapter, HTTP MCP gateway
-profile, 로컬 replica adapter는 아직 연결되지
-않았습니다. 네 기반 crate는 server-facing 공개 API와 release
+send/inbox/accept/return/outbox `codex-p1 -> codex-p2` 흐름을 완료한 뒤
+exact-read replica를 bootstrap하고 서버 종료 후 완료 handoff를 읽으며 guarded
+reset도 검사합니다. PostgreSQL, Durable Object, artifact body, search adapter,
+HTTP MCP gateway profile, retrieval projection, offline outbox는 아직 연결되지
+않았습니다. 다섯 기반 crate는 server-facing 공개 API와 release
 순서를 승인할 때까지 모두 `publish = false`이며 기존 v0.1.0 crate 배포 흐름에
 조용히 포함되지 않습니다.
 
@@ -433,12 +444,17 @@ bearer token을 보관할 수 있고, connected CLI 경로는 actor override를 
 `send -> inbox -> accept -> return -> outbox`를 완료합니다.
 `mcp-install --remote-profile`은 이 identity를 확인하고 파생 actor와 profile
 이름을 agent config 하나에 고정합니다. Binary integration test는 설치된 argument와
-환경을 그대로 사용해 같은 왕복을 실행합니다. 도메인과 HTTP test를 합쳐 잘못된 actor, claim,
-source/session 증거, read-only 수신자, 비참여자 read, mailbox actor filter 주입을
-거부합니다. Indexed inbox/outbox query는 completed/source filter와 exclusive
-sequence pagination을 지원하며 schema v2 migration backfill도 검사합니다. HTTP
-MCP gateway 연결, 로컬 artifact, replica bootstrap/reset, retrieval indexing, 서버 중단 시 offline
-동작은 아직 열려 있으므로 Phase 1 종료 gate 전체는 닫히지 않았습니다.
+환경을 그대로 사용해 같은 왕복을 실행합니다.
+`replica pull --remote-profile`은 sequence 0에서 bootstrap하고 materialized exact
+resource가 batch 전체와 commit된 경우에만 `<store>.replica.sqlite` cursor를
+증분 전진시킵니다. Scope와 epoch mismatch는 `replica reset --force` 전까지
+fail-closed하며 `replica status/get`은 network-free이고 서버 종료 뒤에도
+검증됩니다. 도메인과 HTTP test를 합쳐 잘못된 actor, claim, source/session 증거,
+read-only mutation, 비참여자 read, mailbox actor filter 주입을 거부합니다.
+Indexed inbox/outbox query는 completed/source filter와 exclusive sequence
+pagination을 지원하며 schema v2 migration backfill도 검사합니다. HTTP MCP gateway
+연결, 로컬 artifact, retrieval indexing, offline write outbox는 아직 열려 있으므로
+Phase 1 종료 gate 전체는 닫히지 않았습니다.
 
 ### Phase 2 — 이식 가능한 프로덕션 backend
 

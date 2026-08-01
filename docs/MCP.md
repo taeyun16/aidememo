@@ -77,8 +77,11 @@ store and sends through the remote SSOT when `dispatch=true`.
 the authenticated server. Other memory tools continue to use the pinned local
 store; a receiver result fact is uploaded as canonical evidence during return.
 The server must be reachable at install, MCP startup, and remote handoff calls.
-HTTP `mcp-serve`, local read replicas, and offline writes are not part of this
-profile path yet.
+Use `aidememo replica pull --remote-profile NAME` outside the MCP process when
+an offline canonical exact-read cache is needed. The resulting
+`<store>.replica.sqlite` is separate from the pinned embedded search store and
+is not refreshed implicitly at MCP startup. HTTP `mcp-serve`, retrieval-index
+replicas, and offline writes are not part of this profile path yet.
 
 ## HTTP MCP server
 

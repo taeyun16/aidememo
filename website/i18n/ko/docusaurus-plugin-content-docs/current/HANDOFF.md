@@ -124,12 +124,14 @@ token과 고정 project를 유지합니다. 반복되는 flag 대신
 현재 구현은 connected-write bridge입니다. CLI는 typed session pointer와 수신자의
 result fact를 canonical server ledger에 올리지만, packet 생성, session resume,
 retrieval은 계속 embedded local store가 담당합니다. 원격 `send`, `inbox`,
-`outbox`, `show/status`, `accept`, `return`은 구현됐습니다. 원격 `run`, heartbeat,
+`outbox`, `show/status`, `accept`, `return`은 구현됐습니다.
 `mcp-install --remote-profile NAME`을 사용하면 stdio MCP도 같은 경로를 사용하며,
 installer가 bearer actor를 확인해 agent profile 하나에 고정합니다. 원격 `run`,
-heartbeat, board, HTTP MCP gateway routing, offline outbox, local read replica는
-이후 작업입니다. Typed server fact는 canonical handoff 근거이지만 아직 embedded
-search engine에는 index되지 않습니다.
+heartbeat, board, HTTP MCP gateway routing, offline outbox, retrieval indexing은
+이후 작업입니다. `replica pull --remote-profile NAME`은 별도 exact-read cache를
+bootstrap하고 증분 전진시키며 `replica status/get`은 서버 없이도 사용할 수
+있습니다. Typed server fact는 canonical handoff 근거이지만 아직 embedded search
+engine에는 index되지 않습니다.
 
 ## 유지되는 것
 

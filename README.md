@@ -351,12 +351,17 @@ aidememo auth login https://memory.example.com --profile codex-p2 \
   --project-id aidememo --token-file /secure/p2.token
 aidememo handoff --remote-profile codex-p1 send codex-p2 "$AIDEMEMO_SESSION_ID"
 aidememo handoff --remote-profile codex-p2 inbox
+aidememo --store ./wiki.sqlite replica pull --remote-profile codex-p1
+aidememo --store ./wiki.sqlite replica status
 ```
 
 The server derives actor identity from each token; remote actor override flags
 are rejected. Add `--remote-profile codex-p1` to `mcp-install` to pin the same
-route into one stdio MCP account. Retrieval replicas, HTTP MCP gateway routing,
-and offline writes remain on the SSOT roadmap. See
+route into one stdio MCP account. `replica pull` maintains a separate
+`<store>.replica.sqlite` exact-read cache; `replica get KIND ID` remains usable
+when the server is down. This cache does not replace the embedded search store.
+Retrieval indexing, HTTP MCP gateway routing, and offline writes remain on the
+SSOT roadmap. See
 [Server and SSOT architecture](docs/SERVER_SSOT.md) for that boundary.
 
 <details>

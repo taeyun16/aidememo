@@ -20,6 +20,7 @@ vectors) and exposes it to LLM agents via CLI, MCP server, and native bindings
 | `aidememo-service` | Authenticated command orchestration and canonical request fingerprinting |
 | `aidememo-store-local` | Separate single-node SQLite command ledger for the future server mode; does not replace the embedded core store |
 | `aidememo-server` | Authenticated single-node HTTP resource command, exact-read, change-feed, bootstrap, and health boundary |
+| `aidememo-client` | Authenticated SSOT HTTP transport plus a separate SQLite exact-read replica and durable project cursor |
 | `aidememo-core` | SQLite default store, optional redb store, ingest, search, traverse, lint, validity windows |
 | `aidememo-cli` | `aidememo` binary (CLI + stdio/HTTP MCP) |
 | `aidememo-napi`, `aidememo-python`, `aidememo-nif`, `aidememo-ffi` | language bindings (full API; SQLite default, optional `redb` Cargo feature) |
@@ -40,7 +41,7 @@ cargo check -p aidememo-core --no-default-features --features redb
 cargo check -p aidememo-cli --features s3
 cargo test -p aidememo-core --features semantic
 cargo test -p aidememo-cli --bin aidememo
-cargo test -p aidememo-domain -p aidememo-service -p aidememo-store-local -p aidememo-server
+cargo test -p aidememo-domain -p aidememo-service -p aidememo-store-local -p aidememo-server -p aidememo-client
 ./scripts/ci-local.sh lint
 ./scripts/ci-local.sh demo               # first-run workflow memory smoke
 ./scripts/ci-local.sh test
@@ -234,6 +235,10 @@ aidememo handoff inbox|accept|return|outbox|show|status
 aidememo handoff --remote-profile PROFILE ...
                                             authenticated connected round trip through one
                                             remote SSOT project; actor comes from bearer binding.
+aidememo replica pull --remote-profile PROFILE [--replica-path PATH]
+                                            bootstrap/catch up the separate exact-read cache.
+aidememo replica status|get                  network-free cached canonical reads/status.
+aidememo replica reset --force               explicit scope/epoch cache reset.
 aidememo handoff run AGENT [HANDOFF_ID]             execute oldest pending external-worker assignment;
                                             not a message queue, auto-retry, or task-success proof.
 aidememo workflow start <TITLE> [--body-file issue.md] [--source github:org/repo#123]
@@ -401,6 +406,9 @@ crates/aidememo-server/src/
   main.rs       retry-safe identity bootstrap and loopback-first server process
   product.rs    typed session/fact/handoff send, mailbox, accept, return, and status routes
 
+crates/aidememo-client/src/lib.rs
+  authenticated HTTP identity/change/resource transport + isolated SQLite exact-read replica
+
 crates/aidememo-core/src/
   lib.rs        AideMemo public API (re-exports)
   sqlite_store.rs SQLite CRUD (default backend)
@@ -419,6 +427,7 @@ crates/aidememo-core/src/
 crates/aidememo-cli/src/
   main.rs            command dispatch
   cmd/remote_handoff.rs named authenticated CLI profiles + typed server round trip
+  cmd/replica.rs     remote bootstrap/pull and network-free exact cache status/get/reset
   output.rs          Format::{Table, Json} renderers + format_query_result
   cmd/mod.rs         bpaf top-level + per-command parsers (--project / --json)
   cmd/{init,watch,model,feedback,adapt,doctor,recent,edit,graph,project}.rs
@@ -493,12 +502,17 @@ crates/aidememo-cli/src/
   return/status plus bearer-bound identity inspection. Mailbox actor identity is
   always derived from authentication. Named CLI and installed stdio MCP profiles
   support the connected handoff round trip; the server does not yet provide
-  heartbeat, search, HTTP MCP gateway profiles, or local replicas.
+  heartbeat, search, HTTP MCP gateway profiles, or retrieval indexing.
+- `aidememo-client` uses `<store>.replica.sqlite` as a separate exact-read
+  cache. It validates scope/epoch, applies fully materialized change batches and
+  cursor advancement in one transaction, keeps tombstones, and requires
+  explicit reset after history replacement. It must not open, migrate, or
+  reinterpret the embedded `aidememo-core` store.
 - Typed handoff return must match the canonical session, inherited `source_id`,
   authenticated receiving actor, active `claim_id`, and result fact. The
   receiver must be an active writable project member.
 - Every new canonical adapter must pass `aidememo_domain::conformance::run`.
-- The four foundation crates remain `publish = false` until a server-facing
+- The five foundation crates remain `publish = false` until a server-facing
   public API and dependency release order are approved.
 
 ## MCP integration

@@ -551,6 +551,71 @@ async fn two_named_codex_profiles_complete_a_remote_handoff_round_trip()
         mcp_fact_id
     );
 
+    let replica_pull = run(
+        home.path(),
+        &[
+            "--store",
+            store,
+            "--json",
+            "replica",
+            "pull",
+            "--remote-profile",
+            "codex-p1",
+            "--limit",
+            "2",
+        ],
+    );
+    assert_success(&replica_pull);
+    let replica_pull: serde_json::Value = serde_json::from_slice(&replica_pull.stdout)?;
+    assert_eq!(replica_pull["report"]["bootstrapped"], true);
+    assert!(
+        replica_pull["report"]["changes"]
+            .as_u64()
+            .is_some_and(|changes| changes > 0)
+    );
+
+    let replica_status = run(
+        home.path(),
+        &["--store", store, "--json", "replica", "status"],
+    );
+    assert_success(&replica_status);
+    let replica_status: serde_json::Value = serde_json::from_slice(&replica_status.stdout)?;
+    assert_eq!(replica_status["status"]["initialized"], true);
+    assert_eq!(
+        replica_status["status"]["scope"]["project_id"],
+        "project_cli_remote"
+    );
+
     server.abort();
+    let _ = server.await;
+
+    let offline_handoff = run(
+        home.path(),
+        &[
+            "--store",
+            store,
+            "--json",
+            "replica",
+            "get",
+            "handoff",
+            mcp_handoff_id,
+        ],
+    );
+    assert_success(&offline_handoff);
+    let offline_handoff: serde_json::Value = serde_json::from_slice(&offline_handoff.stdout)?;
+    assert_eq!(offline_handoff["state"]["state"], "present");
+    assert_eq!(offline_handoff["state"]["body"]["status"], "completed");
+
+    let reset_without_force = run(home.path(), &["--store", store, "replica", "reset"]);
+    assert!(!reset_without_force.status.success());
+    assert!(String::from_utf8_lossy(&reset_without_force.stderr).contains("pass --force"));
+
+    let reset = run(
+        home.path(),
+        &["--store", store, "--json", "replica", "reset", "--force"],
+    );
+    assert_success(&reset);
+    let reset: serde_json::Value = serde_json::from_slice(&reset.stdout)?;
+    assert_eq!(reset["reset"], true);
     Ok(())
 }
