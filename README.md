@@ -357,8 +357,9 @@ aidememo --store ./wiki.sqlite replica status
 
 The server derives actor identity from each token; remote actor override flags
 are rejected. Add `--remote-profile codex-p1` to `mcp-install` to pin the same
-route into one stdio MCP account. `replica pull` maintains a separate
-`<store>.replica.sqlite` exact-read cache; `replica get KIND ID` remains usable
+route into one stdio MCP account. `replica pull` maintains a separate,
+snapshot-bootstrapped and revision-pinned `<store>.replica.sqlite` exact-read
+cache; `replica get KIND ID` remains usable
 when the server is down. This cache does not replace the embedded search store.
 Retrieval indexing, HTTP MCP gateway routing, and offline writes remain on the
 SSOT roadmap. See

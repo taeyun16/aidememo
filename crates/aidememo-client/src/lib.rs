@@ -5,15 +5,14 @@
 //! migrating, or reinterpreting the embedded search database.
 
 use aidememo_domain::{
-    ActorId, CanonicalResource, ChangeBatch, ChangeCursor, DomainError, MembershipRole,
-    ProjectEpoch, ProjectId, ProjectScope, ProjectSequence, ResourceRef, ResourceState, Revision,
-    TenantId,
+    ActorId, CanonicalResource, ChangeCursor, ChangeEntry, DomainError, MaterializedChange,
+    MaterializedChangeBatch, MembershipRole, ProjectEpoch, ProjectId, ProjectScope,
+    ProjectSequence, ProjectSnapshot, ResourceRef, ResourceState, Revision, TenantId,
 };
 use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -199,25 +198,45 @@ impl HttpReplicaClient {
         ))
     }
 
-    /// Pull one validated ordered change batch.
+    /// Pull one validated revision-pinned change batch.
     ///
     /// # Errors
     ///
     /// Returns a transport, server, decoding, or change-validation error.
-    pub fn changes(&self, cursor: &ChangeCursor, limit: usize) -> Result<ChangeBatch, ClientError> {
+    pub fn materialized_changes(
+        &self,
+        cursor: &ChangeCursor,
+        limit: usize,
+    ) -> Result<MaterializedChangeBatch, ClientError> {
         if limit == 0 || limit > MAX_CHANGE_LIMIT {
             return Err(ClientError::Protocol(format!(
                 "change limit must be between 1 and {MAX_CHANGE_LIMIT}"
             )));
         }
-        let batch: ChangeBatch = self.get_json(&format!(
-            "/v1/projects/{}/changes?project_epoch={}&after_seq={}&limit={limit}",
+        let wire: MaterializedChangeResponseBatch = self.get_json(&format!(
+            "/v1/projects/{}/changes/materialized?project_epoch={}&after_seq={}&limit={limit}",
             segment(self.profile.project_id.as_str()),
             segment(cursor.project_epoch.as_str()),
             cursor.after_seq.get(),
         ))?;
-        validate_batch(&batch)?;
+        let batch = MaterializedChangeBatch::try_from(wire)?;
+        validate_materialized_batch(&batch)?;
         Ok(batch)
+    }
+
+    /// Fetch a complete current-state project snapshot and represented head.
+    ///
+    /// # Errors
+    ///
+    /// Returns a transport, server, decoding, or snapshot-validation error.
+    pub fn snapshot(&self) -> Result<ProjectSnapshot, ClientError> {
+        let wire: SnapshotResponse = self.get_json(&format!(
+            "/v1/projects/{}/snapshot",
+            segment(self.profile.project_id.as_str())
+        ))?;
+        let snapshot = ProjectSnapshot::try_from(wire)?;
+        validate_snapshot(&snapshot)?;
+        Ok(snapshot)
     }
 
     /// Fetch current canonical state for one changed resource.
@@ -273,6 +292,71 @@ struct ResourceResponse {
     resource: ResourceRef,
     revision: Revision,
     state: ResourceResponseState,
+}
+
+#[derive(Deserialize)]
+struct MaterializedChangeResponse {
+    change: ChangeEntry,
+    resource: ResourceResponse,
+}
+
+#[derive(Deserialize)]
+struct MaterializedChangeResponseBatch {
+    scope: ProjectScope,
+    cursor: ChangeCursor,
+    entries: Vec<MaterializedChangeResponse>,
+    next_cursor: ChangeCursor,
+    has_more: bool,
+}
+
+impl TryFrom<MaterializedChangeResponseBatch> for MaterializedChangeBatch {
+    type Error = ClientError;
+
+    fn try_from(batch: MaterializedChangeResponseBatch) -> Result<Self, Self::Error> {
+        let entries = batch
+            .entries
+            .into_iter()
+            .map(|entry| {
+                Ok(MaterializedChange {
+                    change: entry.change,
+                    resource: CanonicalResource::try_from(entry.resource)?,
+                })
+            })
+            .collect::<Result<Vec<_>, ClientError>>()?;
+        let validated =
+            MaterializedChangeBatch::new(batch.scope, batch.cursor, entries, batch.has_more)?;
+        if validated.next_cursor != batch.next_cursor {
+            return Err(ClientError::Protocol(
+                "server next_cursor does not match the ordered entries".to_owned(),
+            ));
+        }
+        Ok(validated)
+    }
+}
+
+#[derive(Deserialize)]
+struct SnapshotResponse {
+    scope: ProjectScope,
+    project_epoch: ProjectEpoch,
+    at_seq: ProjectSequence,
+    resources: Vec<ResourceResponse>,
+}
+
+impl TryFrom<SnapshotResponse> for ProjectSnapshot {
+    type Error = ClientError;
+
+    fn try_from(snapshot: SnapshotResponse) -> Result<Self, Self::Error> {
+        Ok(ProjectSnapshot::new(
+            snapshot.scope,
+            snapshot.project_epoch,
+            snapshot.at_seq,
+            snapshot
+                .resources
+                .into_iter()
+                .map(CanonicalResource::try_from)
+                .collect::<Result<Vec<_>, ClientError>>()?,
+        )?)
+    }
 }
 
 #[derive(Deserialize)]
@@ -375,12 +459,7 @@ impl ReplicaStore {
         Ok(Self { connection })
     }
 
-    /// Initialize an empty file or verify its existing scope and epoch.
-    ///
-    /// # Errors
-    ///
-    /// Fails closed when the file belongs to another project or history epoch.
-    pub fn prepare(&mut self, identity: &ProjectIdentity) -> Result<bool, ClientError> {
+    fn verify_identity(&self, identity: &ProjectIdentity) -> Result<bool, ClientError> {
         let remote_scope = identity.scope();
         if let Some(meta) = load_meta(&self.connection)? {
             if meta.scope != remote_scope {
@@ -397,36 +476,7 @@ impl ReplicaStore {
             }
             return Ok(false);
         }
-        let inserted = self
-            .connection
-            .execute(
-                "INSERT OR IGNORE INTO replica_meta
-                    (singleton, tenant_id, project_id, project_epoch, after_seq, updated_at_ms)
-                 VALUES (1, ?1, ?2, ?3, 0, ?4)",
-                params![
-                    remote_scope.tenant_id.as_str(),
-                    remote_scope.project_id.as_str(),
-                    identity.project_epoch.as_str(),
-                    now_ms()?,
-                ],
-            )
-            .map_err(|error| storage("replica_initialize", error))?;
-        let meta = load_meta(&self.connection)?.ok_or_else(|| {
-            ClientError::Protocol("replica initialization did not persist metadata".to_owned())
-        })?;
-        if meta.scope != remote_scope {
-            return Err(ClientError::ScopeMismatch {
-                cached: meta.scope,
-                remote: remote_scope,
-            });
-        }
-        if meta.project_epoch != identity.project_epoch {
-            return Err(ClientError::EpochMismatch {
-                cached: meta.project_epoch,
-                remote: identity.project_epoch.clone(),
-            });
-        }
-        Ok(inserted == 1)
+        Ok(true)
     }
 
     /// Return the durable local cursor, if initialized.
@@ -441,19 +491,58 @@ impl ReplicaStore {
         }))
     }
 
-    /// Atomically apply one fully materialized change batch and advance cursor.
+    /// Atomically initialize an empty replica from one complete project snapshot.
+    ///
+    /// # Errors
+    ///
+    /// Fails without mutation when the snapshot is invalid or the replica is
+    /// already initialized.
+    pub fn apply_snapshot(&mut self, snapshot: &ProjectSnapshot) -> Result<(), ClientError> {
+        validate_snapshot(snapshot)?;
+        let transaction = self
+            .connection
+            .transaction()
+            .map_err(|error| storage("snapshot_apply_begin", error))?;
+        if load_meta_tx(&transaction)?.is_some() {
+            return Err(ClientError::Protocol(
+                "replica is already initialized; reset explicitly before applying a snapshot"
+                    .to_owned(),
+            ));
+        }
+        let updated_at_ms = now_ms()?;
+        transaction
+            .execute(
+                "INSERT INTO replica_meta
+                    (singleton, tenant_id, project_id, project_epoch, after_seq, updated_at_ms)
+                 VALUES (1, ?1, ?2, ?3, ?4, ?5)",
+                params![
+                    snapshot.scope.tenant_id.as_str(),
+                    snapshot.scope.project_id.as_str(),
+                    snapshot.project_epoch.as_str(),
+                    to_i64(snapshot.at_seq.get(), "snapshot_cursor")?,
+                    updated_at_ms,
+                ],
+            )
+            .map_err(|error| storage("snapshot_meta_apply", error))?;
+        for resource in &snapshot.resources {
+            apply_resource(&transaction, resource, snapshot.at_seq)?;
+        }
+        transaction
+            .commit()
+            .map_err(|error| storage("snapshot_apply_commit", error))
+    }
+
+    /// Atomically apply one revision-pinned change batch and advance cursor.
     ///
     /// # Errors
     ///
     /// Fails without cursor advancement on invalid scope, epoch, sequence, or
     /// resource materialization.
-    pub fn apply_batch(
+    pub fn apply_materialized_batch(
         &mut self,
-        batch: &ChangeBatch,
-        resources: &[CanonicalResource],
+        batch: &MaterializedChangeBatch,
     ) -> Result<(), ClientError> {
-        validate_batch(batch)?;
-        let materialized = validate_materializations(batch, resources)?;
+        validate_materialized_batch(batch)?;
         let transaction = self
             .connection
             .transaction()
@@ -480,8 +569,8 @@ impl ReplicaStore {
             });
         }
 
-        for resource in materialized.values() {
-            apply_resource(&transaction, resource, batch.next_cursor.after_seq)?;
+        for entry in &batch.entries {
+            apply_resource(&transaction, &entry.resource, entry.change.seq)?;
         }
         transaction
             .execute(
@@ -580,7 +669,9 @@ impl ReplicaStore {
 
 /// Bootstrap or incrementally catch up one replica to the remote change head.
 ///
-/// Exact resources are fetched before each local transaction. If the server is
+/// An empty replica starts from one atomic snapshot. Incremental pulls apply
+/// revision-pinned change bodies directly, so the local state never observes a
+/// resource revision newer than its durable feed cursor. If the server is
 /// unavailable or a response is invalid, the previous durable cursor remains
 /// usable for offline reads.
 ///
@@ -598,7 +689,23 @@ pub fn pull_to_current(
         )));
     }
     let identity = client.identity()?;
-    let bootstrapped = store.prepare(&identity)?;
+    let bootstrapped = store.verify_identity(&identity)?;
+    if bootstrapped {
+        let snapshot = client.snapshot()?;
+        if snapshot.scope != identity.scope() {
+            return Err(ClientError::ScopeMismatch {
+                cached: identity.scope(),
+                remote: snapshot.scope,
+            });
+        }
+        if snapshot.project_epoch != identity.project_epoch {
+            return Err(ClientError::EpochMismatch {
+                cached: identity.project_epoch.clone(),
+                remote: snapshot.project_epoch,
+            });
+        }
+        store.apply_snapshot(&snapshot)?;
+    }
     let mut batches = 0_usize;
     let mut changes = 0_usize;
     loop {
@@ -610,21 +717,14 @@ pub fn pull_to_current(
         let cursor = store.cursor()?.ok_or_else(|| {
             ClientError::Protocol("prepared replica omitted its cursor".to_owned())
         })?;
-        let batch = client.changes(&cursor, limit)?;
+        let batch = client.materialized_changes(&cursor, limit)?;
         if batch.scope != identity.scope() {
             return Err(ClientError::ScopeMismatch {
                 cached: identity.scope(),
                 remote: batch.scope,
             });
         }
-        let mut seen = HashSet::new();
-        let mut resources = Vec::new();
-        for entry in &batch.entries {
-            if seen.insert(entry.resource.clone()) {
-                resources.push(client.resource(&entry.resource)?);
-            }
-        }
-        store.apply_batch(&batch, &resources)?;
+        store.apply_materialized_batch(&batch)?;
         batches += 1;
         changes += batch.entries.len();
         if !batch.has_more {
@@ -743,8 +843,8 @@ fn decode_meta(row: (String, String, String, i64, i64)) -> Result<ReplicaMeta, C
     })
 }
 
-fn validate_batch(batch: &ChangeBatch) -> Result<(), ClientError> {
-    let validated = ChangeBatch::new(
+fn validate_materialized_batch(batch: &MaterializedChangeBatch) -> Result<(), ClientError> {
+    let validated = MaterializedChangeBatch::new(
         batch.scope.clone(),
         batch.cursor.clone(),
         batch.entries.clone(),
@@ -758,70 +858,19 @@ fn validate_batch(batch: &ChangeBatch) -> Result<(), ClientError> {
     Ok(())
 }
 
-fn validate_materializations<'a>(
-    batch: &ChangeBatch,
-    resources: &'a [CanonicalResource],
-) -> Result<HashMap<ResourceRef, &'a CanonicalResource>, ClientError> {
-    let changed = batch
-        .entries
-        .iter()
-        .map(|entry| entry.resource.clone())
-        .collect::<HashSet<_>>();
-    let mut map = HashMap::with_capacity(resources.len());
-    for resource in resources {
-        if !changed.contains(&resource.resource) {
-            return Err(ClientError::Protocol(format!(
-                "materialized resource {:?} is not named by the change batch",
-                resource.resource
-            )));
-        }
-        if resource.scope != batch.scope {
-            return Err(ClientError::Protocol(format!(
-                "materialized resource {:?} has the wrong project scope",
-                resource.resource
-            )));
-        }
-        if let Some(previous) = map.insert(resource.resource.clone(), resource)
-            && previous != resource
-        {
-            return Err(ClientError::Protocol(format!(
-                "conflicting materializations for {:?}",
-                resource.resource
-            )));
-        }
+fn validate_snapshot(snapshot: &ProjectSnapshot) -> Result<(), ClientError> {
+    let validated = ProjectSnapshot::new(
+        snapshot.scope.clone(),
+        snapshot.project_epoch.clone(),
+        snapshot.at_seq,
+        snapshot.resources.clone(),
+    )?;
+    if validated != *snapshot {
+        return Err(ClientError::Protocol(
+            "server snapshot does not match its validated representation".to_owned(),
+        ));
     }
-    for entry in &batch.entries {
-        let resource = map.get(&entry.resource).ok_or_else(|| {
-            ClientError::Protocol(format!(
-                "change {:?} has no exact resource materialization",
-                entry.resource
-            ))
-        })?;
-        if resource.revision < entry.revision {
-            return Err(ClientError::Protocol(format!(
-                "materialized resource {:?} revision {} is older than change revision {}",
-                entry.resource, resource.revision, entry.revision
-            )));
-        }
-        if resource.revision == entry.revision
-            && !matches!(
-                (entry.operation, &resource.state),
-                (
-                    aidememo_domain::ChangeOperation::Upsert,
-                    ResourceState::Present { .. }
-                ) | (
-                    aidememo_domain::ChangeOperation::Delete,
-                    ResourceState::Deleted
-                )
-            )
-        {
-            return Err(ClientError::Protocol(format!(
-                "materialized resource {:?} state does not match change operation",
-                entry.resource
-            )));
-        }
-    }
-    Ok(map)
+    Ok(())
 }
 
 fn apply_resource(
@@ -967,23 +1016,38 @@ mod tests {
         resource: ResourceRef,
         operation: ChangeOperation,
         revision: u64,
-    ) -> Result<ChangeBatch, ClientError> {
-        Ok(ChangeBatch::new(
+    ) -> Result<MaterializedChangeBatch, ClientError> {
+        let change = ChangeEntry {
+            tenant_id: identity.tenant_id.clone(),
+            project_id: identity.project_id.clone(),
+            project_epoch: identity.project_epoch.clone(),
+            seq: ProjectSequence::new(seq),
+            resource,
+            operation,
+            revision: Revision::new(revision)?,
+            actor_id: identity.actor_id.clone(),
+            committed_at_ms: 1_700_000_000_000,
+        };
+        let state = match operation {
+            ChangeOperation::Upsert => ResourceState::Present {
+                body: br#"{"content":"cached"}"#.to_vec(),
+            },
+            ChangeOperation::Delete => ResourceState::Deleted,
+        };
+        Ok(MaterializedChangeBatch::new(
             identity.scope(),
             ChangeCursor {
                 project_epoch: identity.project_epoch.clone(),
                 after_seq: ProjectSequence::new(after_seq),
             },
-            vec![ChangeEntry {
-                tenant_id: identity.tenant_id.clone(),
-                project_id: identity.project_id.clone(),
-                project_epoch: identity.project_epoch.clone(),
-                seq: ProjectSequence::new(seq),
-                resource,
-                operation,
-                revision: Revision::new(revision)?,
-                actor_id: identity.actor_id.clone(),
-                committed_at_ms: 1_700_000_000_000,
+            vec![MaterializedChange {
+                resource: CanonicalResource {
+                    scope: identity.scope(),
+                    resource: change.resource.clone(),
+                    revision: change.revision,
+                    state,
+                },
+                change,
             }],
             false,
         )?)
@@ -996,10 +1060,8 @@ mod tests {
         let path = dir.path().join("replica.sqlite");
         let mut store = ReplicaStore::open(&path)?;
         let identity = identity("epoch-a")?;
-        assert!(store.prepare(&identity)?);
 
         let fact = resource_ref("fact-1")?;
-        let first = batch(&identity, 0, 1, fact.clone(), ChangeOperation::Upsert, 1)?;
         let current = CanonicalResource {
             scope: identity.scope(),
             resource: fact.clone(),
@@ -1008,7 +1070,12 @@ mod tests {
                 body: br#"{"content":"cached"}"#.to_vec(),
             },
         };
-        store.apply_batch(&first, std::slice::from_ref(&current))?;
+        store.apply_snapshot(&ProjectSnapshot::new(
+            identity.scope(),
+            identity.project_epoch.clone(),
+            ProjectSequence::new(1),
+            vec![current.clone()],
+        )?)?;
 
         drop(store);
         let mut reopened = ReplicaStore::open(&path)?;
@@ -1017,13 +1084,7 @@ mod tests {
         assert_eq!(reopened.status()?.after_seq, ProjectSequence::new(1));
 
         let second = batch(&identity, 1, 2, fact.clone(), ChangeOperation::Delete, 2)?;
-        let tombstone = CanonicalResource {
-            scope: identity.scope(),
-            resource: fact.clone(),
-            revision: Revision::new(2)?,
-            state: ResourceState::Deleted,
-        };
-        reopened.apply_batch(&second, &[tombstone])?;
+        reopened.apply_materialized_batch(&second)?;
         assert!(matches!(
             reopened.resource(&fact)?.map(|resource| resource.state),
             Some(ResourceState::Deleted)
@@ -1040,10 +1101,16 @@ mod tests {
         let dir = tempfile::tempdir()?;
         let mut store = ReplicaStore::open(dir.path().join("replica.sqlite"))?;
         let identity = identity("epoch-a")?;
-        store.prepare(&identity)?;
         let fact = resource_ref("fact-1")?;
-        let batch = batch(&identity, 0, 1, fact, ChangeOperation::Upsert, 2)?;
-        assert!(store.apply_batch(&batch, &[]).is_err());
+        store.apply_snapshot(&ProjectSnapshot::new(
+            identity.scope(),
+            identity.project_epoch.clone(),
+            ProjectSequence::ZERO,
+            vec![],
+        )?)?;
+        let mut batch = batch(&identity, 0, 1, fact, ChangeOperation::Upsert, 2)?;
+        batch.next_cursor.after_seq = ProjectSequence::new(2);
+        assert!(store.apply_materialized_batch(&batch).is_err());
         assert_eq!(
             store.cursor()?.map(|cursor| cursor.after_seq),
             Some(ProjectSequence::ZERO)
@@ -1056,21 +1123,31 @@ mod tests {
         let dir = tempfile::tempdir()?;
         let mut store = ReplicaStore::open(dir.path().join("replica.sqlite"))?;
         let first = identity("epoch-a")?;
-        store.prepare(&first)?;
+        store.apply_snapshot(&ProjectSnapshot::new(
+            first.scope(),
+            first.project_epoch.clone(),
+            ProjectSequence::ZERO,
+            vec![],
+        )?)?;
         assert!(matches!(
-            store.prepare(&identity("epoch-b")?),
+            store.verify_identity(&identity("epoch-b")?),
             Err(ClientError::EpochMismatch { .. })
         ));
 
         let mut other = identity("epoch-a")?;
         other.project_id = ProjectId::try_from("project-b")?;
         assert!(matches!(
-            store.prepare(&other),
+            store.verify_identity(&other),
             Err(ClientError::ScopeMismatch { .. })
         ));
 
         store.reset()?;
-        assert!(store.prepare(&other)?);
+        store.apply_snapshot(&ProjectSnapshot::new(
+            other.scope(),
+            other.project_epoch.clone(),
+            ProjectSequence::ZERO,
+            vec![],
+        )?)?;
         assert_eq!(store.status()?.scope, Some(other.scope()));
         Ok(())
     }

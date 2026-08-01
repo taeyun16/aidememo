@@ -186,13 +186,14 @@ aidememo --store ./wiki.sqlite --json replica get handoff handoff_...
 aidememo --store ./wiki.sqlite replica reset --force
 ```
 
-The default file is `<store>.replica.sqlite`. `pull` bootstraps from sequence
-zero, then advances the authenticated project cursor only after a complete
-batch and all exact resources commit locally. Scope or project-epoch changes
+The default file is `<store>.replica.sqlite`. `pull` bootstraps from one atomic,
+bounded current-state snapshot, then advances the authenticated project cursor
+only after a complete revision-pinned batch commits locally. Scope or
+project-epoch changes
 fail closed until an explicit `reset --force`. `status` and `get` never contact
 the server, so cached canonical resources remain readable during an outage.
-This is not yet the BM25/HNSW retrieval replica and it never opens or rewrites
-the embedded store.
+The bootstrap is currently limited to 10,000 resources. This is not yet the
+BM25/HNSW retrieval replica and it never opens or rewrites the embedded store.
 
 For repeated local accounts, use the shorter agent-oriented surface:
 `agent add --type ... --home ...`, `handoff send ALIAS`, then

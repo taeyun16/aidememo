@@ -167,20 +167,24 @@ HTTP 구간은 이 검사를 강제하고, 수신자가 활성 writer membership
 }
 ```
 
-각 entry는 `seq`, resource kind와 ID, operation, revision, actor provenance,
-commit 시각을 포함합니다. 삭제는 durable tombstone입니다. 로컬 replica가 batch
-전체를 commit한 뒤에만 다음 cursor를 확인합니다.
+각 materialized entry는 `seq`, resource kind와 ID, operation, revision, actor
+provenance, commit 시각과 정확히 해당 revision의 canonical body 또는 tombstone을
+포함합니다. 서버는 metadata와 body를 같은 command transaction에 저장합니다. 로컬
+replica가 revision-pinned resource와 batch 전체를 함께 commit한 뒤에만 다음 cursor를
+확인합니다.
 
-현재 exact-read client는 batch에 이름이 나온 distinct resource마다 최신 상태를
-가져옵니다. 따라서 concurrent 후속 mutation이 있으면 개별 cached resource가 durable
-feed cursor보다 새로울 수 있습니다. Client는 같거나 더 새로운 revision만 받아들이고
-downgrade하지 않습니다. 이는 monotonic exact-read cache이지 전역 sequence-consistent
-snapshot이나 retrieval index가 아닙니다. Point-in-time replica read를 주장하기 전에
-향후 snapshot 또는 hydrated-feed 계약으로 이 차이를 닫아야 합니다.
+빈 exact-read replica는 `GET .../snapshot`으로 bootstrap합니다. 이 endpoint는 현재
+resource 전체와 그 상태를 대표하는 project head를 하나의 SQLite read transaction에서
+읽습니다. 이후 hydrated change만 적용하므로 cached resource가 durable cursor보다
+앞설 수 없습니다. 첫 snapshot endpoint는 의도적으로 resource 10,000개로 제한하며,
+stable snapshot handle을 사용하는 pagination은 이후 scale-out 항목입니다. 과거 body가
+없는 schema v3 change row는 현재 상태를 추정하지 않고 `snapshot_required`를 반환합니다.
+이는 sequence-consistent exact-read cache이며 아직 BM25/HNSW retrieval index는 아닙니다.
 
 관리자가 기존 cursor를 무효화하는 방식으로 정본 history를 restore하거나
-교체하면 `project_epoch`가 바뀝니다. Epoch가 다르면 best-effort incremental
-merge가 아니라 fail-closed snapshot refresh를 수행합니다.
+교체하면 `project_epoch`가 바뀝니다. Epoch가 다르면 pull은 fail-closed하고,
+operator가 `replica reset --force`를 실행한 뒤 다음 pull이 새 snapshot으로
+bootstrap합니다. 서로 다른 history generation을 best-effort로 merge하지 않습니다.
 
 Offline write는 암묵적인 multi-primary 시스템을 만들지 않습니다. Command ID와
 base revision을 포함한 actor branch/outbox에 저장하고 명시적으로 publish합니다.
@@ -274,7 +278,9 @@ membership role, token 소유권 충돌은 fail closed로 처리합니다. 서�
 | `GET /v1/projects/{project}/identity` | Bearer에 binding된 tenant, project, actor와 활성 membership role 확인 |
 | `POST /v1/commands` | 인증된 `custom.*` `resource.put` / `resource.delete`, idempotent receipt, revision CAS |
 | `GET /v1/projects/{project}/resources/{kind}/{id}` | 정확한 정본 body 또는 tombstone |
-| `GET /v1/projects/{project}/changes` | Epoch/sequence cursor 이후 순서가 있는 change entry |
+| `GET /v1/projects/{project}/changes` | Epoch/sequence cursor 이후 순서가 있는 metadata-only change entry |
+| `GET /v1/projects/{project}/changes/materialized` | 각 revision의 정확한 canonical body 또는 tombstone을 포함한 순서형 change |
+| `GET /v1/projects/{project}/snapshot` | 현재 상태 전체와 이를 대표하는 project head의 원자적 bounded bootstrap |
 | `POST /v1/projects/{project}/sessions` | Typed session 하나를 생성하고 `source_id`를 고정 |
 | `POST /v1/projects/{project}/facts` | 기존 session에 fact를 생성하며 source와 actor는 서버에서 상속 |
 | `POST /v1/projects/{project}/handoffs` | Session pointer를 다른 활성 writer에게 전달 |
@@ -445,11 +451,13 @@ bearer token을 보관할 수 있고, connected CLI 경로는 actor override를 
 `mcp-install --remote-profile`은 이 identity를 확인하고 파생 actor와 profile
 이름을 agent config 하나에 고정합니다. Binary integration test는 설치된 argument와
 환경을 그대로 사용해 같은 왕복을 실행합니다.
-`replica pull --remote-profile`은 sequence 0에서 bootstrap하고 materialized exact
-resource가 batch 전체와 commit된 경우에만 `<store>.replica.sqlite` cursor를
-증분 전진시킵니다. Scope와 epoch mismatch는 `replica reset --force` 전까지
+`replica pull --remote-profile`은 원자적인 현재 상태 snapshot에서 bootstrap하고,
+revision-pinned resource가 batch 전체와 commit된 경우에만
+`<store>.replica.sqlite` cursor를 증분 전진시킵니다. Scope와 epoch mismatch는
+`replica reset --force` 전까지
 fail-closed하며 `replica status/get`은 network-free이고 서버 종료 뒤에도
-검증됩니다. 도메인과 HTTP test를 합쳐 잘못된 actor, claim, source/session 증거,
+검증됩니다. Legacy unhydrated change 범위는 더 최신 상태로 재구성하지 않고 새
+snapshot을 요구합니다. 도메인과 HTTP test를 합쳐 잘못된 actor, claim, source/session 증거,
 read-only mutation, 비참여자 read, mailbox actor filter 주입을 거부합니다.
 Indexed inbox/outbox query는 completed/source filter와 exclusive sequence
 pagination을 지원하며 schema v2 migration backfill도 검사합니다. HTTP MCP gateway

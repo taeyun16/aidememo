@@ -494,7 +494,8 @@ crates/aidememo-cli/src/
 - `aidememo-server` derives tenant and actor identity only from a persisted
   SHA-256 bearer-token binding, reloads active membership for every request,
   and exposes `resource.put` / `resource.delete` only for `custom.*` extension
-  kinds, exact resource reads, the ordered change feed, and bounded typed
+  kinds, exact resource reads, an atomic bounded snapshot, revision-pinned
+  materialized changes, the ordered metadata feed, and bounded typed
   product routes. Reserved product kinds such as `fact`, `session`, and
   `handoff` are writable only through typed APIs; the raw endpoint must not
   bypass their invariants. The first typed slice supports session create,
@@ -504,10 +505,11 @@ crates/aidememo-cli/src/
   support the connected handoff round trip; the server does not yet provide
   heartbeat, search, HTTP MCP gateway profiles, or retrieval indexing.
 - `aidememo-client` uses `<store>.replica.sqlite` as a separate exact-read
-  cache. It validates scope/epoch, applies fully materialized change batches and
-  cursor advancement in one transaction, keeps tombstones, and requires
-  explicit reset after history replacement. It must not open, migrate, or
-  reinterpret the embedded `aidememo-core` store.
+  cache. It bootstraps from one atomic current-state snapshot, validates
+  scope/epoch, applies revision-pinned change batches and cursor advancement in
+  one transaction, keeps tombstones, and requires explicit reset after history
+  replacement. The first snapshot is bounded to 10,000 resources. It must not
+  open, migrate, or reinterpret the embedded `aidememo-core` store.
 - Typed handoff return must match the canonical session, inherited `source_id`,
   authenticated receiving actor, active `claim_id`, and result fact. The
   receiver must be an active writable project member.

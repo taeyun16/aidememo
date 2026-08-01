@@ -36,6 +36,10 @@ pub enum ErrorCode {
     CursorOutOfRange,
     /// A change batch violates sequence, scope, or cursor invariants.
     InvalidChangeBatch,
+    /// Exact historical bodies are unavailable and a fresh snapshot is required.
+    SnapshotRequired,
+    /// A project exceeds the bounded snapshot response contract.
+    SnapshotTooLarge,
     /// A logical artifact path is not canonical.
     InvalidArtifactPath,
     /// Artifact metadata is incomplete or internally inconsistent.
@@ -121,6 +125,15 @@ pub enum DomainError {
     /// Change-feed batch is invalid.
     #[error("invalid change batch: {0}")]
     InvalidChangeBatch(String),
+    /// Exact historical bodies cannot be reconstructed from this cursor.
+    #[error("exact change materialization is unavailable; refresh from a project snapshot")]
+    SnapshotRequired,
+    /// Current project state exceeds the bounded snapshot response.
+    #[error("project snapshot exceeds the current limit of {limit} resources")]
+    SnapshotTooLarge {
+        /// Maximum resources supported by one atomic snapshot response.
+        limit: usize,
+    },
     /// Logical artifact path is invalid.
     #[error("invalid artifact path: {0}")]
     InvalidArtifactPath(String),
@@ -167,6 +180,8 @@ impl DomainError {
             Self::CursorEpochMismatch { .. } => ErrorCode::CursorEpochMismatch,
             Self::CursorOutOfRange { .. } => ErrorCode::CursorOutOfRange,
             Self::InvalidChangeBatch(_) => ErrorCode::InvalidChangeBatch,
+            Self::SnapshotRequired => ErrorCode::SnapshotRequired,
+            Self::SnapshotTooLarge { .. } => ErrorCode::SnapshotTooLarge,
             Self::InvalidArtifactPath(_) => ErrorCode::InvalidArtifactPath,
             Self::InvalidArtifactReference(_) => ErrorCode::InvalidArtifactReference,
             Self::ConformanceViolation { .. } => ErrorCode::ConformanceViolation,

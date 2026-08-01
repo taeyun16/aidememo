@@ -151,7 +151,7 @@ async fn authentication_and_identity_override_fail_closed() -> Result<(), Box<dy
         .await?;
     assert_eq!(health.status(), 200);
     let health_body = response_json(health).await?;
-    assert_eq!(health_body["schema_version"], 3);
+    assert_eq!(health_body["schema_version"], 4);
 
     let writer_identity = app
         .clone()
@@ -817,7 +817,7 @@ async fn authenticated_replica_bootstraps_pulls_incrementally_and_reads_offline(
     let first = pull_to_current(&client, &mut replica, 1)?;
     assert!(first.bootstrapped);
     assert_eq!(first.after_seq, ProjectSequence::new(1));
-    assert_eq!(first.changes, 1);
+    assert_eq!(first.changes, 0);
 
     let coordinate = ResourceRef {
         kind: ResourceKind::try_from("custom.note")?,

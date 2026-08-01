@@ -96,6 +96,75 @@ fn receipt_and_tombstone_survive_process_reopen() -> Result<(), Box<dyn std::err
 }
 
 #[test]
+fn legacy_unmaterialized_history_requires_snapshot_but_snapshot_remains_exact()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("legacy-v3.sqlite");
+    let scope = ProjectScope::new(
+        TenantId::try_from("tenant_legacy")?,
+        ProjectId::try_from("project_legacy")?,
+    );
+    let epoch = ProjectEpoch::try_from("epoch_legacy")?;
+    let resource = ResourceRef {
+        kind: ResourceKind::try_from("fact")?,
+        id: ResourceId::try_from("fact_legacy")?,
+    };
+    {
+        let mut store = SqliteCommandStore::open(&path)?;
+        store.initialize_project(&scope, &epoch)?;
+        let authenticated =
+            AuthenticatedActor::new(scope.tenant_id.clone(), ActorId::try_from("actor_legacy")?);
+        let membership = ProjectMembership {
+            tenant_id: scope.tenant_id.clone(),
+            project_id: scope.project_id.clone(),
+            actor_id: authenticated.actor_id().clone(),
+            role: MembershipRole::Writer,
+            status: MembershipStatus::Active,
+        };
+        CommandService::new(store).execute(
+            &authenticated,
+            &membership,
+            CommandEnvelope {
+                command_id: CommandId::try_from("command_legacy")?,
+                project_id: scope.project_id.clone(),
+                expected_revision: None,
+                operation: OperationName::try_from("fact.add")?,
+                payload: json!({"content": "preserved by snapshot"}),
+            },
+            resource.clone(),
+            ChangeOperation::Upsert,
+        )?;
+    }
+    {
+        let connection = rusqlite::Connection::open(&path)?;
+        connection.execute_batch(
+            "UPDATE ssot_changes SET state_available = 0, body_json = NULL;
+             PRAGMA user_version = 3;",
+        )?;
+    }
+
+    let store = SqliteCommandStore::open(&path)?;
+    assert_eq!(store.schema_version()?, 4);
+    assert!(matches!(
+        store.materialized_changes(
+            &scope,
+            &ChangeCursor {
+                project_epoch: epoch.clone(),
+                after_seq: ProjectSequence::ZERO,
+            },
+            10,
+        ),
+        Err(aidememo_domain::DomainError::SnapshotRequired)
+    ));
+    let snapshot = store.snapshot(&scope)?;
+    assert_eq!(snapshot.project_epoch, epoch);
+    assert_eq!(snapshot.at_seq, ProjectSequence::new(1));
+    assert_eq!(snapshot.resources.len(), 1);
+    assert_eq!(snapshot.resources[0].resource, resource);
+    Ok(())
+}
+
+#[test]
 fn same_project_id_is_isolated_by_tenant_scope() -> Result<(), Box<dyn std::error::Error>> {
     let mut store = SqliteCommandStore::open_in_memory()?;
     let project_id = ProjectId::try_from("shared_slug")?;
@@ -364,7 +433,7 @@ fn bootstrap_persists_token_identity_and_membership() -> Result<(), Box<dyn std:
         ))?,
         Some(project.project_epoch)
     );
-    assert_eq!(store.schema_version()?, 3);
+    assert_eq!(store.schema_version()?, 4);
     Ok(())
 }
 
@@ -415,7 +484,7 @@ fn v1_ledger_migrates_and_adopts_bootstrap_metadata() -> Result<(), Box<dyn std:
         updated_at_ms: timestamp,
     };
     let mut store = SqliteCommandStore::open(path)?;
-    assert_eq!(store.schema_version()?, 3);
+    assert_eq!(store.schema_version()?, 4);
     store.bootstrap_project(&tenant, &project)?;
     Ok(())
 }
@@ -481,7 +550,7 @@ fn v2_ledger_backfills_transactional_handoff_index() -> Result<(), Box<dyn std::
     }
 
     let store = SqliteCommandStore::open(&path)?;
-    assert_eq!(store.schema_version()?, 3);
+    assert_eq!(store.schema_version()?, 4);
     let page = store.handoffs(
         &scope,
         &ActorId::try_from("codex-p2")?,

@@ -16,7 +16,10 @@ mod record;
 mod storage;
 
 pub use artifact::{ArtifactBodyRef, ArtifactPath, ArtifactReference, ContentDigest};
-pub use change::{ChangeBatch, ChangeCursor, ChangeEntry, ChangeOperation};
+pub use change::{
+    ChangeBatch, ChangeCursor, ChangeEntry, ChangeOperation, MaterializedChange,
+    MaterializedChangeBatch, ProjectSnapshot,
+};
 pub use command::{
     AuditEntry, AuthorizedCommand, CanonicalResource, CommandEnvelope, CommandFingerprint,
     CommandReceipt, MutationCommand, OperationName, ResourceKind, ResourceRef, ResourceState,

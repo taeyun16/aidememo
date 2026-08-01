@@ -8,17 +8,19 @@ use aidememo_domain::{
     ActorId, ActorKind, ActorRecord, AuthenticatedActor, CanonicalResource, ChangeBatch,
     ChangeCursor, ChangeEntry, ChangeOperation, CommandFingerprint, CommandId, CommandReceipt,
     CommandStore, DomainError, HandoffListEntry, HandoffMailbox, HandoffPage, HandoffQuery,
-    HandoffRecord, HandoffStatus, HandoffStore, MembershipRole, MembershipStatus, MutationCommand,
-    OperationName, ProjectEpoch, ProjectId, ProjectMembership, ProjectRecord, ProjectScope,
-    ProjectSequence, RecordStatus, ResourceId, ResourceKind, ResourceRef, ResourceState, Revision,
-    SourceId, TenantId, TenantRecord,
+    HandoffRecord, HandoffStatus, HandoffStore, MaterializedChange, MaterializedChangeBatch,
+    MembershipRole, MembershipStatus, MutationCommand, OperationName, ProjectEpoch, ProjectId,
+    ProjectMembership, ProjectRecord, ProjectScope, ProjectSequence, ProjectSnapshot, RecordStatus,
+    ResourceId, ResourceKind, ResourceRef, ResourceState, Revision, SourceId, TenantId,
+    TenantRecord,
 };
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use std::{path::Path, time::Duration};
 
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 4;
 const DEFAULT_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_CHANGE_LIMIT: usize = 10_000;
+const MAX_SNAPSHOT_RESOURCES: usize = 10_000;
 
 /// Durable single-process SQLite command ledger.
 pub struct SqliteCommandStore {
@@ -516,7 +518,12 @@ impl SqliteCommandStore {
             committed_at_ms,
         };
         insert_receipt(tx, &receipt)?;
-        insert_change(tx, &receipt, command.change)?;
+        insert_change(
+            tx,
+            &receipt,
+            command.change,
+            command.resource_body.as_deref(),
+        )?;
         insert_audit(tx, &receipt, &envelope.operation)?;
 
         let updated = tx
@@ -641,6 +648,152 @@ impl CommandStore for SqliteCommandStore {
         ChangeBatch::new(scope.clone(), cursor.clone(), decoded, has_more)
     }
 
+    fn materialized_changes(
+        &self,
+        scope: &ProjectScope,
+        cursor: &ChangeCursor,
+        limit: usize,
+    ) -> Result<MaterializedChangeBatch, DomainError> {
+        validate_change_cursor(&self.connection, scope, cursor, limit)?;
+        let fetch_limit = limit
+            .checked_add(1)
+            .ok_or_else(|| DomainError::InvalidChangeBatch("limit overflow".to_owned()))?;
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT project_epoch, seq, resource_kind, resource_id, operation,
+                        revision, actor_id, committed_at_ms, state_available, body_json
+                 FROM ssot_changes
+                 WHERE tenant_id = ?1 AND project_id = ?2 AND seq > ?3
+                 ORDER BY seq ASC LIMIT ?4",
+            )
+            .map_err(|error| storage("materialized_changes_prepare", error))?;
+        let rows = statement
+            .query_map(
+                params![
+                    scope.tenant_id.as_str(),
+                    scope.project_id.as_str(),
+                    to_i64(cursor.after_seq.get(), "cursor_sequence")?,
+                    to_i64(fetch_limit as u64, "change_limit")?,
+                ],
+                |row| {
+                    Ok((
+                        ChangeRow {
+                            project_epoch: row.get(0)?,
+                            seq: row.get(1)?,
+                            resource_kind: row.get(2)?,
+                            resource_id: row.get(3)?,
+                            operation: row.get(4)?,
+                            revision: row.get(5)?,
+                            actor_id: row.get(6)?,
+                            committed_at_ms: row.get(7)?,
+                        },
+                        row.get::<_, i64>(8)?,
+                        row.get::<_, Option<Vec<u8>>>(9)?,
+                    ))
+                },
+            )
+            .map_err(|error| storage("materialized_changes_query", error))?;
+        let mut decoded = Vec::with_capacity(fetch_limit);
+        for row in rows {
+            let (row, state_available, body) =
+                row.map_err(|error| storage("materialized_changes_row", error))?;
+            if state_available != 1 {
+                return Err(DomainError::SnapshotRequired);
+            }
+            let change = row.decode(scope)?;
+            let state = match (change.operation, body) {
+                (ChangeOperation::Upsert, Some(body)) => ResourceState::Present { body },
+                (ChangeOperation::Delete, None) => ResourceState::Deleted,
+                _ => {
+                    return Err(DomainError::StorageFailure {
+                        operation: "materialized_change_decode",
+                        detail: "change operation and stored state are inconsistent".to_owned(),
+                    });
+                }
+            };
+            decoded.push(MaterializedChange {
+                resource: CanonicalResource {
+                    scope: scope.clone(),
+                    resource: change.resource.clone(),
+                    revision: change.revision,
+                    state,
+                },
+                change,
+            });
+        }
+        let has_more = decoded.len() > limit;
+        if has_more {
+            decoded.truncate(limit);
+        }
+        MaterializedChangeBatch::new(scope.clone(), cursor.clone(), decoded, has_more)
+    }
+
+    fn snapshot(&self, scope: &ProjectScope) -> Result<ProjectSnapshot, DomainError> {
+        let transaction = self
+            .connection
+            .unchecked_transaction()
+            .map_err(|error| storage("snapshot_begin", error))?;
+        let Some((project_epoch, at_seq)) = load_project(&transaction, scope)? else {
+            return Err(DomainError::ProjectUnauthorized {
+                project_id: scope.project_id.clone(),
+            });
+        };
+        let fetch_limit = MAX_SNAPSHOT_RESOURCES
+            .checked_add(1)
+            .ok_or_else(|| DomainError::InvalidChangeBatch("snapshot limit overflow".to_owned()))?;
+        let resources = {
+            let mut statement = transaction
+                .prepare(
+                    "SELECT resource_kind, resource_id, revision, deleted, body_json
+                     FROM ssot_resources
+                     WHERE tenant_id = ?1 AND project_id = ?2
+                     ORDER BY resource_kind ASC, resource_id ASC LIMIT ?3",
+                )
+                .map_err(|error| storage("snapshot_prepare", error))?;
+            let rows = statement
+                .query_map(
+                    params![
+                        scope.tenant_id.as_str(),
+                        scope.project_id.as_str(),
+                        to_i64(fetch_limit as u64, "snapshot_limit")?,
+                    ],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, i64>(2)?,
+                            row.get::<_, i64>(3)?,
+                            row.get::<_, Option<Vec<u8>>>(4)?,
+                        ))
+                    },
+                )
+                .map_err(|error| storage("snapshot_query", error))?;
+            let mut resources = Vec::with_capacity(fetch_limit);
+            for row in rows {
+                let (kind, id, revision, deleted, body) =
+                    row.map_err(|error| storage("snapshot_row", error))?;
+                let resource = ResourceRef {
+                    kind: ResourceKind::try_from(kind)?,
+                    id: ResourceId::try_from(id)?,
+                };
+                resources.push(decode_canonical_resource(
+                    scope, resource, revision, deleted, body,
+                )?);
+            }
+            resources
+        };
+        if resources.len() > MAX_SNAPSHOT_RESOURCES {
+            return Err(DomainError::SnapshotTooLarge {
+                limit: MAX_SNAPSHOT_RESOURCES,
+            });
+        }
+        transaction
+            .commit()
+            .map_err(|error| storage("snapshot_commit", error))?;
+        ProjectSnapshot::new(scope.clone(), project_epoch, at_seq, resources)
+    }
+
     fn resource(
         &self,
         scope: &ProjectScope,
@@ -663,22 +816,7 @@ impl CommandStore for SqliteCommandStore {
             .optional()
             .map_err(|error| storage("resource_state_read", error))?;
         row.map(|(revision, deleted, body)| {
-            let state = match (deleted, body) {
-                (0, Some(body)) => ResourceState::Present { body },
-                (1, None) => ResourceState::Deleted,
-                _ => {
-                    return Err(DomainError::StorageFailure {
-                        operation: "resource_state_decode",
-                        detail: "resource body and deletion marker are inconsistent".to_owned(),
-                    });
-                }
-            };
-            Ok(CanonicalResource {
-                scope: scope.clone(),
-                resource: resource.clone(),
-                revision: Revision::new(from_i64(revision, "resource_revision")?)?,
-                state,
-            })
+            decode_canonical_resource(scope, resource.clone(), revision, deleted, body)
         })
         .transpose()
     }
@@ -910,12 +1048,17 @@ fn migrate(connection: &Connection) -> Result<(), DomainError> {
         });
     }
     match version {
-        0 => create_schema_v3(connection),
+        0 => create_schema_v4(connection),
         1 => {
             migrate_v1_to_v2(connection)?;
-            migrate_v2_to_v3(connection)
+            migrate_v2_to_v3(connection)?;
+            migrate_v3_to_v4(connection)
         }
-        2 => migrate_v2_to_v3(connection),
+        2 => {
+            migrate_v2_to_v3(connection)?;
+            migrate_v3_to_v4(connection)
+        }
+        3 => migrate_v3_to_v4(connection),
         SCHEMA_VERSION => Ok(()),
         _ => Err(DomainError::StorageFailure {
             operation: "schema_version",
@@ -924,7 +1067,7 @@ fn migrate(connection: &Connection) -> Result<(), DomainError> {
     }
 }
 
-fn create_schema_v3(connection: &Connection) -> Result<(), DomainError> {
+fn create_schema_v4(connection: &Connection) -> Result<(), DomainError> {
     connection
         .execute_batch(
             "BEGIN IMMEDIATE;
@@ -1023,6 +1166,12 @@ fn create_schema_v3(connection: &Connection) -> Result<(), DomainError> {
                 revision INTEGER NOT NULL CHECK (revision > 0),
                 actor_id TEXT NOT NULL,
                 committed_at_ms INTEGER NOT NULL,
+                state_available INTEGER NOT NULL DEFAULT 1
+                    CHECK (state_available IN (0, 1)),
+                body_json BLOB,
+                CHECK ((state_available = 0 AND body_json IS NULL)
+                    OR (state_available = 1 AND operation = 'upsert' AND body_json IS NOT NULL)
+                    OR (state_available = 1 AND operation = 'delete' AND body_json IS NULL)),
                 PRIMARY KEY (tenant_id, project_id, seq),
                 FOREIGN KEY (tenant_id, project_id)
                     REFERENCES ssot_projects (tenant_id, project_id)
@@ -1066,7 +1215,7 @@ fn create_schema_v3(connection: &Connection) -> Result<(), DomainError> {
              CREATE INDEX ssot_handoff_outbox_idx
                 ON ssot_handoff_index
                     (tenant_id, project_id, from_actor, updated_seq DESC);
-             PRAGMA user_version = 3;
+             PRAGMA user_version = 4;
              COMMIT;",
         )
         .map_err(|error| storage("schema_create", error))
@@ -1193,6 +1342,32 @@ fn migrate_v2_to_v3(connection: &Connection) -> Result<(), DomainError> {
         .map_err(|error| storage("schema_migrate_v2_v3", error))
 }
 
+fn migrate_v3_to_v4(connection: &Connection) -> Result<(), DomainError> {
+    let has_changes = table_exists(connection, "ssot_changes")?;
+    let add_state = if has_changes && !column_exists(connection, "ssot_changes", "state_available")?
+    {
+        "ALTER TABLE ssot_changes ADD COLUMN state_available INTEGER NOT NULL DEFAULT 0
+            CHECK (state_available IN (0, 1));"
+    } else {
+        ""
+    };
+    let add_body = if has_changes && !column_exists(connection, "ssot_changes", "body_json")? {
+        "ALTER TABLE ssot_changes ADD COLUMN body_json BLOB;"
+    } else {
+        ""
+    };
+    let migration = format!(
+        "BEGIN IMMEDIATE;
+         {add_state}
+         {add_body}
+         PRAGMA user_version = 4;
+         COMMIT;"
+    );
+    connection
+        .execute_batch(&migration)
+        .map_err(|error| storage("schema_migrate_v3_v4", error))
+}
+
 fn table_exists(connection: &Connection, table: &str) -> Result<bool, DomainError> {
     let count: i64 = connection
         .query_row(
@@ -1202,6 +1377,21 @@ fn table_exists(connection: &Connection, table: &str) -> Result<bool, DomainErro
         )
         .map_err(|error| storage("schema_table_lookup", error))?;
     Ok(count == 1)
+}
+
+fn column_exists(connection: &Connection, table: &str, column: &str) -> Result<bool, DomainError> {
+    let mut statement = connection
+        .prepare(&format!("PRAGMA table_info({table})"))
+        .map_err(|error| storage("schema_column_prepare", error))?;
+    let rows = statement
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|error| storage("schema_column_query", error))?;
+    for row in rows {
+        if row.map_err(|error| storage("schema_column_row", error))? == column {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn validate_tenant_project(
@@ -1483,6 +1673,62 @@ fn load_project(
     .transpose()
 }
 
+fn validate_change_cursor(
+    connection: &Connection,
+    scope: &ProjectScope,
+    cursor: &ChangeCursor,
+    limit: usize,
+) -> Result<(), DomainError> {
+    if limit == 0 || limit > MAX_CHANGE_LIMIT {
+        return Err(DomainError::InvalidChangeBatch(format!(
+            "limit must be between 1 and {MAX_CHANGE_LIMIT}"
+        )));
+    }
+    let Some((epoch, current_sequence)) = load_project(connection, scope)? else {
+        return Err(DomainError::ProjectUnauthorized {
+            project_id: scope.project_id.clone(),
+        });
+    };
+    if cursor.project_epoch != epoch {
+        return Err(DomainError::CursorEpochMismatch {
+            cursor: cursor.project_epoch.clone(),
+            current: epoch,
+        });
+    }
+    if cursor.after_seq > current_sequence {
+        return Err(DomainError::CursorOutOfRange {
+            after_seq: cursor.after_seq,
+            current: current_sequence,
+        });
+    }
+    Ok(())
+}
+
+fn decode_canonical_resource(
+    scope: &ProjectScope,
+    resource: ResourceRef,
+    revision: i64,
+    deleted: i64,
+    body: Option<Vec<u8>>,
+) -> Result<CanonicalResource, DomainError> {
+    let state = match (deleted, body) {
+        (0, Some(body)) => ResourceState::Present { body },
+        (1, None) => ResourceState::Deleted,
+        _ => {
+            return Err(DomainError::StorageFailure {
+                operation: "resource_state_decode",
+                detail: "resource body and deletion marker are inconsistent".to_owned(),
+            });
+        }
+    };
+    Ok(CanonicalResource {
+        scope: scope.clone(),
+        resource,
+        revision: Revision::new(from_i64(revision, "resource_revision")?)?,
+        state,
+    })
+}
+
 fn load_resource_revision(
     tx: &Transaction<'_>,
     scope: &ProjectScope,
@@ -1535,7 +1781,16 @@ fn insert_change(
     tx: &Transaction<'_>,
     receipt: &CommandReceipt,
     change: ChangeOperation,
+    body: Option<&[u8]>,
 ) -> Result<(), DomainError> {
+    if !matches!(
+        (change, body),
+        (ChangeOperation::Upsert, Some(_)) | (ChangeOperation::Delete, None)
+    ) {
+        return Err(DomainError::InvalidCommand(
+            "change operation and canonical resource body are inconsistent".to_owned(),
+        ));
+    }
     let epoch: String = tx
         .query_row(
             "SELECT project_epoch FROM ssot_projects
@@ -1547,8 +1802,8 @@ fn insert_change(
     tx.execute(
         "INSERT INTO ssot_changes
             (tenant_id, project_id, project_epoch, seq, resource_kind, resource_id,
-             operation, revision, actor_id, committed_at_ms)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+             operation, revision, actor_id, committed_at_ms, state_available, body_json)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 1, ?11)",
         params![
             receipt.tenant_id.as_str(),
             receipt.project_id.as_str(),
@@ -1560,6 +1815,7 @@ fn insert_change(
             to_i64(receipt.revision.get(), "resource_revision")?,
             receipt.actor_id.as_str(),
             receipt.committed_at_ms,
+            body,
         ],
     )
     .map_err(|error| storage("change_write", error))?;

@@ -8,9 +8,10 @@
 mod product;
 
 use aidememo_domain::{
-    CanonicalResource, ChangeCursor, ChangeOperation, CommandEnvelope, CommandId, DomainError,
-    ErrorCode, OperationName, ProjectEpoch, ProjectId, ProjectSequence, ResourceId, ResourceKind,
-    ResourceRef, ResourceState, Revision,
+    CanonicalResource, ChangeCursor, ChangeEntry, ChangeOperation, CommandEnvelope, CommandId,
+    DomainError, ErrorCode, MaterializedChangeBatch, OperationName, ProjectEpoch, ProjectId,
+    ProjectScope, ProjectSequence, ProjectSnapshot, ResourceId, ResourceKind, ResourceRef,
+    ResourceState, Revision,
 };
 use aidememo_service::CommandService;
 use aidememo_store_local::SqliteCommandStore;
@@ -55,6 +56,11 @@ pub fn router(state: ServerState) -> Router {
         .route("/health", get(health))
         .route("/v1/commands", post(command))
         .route("/v1/projects/{project_id}/changes", get(changes))
+        .route(
+            "/v1/projects/{project_id}/changes/materialized",
+            get(materialized_changes),
+        )
+        .route("/v1/projects/{project_id}/snapshot", get(snapshot))
         .route(
             "/v1/projects/{project_id}/resources/{resource_kind}/{resource_id}",
             get(resource),
@@ -225,6 +231,64 @@ async fn changes(
     Ok((StatusCode::OK, Json(batch)))
 }
 
+async fn materialized_changes(
+    State(state): State<ServerState>,
+    headers: HeaderMap,
+    Path(project_id): Path<String>,
+    query: Result<Query<ChangeQuery>, axum::extract::rejection::QueryRejection>,
+) -> Result<impl IntoResponse, ApiError> {
+    let project_id = ProjectId::try_from(project_id)?;
+    let Query(query) =
+        query.map_err(|error| ApiError(DomainError::InvalidCommand(error.body_text())))?;
+    let digest = bearer_digest_from_headers(&headers)?;
+    let service = state.service.lock().await;
+    let authenticated = service
+        .store()
+        .authenticate_token(&digest)?
+        .ok_or(DomainError::AuthenticationFailed)?;
+    let membership = service
+        .store()
+        .membership(&authenticated, &project_id)?
+        .ok_or_else(|| DomainError::ProjectUnauthorized {
+            project_id: project_id.clone(),
+        })?;
+    let batch = service.materialized_changes(
+        &authenticated,
+        &membership,
+        &ChangeCursor {
+            project_epoch: query.project_epoch,
+            after_seq: ProjectSequence::new(query.after_seq),
+        },
+        query.limit.unwrap_or(DEFAULT_CHANGE_LIMIT),
+    )?;
+    Ok((
+        StatusCode::OK,
+        Json(MaterializedChangeResponseBatch::try_from(batch)?),
+    ))
+}
+
+async fn snapshot(
+    State(state): State<ServerState>,
+    headers: HeaderMap,
+    Path(project_id): Path<String>,
+) -> Result<impl IntoResponse, ApiError> {
+    let project_id = ProjectId::try_from(project_id)?;
+    let digest = bearer_digest_from_headers(&headers)?;
+    let service = state.service.lock().await;
+    let authenticated = service
+        .store()
+        .authenticate_token(&digest)?
+        .ok_or(DomainError::AuthenticationFailed)?;
+    let membership = service
+        .store()
+        .membership(&authenticated, &project_id)?
+        .ok_or_else(|| DomainError::ProjectUnauthorized {
+            project_id: project_id.clone(),
+        })?;
+    let snapshot = service.snapshot(&authenticated, &membership, &project_id)?;
+    Ok((StatusCode::OK, Json(SnapshotResponse::try_from(snapshot)?)))
+}
+
 #[derive(Serialize)]
 struct ResourceResponse {
     scope: aidememo_domain::ProjectScope,
@@ -260,6 +324,70 @@ impl TryFrom<CanonicalResource> for ResourceResponse {
             resource: resource.resource,
             revision: resource.revision,
             state,
+        })
+    }
+}
+
+#[derive(Serialize)]
+struct MaterializedChangeResponse {
+    change: ChangeEntry,
+    resource: ResourceResponse,
+}
+
+#[derive(Serialize)]
+struct MaterializedChangeResponseBatch {
+    scope: ProjectScope,
+    cursor: ChangeCursor,
+    entries: Vec<MaterializedChangeResponse>,
+    next_cursor: ChangeCursor,
+    has_more: bool,
+}
+
+impl TryFrom<MaterializedChangeBatch> for MaterializedChangeResponseBatch {
+    type Error = DomainError;
+
+    fn try_from(batch: MaterializedChangeBatch) -> Result<Self, Self::Error> {
+        let entries = batch
+            .entries
+            .into_iter()
+            .map(|entry| {
+                Ok(MaterializedChangeResponse {
+                    change: entry.change,
+                    resource: ResourceResponse::try_from(entry.resource)?,
+                })
+            })
+            .collect::<Result<Vec<_>, DomainError>>()?;
+        Ok(Self {
+            scope: batch.scope,
+            cursor: batch.cursor,
+            entries,
+            next_cursor: batch.next_cursor,
+            has_more: batch.has_more,
+        })
+    }
+}
+
+#[derive(Serialize)]
+struct SnapshotResponse {
+    scope: ProjectScope,
+    project_epoch: ProjectEpoch,
+    at_seq: ProjectSequence,
+    resources: Vec<ResourceResponse>,
+}
+
+impl TryFrom<ProjectSnapshot> for SnapshotResponse {
+    type Error = DomainError;
+
+    fn try_from(snapshot: ProjectSnapshot) -> Result<Self, Self::Error> {
+        Ok(Self {
+            scope: snapshot.scope,
+            project_epoch: snapshot.project_epoch,
+            at_seq: snapshot.at_seq,
+            resources: snapshot
+                .resources
+                .into_iter()
+                .map(ResourceResponse::try_from)
+                .collect::<Result<Vec<_>, DomainError>>()?,
         })
     }
 }
@@ -358,7 +486,9 @@ fn status_for_error(error: &DomainError) -> StatusCode {
         | DomainError::HandoffConflict(_)
         | DomainError::StaleRevision { .. }
         | DomainError::CursorEpochMismatch { .. }
-        | DomainError::CursorOutOfRange { .. } => StatusCode::CONFLICT,
+        | DomainError::CursorOutOfRange { .. }
+        | DomainError::SnapshotRequired => StatusCode::CONFLICT,
+        DomainError::SnapshotTooLarge { .. } => StatusCode::PAYLOAD_TOO_LARGE,
         DomainError::InvalidIdentifier { .. }
         | DomainError::InvalidChangeBatch(_)
         | DomainError::InvalidArtifactPath(_)

@@ -1,10 +1,11 @@
 //! Ordered per-project change-feed types and validation.
 
 use crate::{
-    ActorId, DomainError, ProjectEpoch, ProjectId, ProjectScope, ProjectSequence, ResourceRef,
-    Revision, TenantId,
+    ActorId, CanonicalResource, DomainError, ProjectEpoch, ProjectId, ProjectScope,
+    ProjectSequence, ResourceRef, ResourceState, Revision, TenantId,
 };
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 
 /// Canonical mutation represented in the replica change feed.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -129,6 +130,150 @@ impl ChangeBatch {
             entries,
             next_cursor,
             has_more,
+        })
+    }
+}
+
+/// One ordered change together with the canonical state at exactly its revision.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct MaterializedChange {
+    /// Ordered mutation metadata.
+    pub change: ChangeEntry,
+    /// Resource body or tombstone at `change.revision`.
+    pub resource: CanonicalResource,
+}
+
+impl MaterializedChange {
+    /// Validate the exact revision-pinned resource materialization.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DomainError::InvalidChangeBatch`] when scope, coordinate,
+    /// revision, or operation state differs from the change entry.
+    pub fn validate(&self, scope: &ProjectScope) -> Result<(), DomainError> {
+        self.change.validate()?;
+        if self.resource.scope != *scope
+            || self.change.tenant_id != scope.tenant_id
+            || self.change.project_id != scope.project_id
+        {
+            return Err(DomainError::InvalidChangeBatch(
+                "materialized change has the wrong project scope".to_owned(),
+            ));
+        }
+        if self.resource.resource != self.change.resource {
+            return Err(DomainError::InvalidChangeBatch(
+                "materialized resource coordinate does not match the change".to_owned(),
+            ));
+        }
+        if self.resource.revision != self.change.revision {
+            return Err(DomainError::InvalidChangeBatch(
+                "materialized resource revision does not match the change".to_owned(),
+            ));
+        }
+        if !matches!(
+            (self.change.operation, &self.resource.state),
+            (ChangeOperation::Upsert, ResourceState::Present { .. })
+                | (ChangeOperation::Delete, ResourceState::Deleted)
+        ) {
+            return Err(DomainError::InvalidChangeBatch(
+                "materialized resource state does not match the change operation".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Validated incremental feed whose bodies are pinned to each change revision.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct MaterializedChangeBatch {
+    /// Tenant-project scope selected by the authenticated route.
+    pub scope: ProjectScope,
+    /// Input cursor.
+    pub cursor: ChangeCursor,
+    /// Strictly increasing revision-pinned changes after the input cursor.
+    pub entries: Vec<MaterializedChange>,
+    /// Cursor to persist only after all entries commit locally.
+    pub next_cursor: ChangeCursor,
+    /// Whether the server has additional entries available.
+    pub has_more: bool,
+}
+
+impl MaterializedChangeBatch {
+    /// Build and validate one revision-pinned incremental batch.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DomainError::InvalidChangeBatch`] for any metadata or exact
+    /// resource mismatch.
+    pub fn new(
+        scope: ProjectScope,
+        cursor: ChangeCursor,
+        entries: Vec<MaterializedChange>,
+        has_more: bool,
+    ) -> Result<Self, DomainError> {
+        for entry in &entries {
+            entry.validate(&scope)?;
+        }
+        let metadata = ChangeBatch::new(
+            scope.clone(),
+            cursor.clone(),
+            entries.iter().map(|entry| entry.change.clone()).collect(),
+            has_more,
+        )?;
+        Ok(Self {
+            scope,
+            cursor,
+            entries,
+            next_cursor: metadata.next_cursor,
+            has_more,
+        })
+    }
+}
+
+/// Atomic current-state bootstrap for one project history generation.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ProjectSnapshot {
+    /// Tenant-project scope selected by the authenticated route.
+    pub scope: ProjectScope,
+    /// History generation containing the snapshot.
+    pub project_epoch: ProjectEpoch,
+    /// Project head represented by every resource in this snapshot.
+    pub at_seq: ProjectSequence,
+    /// Complete current resource set, including durable tombstones.
+    pub resources: Vec<CanonicalResource>,
+}
+
+impl ProjectSnapshot {
+    /// Build and validate one complete project snapshot.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DomainError::InvalidChangeBatch`] when a resource has the
+    /// wrong scope or a coordinate appears more than once.
+    pub fn new(
+        scope: ProjectScope,
+        project_epoch: ProjectEpoch,
+        at_seq: ProjectSequence,
+        resources: Vec<CanonicalResource>,
+    ) -> Result<Self, DomainError> {
+        let mut seen = HashSet::with_capacity(resources.len());
+        for resource in &resources {
+            if resource.scope != scope {
+                return Err(DomainError::InvalidChangeBatch(
+                    "snapshot resource has the wrong project scope".to_owned(),
+                ));
+            }
+            if !seen.insert(resource.resource.clone()) {
+                return Err(DomainError::InvalidChangeBatch(
+                    "snapshot contains a duplicate resource coordinate".to_owned(),
+                ));
+            }
+        }
+        Ok(Self {
+            scope,
+            project_epoch,
+            at_seq,
+            resources,
         })
     }
 }

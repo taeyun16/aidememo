@@ -129,7 +129,8 @@ retrieval은 계속 embedded local store가 담당합니다. 원격 `send`, `inb
 installer가 bearer actor를 확인해 agent profile 하나에 고정합니다. 원격 `run`,
 heartbeat, board, HTTP MCP gateway routing, offline outbox, retrieval indexing은
 이후 작업입니다. `replica pull --remote-profile NAME`은 별도 exact-read cache를
-bootstrap하고 증분 전진시키며 `replica status/get`은 서버 없이도 사용할 수
+원자적 snapshot으로 bootstrap하고 revision-pinned change로 증분 전진시키며
+`replica status/get`은 서버 없이도 사용할 수
 있습니다. Typed server fact는 canonical handoff 근거이지만 아직 embedded search
 engine에는 index되지 않습니다.
 

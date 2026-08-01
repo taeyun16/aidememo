@@ -199,12 +199,13 @@ aidememo --store ./wiki.sqlite --json replica get handoff handoff_...
 aidememo --store ./wiki.sqlite replica reset --force
 ```
 
-기본 파일은 `<store>.replica.sqlite`입니다. `pull`은 sequence 0에서 bootstrap한
-뒤 complete batch와 모든 exact resource가 로컬에 commit된 경우에만 인증 project
-cursor를 전진시킵니다. Scope 또는 project epoch가 달라지면 명시적인
+기본 파일은 `<store>.replica.sqlite`입니다. `pull`은 원자적이며 bounded인 현재 상태
+snapshot에서 bootstrap한 뒤 complete revision-pinned batch가 로컬에 commit된
+경우에만 인증 project cursor를 전진시킵니다. Scope 또는 project epoch가 달라지면 명시적인
 `reset --force` 전까지 fail-closed합니다. `status`와 `get`은 서버에 연결하지
-않으므로 장애 중에도 cached canonical resource를 읽을 수 있습니다. 아직
-BM25/HNSW retrieval replica는 아니며 embedded store를 열거나 다시 쓰지 않습니다.
+않으므로 장애 중에도 cached canonical resource를 읽을 수 있습니다. Bootstrap은
+현재 resource 10,000개로 제한됩니다. 아직 BM25/HNSW retrieval replica는 아니며
+embedded store를 열거나 다시 쓰지 않습니다.
 
 이 인터페이스에는 topic, offset, consumer group, lease, retry, payload 복제,
 exactly-once delivery가 없습니다. 모든 할당은 기존 추적 세션을 가리킵니다.

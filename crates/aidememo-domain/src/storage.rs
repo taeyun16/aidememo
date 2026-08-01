@@ -2,7 +2,8 @@
 
 use crate::{
     ActorId, CanonicalResource, ChangeBatch, ChangeCursor, CommandId, CommandReceipt, DomainError,
-    HandoffPage, HandoffQuery, MutationCommand, ProjectScope, ResourceRef,
+    HandoffPage, HandoffQuery, MaterializedChangeBatch, MutationCommand, ProjectScope,
+    ProjectSnapshot, ResourceRef,
 };
 
 /// Atomic receipt, resource-revision, audit, and change-feed persistence.
@@ -42,6 +43,26 @@ pub trait CommandStore {
         cursor: &ChangeCursor,
         limit: usize,
     ) -> Result<ChangeBatch, DomainError>;
+
+    /// Pull ordered mutations with exact resource state at each revision.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DomainError::SnapshotRequired`] when legacy history cannot be
+    /// materialized exactly, or another stable error when the read fails.
+    fn materialized_changes(
+        &self,
+        scope: &ProjectScope,
+        cursor: &ChangeCursor,
+        limit: usize,
+    ) -> Result<MaterializedChangeBatch, DomainError>;
+
+    /// Read a complete current-state snapshot and its project head atomically.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stable [`DomainError`] when the snapshot cannot be produced.
+    fn snapshot(&self, scope: &ProjectScope) -> Result<ProjectSnapshot, DomainError>;
 
     /// Fetch current canonical state or deletion tombstone by resource ID.
     ///

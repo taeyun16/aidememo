@@ -78,7 +78,8 @@ the authenticated server. Other memory tools continue to use the pinned local
 store; a receiver result fact is uploaded as canonical evidence during return.
 The server must be reachable at install, MCP startup, and remote handoff calls.
 Use `aidememo replica pull --remote-profile NAME` outside the MCP process when
-an offline canonical exact-read cache is needed. The resulting
+an offline canonical exact-read cache is needed. Pull bootstraps atomically and
+then applies revision-pinned changes. The resulting
 `<store>.replica.sqlite` is separate from the pinned embedded search store and
 is not refreshed implicitly at MCP startup. HTTP `mcp-serve`, retrieval-index
 replicas, and offline writes are not part of this profile path yet.

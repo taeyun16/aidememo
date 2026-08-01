@@ -8,8 +8,8 @@
 use aidememo_domain::{
     AuthenticatedActor, AuthorizedCommand, CanonicalResource, ChangeBatch, ChangeCursor,
     ChangeOperation, CommandEnvelope, CommandFingerprint, CommandReceipt, CommandStore,
-    DomainError, HandoffPage, HandoffQuery, HandoffStore, MutationCommand, ProjectAccess,
-    ProjectId, ProjectMembership, ResourceRef,
+    DomainError, HandoffPage, HandoffQuery, HandoffStore, MaterializedChangeBatch, MutationCommand,
+    ProjectAccess, ProjectId, ProjectMembership, ProjectSnapshot, ResourceRef,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -212,6 +212,46 @@ impl<S: CommandStore> CommandService<S> {
     ) -> Result<ChangeBatch, DomainError> {
         let access = ProjectAccess::authorize(authenticated, membership)?;
         self.store.changes(&access.scope(), cursor, limit)
+    }
+
+    /// Pull revision-pinned changes through active project membership.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stable [`DomainError`] for authorization, invalid cursor, a
+    /// legacy range requiring snapshot bootstrap, or storage failure.
+    pub fn materialized_changes(
+        &self,
+        authenticated: &AuthenticatedActor,
+        membership: &ProjectMembership,
+        cursor: &ChangeCursor,
+        limit: usize,
+    ) -> Result<MaterializedChangeBatch, DomainError> {
+        let access = ProjectAccess::authorize(authenticated, membership)?;
+        self.store
+            .materialized_changes(&access.scope(), cursor, limit)
+    }
+
+    /// Read one complete current-state snapshot and represented head through
+    /// active project membership.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stable [`DomainError`] for authorization or storage failure.
+    pub fn snapshot(
+        &self,
+        authenticated: &AuthenticatedActor,
+        membership: &ProjectMembership,
+        project_id: &ProjectId,
+    ) -> Result<ProjectSnapshot, DomainError> {
+        if &membership.project_id != project_id {
+            return Err(DomainError::ProjectScopeMismatch {
+                requested: project_id.clone(),
+                authorized: membership.project_id.clone(),
+            });
+        }
+        let access = ProjectAccess::authorize(authenticated, membership)?;
+        self.store.snapshot(&access.scope())
     }
 
     /// Fetch canonical resource state through active project membership.

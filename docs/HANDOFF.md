@@ -130,9 +130,10 @@ and retrieval. Remote `send`, `inbox`, `outbox`, `show/status`, `accept`, and
 `mcp-install --remote-profile NAME`; the installer verifies the bearer actor and
 pins it to one agent profile. Remote `run`, heartbeat, board, HTTP MCP gateway
 routing, offline outbox, and retrieval indexing remain future work.
-`replica pull --remote-profile NAME` now bootstraps and incrementally advances a
-separate exact-read cache, while `replica status/get` remains available without
-the server. Typed server facts are canonical handoff evidence but are not yet
+`replica pull --remote-profile NAME` now bootstraps a separate exact-read cache
+from one atomic snapshot and advances it with revision-pinned changes, while
+`replica status/get` remains available without the server. Typed server facts
+are canonical handoff evidence but are not yet
 indexed by the embedded search engine.
 
 ## What stays the same

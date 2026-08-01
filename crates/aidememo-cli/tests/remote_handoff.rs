@@ -568,10 +568,16 @@ async fn two_named_codex_profiles_complete_a_remote_handoff_round_trip()
     assert_success(&replica_pull);
     let replica_pull: serde_json::Value = serde_json::from_slice(&replica_pull.stdout)?;
     assert_eq!(replica_pull["report"]["bootstrapped"], true);
+    assert_eq!(replica_pull["report"]["changes"], 0);
     assert!(
-        replica_pull["report"]["changes"]
+        replica_pull["report"]["after_seq"]
             .as_u64()
-            .is_some_and(|changes| changes > 0)
+            .is_some_and(|after_seq| after_seq > 0)
+    );
+    assert!(
+        replica_pull["report"]["resource_count"]
+            .as_u64()
+            .is_some_and(|resources| resources > 0)
     );
 
     let replica_status = run(

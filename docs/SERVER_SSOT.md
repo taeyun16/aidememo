@@ -172,21 +172,27 @@ watermarks for each record class:
 }
 ```
 
-Each returned entry carries `seq`, resource kind and ID, operation, revision,
-actor provenance, and commit time. Deletions are durable tombstones. The next
-cursor is acknowledged only after the local replica commits the full batch.
+Each materialized entry carries `seq`, resource kind and ID, operation,
+revision, actor provenance, commit time, and the canonical body or tombstone at
+exactly that revision. The server persists metadata and body in the same command
+transaction. The next cursor is acknowledged only after the local replica
+commits the full batch and its revision-pinned resources together.
 
-The current exact-read client fetches the latest state for each distinct
-resource named by a batch. A concurrent later mutation can therefore make that
-one cached resource newer than the durable feed cursor; the client accepts only
-equal-or-newer revisions and never downgrades it. This is a monotonic exact-read
-cache, not a globally sequence-consistent snapshot or retrieval index. A future
-snapshot/hydrated-feed contract must close that distinction before claiming
-point-in-time replica reads.
+An empty exact-read replica bootstraps from `GET .../snapshot`, which reads the
+complete current resource set and represented project head in one SQLite read
+transaction. It then consumes only hydrated changes, so no cached resource can
+run ahead of the durable cursor. This first snapshot endpoint is deliberately
+bounded to 10,000 resources; pagination with a stable snapshot handle remains a
+later scale-out item. Legacy schema-v3 change rows do not have historical
+bodies and return `snapshot_required` rather than guessing from current state.
+This is a sequence-consistent exact-read cache, not yet a BM25/HNSW retrieval
+index.
 
 `project_epoch` changes when an administrator restores or replaces canonical
 history in a way that invalidates existing cursors. A mismatched epoch causes a
-fail-closed snapshot refresh rather than a best-effort incremental merge.
+fail-closed pull; the operator must run `replica reset --force` before the next
+pull bootstraps a fresh snapshot. It never attempts a best-effort merge across
+history generations.
 
 Offline writes do not create an implicit multi-primary system. They are stored
 in an actor branch/outbox with command IDs and base revisions. Publication is
@@ -282,7 +288,9 @@ The current HTTP surface is intentionally small:
 | `GET /v1/projects/{project}/identity` | Resolve the bearer-bound tenant, project, actor, and active membership role |
 | `POST /v1/commands` | Authenticated `custom.*` `resource.put` / `resource.delete`, idempotent receipt, revision CAS |
 | `GET /v1/projects/{project}/resources/{kind}/{id}` | Exact canonical body or tombstone |
-| `GET /v1/projects/{project}/changes` | Ordered change entries after an epoch/sequence cursor |
+| `GET /v1/projects/{project}/changes` | Ordered metadata-only change entries after an epoch/sequence cursor |
+| `GET /v1/projects/{project}/changes/materialized` | Ordered changes with the exact canonical body or tombstone at each revision |
+| `GET /v1/projects/{project}/snapshot` | Atomic bounded current-state bootstrap plus represented project head |
 | `POST /v1/projects/{project}/sessions` | Create one typed session; `source_id` is fixed here |
 | `POST /v1/projects/{project}/facts` | Create one fact attached to an existing session; source and actor are inherited server-side |
 | `POST /v1/projects/{project}/handoffs` | Send the session pointer to another active writer |
@@ -462,11 +470,13 @@ overrides and validating local result provenance against the authenticated
 server identity. `mcp-install --remote-profile` verifies that identity, pins the
 derived actor plus profile name to one agent config, and the binary integration
 test runs the installed arguments and environment through the same round trip.
-`replica pull --remote-profile` bootstraps from sequence zero and incrementally
-advances `<store>.replica.sqlite` only after materialized exact resources commit
-with the whole batch. Scope and epoch mismatches fail closed until
+`replica pull --remote-profile` bootstraps from one atomic current-state
+snapshot, then incrementally advances `<store>.replica.sqlite` only after
+revision-pinned resources commit with the whole batch. Scope and epoch
+mismatches fail closed until
 `replica reset --force`; `replica status/get` are network-free and tested after
-server shutdown. Combined domain and HTTP tests reject wrong actor, claim,
+server shutdown. Legacy unhydrated change ranges require a fresh snapshot
+instead of being reconstructed from newer state. Combined domain and HTTP tests reject wrong actor, claim,
 source/session evidence, read-only mutation, non-participant reads, and mailbox
 actor-filter injection. Indexed inbox/outbox queries support completed/source
 filters and exclusive sequence pagination; schema v2 migration backfill is

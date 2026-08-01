@@ -182,6 +182,35 @@ pub fn run<A: CommandStore>(
         "canonical_resource_tombstone",
         "delete must retain a body-free canonical tombstone",
     )?;
+    let materialized = adapter.materialized_changes(&scope, &cursor, 100)?;
+    check(
+        materialized.entries.len() == 3
+            && materialized.entries[0].resource.revision.get() == 1
+            && matches!(
+                &materialized.entries[0].resource.state,
+                ResourceState::Present { body } if body == br#"{"fixture":"a"}"#
+            )
+            && materialized.entries[1].resource.revision.get() == 2
+            && matches!(
+                &materialized.entries[1].resource.state,
+                ResourceState::Present { body } if body == br#"{"fixture":"d"}"#
+            )
+            && matches!(
+                materialized.entries[2].resource.state,
+                ResourceState::Deleted
+            ),
+        "revision_pinned_change_materialization",
+        "every change must carry the exact body or tombstone committed at its revision",
+    )?;
+    let snapshot = adapter.snapshot(&scope)?;
+    check(
+        snapshot.project_epoch == cursor.project_epoch
+            && snapshot.at_seq == deleted.project_seq
+            && snapshot.resources.len() == 1
+            && matches!(snapshot.resources[0].state, ResourceState::Deleted),
+        "atomic_project_snapshot",
+        "snapshot must pair complete current state with the represented project head",
+    )?;
 
     let wrong_epoch_cursor = ChangeCursor {
         project_epoch: ProjectEpoch::try_from("epoch_replaced")?,
@@ -215,6 +244,8 @@ pub fn run<A: CommandStore>(
             "single_mutation_per_command",
             "delete_tombstone",
             "canonical_resource_tombstone",
+            "revision_pinned_change_materialization",
+            "atomic_project_snapshot",
             "cursor_epoch_fail_closed",
             "cursor_sequence_fail_closed",
         ],
@@ -319,7 +350,10 @@ fn violation(check: &'static str, detail: &str) -> DomainError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{CanonicalResource, ChangeBatch, ChangeEntry, CommandReceipt, ResourceState};
+    use crate::{
+        CanonicalResource, ChangeBatch, ChangeEntry, CommandReceipt, MaterializedChange,
+        MaterializedChangeBatch, ProjectSnapshot, ResourceState,
+    };
     use std::collections::HashMap;
 
     struct ReferenceAdapter {
@@ -328,6 +362,7 @@ mod tests {
         revisions: HashMap<ResourceRef, Revision>,
         receipts: HashMap<CommandId, CommandReceipt>,
         changes: Vec<ChangeEntry>,
+        materialized_changes: Vec<MaterializedChange>,
         resources: HashMap<(ProjectScope, ResourceRef), CanonicalResource>,
     }
 
@@ -339,6 +374,7 @@ mod tests {
                 revisions: HashMap::new(),
                 receipts: HashMap::new(),
                 changes: Vec::new(),
+                materialized_changes: Vec::new(),
                 resources: HashMap::new(),
             }
         }
@@ -392,18 +428,19 @@ mod tests {
                 },
                 ChangeOperation::Delete => ResourceState::Deleted,
             };
+            let canonical = CanonicalResource {
+                scope: authorization.scope(),
+                resource: command.resource.clone(),
+                revision,
+                state,
+            };
             self.resources.insert(
                 (authorization.scope(), command.resource.clone()),
-                CanonicalResource {
-                    scope: authorization.scope(),
-                    resource: command.resource.clone(),
-                    revision,
-                    state,
-                },
+                canonical.clone(),
             );
             self.receipts
                 .insert(envelope.command_id.clone(), receipt.clone());
-            self.changes.push(ChangeEntry {
+            let change = ChangeEntry {
                 tenant_id: authorization.tenant_id().clone(),
                 project_id: authorization.project_id().clone(),
                 project_epoch: self.epoch.clone(),
@@ -413,6 +450,11 @@ mod tests {
                 revision,
                 actor_id: authorization.actor_id().clone(),
                 committed_at_ms: receipt.committed_at_ms,
+            };
+            self.changes.push(change.clone());
+            self.materialized_changes.push(MaterializedChange {
+                change,
+                resource: canonical,
             });
             self.sequence = sequence;
             Ok(receipt)
@@ -474,6 +516,50 @@ mod tests {
                 .get(&(scope.clone(), resource.clone()))
                 .cloned())
         }
+
+        fn materialized_changes(
+            &self,
+            scope: &ProjectScope,
+            cursor: &ChangeCursor,
+            limit: usize,
+        ) -> Result<MaterializedChangeBatch, DomainError> {
+            if cursor.project_epoch != self.epoch {
+                return Err(DomainError::CursorEpochMismatch {
+                    cursor: cursor.project_epoch.clone(),
+                    current: self.epoch.clone(),
+                });
+            }
+            if cursor.after_seq > self.sequence {
+                return Err(DomainError::CursorOutOfRange {
+                    after_seq: cursor.after_seq,
+                    current: self.sequence,
+                });
+            }
+            let entries: Vec<_> = self
+                .materialized_changes
+                .iter()
+                .filter(|entry| entry.change.seq > cursor.after_seq)
+                .take(limit)
+                .cloned()
+                .collect();
+            let has_more = self
+                .materialized_changes
+                .iter()
+                .filter(|entry| entry.change.seq > cursor.after_seq)
+                .count()
+                > entries.len();
+            MaterializedChangeBatch::new(scope.clone(), cursor.clone(), entries, has_more)
+        }
+
+        fn snapshot(&self, scope: &ProjectScope) -> Result<ProjectSnapshot, DomainError> {
+            let resources = self
+                .resources
+                .iter()
+                .filter(|((resource_scope, _), _)| resource_scope == scope)
+                .map(|(_, resource)| resource.clone())
+                .collect();
+            ProjectSnapshot::new(scope.clone(), self.epoch.clone(), self.sequence, resources)
+        }
     }
 
     #[test]
@@ -484,7 +570,7 @@ mod tests {
         let report = run(&mut adapter, epoch)?;
         assert_eq!(report.final_sequence, ProjectSequence::new(3));
         assert_eq!(report.tombstone_revision.get(), 3);
-        assert_eq!(report.checks.len(), 13);
+        assert_eq!(report.checks.len(), 15);
         Ok(())
     }
 }
