@@ -468,14 +468,17 @@ crates/aidememo-cli/src/
 - Every canonical lookup uses `ProjectScope { tenant_id, project_id }`;
   `source_id` and actor aliases are not tenant credentials.
 - `aidememo-service` computes the command fingerprint from canonical project,
-  revision precondition, operation, and payload fields. `command_id` is the
-  receipt lookup key and is excluded from its own fingerprint.
+  revision precondition, operation, payload, resource coordinate, and change
+  kind. `command_id` is the receipt lookup key and is excluded from its own
+  fingerprint.
 - `aidememo-store-local` uses a separate SQLite database and must not migrate or
   reinterpret the current embedded `aidememo-core` file format.
 - `aidememo-server` derives tenant and actor identity only from a persisted
   SHA-256 bearer-token binding, reloads active membership for every request,
-  and currently exposes only `resource.put` / `resource.delete`, exact resource
-  reads, and the ordered change feed. It is not yet the fact/search/handoff API.
+  and currently exposes only `resource.put` / `resource.delete` for `custom.*`
+  extension kinds, exact resource reads, and the ordered change feed. Reserved
+  product kinds such as `fact`, `session`, and `handoff` require future typed
+  APIs; the raw endpoint must not bypass their invariants.
 - Every new canonical adapter must pass `aidememo_domain::conformance::run`.
 - The four foundation crates remain `publish = false` until a server-facing
   public API and dependency release order are approved.

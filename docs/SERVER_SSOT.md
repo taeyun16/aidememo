@@ -138,10 +138,18 @@ The authenticated gateway supplies tenant and actor identity. The service must:
 
 The currently implemented `/v1/commands` slice deliberately accepts only the
 lower-level pairs `resource.put` + `upsert` and `resource.delete` + `delete`.
-A delete payload must be JSON `null`. Product operations such as `fact.add`,
-`session.handoff`, search, and MCP still require their domain adapters; they are
-not aliases accepted by this endpoint. This keeps the first server executable
-from claiming application semantics it does not yet enforce.
+A delete payload must be JSON `null`, and the resource kind must use the
+`custom.*` extension namespace. Reserved product kinds such as `fact`,
+`session`, `handoff`, and `artifact` are rejected on the raw endpoint. Product
+operations such as `fact.add`, `session.handoff`, search, and MCP still require
+their typed domain adapters; they are not aliases accepted by this endpoint.
+This keeps the first server executable from claiming or bypassing application
+semantics it does not yet enforce.
+
+The idempotency fingerprint binds project, revision precondition, operation,
+payload, full resource coordinate, and upsert/delete change kind. Consequently,
+reusing one `command_id` for another resource fails with `command_conflict`
+instead of replaying the first resource's receipt.
 
 Handoff claim and return invariants remain domain operations. A handoff result
 fact must match the same tenant, project, session, source, receiving actor, and
@@ -260,7 +268,7 @@ The current HTTP surface is intentionally small:
 | Endpoint | Contract |
 |---|---|
 | `GET /health` | Process mode and SQLite schema version |
-| `POST /v1/commands` | Authenticated `resource.put` / `resource.delete`, idempotent receipt, revision CAS |
+| `POST /v1/commands` | Authenticated `custom.*` `resource.put` / `resource.delete`, idempotent receipt, revision CAS |
 | `GET /v1/projects/{project}/resources/{kind}/{id}` | Exact canonical body or tombstone |
 | `GET /v1/projects/{project}/changes` | Ordered change entries after an epoch/sequence cursor |
 

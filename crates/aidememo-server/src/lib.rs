@@ -29,6 +29,7 @@ use tokio::sync::Mutex;
 const DEFAULT_CHANGE_LIMIT: usize = 100;
 const MAX_COMMAND_BODY_BYTES: usize = 1024 * 1024;
 const MAX_BEARER_BYTES: usize = 4096;
+const EXTENSION_RESOURCE_PREFIX: &str = "custom.";
 
 /// Cloneable application state around one single-node command service.
 #[derive(Clone)]
@@ -113,7 +114,7 @@ pub struct CommandRequest {
     /// Full canonical resource representation for `resource.put`; must be
     /// JSON null for `resource.delete`.
     pub payload: Value,
-    /// Canonical resource coordinate.
+    /// `custom.*` extension resource coordinate. Product kinds use typed APIs.
     pub resource: ResourceRef,
     /// Upsert or deletion tombstone.
     pub change: ChangeOperation,
@@ -157,6 +158,17 @@ async fn command(
 }
 
 fn validate_resource_command(request: &CommandRequest) -> Result<(), DomainError> {
+    if !request
+        .resource
+        .kind
+        .as_str()
+        .starts_with(EXTENSION_RESOURCE_PREFIX)
+    {
+        return Err(DomainError::InvalidCommand(
+            "raw resource commands only accept custom.* extension kinds; product kinds require a typed API"
+                .to_owned(),
+        ));
+    }
     match (request.operation.as_str(), request.change) {
         ("resource.put", ChangeOperation::Upsert) => Ok(()),
         ("resource.delete", ChangeOperation::Delete) if request.payload.is_null() => Ok(()),

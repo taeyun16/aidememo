@@ -73,7 +73,7 @@ impl<S: CommandStore> CommandService<S> {
                 authorized: authorization.project_id().clone(),
             });
         }
-        let fingerprint = command_fingerprint(&envelope)?;
+        let fingerprint = command_fingerprint(&envelope, &resource, change)?;
         let resource_body = match change {
             ChangeOperation::Upsert => Some(canonical_json_bytes(&envelope.payload)?),
             ChangeOperation::Delete => None,
@@ -139,8 +139,8 @@ impl<S: CommandStore> CommandService<S> {
     }
 }
 
-/// Compute the idempotency fingerprint for every untrusted command field except
-/// `command_id`, which is the lookup key itself.
+/// Compute the idempotency fingerprint for every untrusted mutation field
+/// except `command_id`, which is the lookup key itself.
 ///
 /// JSON object keys are recursively sorted before SHA-256 so equivalent map
 /// insertion order does not create different requests.
@@ -151,6 +151,8 @@ impl<S: CommandStore> CommandService<S> {
 /// to or encoded from canonical JSON.
 pub fn command_fingerprint<T: Serialize>(
     envelope: &CommandEnvelope<T>,
+    resource: &ResourceRef,
+    change: ChangeOperation,
 ) -> Result<CommandFingerprint, DomainError> {
     #[derive(Serialize)]
     struct FingerprintMaterial<'a, T> {
@@ -158,6 +160,8 @@ pub fn command_fingerprint<T: Serialize>(
         expected_revision: Option<aidememo_domain::Revision>,
         operation: &'a aidememo_domain::OperationName,
         payload: &'a T,
+        resource: &'a ResourceRef,
+        change: ChangeOperation,
     }
 
     let material = FingerprintMaterial {
@@ -165,6 +169,8 @@ pub fn command_fingerprint<T: Serialize>(
         expected_revision: envelope.expected_revision,
         operation: &envelope.operation,
         payload: &envelope.payload,
+        resource,
+        change,
     };
     let value = serde_json::to_value(material)
         .map_err(|error| DomainError::InvalidCommand(error.to_string()))?;
@@ -212,7 +218,7 @@ fn canonicalize_json(value: Value) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aidememo_domain::{CommandId, OperationName, ProjectId};
+    use aidememo_domain::{CommandId, OperationName, ProjectId, ResourceId, ResourceKind};
     use serde_json::json;
 
     fn envelope(payload: Value) -> Result<CommandEnvelope<Value>, DomainError> {
@@ -225,12 +231,23 @@ mod tests {
         })
     }
 
+    fn resource(id: &str) -> Result<ResourceRef, DomainError> {
+        Ok(ResourceRef {
+            kind: ResourceKind::try_from("custom.note")?,
+            id: ResourceId::try_from(id)?,
+        })
+    }
+
     #[test]
     fn fingerprint_is_independent_of_json_object_insertion_order()
     -> Result<(), Box<dyn std::error::Error>> {
         let left = envelope(json!({"a": 1, "b": {"c": 2, "d": 3}}))?;
         let right = envelope(json!({"b": {"d": 3, "c": 2}, "a": 1}))?;
-        assert_eq!(command_fingerprint(&left)?, command_fingerprint(&right)?);
+        let resource = resource("note_01")?;
+        assert_eq!(
+            command_fingerprint(&left, &resource, ChangeOperation::Upsert)?,
+            command_fingerprint(&right, &resource, ChangeOperation::Upsert)?
+        );
         Ok(())
     }
 
@@ -239,7 +256,29 @@ mod tests {
         let left = envelope(json!({"content": "same"}))?;
         let mut right = left.clone();
         right.expected_revision = Some(aidememo_domain::Revision::new(1)?);
-        assert_ne!(command_fingerprint(&left)?, command_fingerprint(&right)?);
+        let resource = resource("note_01")?;
+        assert_ne!(
+            command_fingerprint(&left, &resource, ChangeOperation::Upsert)?,
+            command_fingerprint(&right, &resource, ChangeOperation::Upsert)?
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn fingerprint_binds_resource_coordinate_and_change_kind()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let envelope = envelope(json!({"content": "same"}))?;
+        let first = resource("note_01")?;
+        let second = resource("note_02")?;
+        let upsert = command_fingerprint(&envelope, &first, ChangeOperation::Upsert)?;
+        assert_ne!(
+            upsert,
+            command_fingerprint(&envelope, &second, ChangeOperation::Upsert)?
+        );
+        assert_ne!(
+            upsert,
+            command_fingerprint(&envelope, &first, ChangeOperation::Delete)?
+        );
         Ok(())
     }
 }

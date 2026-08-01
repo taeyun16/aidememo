@@ -152,6 +152,17 @@ async fn authentication_and_identity_override_fail_closed() -> Result<(), Box<dy
         "invalid_command"
     );
 
+    let reserved = app
+        .clone()
+        .oneshot(command_request(Some(WRITER_TOKEN), body.clone())?)
+        .await?;
+    assert_eq!(reserved.status(), 400);
+    assert!(
+        response_json(reserved).await?["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("custom.*"))
+    );
+
     let mut override_body = body;
     override_body["tenant_id"] = json!("tenant_other");
     let override_attempt = app
@@ -174,7 +185,7 @@ async fn writer_round_trip_and_reader_boundary() -> Result<(), Box<dyn std::erro
         "expected_revision": null,
         "operation": "resource.put",
         "payload": {"z": 2, "a": {"d": 4, "b": 3}},
-        "resource": {"kind": "fact", "id": "fact_http"},
+        "resource": {"kind": "custom.note", "id": "note_http"},
         "change": "upsert"
     });
     let first = app
@@ -193,6 +204,18 @@ async fn writer_round_trip_and_reader_boundary() -> Result<(), Box<dyn std::erro
     assert_eq!(replay.status(), 200);
     assert_eq!(response_json(replay).await?, first_body);
 
+    let mut coordinate_conflict = upsert.clone();
+    coordinate_conflict["resource"]["id"] = json!("note_other");
+    let coordinate_conflict_response = app
+        .clone()
+        .oneshot(command_request(Some(WRITER_TOKEN), coordinate_conflict)?)
+        .await?;
+    assert_eq!(coordinate_conflict_response.status(), 409);
+    assert_eq!(
+        response_json(coordinate_conflict_response).await?["error"]["code"],
+        "command_conflict"
+    );
+
     let mut conflict = upsert;
     conflict["payload"] = json!({"content": "different"});
     let conflict_response = app
@@ -209,7 +232,7 @@ async fn writer_round_trip_and_reader_boundary() -> Result<(), Box<dyn std::erro
         .clone()
         .oneshot(
             Request::builder()
-                .uri("/v1/projects/project_http/resources/fact/fact_http")
+                .uri("/v1/projects/project_http/resources/custom.note/note_http")
                 .header("authorization", format!("Bearer {READER_TOKEN}"))
                 .body(Body::empty())?,
         )
@@ -244,7 +267,7 @@ async fn writer_round_trip_and_reader_boundary() -> Result<(), Box<dyn std::erro
         "expected_revision": 1,
         "operation": "resource.put",
         "payload": {"content": "forbidden"},
-        "resource": {"kind": "fact", "id": "fact_http"},
+        "resource": {"kind": "custom.note", "id": "note_http"},
         "change": "upsert"
     });
     let forbidden = app

@@ -135,10 +135,17 @@ surface는 하나의 command envelope로 매핑합니다.
 
 현재 구현된 `/v1/commands` 구간은 의도적으로 저수준 조합인
 `resource.put` + `upsert`와 `resource.delete` + `delete`만 받습니다. Delete
-payload는 JSON `null`이어야 합니다. `fact.add`, `session.handoff`, search, MCP
-같은 제품 작업에는 아직 도메인 adapter가 필요하며 이 endpoint의 alias로 받지
-않습니다. 첫 서버 실행 파일이 아직 강제하지 않는 애플리케이션 의미론까지
-지원한다고 주장하지 않기 위한 경계입니다.
+payload는 JSON `null`이어야 하고 resource kind는 `custom.*` 확장 namespace를
+사용해야 합니다. `fact`, `session`, `handoff`, `artifact` 같은 예약 제품 kind는
+원시 endpoint에서 거부합니다. `fact.add`, `session.handoff`, search, MCP 같은 제품
+작업에는 아직 typed 도메인 adapter가 필요하며 이 endpoint의 alias로 받지
+않습니다. 첫 서버 실행 파일이 아직 강제하지 않는 애플리케이션 의미론을
+지원하거나 우회한다고 주장하지 않기 위한 경계입니다.
+
+Idempotency fingerprint는 project, revision precondition, operation, payload,
+전체 resource 좌표, upsert/delete change kind를 결합합니다. 따라서 하나의
+`command_id`를 다른 resource에 재사용하면 첫 resource receipt를 replay하지 않고
+`command_conflict`로 실패합니다.
 
 Handoff claim과 return invariant는 계속 도메인 작업입니다. Handoff 결과 fact는
 같은 tenant, project, session, source, 수신 actor, 활성 claim과 일치해야 합니다.
@@ -254,7 +261,7 @@ membership role, token 소유권 충돌은 fail closed로 처리합니다. 서�
 | Endpoint | 계약 |
 |---|---|
 | `GET /health` | Process mode와 SQLite schema version |
-| `POST /v1/commands` | 인증된 `resource.put` / `resource.delete`, idempotent receipt, revision CAS |
+| `POST /v1/commands` | 인증된 `custom.*` `resource.put` / `resource.delete`, idempotent receipt, revision CAS |
 | `GET /v1/projects/{project}/resources/{kind}/{id}` | 정확한 정본 body 또는 tombstone |
 | `GET /v1/projects/{project}/changes` | Epoch/sequence cursor 이후 순서가 있는 change entry |
 
