@@ -237,7 +237,7 @@ sequenceDiagram
 | CLI 명령과 파서 | `crates/aidememo-cli/src/cmd/mod.rs`, `crates/aidememo-cli/src/main.rs` | [`CLI 사용법`](CLI.md), [`기능 목록`](FEATURES.md) |
 | MCP 도구와 스키마 | `crates/aidememo-cli/src/cmd/mcp_tools.rs` | [`MCP 설정`](MCP.md), [`에이전트 워크플로`](AGENT_WORKFLOWS.md) |
 | 공용 메모리 identity 경계 | `crates/aidememo-cli/src/cmd/mcp_serve.rs`, `crates/aidememo-core/src/backend.rs` | [`공용 메모리 레이어`](SHARED_MEMORY.md), [`MCP 설정`](MCP.md) |
-| Server / SSOT 기반 | `crates/aidememo-domain`, `aidememo-service`, `aidememo-store-local`, `aidememo-server`, `aidememo-client` 구현, 제한된 typed session/fact/handoff HTTP, transactional actor mailbox index, 원시 `custom.*` resource, 격리된 exact-read replica 지원, PostgreSQL, artifact, retrieval projection, HTTP MCP gateway routing, offline write는 제안 상태 | [`서버 및 SSOT 아키텍처`](SERVER_SSOT.md) |
+| Server / SSOT 기반 | `crates/aidememo-domain`, `aidememo-service`, `aidememo-store-local`, `aidememo-server`, `aidememo-client`, `aidememo-artifacts` 구현, 제한된 typed session/fact/handoff HTTP, transactional actor mailbox index, 원시 `custom.*` resource, 격리된 exact-read replica, 로컬 immutable artifact repository 지원, server artifact route, PostgreSQL/S3, retrieval projection, HTTP MCP gateway routing, offline write는 제안 상태 | [`서버 및 SSOT 아키텍처`](SERVER_SSOT.md) |
 | 코어 API와 검색 | `crates/aidememo-core/src/lib.rs`, `search.rs`, `graph.rs` | [`아키텍처`](ARCHITECTURE.md), [`운영`](OPERATIONS.md) |
 | 저장소 디스패치 | `crates/aidememo-core/src/backend.rs`, `sqlite_store.rs`, `store.rs` | [`운영`](OPERATIONS.md), [`기능 목록`](FEATURES.md) |
 | Python 에이전트 SDK | `packages/aidememo-agent-sdk/src/aidememo_agent/sdk.py` | [`Python SDK`](SDK.md), [`에이전트 워크플로`](AGENT_WORKFLOWS.md) |

@@ -1,0 +1,24 @@
+[package]
+name = "aidememo-artifacts"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "Immutable local artifact bodies and reservation lifecycle for AideMemo SSOT mode"
+license.workspace = true
+repository.workspace = true
+version.workspace = true
+publish = false
+
+[dependencies]
+aidememo-domain = { version = "0.1.0", path = "../aidememo-domain" }
+rusqlite = { version = "0.40.1", default-features = false, features = ["bundled"] }
+sha2 = "0.11"
+tempfile = "3.10"
+thiserror = "2.0"
+ulid = "1.1"
+
+[dev-dependencies]
+serde_json = "1.0"
+
+[lints]
+workspace = true

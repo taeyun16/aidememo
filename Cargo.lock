@@ -41,6 +41,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "aidememo-artifacts"
+version = "0.1.0"
+dependencies = [
+ "aidememo-domain",
+ "rusqlite",
+ "serde_json",
+ "sha2 0.11.0",
+ "tempfile",
+ "thiserror 2.0.18",
+ "ulid",
+]
+
+[[package]]
 name = "aidememo-benchmarks"
 version = "0.1.0"
 dependencies = [

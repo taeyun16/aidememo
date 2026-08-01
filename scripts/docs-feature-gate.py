@@ -45,6 +45,7 @@ CLI_AUTH_RS = ROOT / "crates" / "aidememo-cli" / "src" / "cmd" / "auth.rs"
 CLI_REMOTE_HANDOFF_RS = ROOT / "crates" / "aidememo-cli" / "src" / "cmd" / "remote_handoff.rs"
 CLI_REPLICA_RS = ROOT / "crates" / "aidememo-cli" / "src" / "cmd" / "replica.rs"
 CLIENT_LIB_RS = ROOT / "crates" / "aidememo-client" / "src" / "lib.rs"
+ARTIFACTS_LIB_RS = ROOT / "crates" / "aidememo-artifacts" / "src" / "lib.rs"
 DOMAIN_LIB_RS = ROOT / "crates" / "aidememo-domain" / "src" / "lib.rs"
 DOMAIN_CONFORMANCE_RS = ROOT / "crates" / "aidememo-domain" / "src" / "conformance.rs"
 DOMAIN_HANDOFF_RS = ROOT / "crates" / "aidememo-domain" / "src" / "handoff.rs"
@@ -250,6 +251,17 @@ DOC_CONTENT_REQUIREMENTS = [
         ],
     ),
     (
+        ARTIFACTS_LIB_RS,
+        [
+            "LocalArtifactStore",
+            "ReserveRequest",
+            "persist_noclobber",
+            "ensure_live_reservation",
+            "BodyMismatch",
+            "64 * 1024 * 1024",
+        ],
+    ),
+    (
         CLI_REPLICA_RS,
         [
             "--remote-profile",
@@ -304,6 +316,7 @@ DOC_CONTENT_REQUIREMENTS = [
             "aidememo-store-local",
             "aidememo-server",
             "aidememo-client",
+            "aidememo-artifacts",
             "conformance::run",
             "Phase 0 code exit gate passes",
             "resource.put",

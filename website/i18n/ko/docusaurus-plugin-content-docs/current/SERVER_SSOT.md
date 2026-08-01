@@ -321,9 +321,11 @@ resource body, receipt, resource revision, project sequence, change entry, audit
 row는 한 SQLite transaction으로 commit됩니다.
 
 현재 process는 application replica 하나만 지원하며 내장 TLS, token
-rotation/revocation command, rate limit, artifact directory, PostgreSQL, search,
-heartbeat, HTTP MCP gateway profile, retrieval-index replica, offline outbox가
-아직 없습니다. CLI와 stdio MCP는 named connected handoff profile을 지원하고
+rotation/revocation command, rate limit, artifact HTTP route, PostgreSQL/S3,
+search, heartbeat, HTTP MCP gateway profile, retrieval-index replica, offline
+outbox가 아직 없습니다. 별도 local artifact repository는 exclusive path
+reservation, immutable upload, 관측된 SHA-256/size 검증, CAS publication, abort,
+재시작 후 read를 검증하지만 아직 server에 연결되지 않았습니다. CLI와 stdio MCP는 named connected handoff profile을 지원하고
 client는 별도 exact-read replica를 유지할 수 있지만 일반 원격 storage backend는
 아닙니다. Typed fact는 정본 ledger의 결과 증거이며 기존 embedded retrieval
 engine에 index되지 않습니다. 서버 계약 실행 파일이지 출시된 SaaS나
@@ -362,15 +364,16 @@ API replica는 read-write-many volume을 통해 live embedded SQLite 파일을 �
 
 ## 코드 경계
 
-다섯 기반 crate가 존재하며 같은 경계 map에 다음 두 planned crate도 표시합니다.
+여섯 기반 crate가 존재하며 같은 경계 map에 다음 planned canonical adapter도
+표시합니다.
 
 ```text
 aidememo-domain          portable ID, command, record, invariant
 aidememo-service         command/query orchestration과 authorization context
 aidememo-store-local     SQLite command ledger와 transactional handoff index
 aidememo-client          인증 transport와 격리된 exact-read replica
-aidememo-store-postgres  서버 정본 adapter
-aidememo-artifacts       local 및 S3 호환 reservation/commit 계약
+aidememo-artifacts       local immutable body와 reservation/commit 계약
+aidememo-store-postgres  planned 서버 정본 adapter
 aidememo-server          제한된 인증 HTTP resource/change/handoff surface
 ```
 
@@ -394,6 +397,12 @@ resource command, typed session/fact/handoff와 mailbox route, change feed, heal
 cursor와 exact canonical resource cache를 유지하며 fully materialized change
 batch를 원자적으로 적용합니다. Scope 또는 epoch가 바뀌면 명시적 reset을
 요구하며 embedded search store를 열거나 재해석하지 않습니다.
+`aidememo-artifacts`는 별도 SQLite logical-path catalog와 immutable generation
+file을 유지합니다. Replacement에는 현재 published mutation token이 필요하고, live
+경쟁 reservation을 거부하며, publication 전에 byte를 다시 hash하고, abort 시 이전
+version을 보존하며, logical artifact path를 OS path로 해석하지 않습니다. 직접 local
+upload는 64 MiB로 제한되고 unpublished object GC와 S3/R2 streaming은 아직 열려
+있습니다.
 
 Backend 중립 `conformance::run` fixture는 정확한 idempotent receipt replay, command ID
 충돌, stale revision 거부, 단조 증가 project sequence, 삭제 tombstone, fail-closed
@@ -406,9 +415,9 @@ Hermes` typed handoff chain도 검사합니다. Binary 수준 test도 URL 하나
 profile 두 개를 저장하고 CLI와 설치된 stdio MCP 모두에서
 send/inbox/accept/return/outbox `codex-p1 -> codex-p2` 흐름을 완료한 뒤
 exact-read replica를 bootstrap하고 서버 종료 후 완료 handoff를 읽으며 guarded
-reset도 검사합니다. PostgreSQL, Durable Object, artifact body, search adapter,
-HTTP MCP gateway profile, retrieval projection, offline outbox는 아직 연결되지
-않았습니다. 다섯 기반 crate는 server-facing 공개 API와 release
+reset도 검사합니다. PostgreSQL, Durable Object, artifact server route/S3 adapter,
+search adapter, HTTP MCP gateway profile, retrieval projection, offline outbox는 아직
+연결되지 않았습니다. 여섯 기반 crate는 server-facing 공개 API와 release
 순서를 승인할 때까지 모두 `publish = false`이며 기존 v0.1.0 crate 배포 흐름에
 조용히 포함되지 않습니다.
 
@@ -441,8 +450,9 @@ replica에 도착합니다.
 handoff를 완료합니다. 서버가 중단되면 cache read는 유지되지만 조용한
 multi-primary write는 만들지 않습니다.
 
-현재 상태: 정본 inline JSON resource, 저장된 bearer identity/membership, exact
-read, incremental change 조회, typed session/fact/handoff command에 대해서는 첫
+현재 상태: 정본 inline JSON resource, 별도 local immutable artifact repository,
+저장된 bearer identity/membership, exact read, incremental change 조회,
+typed session/fact/handoff command에 대해서는 첫
 항목이 일부 완료됐습니다. HTTP integration test는 `codex-p1 -> codex-p2 ->
 Hermes` chain을 완료합니다. Named CLI profile은 같은 URL/project에 서로 다른
 bearer token을 보관할 수 있고, connected CLI 경로는 actor override를 거부하며
@@ -460,8 +470,9 @@ fail-closed하며 `replica status/get`은 network-free이고 서버 종료 뒤�
 snapshot을 요구합니다. 도메인과 HTTP test를 합쳐 잘못된 actor, claim, source/session 증거,
 read-only mutation, 비참여자 read, mailbox actor filter 주입을 거부합니다.
 Indexed inbox/outbox query는 completed/source filter와 exclusive sequence
-pagination을 지원하며 schema v2 migration backfill도 검사합니다. HTTP MCP gateway
-연결, 로컬 artifact, retrieval indexing, offline write outbox는 아직 열려 있으므로
+pagination을 지원하며 schema v2 migration backfill도 검사합니다. Artifact HTTP
+integration과 unreachable-generation GC, HTTP MCP gateway 연결, retrieval indexing,
+offline write outbox는 아직 열려 있으므로
 Phase 1 종료 gate 전체는 닫히지 않았습니다.
 
 ### Phase 2 — 이식 가능한 프로덕션 backend

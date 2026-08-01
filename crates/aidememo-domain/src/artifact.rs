@@ -1,6 +1,6 @@
 //! Logical artifact namespace and immutable body references.
 
-use crate::{ArtifactId, DomainError, ProjectId, Revision};
+use crate::{ArtifactId, DomainError, ProjectScope, Revision};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 
@@ -211,8 +211,8 @@ fn validate_metadata_text(name: &str, value: &str) -> Result<(), DomainError> {
 pub struct ArtifactReference {
     /// Artifact resource identity.
     pub artifact_id: ArtifactId,
-    /// Authorized project scope.
-    pub project_id: ProjectId,
+    /// Authorized tenant-project scope.
+    pub scope: ProjectScope,
     /// Canonical logical namespace path.
     pub path: ArtifactPath,
     /// Metadata revision used for compare-and-swap publication.
@@ -221,6 +221,82 @@ pub struct ArtifactReference {
     pub mutation_token: String,
     /// Inline or immutable object body reference.
     pub body: ArtifactBodyRef,
+}
+
+/// Exclusive, expiring permission to upload one immutable artifact generation.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ArtifactReservation {
+    /// Stable artifact resource identity for this logical path.
+    pub artifact_id: ArtifactId,
+    /// Authorized tenant-project scope.
+    pub scope: ProjectScope,
+    /// Canonical logical namespace path.
+    pub path: ArtifactPath,
+    /// Revision that publication will create.
+    pub revision: Revision,
+    /// Opaque compare-and-swap token for this reservation.
+    pub mutation_token: String,
+    /// Adapter-selected immutable object generation.
+    pub generation: String,
+    /// UTC Unix timestamp in milliseconds after which publication is rejected.
+    pub expires_at_ms: i64,
+}
+
+impl ArtifactReservation {
+    /// Validate portable reservation fields.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DomainError::InvalidArtifactReference`] when the token,
+    /// generation, or expiry is invalid.
+    pub fn validate(&self) -> Result<(), DomainError> {
+        validate_metadata_text("mutation_token", &self.mutation_token)?;
+        validate_metadata_text("generation", &self.generation)?;
+        if self.expires_at_ms <= 0 {
+            return Err(DomainError::InvalidArtifactReference(
+                "reservation expiry must be a positive Unix timestamp".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Metadata observed from an immutable body after upload.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ArtifactObservation {
+    /// Adapter-owned opaque object key.
+    pub object_key: String,
+    /// Immutable generation selected by the reservation.
+    pub generation: String,
+    /// Exact body size observed after upload.
+    pub size_bytes: u64,
+    /// Provider or adapter entity tag observed after upload.
+    pub etag: String,
+    /// Optional provider version identifier.
+    pub version: Option<String>,
+    /// Optional end-to-end content digest.
+    pub digest: Option<ContentDigest>,
+}
+
+impl ArtifactObservation {
+    /// Validate and convert observed metadata into a portable object reference.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DomainError::InvalidArtifactReference`] for incomplete or
+    /// invalid observed metadata.
+    pub fn body_ref(&self) -> Result<ArtifactBodyRef, DomainError> {
+        let body = ArtifactBodyRef::Object {
+            object_key: self.object_key.clone(),
+            generation: self.generation.clone(),
+            size_bytes: self.size_bytes,
+            etag: self.etag.clone(),
+            version: self.version.clone(),
+            digest: self.digest.clone(),
+        };
+        body.validate()?;
+        Ok(body)
+    }
 }
 
 impl ArtifactReference {
@@ -252,7 +328,10 @@ mod tests {
     fn object_reference_requires_observed_metadata() -> Result<(), Box<dyn std::error::Error>> {
         let reference = ArtifactReference {
             artifact_id: ArtifactId::try_from("artifact_01")?,
-            project_id: ProjectId::try_from("project_a")?,
+            scope: ProjectScope::new(
+                crate::TenantId::try_from("tenant_a")?,
+                crate::ProjectId::try_from("project_a")?,
+            ),
             path: ArtifactPath::try_from("/sessions/s1/result.json")?,
             revision: Revision::new(1)?,
             mutation_token: "token_01".to_owned(),

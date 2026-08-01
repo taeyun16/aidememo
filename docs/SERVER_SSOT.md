@@ -332,9 +332,12 @@ than ignored. Canonical resource bodies, receipt, resource revision, project
 sequence, change entry, and audit row commit in one SQLite transaction.
 
 This process supports one application replica and has no built-in TLS, token
-rotation/revocation command, rate limits, artifact directory, PostgreSQL,
+rotation/revocation command, rate limits, artifact HTTP route, PostgreSQL/S3,
 search, heartbeat, HTTP MCP gateway profile, retrieval-index replica, or offline
-outbox yet. The CLI and stdio MCP support named connected handoff profiles, and
+outbox yet. A separate local artifact repository now proves exclusive path
+reservation, immutable upload, observed SHA-256/size verification, CAS
+publication, abort, and restart-safe reads, but it is not wired into the server.
+The CLI and stdio MCP support named connected handoff profiles, and
 the client can maintain a separate exact-read replica, but this is not a general
 remote storage backend. Typed facts are result evidence in the canonical ledger
 and are not indexed by the existing embedded retrieval engine. This is a server
@@ -373,16 +376,16 @@ file through a read-write-many volume.
 
 ## Code boundaries
 
-Five foundation crates now exist; the same boundary map also includes the next
-two planned crates:
+Six foundation crates now exist; the same boundary map includes one next
+canonical adapter:
 
 ```text
 aidememo-domain          portable IDs, commands, records, invariants
 aidememo-service         command/query orchestration and authorization context
 aidememo-store-local     SQLite command ledger and transactional handoff index
 aidememo-client          authenticated transport and isolated exact-read replica
-aidememo-store-postgres  server canonical adapter
-aidememo-artifacts       local and S3-compatible reservation/commit contract
+aidememo-artifacts       local immutable body + reservation/commit contract
+aidememo-store-postgres  planned server canonical adapter
 aidememo-server          bounded authenticated HTTP resource/change/handoff surface
 ```
 
@@ -409,6 +412,12 @@ mailbox routes, a change feed, and health over a loopback-first Axum process.
 cursor and exact canonical resource cache, applies each fully materialized
 change batch atomically, and requires explicit reset on scope or epoch changes.
 It does not open or reinterpret the embedded search store.
+`aidememo-artifacts` keeps a separate SQLite logical-path catalog and immutable
+generation files. It requires the current published mutation token for
+replacement, rejects live competing reservations, re-hashes bytes before
+publication, preserves the prior version on abort, and never resolves a logical
+artifact path as an OS path. Its direct local upload is bounded to 64 MiB;
+unpublished object GC and S3/R2 streaming remain open.
 
 The backend-neutral `conformance::run` fixture checks exact idempotent receipt
 replay, command-ID conflicts, stale revision rejection, monotonic project
@@ -424,8 +433,9 @@ also stores two bearer profiles for one URL and completes both CLI and installed
 stdio MCP `codex-p1 -> codex-p2` flows through
 send/inbox/accept/return/outbox, then bootstraps the exact-read replica, reads a
 completed handoff after the server stops, and exercises guarded reset. No
-PostgreSQL, Durable Object, artifact body, search adapter, HTTP MCP gateway
-profile, retrieval projection, or offline outbox is wired yet. All five
+PostgreSQL, Durable Object, artifact server route/S3 adapter, search adapter,
+HTTP MCP gateway profile, retrieval projection, or offline outbox is wired yet.
+All six
 foundation crates are `publish = false` until a server-facing public API and
 release order are approved, so they do not silently enter the existing v0.1.0
 crate publication workflow.
@@ -461,7 +471,8 @@ one remote project; an unavailable server preserves cached reads and creates no
 silent multi-primary writes.
 
 Current status: the first item is partially complete for canonical inline JSON
-resources, persisted bearer identity/membership, exact reads, incremental
+resources, a separate local immutable artifact repository, persisted bearer
+identity/membership, exact reads, incremental
 change retrieval, and typed session/fact/handoff commands. An HTTP integration
 test completes a `codex-p1 -> codex-p2 -> Hermes` chain. Named CLI profiles can
 hold distinct bearer tokens for one URL/project; the connected CLI path now
@@ -480,8 +491,8 @@ instead of being reconstructed from newer state. Combined domain and HTTP tests 
 source/session evidence, read-only mutation, non-participant reads, and mailbox
 actor-filter injection. Indexed inbox/outbox queries support completed/source
 filters and exclusive sequence pagination; schema v2 migration backfill is
-tested. HTTP MCP gateway wiring, local artifacts, retrieval indexing, and
-offline write outbox remain open, so the full Phase 1 exit gate is not yet
+tested. Artifact HTTP integration and unreachable-generation GC, HTTP MCP
+gateway wiring, retrieval indexing, and offline write outbox remain open, so the full Phase 1 exit gate is not yet
 closed.
 
 ### Phase 2 — portable production backend

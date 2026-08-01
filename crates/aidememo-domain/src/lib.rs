@@ -15,7 +15,10 @@ mod identity;
 mod record;
 mod storage;
 
-pub use artifact::{ArtifactBodyRef, ArtifactPath, ArtifactReference, ContentDigest};
+pub use artifact::{
+    ArtifactBodyRef, ArtifactObservation, ArtifactPath, ArtifactReference, ArtifactReservation,
+    ContentDigest,
+};
 pub use change::{
     ChangeBatch, ChangeCursor, ChangeEntry, ChangeOperation, MaterializedChange,
     MaterializedChangeBatch, ProjectSnapshot,

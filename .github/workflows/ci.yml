@@ -103,7 +103,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: ubuntu-aidememo-msrv-v1
-      - run: cargo check --locked -p aidememo-core -p aidememo-cli
+      - run: cargo check --locked -p aidememo-core -p aidememo-cli -p aidememo-artifacts
       - run: cargo check --locked -p aidememo-core --no-default-features --features s3
 
   test:

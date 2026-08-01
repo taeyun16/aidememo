@@ -21,6 +21,7 @@ vectors) and exposes it to LLM agents via CLI, MCP server, and native bindings
 | `aidememo-store-local` | Separate single-node SQLite command ledger for the future server mode; does not replace the embedded core store |
 | `aidememo-server` | Authenticated single-node HTTP resource command, exact-read, change-feed, bootstrap, and health boundary |
 | `aidememo-client` | Authenticated SSOT HTTP transport plus a separate SQLite exact-read replica and durable project cursor |
+| `aidememo-artifacts` | Separate local immutable-body repository with SQLite path reservations and CAS publication; not yet exposed by the server |
 | `aidememo-core` | SQLite default store, optional redb store, ingest, search, traverse, lint, validity windows |
 | `aidememo-cli` | `aidememo` binary (CLI + stdio/HTTP MCP) |
 | `aidememo-napi`, `aidememo-python`, `aidememo-nif`, `aidememo-ffi` | language bindings (full API; SQLite default, optional `redb` Cargo feature) |
@@ -41,7 +42,7 @@ cargo check -p aidememo-core --no-default-features --features redb
 cargo check -p aidememo-cli --features s3
 cargo test -p aidememo-core --features semantic
 cargo test -p aidememo-cli --bin aidememo
-cargo test -p aidememo-domain -p aidememo-service -p aidememo-store-local -p aidememo-server -p aidememo-client
+cargo test -p aidememo-domain -p aidememo-service -p aidememo-store-local -p aidememo-server -p aidememo-client -p aidememo-artifacts
 ./scripts/ci-local.sh lint
 ./scripts/ci-local.sh demo               # first-run workflow memory smoke
 ./scripts/ci-local.sh test
@@ -409,6 +410,9 @@ crates/aidememo-server/src/
 crates/aidememo-client/src/lib.rs
   authenticated HTTP identity/change/resource transport + isolated SQLite exact-read replica
 
+crates/aidememo-artifacts/src/lib.rs
+  local reserve/upload/publish/abort lifecycle + immutable generation bodies
+
 crates/aidememo-core/src/
   lib.rs        AideMemo public API (re-exports)
   sqlite_store.rs SQLite CRUD (default backend)
@@ -510,11 +514,17 @@ crates/aidememo-cli/src/
   one transaction, keeps tombstones, and requires explicit reset after history
   replacement. The first snapshot is bounded to 10,000 resources. It must not
   open, migrate, or reinterpret the embedded `aidememo-core` store.
+- `aidememo-artifacts` keeps its SQLite path catalog and immutable `objects/`
+  bodies under a separate root. Publication requires the current path token,
+  a live reservation, and server-observed size/SHA-256. Logical paths never
+  become filesystem paths. Uploaded but unpublished generations are unreachable
+  and reserved for a later idempotent GC pass. The 64 MiB direct-upload limit is
+  a bounded local profile, not the future S3/R2 streaming contract.
 - Typed handoff return must match the canonical session, inherited `source_id`,
   authenticated receiving actor, active `claim_id`, and result fact. The
   receiver must be an active writable project member.
 - Every new canonical adapter must pass `aidememo_domain::conformance::run`.
-- The five foundation crates remain `publish = false` until a server-facing
+- The six foundation crates remain `publish = false` until a server-facing
   public API and dependency release order are approved.
 
 ## MCP integration
