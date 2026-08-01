@@ -151,6 +151,38 @@ async fn authentication_and_identity_override_fail_closed() -> Result<(), Box<dy
     let health_body = response_json(health).await?;
     assert_eq!(health_body["schema_version"], 3);
 
+    let writer_identity = app
+        .clone()
+        .oneshot(get_request(
+            "/v1/projects/project_http/identity",
+            Some(WRITER_TOKEN),
+        )?)
+        .await?;
+    assert_eq!(writer_identity.status(), 200);
+    let writer_identity = response_json(writer_identity).await?;
+    assert_eq!(writer_identity["tenant_id"], "tenant_http");
+    assert_eq!(writer_identity["project_id"], "project_http");
+    assert_eq!(writer_identity["actor_id"], "codex-p1");
+    assert_eq!(writer_identity["role"], "writer");
+
+    let receiver_identity = app
+        .clone()
+        .oneshot(get_request(
+            "/v1/projects/project_http/identity",
+            Some(RECEIVER_TOKEN),
+        )?)
+        .await?;
+    assert_eq!(
+        response_json(receiver_identity).await?["actor_id"],
+        "codex-p2"
+    );
+
+    let missing_identity = app
+        .clone()
+        .oneshot(get_request("/v1/projects/project_http/identity", None)?)
+        .await?;
+    assert_eq!(missing_identity.status(), 401);
+
     let body = json!({
         "command_id": "command_auth",
         "project_id": "project_http",

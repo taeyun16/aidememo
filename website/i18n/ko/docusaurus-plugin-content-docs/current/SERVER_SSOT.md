@@ -264,6 +264,7 @@ membership role, token 소유권 충돌은 fail closed로 처리합니다. 서�
 | Endpoint | 계약 |
 |---|---|
 | `GET /health` | Process mode와 SQLite schema version |
+| `GET /v1/projects/{project}/identity` | Bearer에 binding된 tenant, project, actor와 활성 membership role 확인 |
 | `POST /v1/commands` | 인증된 `custom.*` `resource.put` / `resource.delete`, idempotent receipt, revision CAS |
 | `GET /v1/projects/{project}/resources/{kind}/{id}` | 정확한 정본 body 또는 tombstone |
 | `GET /v1/projects/{project}/changes` | Epoch/sequence cursor 이후 순서가 있는 change entry |
@@ -309,7 +310,8 @@ row는 한 SQLite transaction으로 commit됩니다.
 현재 process는 application replica 하나만 지원하며 내장 TLS, token
 rotation/revocation command, rate limit, artifact directory, PostgreSQL, search,
 heartbeat, MCP remote profile, 로컬 read replica, offline outbox가 아직 없습니다.
-Typed fact는 정본 ledger의 결과 증거이며 기존
+CLI는 이제 named connected handoff profile을 지원하지만 일반 원격 storage
+backend는 아닙니다. Typed fact는 정본 ledger의 결과 증거이며 기존
 embedded retrieval engine에 index되지 않습니다. 서버 계약 실행 파일이지 출시된
 SaaS나 `aidememo mcp-serve`의 대체물이 아닙니다.
 
@@ -384,8 +386,10 @@ epoch 변경, 정본 이력보다 앞선 cursor 거부를 검사합니다. In-me
 두 concurrent connection의 duplicate submission, 두 tenant 아래 같은 project ID
 격리도 검증합니다. HTTP test는 누락·미등록 bearer 거부, identity field injection,
 writer replay/conflict, reader 전용 sync, role 강제와 `codex-p1 -> codex-p2 ->
-Hermes` typed handoff chain도 검사합니다. PostgreSQL, Durable Object, artifact
-body, search adapter, MCP remote profile, 로컬 replica adapter는 아직 연결되지
+Hermes` typed handoff chain도 검사합니다. Binary 수준 CLI test도 URL 하나에
+bearer profile 두 개를 저장하고 send/inbox/accept/return/outbox로
+`codex-p1 -> codex-p2`를 완료합니다. PostgreSQL, Durable Object, artifact body,
+search adapter, MCP remote profile, 로컬 replica adapter는 아직 연결되지
 않았습니다. 네 기반 crate는 server-facing 공개 API와 release
 순서를 승인할 때까지 모두 `publish = false`이며 기존 v0.1.0 crate 배포 흐름에
 조용히 포함되지 않습니다.
@@ -422,11 +426,14 @@ multi-primary write는 만들지 않습니다.
 현재 상태: 정본 inline JSON resource, 저장된 bearer identity/membership, exact
 read, incremental change 조회, typed session/fact/handoff command에 대해서는 첫
 항목이 일부 완료됐습니다. HTTP integration test는 `codex-p1 -> codex-p2 ->
-Hermes` chain을 완료합니다. 도메인과 HTTP test를 합쳐 잘못된 actor, claim,
+Hermes` chain을 완료합니다. Named CLI profile은 같은 URL/project에 서로 다른
+bearer token을 보관할 수 있고, connected CLI 경로는 actor override를 거부하며
+로컬 결과 provenance를 인증된 서버 identity와 대조한 뒤
+`send -> inbox -> accept -> return -> outbox`를 완료합니다. 도메인과 HTTP test를 합쳐 잘못된 actor, claim,
 source/session 증거, read-only 수신자, 비참여자 read, mailbox actor filter 주입을
 거부합니다. Indexed inbox/outbox query는 completed/source filter와 exclusive
-sequence pagination을 지원하며 schema v2 migration backfill도 검사합니다. 실제
-CLI/MCP profile 연결, 로컬 artifact, replica bootstrap/reset, 서버 중단 시 offline
+sequence pagination을 지원하며 schema v2 migration backfill도 검사합니다. MCP
+profile 연결, 로컬 artifact, replica bootstrap/reset, retrieval indexing, 서버 중단 시 offline
 동작은 아직 열려 있으므로 Phase 1 종료 gate 전체는 닫히지 않았습니다.
 
 ### Phase 2 — 이식 가능한 프로덕션 backend

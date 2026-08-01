@@ -1801,9 +1801,25 @@ fn handle_session(
 fn handle_handoff(
     store_path: &Path,
     config: Config,
-    sub: cmd::HandoffSub,
+    command: cmd::HandoffCommand,
     json: bool,
 ) -> Result<String, AideMemoError> {
+    let remote_profile = command.remote_profile.or_else(|| {
+        std::env::var("AIDEMEMO_REMOTE_PROFILE")
+            .ok()
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty())
+    });
+    if let Some(remote_profile) = remote_profile {
+        return cmd::remote_handoff::run_remote_handoff(
+            store_path,
+            config,
+            &remote_profile,
+            command.sub,
+            json,
+        );
+    }
+    let sub = command.sub;
     let sub = match sub {
         cmd::HandoffSub::Send {
             from_actor,

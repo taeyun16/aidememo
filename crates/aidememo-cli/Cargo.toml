@@ -91,3 +91,8 @@ fastembed = ["aidememo-core/fastembed"]
 # which https://nnethercote.github.io/dh_view/dh_view.html renders
 # into a treemap of "live bytes by allocation site".
 dhat-heap = ["dep:dhat"]
+
+[dev-dependencies]
+aidememo-domain = { path = "../aidememo-domain" }
+aidememo-server = { path = "../aidememo-server" }
+aidememo-store-local = { path = "../aidememo-store-local" }

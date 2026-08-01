@@ -25,6 +25,7 @@ pub mod model;
 pub mod pending;
 pub mod project;
 pub mod recent;
+pub mod remote_handoff;
 pub mod skill;
 pub mod watch;
 
@@ -95,7 +96,7 @@ pub enum Command {
     Daemon(daemon::DaemonSub),
     Extract(ExtractSub),
     Session(SessionSub),
-    Handoff(HandoffSub),
+    Handoff(HandoffCommand),
     Workflow(WorkflowSub),
     Profile(ProfileSub),
     AutoRelate(AutoRelateSub),
@@ -305,6 +306,14 @@ pub enum HandoffSub {
         installation_alias: Option<String>,
         handoff_id: Option<String>,
     },
+}
+
+#[derive(Debug, Clone)]
+pub struct HandoffCommand {
+    /// Named bearer credential selected from `~/.aidememo/auth.json`.
+    pub remote_profile: Option<String>,
+    /// Existing local or remote handoff operation.
+    pub sub: HandoffSub,
 }
 
 #[derive(Debug, Clone)]
@@ -1290,7 +1299,7 @@ fn handoff_command() -> impl Parser<Command> {
     .command("run")
     .help("Run one handoff through a configured Codex/Claude installation");
 
-    construct!([
+    let sub = construct!([
         send,
         inbox,
         outbox,
@@ -1302,7 +1311,18 @@ fn handoff_command() -> impl Parser<Command> {
         complete,
         return_result,
         run,
-    ])
+    ]);
+    let remote_profile = long("remote-profile")
+        .help(
+            "Use a named authenticated server profile from `aidememo auth login`; \
+             falls back to AIDEMEMO_REMOTE_PROFILE",
+        )
+        .argument::<String>("NAME")
+        .optional();
+    construct!(HandoffCommand {
+        remote_profile,
+        sub,
+    })
     .map(Command::Handoff)
     .to_options()
     .command("handoff")

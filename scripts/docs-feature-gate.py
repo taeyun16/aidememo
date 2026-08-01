@@ -38,6 +38,8 @@ BUG_TEMPLATE = ROOT / ".github" / "ISSUE_TEMPLATE" / "bug_report.yml"
 FEATURE_TEMPLATE = ROOT / ".github" / "ISSUE_TEMPLATE" / "feature_request.yml"
 ISSUE_TEMPLATE_CONFIG = ROOT / ".github" / "ISSUE_TEMPLATE" / "config.yml"
 MCP_TOOLS_RS = ROOT / "crates" / "aidememo-cli" / "src" / "cmd" / "mcp_tools.rs"
+CLI_AUTH_RS = ROOT / "crates" / "aidememo-cli" / "src" / "cmd" / "auth.rs"
+CLI_REMOTE_HANDOFF_RS = ROOT / "crates" / "aidememo-cli" / "src" / "cmd" / "remote_handoff.rs"
 DOMAIN_LIB_RS = ROOT / "crates" / "aidememo-domain" / "src" / "lib.rs"
 DOMAIN_CONFORMANCE_RS = ROOT / "crates" / "aidememo-domain" / "src" / "conformance.rs"
 DOMAIN_HANDOFF_RS = ROOT / "crates" / "aidememo-domain" / "src" / "handoff.rs"
@@ -199,6 +201,7 @@ DOC_CONTENT_REQUIREMENTS = [
     (
         SERVER_PRODUCT_RS,
         [
+            "/identity",
             "/sessions",
             "/facts",
             "/handoffs",
@@ -208,6 +211,24 @@ DOC_CONTENT_REQUIREMENTS = [
             "before_seq",
             "project_membership",
             "return_result",
+        ],
+    ),
+    (
+        CLI_AUTH_RS,
+        [
+            "RemoteAuthProfile",
+            "load_remote_profile",
+            "named auth profiles require --project-id",
+        ],
+    ),
+    (
+        CLI_REMOTE_HANDOFF_RS,
+        [
+            "AIDEMEMO_REMOTE_PROFILE",
+            "remote handoff send",
+            "authenticated remote actor",
+            "ensure_session",
+            "ensure_fact",
         ],
     ),
     (
@@ -256,6 +277,8 @@ DOC_CONTENT_REQUIREMENTS = [
             "aidememo handoff send codex-two",
             "aidememo handoff run codex-two",
             "aidememo handoff show handoff-...",
+            "--remote-profile codex-p1",
+            "AIDEMEMO_REMOTE_PROFILE=codex-p2",
             "same tracked session",
             "not a message broker",
         ],

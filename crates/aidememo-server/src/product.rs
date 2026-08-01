@@ -24,6 +24,7 @@ const HANDOFF_KIND: &str = "handoff";
 
 pub(super) fn routes() -> Router<ServerState> {
     Router::new()
+        .route("/v1/projects/{project_id}/identity", get(get_identity))
         .route("/v1/projects/{project_id}/sessions", post(create_session))
         .route("/v1/projects/{project_id}/facts", post(create_fact))
         .route(
@@ -114,6 +115,30 @@ struct HandoffListQuery {
 struct TypedRecordResponse<T> {
     revision: Revision,
     record: T,
+}
+
+#[derive(Serialize)]
+struct IdentityResponse {
+    tenant_id: aidememo_domain::TenantId,
+    project_id: ProjectId,
+    actor_id: ActorId,
+    role: aidememo_domain::MembershipRole,
+}
+
+async fn get_identity(
+    State(state): State<ServerState>,
+    headers: HeaderMap,
+    Path(project_id): Path<String>,
+) -> Result<impl axum::response::IntoResponse, ApiError> {
+    let project_id = ProjectId::try_from(project_id)?;
+    let service = state.service.lock().await;
+    let (authenticated, membership) = request_context(&service, &headers, &project_id)?;
+    Ok(Json(IdentityResponse {
+        tenant_id: authenticated.tenant_id().clone(),
+        project_id,
+        actor_id: authenticated.actor_id().clone(),
+        role: membership.role,
+    }))
 }
 
 async fn list_handoffs(

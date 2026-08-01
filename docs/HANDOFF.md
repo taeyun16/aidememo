@@ -81,6 +81,56 @@ aidememo handoff outbox --actor-id codex-one
 The sender sees the returned outcome and linked result fact without opening the
 receiver's vendor-local chat.
 
+## Two accounts through one remote project
+
+Use named remote credential profiles when `codex-p1`, `codex-p2`, or a Hermes
+gateway run as separate authenticated actors against one server. These are
+credential profiles, unlike the credential-free local `agent` profiles used by
+`handoff run`.
+
+```bash
+aidememo auth login https://memory.example.com \
+  --profile codex-p1 --project-id aidememo \
+  --token-file ~/.config/aidememo/codex-p1.token
+aidememo auth login https://memory.example.com \
+  --profile codex-p2 --project-id aidememo \
+  --token-file ~/.config/aidememo/codex-p2.token
+
+# The sender routes the existing local tracked session into the remote SSOT.
+aidememo handoff --remote-profile codex-p1 send codex-p2 \
+  --source-id project:aidememo \
+  --focus "Review the remote boundary" \
+  "$AIDEMEMO_SESSION_ID"
+
+# The receiver identity comes from the codex-p2 bearer token.
+aidememo handoff --remote-profile codex-p2 inbox \
+  --source-id project:aidememo
+aidememo handoff --remote-profile codex-p2 accept handoff_...
+
+# Resume the session shown in the inbox, then write receiver-owned evidence.
+eval "$(aidememo session resume --source-id project:aidememo session-...)"
+aidememo fact add "Remote review passed" --type note --entities Release \
+  --source-id project:aidememo --actor-id codex-p2
+aidememo handoff --remote-profile codex-p2 return \
+  --outcome succeeded --result-fact-id 01... handoff_...
+
+aidememo handoff --remote-profile codex-p1 outbox
+```
+
+Several named profiles may use the same URL, but each keeps its own bearer
+token and fixed project. `AIDEMEMO_REMOTE_PROFILE=codex-p2` may replace the
+repeated flag. Remote operations reject `--actor-id` and `--from`: the server's
+persisted token binding is the only actor authority.
+
+This is currently a connected-write bridge. The CLI uploads the typed session
+pointer and the receiver's result fact to the canonical server ledger, while
+the embedded local store still provides packet construction, session resume,
+and retrieval. Remote `send`, `inbox`, `outbox`, `show/status`, `accept`, and
+`return` are implemented; remote `run`, heartbeat, board, offline outbox, local
+read replica, and MCP profile routing remain future work. Typed server facts are
+canonical handoff evidence but are not yet indexed by the embedded search
+engine.
+
 ## What stays the same
 
 | Stays with the workflow | Changes with the worker |

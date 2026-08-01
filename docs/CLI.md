@@ -158,6 +158,23 @@ assert that tests passed. Configure a stable default per MCP installation with
 `AIDEMEMO_ACTOR_ID`. The alias is non-secret routing metadata, not an
 authenticated vendor account id.
 
+For authenticated remote handoff, store one named credential per account even
+when both accounts use the same server URL:
+
+```bash
+aidememo auth login https://memory.example.com \
+  --profile codex-p1 --project-id aidememo --token-file /secure/p1.token
+aidememo auth login https://memory.example.com \
+  --profile codex-p2 --project-id aidememo --token-file /secure/p2.token
+aidememo handoff --remote-profile codex-p1 send codex-p2 "$AIDEMEMO_SESSION_ID"
+aidememo handoff --remote-profile codex-p2 inbox
+```
+
+The bearer binding supplies actor identity, so remote commands reject actor
+override flags. The supported connected flow is `send`, `inbox`, `outbox`,
+`show/status`, `accept`, and `return`; local execution adapters and remote MCP
+profiles are separate surfaces. See [`Hand off a tracked task`](HANDOFF.md).
+
 For repeated local accounts, use the shorter agent-oriented surface:
 `agent add --type ... --home ...`, `handoff send ALIAS`, then
 `handoff run ALIAS`.

@@ -271,6 +271,7 @@ The current HTTP surface is intentionally small:
 | Endpoint | Contract |
 |---|---|
 | `GET /health` | Process mode and SQLite schema version |
+| `GET /v1/projects/{project}/identity` | Resolve the bearer-bound tenant, project, actor, and active membership role |
 | `POST /v1/commands` | Authenticated `custom.*` `resource.put` / `resource.delete`, idempotent receipt, revision CAS |
 | `GET /v1/projects/{project}/resources/{kind}/{id}` | Exact canonical body or tombstone |
 | `GET /v1/projects/{project}/changes` | Ordered change entries after an epoch/sequence cursor |
@@ -317,7 +318,8 @@ sequence, change entry, and audit row commit in one SQLite transaction.
 This process supports one application replica and has no built-in TLS, token
 rotation/revocation command, rate limits, artifact directory, PostgreSQL,
 search, heartbeat, MCP remote profile, local read replica, or offline outbox
-yet. Typed facts are result evidence in the canonical
+yet. The CLI now supports named connected handoff profiles, but it is not a
+general remote storage backend. Typed facts are result evidence in the canonical
 ledger and are not indexed by the existing embedded retrieval engine. This is a
 server contract executable, not a released SaaS or a replacement for
 `aidememo mcp-serve`.
@@ -397,8 +399,10 @@ also cover process reopen, duplicate submission through two concurrent
 connections, and identical project IDs isolated under two tenants. HTTP tests
 cover missing and unknown bearer rejection, identity-field injection, writer
 replay/conflict behavior, reader-only sync, role enforcement, and a
-`codex-p1 -> codex-p2 -> Hermes` typed handoff chain. No PostgreSQL, Durable
-Object, artifact body, search adapter, MCP remote profile, or local replica
+`codex-p1 -> codex-p2 -> Hermes` typed handoff chain. A binary-level CLI test
+also stores two bearer profiles for one URL and completes
+`codex-p1 -> codex-p2` through send/inbox/accept/return/outbox. No PostgreSQL,
+Durable Object, artifact body, search adapter, MCP remote profile, or local replica
 adapter is wired yet. All four foundation crates are
 `publish = false` until a server-facing public API and release order are
 approved, so they do not silently enter the existing v0.1.0 crate publication
@@ -437,12 +441,16 @@ silent multi-primary writes.
 Current status: the first item is partially complete for canonical inline JSON
 resources, persisted bearer identity/membership, exact reads, incremental
 change retrieval, and typed session/fact/handoff commands. An HTTP integration
-test completes a `codex-p1 -> codex-p2 -> Hermes` chain. Combined domain and
+test completes a `codex-p1 -> codex-p2 -> Hermes` chain. Named CLI profiles can
+hold distinct bearer tokens for one URL/project; the connected CLI path now
+completes `send -> inbox -> accept -> return -> outbox` while rejecting actor
+overrides and validating local result provenance against the authenticated
+server identity. Combined domain and
 HTTP tests reject wrong actor, claim, source/session evidence, read-only
 receiver, non-participant reads, and mailbox actor-filter injection. Indexed
 inbox/outbox queries support completed/source filters and exclusive sequence
-pagination; schema v2 migration backfill is tested. Actual CLI/MCP profile
-wiring, local artifacts, replica bootstrap/reset, and unavailable-server
+pagination; schema v2 migration backfill is tested. MCP profile wiring, local
+artifacts, replica bootstrap/reset, retrieval indexing, and unavailable-server
 offline behavior remain open, so the full Phase 1 exit gate is not yet closed.
 
 ### Phase 2 — portable production backend

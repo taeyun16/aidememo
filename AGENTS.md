@@ -228,6 +228,9 @@ aidememo installation add|list|show|remove         credential-free Codex/Claude 
 aidememo handoff send AGENT [SESSION]              infer destination metadata and dispatch the session.
 aidememo handoff inbox|accept|return|outbox|show|status
                                             receiver/sender round trip with result fact link;
+aidememo handoff --remote-profile PROFILE ...
+                                            authenticated connected round trip through one
+                                            remote SSOT project; actor comes from bearer binding.
 aidememo handoff run AGENT [HANDOFF_ID]             execute oldest pending external-worker assignment;
                                             not a message queue, auto-retry, or task-success proof.
 aidememo workflow start <TITLE> [--body-file issue.md] [--source github:org/repo#123]
@@ -412,6 +415,7 @@ crates/aidememo-core/src/
 
 crates/aidememo-cli/src/
   main.rs            command dispatch
+  cmd/remote_handoff.rs named authenticated CLI profiles + typed server round trip
   output.rs          Format::{Table, Json} renderers + format_query_result
   cmd/mod.rs         bpaf top-level + per-command parsers (--project / --json)
   cmd/{init,watch,model,feedback,adapt,doctor,recent,edit,graph,project}.rs
@@ -483,8 +487,10 @@ crates/aidememo-cli/src/
   `handoff` are writable only through typed APIs; the raw endpoint must not
   bypass their invariants. The first typed slice supports session create,
   session-attached fact create, and handoff send/indexed inbox/outbox/accept/
-  return/status. Mailbox actor identity is always derived from authentication;
-  it does not yet provide heartbeat, search, MCP remote profiles, or local replicas.
+  return/status plus bearer-bound identity inspection. Mailbox actor identity is
+  always derived from authentication. Named CLI profiles support the connected
+  handoff round trip; the server does not yet provide heartbeat, search, MCP
+  remote profiles, or local replicas.
 - Typed handoff return must match the canonical session, inherited `source_id`,
   authenticated receiving actor, active `claim_id`, and result fact. The
   receiver must be an active writable project member.

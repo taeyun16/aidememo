@@ -80,6 +80,55 @@ aidememo handoff outbox --actor-id codex-one
 발신자는 수신자의 vendor-local 채팅을 열지 않고도 반환 결과와 연결된 result
 fact를 확인합니다.
 
+## 하나의 원격 프로젝트를 사용하는 두 계정
+
+`codex-p1`, `codex-p2` 또는 Hermes gateway가 하나의 서버에서 서로 다른 인증
+actor로 동작할 때 named remote credential profile을 사용합니다. 이는
+`handoff run`이 사용하는 credential-free 로컬 `agent` profile과 다릅니다.
+
+```bash
+aidememo auth login https://memory.example.com \
+  --profile codex-p1 --project-id aidememo \
+  --token-file ~/.config/aidememo/codex-p1.token
+aidememo auth login https://memory.example.com \
+  --profile codex-p2 --project-id aidememo \
+  --token-file ~/.config/aidememo/codex-p2.token
+
+# 발신자는 기존 로컬 추적 세션을 원격 SSOT로 라우팅합니다.
+aidememo handoff --remote-profile codex-p1 send codex-p2 \
+  --source-id project:aidememo \
+  --focus "원격 경계 검토" \
+  "$AIDEMEMO_SESSION_ID"
+
+# 수신자 identity는 codex-p2 bearer token에서 결정됩니다.
+aidememo handoff --remote-profile codex-p2 inbox \
+  --source-id project:aidememo
+aidememo handoff --remote-profile codex-p2 accept handoff_...
+
+# Inbox에 표시된 session을 resume한 뒤 수신자 소유 근거를 작성합니다.
+eval "$(aidememo session resume --source-id project:aidememo session-...)"
+aidememo fact add "원격 리뷰 통과" --type note --entities Release \
+  --source-id project:aidememo --actor-id codex-p2
+aidememo handoff --remote-profile codex-p2 return \
+  --outcome succeeded --result-fact-id 01... handoff_...
+
+aidememo handoff --remote-profile codex-p1 outbox
+```
+
+여러 named profile이 같은 URL을 사용할 수 있지만 각 profile은 고유한 bearer
+token과 고정 project를 유지합니다. 반복되는 flag 대신
+`AIDEMEMO_REMOTE_PROFILE=codex-p2`를 사용할 수 있습니다. 원격 operation은
+`--actor-id`와 `--from`을 거부하며 서버의 저장된 token binding만 actor authority로
+사용합니다.
+
+현재 구현은 connected-write bridge입니다. CLI는 typed session pointer와 수신자의
+result fact를 canonical server ledger에 올리지만, packet 생성, session resume,
+retrieval은 계속 embedded local store가 담당합니다. 원격 `send`, `inbox`,
+`outbox`, `show/status`, `accept`, `return`은 구현됐습니다. 원격 `run`, heartbeat,
+board, offline outbox, local read replica, MCP profile routing은 이후 작업입니다.
+Typed server fact는 canonical handoff 근거이지만 아직 embedded search engine에는
+index되지 않습니다.
+
 ## 유지되는 것
 
 | 워크플로에 유지 | 작업자와 함께 변경 |

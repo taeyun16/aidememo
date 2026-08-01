@@ -325,6 +325,24 @@ aidememo handoff board --stale-after 1h --include-completed
 
 [5단계 핸드오프 가이드](docs/HANDOFF.md)에서 가장 짧은 경로부터 시작하세요.
 
+하나의 원격 SSOT를 공유하는 인증 계정에는 같은 URL을 쓰더라도 별도 bearer
+profile을 저장하고 handoff 경계에서 발신자 또는 수신자를 선택합니다.
+
+```bash
+aidememo auth login https://memory.example.com --profile codex-p1 \
+  --project-id aidememo --token-file /secure/p1.token
+aidememo auth login https://memory.example.com --profile codex-p2 \
+  --project-id aidememo --token-file /secure/p2.token
+aidememo handoff --remote-profile codex-p1 send codex-p2 "$AIDEMEMO_SESSION_ID"
+aidememo handoff --remote-profile codex-p2 inbox
+```
+
+서버가 각 token에서 actor identity를 결정하므로 원격 actor override flag는
+거부됩니다. Connected CLI 왕복은 구현됐지만 원격 MCP profile, retrieval replica,
+offline write는 SSOT roadmap에 남아 있습니다. 경계는
+[서버 및 SSOT 아키텍처](website/i18n/ko/docusaurus-plugin-content-docs/current/SERVER_SSOT.md)를
+참고하세요.
+
 <details>
 <summary>프로토콜, 수신 lifecycle, 측정 경계</summary>
 

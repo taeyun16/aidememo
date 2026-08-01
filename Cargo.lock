@@ -63,6 +63,9 @@ name = "aidememo-cli"
 version = "0.1.0"
 dependencies = [
  "aidememo-core",
+ "aidememo-domain",
+ "aidememo-server",
+ "aidememo-store-local",
  "axum",
  "bpaf",
  "chrono",

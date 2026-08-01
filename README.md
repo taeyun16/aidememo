@@ -340,6 +340,24 @@ aidememo handoff board --stale-after 1h --include-completed
 
 [Follow the five-step handoff guide](docs/HANDOFF.md) for the shortest path.
 
+For authenticated accounts sharing one remote SSOT, store separate bearer
+profiles even when they use the same URL, then select the sender or receiver at
+the handoff boundary:
+
+```bash
+aidememo auth login https://memory.example.com --profile codex-p1 \
+  --project-id aidememo --token-file /secure/p1.token
+aidememo auth login https://memory.example.com --profile codex-p2 \
+  --project-id aidememo --token-file /secure/p2.token
+aidememo handoff --remote-profile codex-p1 send codex-p2 "$AIDEMEMO_SESSION_ID"
+aidememo handoff --remote-profile codex-p2 inbox
+```
+
+The server derives actor identity from each token; remote actor override flags
+are rejected. The connected CLI round trip is implemented now, while remote
+MCP profiles, retrieval replicas, and offline writes remain on the SSOT roadmap.
+See [Server and SSOT architecture](docs/SERVER_SSOT.md) for that boundary.
+
 <details>
 <summary>Protocol, receiver lifecycle, and measured boundaries</summary>
 
