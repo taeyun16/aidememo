@@ -28,6 +28,7 @@ EVIDENCE_DOC = ROOT / "docs" / "EVIDENCE.md"
 MEASUREMENTS_DOC = ROOT / "docs" / "MEASUREMENTS.md"
 LFM_EXPERIMENTS_DOC = ROOT / "docs" / "LFM_EXPERIMENTS.md"
 RELEASE_DOC = ROOT / "docs" / "RELEASE.md"
+SERVER_SSOT_DOC = ROOT / "docs" / "SERVER_SSOT.md"
 SCRIPTS_README = ROOT / "scripts" / "README.md"
 INSTALL_SCRIPT = ROOT / "scripts" / "install.sh"
 CONTRIBUTING = ROOT / "CONTRIBUTING.md"
@@ -69,6 +70,7 @@ REQUIRED_SIDEBAR_DOCS = [
     "CLI",
     "MCP",
     "SHARED_MEMORY",
+    "SERVER_SSOT",
     "CODING_AGENTS",
     "CODEX_MULTI_PROFILE",
     "AGENT_WORKFLOWS",
@@ -96,6 +98,27 @@ REQUIRED_HOMEPAGE_DOCS = [
 ]
 
 DOC_CONTENT_REQUIREMENTS = [
+    (
+        SERVER_SSOT_DOC,
+        [
+            "accepted target direction; not the current production contract",
+            "tenant_id",
+            "project_id",
+            "command_id",
+            "expected_revision",
+            "project_epoch",
+            "after_seq",
+            "Durable Objects",
+            "PostgreSQL",
+            "S3-compatible",
+            "tombstones",
+            "Transactional outbox",
+            "aidememo-domain",
+            "aidememo-store-postgres",
+            "Phase 4",
+            "distributed POSIX filesystem",
+        ],
+    ),
     (
         HANDOFF_DOC,
         [

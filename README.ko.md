@@ -525,6 +525,10 @@ entity name/type ontology를 공유하므로 상호 신뢰하지 않는 tenant�
 적합한 배치 방식을 고르려면
 [공유 메모리 배치 가이드](website/i18n/ko/docusaurus-plugin-content-docs/current/SHARED_MEMORY.md)를
 참고하세요.
+채택된 멀티테넌트 SaaS 및 Kubernetes 방향은
+[서버 및 SSOT 아키텍처](website/i18n/ko/docusaurus-plugin-content-docs/current/SERVER_SSOT.md)에
+별도로 문서화되어 있습니다. 이는 현재 `mcp-serve` 바이너리의 기능이 아니라
+단계별 목표입니다.
 
 ### 에이전트가 코드를 실행할 수 있을 때 Python으로 메모리 조합
 

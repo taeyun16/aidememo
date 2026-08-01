@@ -93,6 +93,12 @@ Entity name과 type은 공용 ontology로 유지되므로 이는 적대적인 te
 아니라 협력하는 에이전트를 위한 partition입니다. 배포 패턴과 trust boundary는
 [`공용 메모리 레이어`](SHARED_MEMORY.md)를 참고하세요.
 
+채택된 server 목표는 독립적인 tenant/project identity, deletion tombstone을
+포함한 순서가 있는 change log, 명시적인 read cache 또는 offline branch로서의
+로컬 저장소를 사용합니다. 이 목표는 현재 `mcp-serve` process에 구현되어 있지
+않습니다. 호스팅 및 온프레미스 배포의 단계별 이식성 계약은
+[`서버 및 SSOT 아키텍처`](SERVER_SSOT.md)를 참고하세요.
+
 ## 검색 흐름
 
 ```mermaid
@@ -231,6 +237,7 @@ sequenceDiagram
 | CLI 명령과 파서 | `crates/aidememo-cli/src/cmd/mod.rs`, `crates/aidememo-cli/src/main.rs` | [`CLI 사용법`](CLI.md), [`기능 목록`](FEATURES.md) |
 | MCP 도구와 스키마 | `crates/aidememo-cli/src/cmd/mcp_tools.rs` | [`MCP 설정`](MCP.md), [`에이전트 워크플로`](AGENT_WORKFLOWS.md) |
 | 공용 메모리 identity 경계 | `crates/aidememo-cli/src/cmd/mcp_serve.rs`, `crates/aidememo-core/src/backend.rs` | [`공용 메모리 레이어`](SHARED_MEMORY.md), [`MCP 설정`](MCP.md) |
+| Server / SSOT 목표 계약 | 제안된 portable domain, server, PostgreSQL, artifact, client 경계 | [`서버 및 SSOT 아키텍처`](SERVER_SSOT.md) |
 | 코어 API와 검색 | `crates/aidememo-core/src/lib.rs`, `search.rs`, `graph.rs` | [`아키텍처`](ARCHITECTURE.md), [`운영`](OPERATIONS.md) |
 | 저장소 디스패치 | `crates/aidememo-core/src/backend.rs`, `sqlite_store.rs`, `store.rs` | [`운영`](OPERATIONS.md), [`기능 목록`](FEATURES.md) |
 | Python 에이전트 SDK | `packages/aidememo-agent-sdk/src/aidememo_agent/sdk.py` | [`Python SDK`](SDK.md), [`에이전트 워크플로`](AGENT_WORKFLOWS.md) |

@@ -574,6 +574,9 @@ separate stores.
 
 See the [shared-memory deployment guide](docs/SHARED_MEMORY.md) for choosing
 between one trusted store, token-bound source partitions, and separate stores.
+The accepted multi-tenant SaaS and Kubernetes direction is documented
+separately in the [server and SSOT architecture](docs/SERVER_SSOT.md); it is a
+staged target, not a capability of the current `mcp-serve` binary.
 
 ### Compose memory in Python when the agent can run code
 
