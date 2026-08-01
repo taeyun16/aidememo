@@ -336,6 +336,15 @@ raise SystemExit(7)
             "dispatch": False,
         },
     )
+    failure_reclaim = mcp_tool(
+        "claude-main",
+        "aidememo_handoff_inbox",
+        {
+            "action": "accept",
+            "handoff_id": failure_id,
+            "claim_id": "worker-retry-fixture",
+        },
+    )
 
     completed_rows = success_history.get("assignments") or []
     failed_rows = failure_inbox.get("assignments") or []
@@ -374,6 +383,13 @@ raise SystemExit(7)
             and len(completed_rows) == 1
             and completed_rows[0]["status"] == "completed"
         ),
+        "automatic_workers_persist_distinct_claim_tokens": (
+            len(completed_rows) == 1
+            and len(failed_rows) == 1
+            and str(completed_rows[0].get("claim_id") or "").startswith("worker-")
+            and str(failed_rows[0].get("claim_id") or "").startswith("worker-")
+            and completed_rows[0]["claim_id"] != failed_rows[0]["claim_id"]
+        ),
         "sender_outbox_links_success_result_fact": (
             len(success_outbox["assignments"]) == 1
             and success_outbox["assignments"][0]["result_fact_id"]
@@ -393,6 +409,12 @@ raise SystemExit(7)
             and len(failed_rows) == 1
             and failed_rows[0]["handoff_id"] == failure_id
             and failed_rows[0]["status"] == "accepted"
+        ),
+        "failed_assignment_accepts_new_worker_claim": (
+            failure_reclaim["assignment"]["claim_id"] == "worker-retry-fixture"
+            and failure_reclaim["assignment"]["attempt_count"] == 2
+            and failure_reclaim["assignment"]["outcome"] is None
+            and failure_reclaim["assignment"]["result_fact_id"] is None
         ),
         "sender_status_links_failure_without_auto_retry": (
             failure_status["assignment"]["result_fact_id"]

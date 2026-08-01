@@ -21,6 +21,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+import uuid
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any, Sequence
@@ -452,7 +453,10 @@ def run_external_assignment(
         else _require_nonempty("handoff_id", config.handoff_id)
     )
 
-    accepted = client.handoff_accept(handoff_id, actor_id=actor_id)
+    claim_id = f"worker-{uuid.uuid4().hex}"
+    accepted = client.handoff_accept(
+        handoff_id, actor_id=actor_id, claim_id=claim_id
+    )
     session_id = _assignment_value(accepted, "session_id")
     source_id = _assignment_value(accepted, "source_id")
     if not session_id:
@@ -520,7 +524,13 @@ def run_external_assignment(
                             _pulse_heartbeat(client, config, handoff_id, kanban_task)
                         )
                         heartbeat_count += 1
-                        next_heartbeat = now + config.heartbeat_interval_seconds
+                        # Schedule from pulse completion. Forwarding to an
+                        # upstream orchestrator can itself take longer than the
+                        # interval; using the pre-pulse timestamp would then
+                        # trigger an immediate duplicate heartbeat.
+                        next_heartbeat = (
+                            time.monotonic() + config.heartbeat_interval_seconds
+                        )
         except OSError as exc:
             exit_code = 1
             stderr = f"failed to start external worker: {exc}"

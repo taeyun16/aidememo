@@ -200,6 +200,32 @@ def test_cli_backend_override_is_forwarded(monkeypatch) -> None:
     ]
 
 
+def test_cli_retries_sqlite_database_is_locked_with_jitter(monkeypatch) -> None:
+    class Locked:
+        returncode = 1
+        stdout = ""
+        stderr = "failed to write to table 'pragma': database is locked"
+
+    class Completed:
+        returncode = 0
+        stdout = "{}"
+        stderr = ""
+
+    runs = iter([Locked(), Completed()])
+    sleeps: list[float] = []
+    monkeypatch.setattr("aidememo_agent.client.subprocess.run", lambda *args, **kwargs: next(runs))
+    monkeypatch.setattr("aidememo_agent.client.time.sleep", sleeps.append)
+
+    client = AideMemoClient.__new__(AideMemoClient)
+    client.store_path = "/tmp/wiki.sqlite"
+    client.storage_backend = "libsqlite"
+    client.lock_retry_ms = 500
+
+    assert client._cli_json(["stats"]) == {}
+    assert len(sleeps) == 1
+    assert 0.020 <= sleeps[0] <= 0.150
+
+
 def test_flatten_dedupe_group_and_coverage() -> None:
     sdk = AideMemoMemorySDK(FakeClient())
     batches = [

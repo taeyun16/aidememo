@@ -14,7 +14,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from hermes_aidememo.client import AideMemoClient
-from hermes_aidememo.plugin import register
+from hermes_aidememo.plugin import _resolve_actor_id, _resolve_source_id, register
 
 
 class FakeCtx:
@@ -339,6 +339,60 @@ def test_register_passes_configured_source_id(monkeypatch: pytest.MonkeyPatch) -
     assert captured["source_id"] == "team-alpha"
     assert captured["actor_id"] == "hermes:account-a"
     assert captured["lock_retry_ms"] == 123
+
+
+def test_explicit_source_and_actor_override_hermes_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AIDEMEMO_SOURCE_ID", "env-source")
+    monkeypatch.setenv("AIDEMEMO_ACTOR_ID", "env-actor")
+    monkeypatch.setenv("HERMES_KANBAN_BOARD", "project-board")
+    monkeypatch.setenv("HERMES_PROFILE", "reviewer")
+
+    config = {
+        "source_id": "configured-source",
+        "actor_id": "configured-actor",
+        "source_from_hermes": "board",
+        "actor_from_hermes_profile": True,
+    }
+    assert _resolve_source_id(config) == "configured-source"
+    assert _resolve_actor_id(config) == "configured-actor"
+
+
+@pytest.mark.parametrize(
+    ("mode", "tenant", "expected"),
+    [
+        ("board", "tenant/a", "hermes:board:aidememo-project"),
+        (
+            "board_tenant",
+            "tenant/a",
+            "hermes:board:aidememo-project:tenant:tenant%2Fa",
+        ),
+        ("board_tenant", "", "hermes:board:aidememo-project"),
+    ],
+)
+def test_hermes_board_and_tenant_source_mapping(
+    monkeypatch: pytest.MonkeyPatch,
+    mode: str,
+    tenant: str,
+    expected: str,
+) -> None:
+    monkeypatch.delenv("AIDEMEMO_SOURCE_ID", raising=False)
+    monkeypatch.setenv("HERMES_KANBAN_BOARD", "aidememo-project")
+    if tenant:
+        monkeypatch.setenv("HERMES_TENANT", tenant)
+    else:
+        monkeypatch.delenv("HERMES_TENANT", raising=False)
+
+    assert _resolve_source_id({"source_from_hermes": mode}) == expected
+
+
+def test_hermes_profile_actor_mapping_is_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("AIDEMEMO_ACTOR_ID", raising=False)
+    monkeypatch.setenv("HERMES_PROFILE", "code/reviewer")
+
+    assert _resolve_actor_id({}) is None
+    assert _resolve_actor_id({"actor_from_hermes_profile": True}) == "hermes:code%2Freviewer"
 
 
 def test_registers_hermes_slash_commands(fake_ctx: FakeCtx) -> None:

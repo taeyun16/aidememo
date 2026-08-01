@@ -153,6 +153,46 @@ pub trait StoreBackend {
     /// List entities with the existing AideMemo filters.
     fn entity_list(&self, opts: ListOpts) -> Result<Vec<crate::types::EntitySummary>>;
 
+    /// Load full entity records of one type.
+    ///
+    /// The default implementation preserves backend compatibility. Backends
+    /// with a structured type index should override this to avoid a full
+    /// entity scan and follow-up point reads.
+    fn entity_records_by_type(
+        &self,
+        entity_type: &crate::types::EntityType,
+    ) -> Result<Vec<EntityRecord>> {
+        self.entity_list(ListOpts {
+            entity_type: Some(entity_type.clone()),
+            limit: None,
+            ..Default::default()
+        })?
+        .into_iter()
+        .map(|summary| self.entity_get_by_id(summary.id))
+        .collect()
+    }
+
+    /// Load full entity records matching one type and every required tag.
+    ///
+    /// Backends may override this with a tag index. The fallback keeps the
+    /// contract available to redb and other stores without changing their
+    /// persistence format.
+    fn entity_records_by_type_and_tags(
+        &self,
+        entity_type: &crate::types::EntityType,
+        required_tags: &[String],
+    ) -> Result<Vec<EntityRecord>> {
+        Ok(self
+            .entity_records_by_type(entity_type)?
+            .into_iter()
+            .filter(|record| {
+                required_tags
+                    .iter()
+                    .all(|required| record.tags.iter().any(|tag| tag == required))
+            })
+            .collect())
+    }
+
     /// Delete one entity.
     fn entity_delete(&mut self, name: &str) -> Result<()>;
 
@@ -450,6 +490,21 @@ impl StoreBackend for Store {
         Store::entity_list(self, opts)
     }
 
+    fn entity_records_by_type(
+        &self,
+        entity_type: &crate::types::EntityType,
+    ) -> Result<Vec<EntityRecord>> {
+        Store::entity_records_by_type_and_tags(self, entity_type, &[])
+    }
+
+    fn entity_records_by_type_and_tags(
+        &self,
+        entity_type: &crate::types::EntityType,
+        required_tags: &[String],
+    ) -> Result<Vec<EntityRecord>> {
+        Store::entity_records_by_type_and_tags(self, entity_type, required_tags)
+    }
+
     fn entity_delete(&mut self, name: &str) -> Result<()> {
         Store::entity_delete(self, name)
     }
@@ -646,6 +701,35 @@ impl StoreBackend for StoreKind {
             StoreKind::Redb(store) => store.entity_list(opts),
             #[cfg(feature = "sqlite")]
             StoreKind::Sqlite(store) => store.entity_list(opts),
+        }
+    }
+
+    fn entity_records_by_type(
+        &self,
+        entity_type: &crate::types::EntityType,
+    ) -> Result<Vec<EntityRecord>> {
+        match self {
+            #[cfg(feature = "redb")]
+            StoreKind::Redb(store) => StoreBackend::entity_records_by_type(store, entity_type),
+            #[cfg(feature = "sqlite")]
+            StoreKind::Sqlite(store) => StoreBackend::entity_records_by_type(store, entity_type),
+        }
+    }
+
+    fn entity_records_by_type_and_tags(
+        &self,
+        entity_type: &crate::types::EntityType,
+        required_tags: &[String],
+    ) -> Result<Vec<EntityRecord>> {
+        match self {
+            #[cfg(feature = "redb")]
+            StoreKind::Redb(store) => {
+                StoreBackend::entity_records_by_type_and_tags(store, entity_type, required_tags)
+            }
+            #[cfg(feature = "sqlite")]
+            StoreKind::Sqlite(store) => {
+                StoreBackend::entity_records_by_type_and_tags(store, entity_type, required_tags)
+            }
         }
     }
 

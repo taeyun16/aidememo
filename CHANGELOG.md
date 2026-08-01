@@ -4,6 +4,16 @@
 
 ### Added
 
+- **Handoff concurrency and lookup hardening** — assignment transitions now use
+  optimistic compare-and-swap revisions so concurrent accept, heartbeat, and
+  return writers fail closed instead of overwriting newer state. Automatic
+  workers add a unique claim token; active assignments reject competing claims,
+  while a fact-linked failed assignment permits a new claim and increments
+  `attempt_count`. SQLite keeps a backfilled entity-tag index and queries
+  handoffs by type, actor, and source without scanning unrelated entities; redb
+  uses the same API with a single filtered record scan. Worker heartbeats
+  schedule from pulse completion to avoid immediate duplicates when upstream
+  forwarding is slow.
 - **Handoff-first documentation** — the GitHub README and Docusaurus homepage
   now lead from the cross-agent continuity promise into a five-step tracked
   workflow handoff. A dedicated English/Korean guide separates always-on shared

@@ -195,8 +195,10 @@ vendor 계정 인증이 아닙니다. 할당 장부는 기존 세션 포인터�
 
 기본 SQLite 백엔드는 WAL mode를 사용하고 `BEGIN IMMEDIATE`로 쓰기를 시작합니다.
 각 SQLite busy wait은 최대 1초로 제한하며, 전체 `store.lock_retry_ms` budget이
-소진될 때까지 20–150 ms jitter를 두고 충돌을 재시도합니다. 선택형 redb
-백엔드도 다른 프로세스가 redb의 독점 파일 lock을 가진 경우 같은 전체
+소진될 때까지 20–150 ms jitter를 두고 충돌을 재시도합니다. 같은 budget이
+SQLite PRAGMA/schema 초기화에도 적용되므로 여러 새 Codex/Hermes process가 한
+저장소를 열 때 `database is locked` 오류로 즉시 실패하지 않습니다. 선택형
+redb 백엔드도 다른 프로세스가 redb의 독점 파일 lock을 가진 경우 전체
 budget으로 저장소 열기를 재시도합니다.
 
 공유 쓰기에는 하나의 daemon을 실행합니다.

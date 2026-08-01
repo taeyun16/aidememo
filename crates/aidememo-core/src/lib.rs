@@ -540,6 +540,25 @@ impl AideMemo {
         self.store.read().entity_list(opts)
     }
 
+    /// Load full entity records of one type.
+    ///
+    /// SQLite uses its structured type index and returns the records directly,
+    /// avoiding the generic list path's fact counts and follow-up point reads.
+    pub fn entity_records_by_type(&self, entity_type: &EntityType) -> Result<Vec<EntityRecord>> {
+        self.store.read().entity_records_by_type(entity_type)
+    }
+
+    /// Load full entity records matching one type and every required tag.
+    pub fn entity_records_by_type_and_tags(
+        &self,
+        entity_type: &EntityType,
+        required_tags: &[String],
+    ) -> Result<Vec<EntityRecord>> {
+        self.store
+            .read()
+            .entity_records_by_type_and_tags(entity_type, required_tags)
+    }
+
     /// List entities that have facts in an optional source namespace.
     /// Source filtering and source-local fact counts happen before pagination,
     /// preventing unrelated entities from displacing a bounded page.

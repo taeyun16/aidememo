@@ -315,9 +315,19 @@ class AideMemoMemorySDK:
         return self.client.handoff_status(handoff_id, actor_id=actor_id)
 
     def handoff_accept(
-        self, handoff_id: str, *, actor_id: str | None = None
+        self,
+        handoff_id: str,
+        *,
+        actor_id: str | None = None,
+        claim_id: str | None = None,
     ) -> dict[str, Any]:
-        return self.client.handoff_accept(handoff_id, actor_id=actor_id)
+        if claim_id is None:
+            return self.client.handoff_accept(handoff_id, actor_id=actor_id)
+        return self.client.handoff_accept(
+            handoff_id,
+            actor_id=actor_id,
+            claim_id=claim_id,
+        )
 
     def handoff_complete(
         self, handoff_id: str, *, actor_id: str | None = None

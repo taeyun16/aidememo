@@ -28,6 +28,8 @@ const FACT_DEDUP_SCOPE_VERSION_KEY: &str = "fact_dedup_scope_version";
 const FACT_DEDUP_SCOPE_VERSION: &[u8] = b"2";
 const RELATION_SCOPE_VERSION_KEY: &str = "relation_scope_version";
 const RELATION_SCOPE_VERSION: &[u8] = b"1";
+const ENTITY_TAG_INDEX_VERSION_KEY: &str = "entity_tag_index_version";
+const ENTITY_TAG_INDEX_VERSION: &[u8] = b"1";
 
 /// SQLite-backed store.
 pub struct SqliteStore {
@@ -62,7 +64,8 @@ impl SqliteStore {
             config: Arc::new(config),
             path: path.to_path_buf(),
         };
-        store.init_schema()?;
+        let lock_retry_ms = store.config.store.lock_retry_ms;
+        sqlite_lock_retry(lock_retry_ms, || store.init_schema())?;
         Ok(store)
     }
 
@@ -103,6 +106,13 @@ impl SqliteStore {
                 CREATE TABLE IF NOT EXISTS entity_names (
                     name_lower TEXT PRIMARY KEY,
                     entity_id TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS entity_tags (
+                    entity_id TEXT NOT NULL,
+                    tag TEXT NOT NULL,
+                    PRIMARY KEY (entity_id, tag),
+                    FOREIGN KEY (entity_id) REFERENCES entities(id) ON DELETE CASCADE
                 );
 
                 CREATE TABLE IF NOT EXISTS facts (
@@ -158,11 +168,16 @@ impl SqliteStore {
 
         Self::migrate_fact_dedup_scope(&mut conn)?;
         Self::migrate_relation_scope(&mut conn)?;
+        Self::migrate_entity_tag_index(&mut conn)?;
 
         conn.execute_batch(
             r#"
                 CREATE INDEX IF NOT EXISTS idx_fact_entities_fact
                     ON fact_entities(fact_id);
+                CREATE INDEX IF NOT EXISTS idx_entities_type_updated
+                    ON entities(entity_type, updated_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_entity_tags_tag_entity
+                    ON entity_tags(tag, entity_id);
                 CREATE INDEX IF NOT EXISTS idx_relations_target
                     ON relations(target_id);
                 CREATE INDEX IF NOT EXISTS idx_search_feedback_session
@@ -180,6 +195,61 @@ impl SqliteStore {
                 "#,
         )
         .map_err(|source| sqlite_write("schema", "<indexes>", source))?;
+        Ok(())
+    }
+
+    /// Backfill the structured tag index for stores created before it existed.
+    fn migrate_entity_tag_index(conn: &mut Connection) -> Result<()> {
+        let current: Option<Vec<u8>> = conn
+            .query_row(
+                "SELECT value FROM meta WHERE key = ?1",
+                params![ENTITY_TAG_INDEX_VERSION_KEY],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|source| sqlite_read("meta", ENTITY_TAG_INDEX_VERSION_KEY, source))?;
+        if current.as_deref() == Some(ENTITY_TAG_INDEX_VERSION) {
+            return Ok(());
+        }
+
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|source| sqlite_write("schema", "entity tag migration begin", source))?;
+        let records = {
+            let mut stmt = tx
+                .prepare("SELECT id, record_json FROM entities ORDER BY id ASC")
+                .map_err(|source| sqlite_read("entities", "<tag migration prepare>", source))?;
+            let rows = stmt
+                .query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?))
+                })
+                .map_err(|source| sqlite_read("entities", "<tag migration iter>", source))?;
+            let mut records = Vec::new();
+            for row in rows {
+                records.push(
+                    row.map_err(|source| sqlite_read("entities", "<tag migration row>", source))?,
+                );
+            }
+            records
+        };
+        tx.execute("DELETE FROM entity_tags", [])
+            .map_err(|source| sqlite_write("entity_tags", "<migration clear>", source))?;
+        for (raw_id, bytes) in records {
+            let record: EntityRecord =
+                serde_json::from_slice(&bytes).map_err(|source| AideMemoError::Deserialize {
+                    context: format!("entity tag migration {raw_id}"),
+                    source,
+                })?;
+            Self::replace_entity_tags(&tx, &record)?;
+        }
+        tx.execute(
+            "INSERT INTO meta (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![ENTITY_TAG_INDEX_VERSION_KEY, ENTITY_TAG_INDEX_VERSION],
+        )
+        .map_err(|source| sqlite_write("meta", ENTITY_TAG_INDEX_VERSION_KEY, source))?;
+        tx.commit()
+            .map_err(|source| sqlite_write("schema", "entity tag migration commit", source))?;
         Ok(())
     }
 
@@ -428,6 +498,7 @@ impl SqliteStore {
             )
             .map_err(|source| sqlite_write("entity_names", name, source))?;
         }
+        Self::replace_entity_tags(conn, record)?;
         Ok(())
     }
 
@@ -467,6 +538,24 @@ impl SqliteStore {
                 params![name.to_lowercase(), record.id.to_string()],
             )
             .map_err(|source| sqlite_write("entity_names", name, source))?;
+        }
+        Self::replace_entity_tags(conn, record)?;
+        Ok(())
+    }
+
+    fn replace_entity_tags(conn: &Connection, record: &EntityRecord) -> Result<()> {
+        let entity_id = record.id.to_string();
+        conn.execute(
+            "DELETE FROM entity_tags WHERE entity_id = ?1",
+            params![entity_id],
+        )
+        .map_err(|source| sqlite_write("entity_tags", &record.id.to_string(), source))?;
+        for tag in &record.tags {
+            conn.execute(
+                "INSERT OR IGNORE INTO entity_tags (entity_id, tag) VALUES (?1, ?2)",
+                params![record.id.to_string(), tag],
+            )
+            .map_err(|source| sqlite_write("entity_tags", tag, source))?;
         }
         Ok(())
     }
@@ -851,12 +940,30 @@ impl StoreBackend for SqliteStore {
         let name = name.to_string();
         let lock_retry_ms = self.config.store.lock_retry_ms;
         sqlite_lock_retry(lock_retry_ms, || {
-            let mut record = self.entity_get(&name)?;
-            record.update(input.clone());
             let mut conn = self.conn.lock();
             let tx = conn
                 .transaction_with_behavior(TransactionBehavior::Immediate)
                 .map_err(|source| sqlite_write("entities", "begin", source))?;
+            let raw_id: Option<String> = tx
+                .query_row(
+                    "SELECT entity_id FROM entity_names WHERE name_lower = ?1",
+                    params![name.to_lowercase()],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(|source| sqlite_read("entity_names", &name, source))?;
+            let id = raw_id
+                .and_then(|value| Ulid::from_string(&value).ok())
+                .map(EntityId)
+                .ok_or_else(|| AideMemoError::entity_not_found(name.clone(), Vec::new()))?;
+            let mut record = Self::get_entity_record(&tx, id)?;
+            if input
+                .expected_updated_at
+                .is_some_and(|expected| expected != record.updated_at)
+            {
+                return Err(AideMemoError::TransactionConflict);
+            }
+            record.update(input.clone());
             Self::update_entity_record(&tx, &record)?;
             tx.commit()
                 .map_err(|source| sqlite_write("entities", "commit", source))?;
@@ -866,27 +973,34 @@ impl StoreBackend for SqliteStore {
 
     fn entity_list(&self, opts: ListOpts) -> Result<Vec<EntitySummary>> {
         let conn = self.conn.lock();
+        let entity_type = opts.entity_type.as_ref().map(ToString::to_string);
+        let sql = if entity_type.is_some() {
+            "SELECT id, record_json FROM entities WHERE entity_type = ?1 ORDER BY id ASC"
+        } else {
+            "SELECT id, record_json FROM entities ORDER BY id ASC"
+        };
         let mut stmt = conn
-            .prepare("SELECT id, record_json FROM entities ORDER BY id ASC")
+            .prepare(sql)
             .map_err(|source| sqlite_read("entities", "<prepare>", source))?;
-        let rows = stmt
-            .query_map([], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?))
-            })
-            .map_err(|source| sqlite_read("entities", "<iter>", source))?;
+        let mut rows = if let Some(entity_type) = entity_type.as_deref() {
+            stmt.query(params![entity_type])
+        } else {
+            stmt.query([])
+        }
+        .map_err(|source| sqlite_read("entities", "<iter>", source))?;
         let mut out = Vec::new();
-        for row in rows {
-            let (raw_id, bytes) = row.map_err(|source| sqlite_read("entities", "<row>", source))?;
+        while let Some(row) = rows
+            .next()
+            .map_err(|source| sqlite_read("entities", "<row>", source))?
+        {
+            let (raw_id, bytes) = (row.get::<_, String>(0), row.get::<_, Vec<u8>>(1));
+            let raw_id = raw_id.map_err(|source| sqlite_read("entities", "<id>", source))?;
+            let bytes = bytes.map_err(|source| sqlite_read("entities", "<record>", source))?;
             let record: EntityRecord =
                 serde_json::from_slice(&bytes).map_err(|source| AideMemoError::Deserialize {
                     context: format!("entity {raw_id}"),
                     source,
                 })?;
-            if let Some(ref entity_type) = opts.entity_type
-                && &record.entity_type != entity_type
-            {
-                continue;
-            }
             let fact_count = count_entity_facts(&conn, &record.id)?;
             if let Some(min_facts) = opts.min_facts
                 && fact_count < min_facts
@@ -917,6 +1031,80 @@ impl StoreBackend for SqliteStore {
             .skip(opts.offset)
             .take(opts.limit.unwrap_or(usize::MAX))
             .collect())
+    }
+
+    fn entity_records_by_type(&self, entity_type: &EntityType) -> Result<Vec<EntityRecord>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, record_json
+                 FROM entities
+                 WHERE entity_type = ?1
+                 ORDER BY updated_at DESC, id DESC",
+            )
+            .map_err(|source| sqlite_read("entities", "<type prepare>", source))?;
+        let rows = stmt
+            .query_map(params![entity_type.to_string()], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?))
+            })
+            .map_err(|source| sqlite_read("entities", "<type iter>", source))?;
+        let mut records = Vec::new();
+        for row in rows {
+            let (raw_id, bytes) =
+                row.map_err(|source| sqlite_read("entities", "<type row>", source))?;
+            let record =
+                serde_json::from_slice(&bytes).map_err(|source| AideMemoError::Deserialize {
+                    context: format!("entity {raw_id}"),
+                    source,
+                })?;
+            records.push(record);
+        }
+        Ok(records)
+    }
+
+    fn entity_records_by_type_and_tags(
+        &self,
+        entity_type: &EntityType,
+        required_tags: &[String],
+    ) -> Result<Vec<EntityRecord>> {
+        if required_tags.is_empty() {
+            return self.entity_records_by_type(entity_type);
+        }
+
+        let conn = self.conn.lock();
+        let mut sql = "SELECT e.id, e.record_json FROM entities e".to_string();
+        for index in 0..required_tags.len() {
+            let parameter = index + 2;
+            sql.push_str(&format!(
+                " JOIN entity_tags t{index}
+                  ON t{index}.entity_id = e.id AND t{index}.tag = ?{parameter}"
+            ));
+        }
+        sql.push_str(" WHERE e.entity_type = ?1 ORDER BY e.updated_at DESC, e.id DESC");
+        let mut values = Vec::with_capacity(required_tags.len() + 1);
+        values.push(entity_type.to_string());
+        values.extend(required_tags.iter().cloned());
+
+        let mut stmt = conn
+            .prepare(&sql)
+            .map_err(|source| sqlite_read("entities", "<tag query prepare>", source))?;
+        let rows = stmt
+            .query_map(rusqlite::params_from_iter(values.iter()), |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?))
+            })
+            .map_err(|source| sqlite_read("entities", "<tag query iter>", source))?;
+        let mut records = Vec::new();
+        for row in rows {
+            let (raw_id, bytes) =
+                row.map_err(|source| sqlite_read("entities", "<tag query row>", source))?;
+            let record =
+                serde_json::from_slice(&bytes).map_err(|source| AideMemoError::Deserialize {
+                    context: format!("entity {raw_id}"),
+                    source,
+                })?;
+            records.push(record);
+        }
+        Ok(records)
     }
 
     fn entity_delete(&mut self, name: &str) -> Result<()> {
@@ -1692,6 +1880,58 @@ mod tests {
     }
 
     #[test]
+    fn sqlite_tag_index_backfills_and_filters_full_entity_records() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("tags.sqlite");
+        {
+            let mut store = SqliteStore::open(&path, Config::default()).expect("open sqlite");
+            store
+                .entity_add(EntityInput {
+                    name: "handoff-test".to_string(),
+                    entity_type: Some(EntityType::parse("handoff")),
+                    tags: Some(vec![
+                        "aidememo:handoff".to_string(),
+                        "to_actor:codex-two".to_string(),
+                        "source_id:alpha".to_string(),
+                    ]),
+                    ..Default::default()
+                })
+                .expect("handoff entity");
+        }
+        {
+            let conn = Connection::open(&path).expect("open raw sqlite");
+            conn.execute("DELETE FROM entity_tags", [])
+                .expect("clear tag index");
+            conn.execute(
+                "DELETE FROM meta WHERE key = ?1",
+                params![ENTITY_TAG_INDEX_VERSION_KEY],
+            )
+            .expect("clear tag index version");
+        }
+
+        let store = SqliteStore::open(&path, Config::default()).expect("reopen sqlite");
+        let records = store
+            .entity_records_by_type_and_tags(
+                &EntityType::parse("handoff"),
+                &[
+                    "to_actor:codex-two".to_string(),
+                    "source_id:alpha".to_string(),
+                ],
+            )
+            .expect("indexed tag query");
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].name, "handoff-test");
+
+        let missing = store
+            .entity_records_by_type_and_tags(
+                &EntityType::parse("handoff"),
+                &["to_actor:claude-main".to_string()],
+            )
+            .expect("missing tag query");
+        assert!(missing.is_empty());
+    }
+
+    #[test]
     fn sqlite_exact_dedup_is_scoped_by_normalized_source_id() {
         let (_dir, mut store) = open_store();
         let content = "shared release decision";
@@ -1858,6 +2098,33 @@ mod tests {
             .query_row("PRAGMA busy_timeout", [], |row| row.get(0))
             .expect("busy timeout");
         assert_eq!(busy_timeout, 1000);
+    }
+
+    #[test]
+    fn sqlite_open_retries_schema_initialization_during_write_contention() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("wiki.sqlite");
+        drop(SqliteStore::open(&path, Config::default()).expect("initialize sqlite"));
+
+        let blocker = Connection::open(&path).expect("open blocker");
+        blocker
+            .execute_batch("BEGIN IMMEDIATE; INSERT INTO meta (key, value) VALUES ('lock', X'01');")
+            .expect("hold sqlite write lock");
+
+        let open_path = path.clone();
+        let opener = std::thread::spawn(move || {
+            let mut config = Config::default();
+            config.store.lock_retry_ms = 1_500;
+            SqliteStore::open(&open_path, config)
+        });
+
+        std::thread::sleep(Duration::from_millis(100));
+        blocker
+            .execute_batch("COMMIT")
+            .expect("release sqlite write lock");
+
+        let reopened = opener.join().expect("join opener");
+        let _store = reopened.expect("schema initialization should retry");
     }
 
     #[test]

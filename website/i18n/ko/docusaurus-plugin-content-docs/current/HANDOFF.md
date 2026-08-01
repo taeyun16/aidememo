@@ -150,10 +150,44 @@ dispatch하지 않으면 `aidememo session handoff`는 읽기 전용 packet 미�
   소유합니다. AideMemo는 외부 session pointer와 결과 근거를 전달합니다.
 - assignment ledger는 메시지 broker가 아닙니다. topic, offset, consumer group,
   delivery retry, exactly-once 실행 보장이 없습니다.
+- 동시에 실행되는 accept, heartbeat, return writer는 compare-and-swap revision을
+  사용합니다. 자동 worker는 고유 claim token도 사용하므로 활성 assignment는 경쟁
+  claim을 거절합니다. fact가 연결된 실패 assignment는 새 token으로 재claim하고
+  `attempt_count`를 증가시킬 수 있습니다. stale writer는
+  `transaction_conflict`로 실패합니다. 이는 lost update와 경쟁 worker의 중복 활성
+  claim을 막지만 renewable worker lease나 crash retry를 제공하지는 않습니다.
 - 결과 반환은 fail-closed입니다. fact는 전달된 세션과 정확한 source 범위에
   속하고 수신 actor의 작성 provenance를 가져야 합니다.
 - 반환 결과는 연결된 근거이지 downstream 모델이 작업을 올바르게 완료했다는
   자동 증명이 아닙니다. `done_when`은 별도로 검증해야 합니다.
+
+## Hermes 프로젝트와 테넌트 범위
+
+Hermes 플러그인은 Kanban lifecycle 상태를 handoff ledger에 복제하지 않으면서
+dispatcher metadata에서 기본 AideMemo 범위를 파생할 수 있습니다.
+
+```yaml
+plugins:
+  aidememo:
+    store_path: ~/.aidememo/hermes-shared.sqlite
+    source_from_hermes: board_tenant
+    actor_from_hermes_profile: true
+    lock_retry_ms: 5000
+```
+
+`board`는 `HERMES_KANBAN_BOARD=aidememo`를
+`source_id=hermes:board:aidememo`로 매핑합니다. 권장 `board_tenant` 모드는
+`HERMES_TENANT`가 있을 때 task tenant를 덧붙이고, tenant가 없는 card는 board
+범위를 공유합니다. 명시적인 plugin `source_id` 또는 `AIDEMEMO_SOURCE_ID`가
+항상 우선합니다. 마찬가지로 명시적 actor가 선택형
+`hermes:<HERMES_PROFILE>` provenance 매핑보다 우선합니다.
+
+이 매핑은 신뢰된 프로세스를 위한 편의 기능이며 gateway user나 channel을
+인증하지 않습니다. 고정된 plugin source 하나를 사용하는 gateway process는
+그 세션들 사이에서 memory를 공유합니다. 상호 신뢰하지 않는 gateway client에는
+별도 Hermes profile/gateway와 store를 실행하거나, bearer token을 고정된
+`source_id` 및 `actor_id`에 바인딩하도록 AideMemo HTTP MCP를
+`--auth-bindings-file`과 함께 사용하세요.
 
 도구 수준 스키마는 [`MCP 설정`](MCP.md), SDK와 저수준 오케스트레이터 패턴은
 [`에이전트 워크플로`](AGENT_WORKFLOWS.md)를 참고하세요. 토큰 없는 protocol
