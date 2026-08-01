@@ -19,6 +19,7 @@ vectors) and exposes it to LLM agents via CLI, MCP server, and native bindings
 | `aidememo-domain` | Portable server/SSOT identities, commands, receipts, revisions, change feed, artifacts, and conformance fixture |
 | `aidememo-service` | Authenticated command orchestration and canonical request fingerprinting |
 | `aidememo-store-local` | Separate single-node SQLite command ledger for the future server mode; does not replace the embedded core store |
+| `aidememo-server` | Authenticated single-node HTTP resource command, exact-read, change-feed, bootstrap, and health boundary |
 | `aidememo-core` | SQLite default store, optional redb store, ingest, search, traverse, lint, validity windows |
 | `aidememo-cli` | `aidememo` binary (CLI + stdio/HTTP MCP) |
 | `aidememo-napi`, `aidememo-python`, `aidememo-nif`, `aidememo-ffi` | language bindings (full API; SQLite default, optional `redb` Cargo feature) |
@@ -39,7 +40,7 @@ cargo check -p aidememo-core --no-default-features --features redb
 cargo check -p aidememo-cli --features s3
 cargo test -p aidememo-core --features semantic
 cargo test -p aidememo-cli --bin aidememo
-cargo test -p aidememo-domain -p aidememo-service -p aidememo-store-local
+cargo test -p aidememo-domain -p aidememo-service -p aidememo-store-local -p aidememo-server
 ./scripts/ci-local.sh lint
 ./scripts/ci-local.sh demo               # first-run workflow memory smoke
 ./scripts/ci-local.sh test
@@ -388,6 +389,10 @@ crates/aidememo-service/src/lib.rs
 crates/aidememo-store-local/src/lib.rs
   separate SQLite receipt/revision/change/audit transaction ledger
 
+crates/aidememo-server/src/
+  lib.rs        authenticated resource command, exact-read, change-feed, and health routes
+  main.rs       retry-safe identity bootstrap and loopback-first server process
+
 crates/aidememo-core/src/
   lib.rs        AideMemo public API (re-exports)
   sqlite_store.rs SQLite CRUD (default backend)
@@ -467,8 +472,12 @@ crates/aidememo-cli/src/
   receipt lookup key and is excluded from its own fingerprint.
 - `aidememo-store-local` uses a separate SQLite database and must not migrate or
   reinterpret the current embedded `aidememo-core` file format.
+- `aidememo-server` derives tenant and actor identity only from a persisted
+  SHA-256 bearer-token binding, reloads active membership for every request,
+  and currently exposes only `resource.put` / `resource.delete`, exact resource
+  reads, and the ordered change feed. It is not yet the fact/search/handoff API.
 - Every new canonical adapter must pass `aidememo_domain::conformance::run`.
-- The three foundation crates remain `publish = false` until a server-facing
+- The four foundation crates remain `publish = false` until a server-facing
   public API and dependency release order are approved.
 
 ## MCP integration

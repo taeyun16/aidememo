@@ -191,6 +191,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "aidememo-server"
+version = "0.1.0"
+dependencies = [
+ "aidememo-domain",
+ "aidememo-service",
+ "aidememo-store-local",
+ "axum",
+ "clap",
+ "http-body-util",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "tempfile",
+ "tokio",
+ "tower",
+ "tracing",
+ "tracing-subscriber",
+ "ulid",
+]
+
+[[package]]
 name = "aidememo-service"
 version = "0.1.0"
 dependencies = [

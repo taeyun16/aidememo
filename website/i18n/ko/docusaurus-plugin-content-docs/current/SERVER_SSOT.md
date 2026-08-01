@@ -5,7 +5,8 @@ description: AideMemo를 멀티테넌트 서버, SaaS 또는 Kubernetes 배포�
 
 # 서버 및 SSOT 아키텍처
 
-> 상태: 채택된 목표 방향이며 현재 프로덕션 계약은 아닙니다.
+> 상태: 채택된 목표 방향입니다. Phase 0과 제한된 단일 노드 HTTP resource
+> 구간은 구현됐지만 현재 프로덕션 계약은 아닙니다.
 
 현재 AideMemo는 로컬 우선 시스템입니다. Rust 코어가 하나의 임베디드
 저장소를 열고 stdio MCP, 로컬 daemon 또는 `aidememo mcp-serve`를 통해 이를
@@ -132,6 +133,13 @@ surface는 하나의 command envelope로 매핑합니다.
 5. commit된 project sequence와 resource revision을 반환합니다.
 6. handoff worker process가 종료됐다는 이유만으로 task 성공을 추론하지 않습니다.
 
+현재 구현된 `/v1/commands` 구간은 의도적으로 저수준 조합인
+`resource.put` + `upsert`와 `resource.delete` + `delete`만 받습니다. Delete
+payload는 JSON `null`이어야 합니다. `fact.add`, `session.handoff`, search, MCP
+같은 제품 작업에는 아직 도메인 adapter가 필요하며 이 endpoint의 alias로 받지
+않습니다. 첫 서버 실행 파일이 아직 강제하지 않는 애플리케이션 의미론까지
+지원한다고 주장하지 않기 위한 경계입니다.
+
 Handoff claim과 return invariant는 계속 도메인 작업입니다. Handoff 결과 fact는
 같은 tenant, project, session, source, 수신 actor, 활성 claim과 일치해야 합니다.
 Artifact path에 파일을 쓰는 것만으로는 handoff가 완료되지 않습니다.
@@ -215,11 +223,52 @@ durable data directory를 binding하며 애플리케이션 replica를 정확히 
 지원합니다. 고가용성을 주장하지 않고 원격 identity, command, change feed,
 로컬 cache 계약을 검증합니다.
 
+제한된 기반은 이제 workspace에서 실행할 수 있습니다. Password가 아닌 높은
+entropy의 bearer token을 생성하고 token file을 비공개로 유지한 뒤 활성 membership
+하나를 bootstrap합니다.
+
 ```bash
-aidememo server \
-  --database sqlite:///data/aidememo.sqlite \
-  --artifacts file:///data/artifacts
+openssl rand -hex 32 > /secure/aidememo-writer.token
+chmod 600 /secure/aidememo-writer.token
+
+cargo run -p aidememo-server -- bootstrap \
+  --database /data/aidememo-ssot.sqlite \
+  --tenant-id acme \
+  --project-id memory \
+  --actor-id codex-p1 \
+  --token-file /secure/aidememo-writer.token
+
+cargo run -p aidememo-server -- serve \
+  --database /data/aidememo-ssot.sqlite
 ```
+
+Bootstrap은 SHA-256 token digest만 저장하고 재시도 시 기존 project epoch를
+재사용합니다. 처음 저장한 label과 timestamp를 유지하며 epoch, actor kind,
+membership role, token 소유권 충돌은 fail closed로 처리합니다. 서버는 기본적으로
+`127.0.0.1:3030`에 binding합니다. Loopback이 아닌 plaintext binding은
+`--allow-insecure-http`를 명시하지 않으면 거부되며 프로덕션 bearer traffic에는
+여전히 TLS ingress가 필요합니다.
+
+현재 HTTP surface는 의도적으로 작습니다.
+
+| Endpoint | 계약 |
+|---|---|
+| `GET /health` | Process mode와 SQLite schema version |
+| `POST /v1/commands` | 인증된 `resource.put` / `resource.delete`, idempotent receipt, revision CAS |
+| `GET /v1/projects/{project}/resources/{kind}/{id}` | 정확한 정본 body 또는 tombstone |
+| `GET /v1/projects/{project}/changes` | Epoch/sequence cursor 이후 순서가 있는 change entry |
+
+보호된 모든 요청은 bearer 값을 hash하고 저장된 tenant와 actor를 찾은 뒤 활성
+project membership을 다시 읽습니다. Command JSON은 `deny_unknown_fields`를
+사용하므로 body의 tenant 또는 actor identity를 무시하지 않고 거부합니다. 정본
+resource body, receipt, resource revision, project sequence, change entry, audit
+row는 한 SQLite transaction으로 commit됩니다.
+
+현재 process는 application replica 하나만 지원하며 내장 TLS, token
+rotation/revocation command, rate limit, artifact directory, PostgreSQL, search,
+제품 fact/session/handoff command, MCP remote profile, 로컬 read replica, offline
+outbox가 아직 없습니다. 서버 계약 실행 파일이지 출시된 SaaS나 `aidememo
+mcp-serve`의 대체물이 아닙니다.
 
 ### Cloudflare edge 호스팅
 
@@ -252,9 +301,9 @@ values file은 단일 노드 의존성을 설치할 수 있지만 고가용성 p
 API replica는 read-write-many volume을 통해 live embedded SQLite 파일을 공유하지
 않습니다.
 
-## 제안 코드 경계
+## 코드 경계
 
-첫 세 개의 Phase 0 기반 crate가 이제 존재합니다. 나머지 이름은 여전히 의도한
+첫 네 개의 기반 crate가 이제 존재합니다. 나머지 이름은 여전히 의도한
 경계를 설명하며 아직 존재하지 않습니다.
 
 ```text
@@ -263,7 +312,7 @@ aidememo-service         command/query orchestration과 authorization context
 aidememo-store-local     별도 single-node SQLite command ledger
 aidememo-store-postgres  서버 정본 adapter
 aidememo-artifacts       local 및 S3 호환 reservation/commit 계약
-aidememo-server          MCP, HTTP, sync, admin, health surface
+aidememo-server          제한된 인증 HTTP resource/change/health surface
 aidememo-client          remote transport, local replica, offline outbox
 ```
 
@@ -278,17 +327,22 @@ feed batch는 tenant-project 복합 scope를 가집니다. `aidememo-service`는
 membership을 untrusted envelope에 결합하고 JSON field를 재귀적으로 canonicalize하여
 command fingerprint를 계산합니다. `aidememo-store-local`은 기존 embedded store와
 분리된 SQLite database에서 receipt, resource revision, change, audit, project sequence를
-한 transaction으로 저장합니다.
+한 transaction으로 저장합니다. `aidememo-server`는 token binding과 membership을
+그 ledger에 저장하고 request body 밖에서 identity를 결정하며, loopback 우선 Axum
+process로 bootstrap, exact resource read, resource command, change feed, health를
+노출합니다.
 
 Backend 중립 `conformance::run` fixture는 정확한 idempotent receipt replay, command ID
 충돌, stale revision 거부, 단조 증가 project sequence, 삭제 tombstone, fail-closed
 epoch 변경, 정본 이력보다 앞선 cursor 거부를 검사합니다. In-memory reference와
 실제 SQLite adapter가 모두 통과합니다. SQLite integration test는 process reopen,
-두 concurrent connection의
-duplicate submission, 두 tenant 아래 같은 project ID 격리도 검증합니다. Remote
-server, PostgreSQL, Durable Object, artifact body, sync adapter는 아직 연결되지 않았습니다.
-세 기반 crate는 server-facing API와 release 순서를 정할 때까지 모두
-`publish = false`이며 기존 v0.1.0 crate 배포 흐름에 조용히 포함되지 않습니다.
+두 concurrent connection의 duplicate submission, 두 tenant 아래 같은 project ID
+격리도 검증합니다. HTTP test는 누락·미등록 bearer 거부, identity field injection,
+writer replay/conflict, reader 전용 sync, role 강제도 검사합니다. PostgreSQL,
+Durable Object, artifact body, 제품 도메인 API, MCP remote profile, 로컬 replica
+adapter는 아직 연결되지 않았습니다. 네 기반 crate는 server-facing 공개 API와
+release 순서를 승인할 때까지 모두 `publish = false`이며 기존 v0.1.0 crate 배포
+흐름에 조용히 포함되지 않습니다.
 
 ## 단계별 delivery gate
 
@@ -304,10 +358,10 @@ server, PostgreSQL, Durable Object, artifact body, sync adapter는 아직 연결
 mutation 하나만 만들며, stale revision이 실패하고, 삭제가 tombstone으로
 replica에 도착합니다.
 
-현재 상태: 기존 embedded API나 파일 format을 변경하지 않고 별도 SQLite adapter가
-Phase 0 code 종료 gate를 통과합니다. 이 crate들은 아직 CLI나 MCP server에서 접근할
-수 없으므로 server mode 출시가 아니라 계약 기반을 닫은 것입니다. Phase 1은 열린
-상태입니다.
+현재 상태: 기존 embedded API나 파일 format을 변경하지 않고 별도 SQLite adapter와
+인증 HTTP test가 Phase 0 code 종료 gate를 통과합니다. 제한된
+`aidememo-server` 실행 파일은 workspace의 미배포 resource API로만 접근할 수 있고
+기존 CLI나 MCP 제품 surface에는 연결되지 않았습니다.
 
 ### Phase 1 — 단일 노드 원격 SSOT
 
@@ -318,6 +372,11 @@ Phase 0 code 종료 gate를 통과합니다. 이 crate들은 아직 CLI나 MCP s
 종료 gate: Codex primary, Codex secondary, Hermes가 하나의 원격 project를 통해
 handoff를 완료합니다. 서버가 중단되면 cache read는 유지되지만 조용한
 multi-primary write는 만들지 않습니다.
+
+현재 상태: 정본 inline JSON resource, 저장된 bearer identity/membership, exact
+read, incremental change 조회에 대해서는 첫 항목이 일부 완료됐습니다. 로컬
+artifact body, 제품 도메인 command, CLI/MCP remote profile, replica
+bootstrap/reset, offline 동작, 세 agent handoff 종료 scenario는 열린 상태입니다.
 
 ### Phase 2 — 이식 가능한 프로덕션 backend
 

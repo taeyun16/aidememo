@@ -1,0 +1,36 @@
+[package]
+name = "aidememo-server"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "Authenticated single-node HTTP server foundation for AideMemo SSOT mode"
+license.workspace = true
+repository.workspace = true
+version.workspace = true
+publish = false
+
+[[bin]]
+name = "aidememo-server"
+path = "src/main.rs"
+
+[dependencies]
+aidememo-domain = { version = "0.1.0", path = "../aidememo-domain" }
+aidememo-service = { version = "0.1.0", path = "../aidememo-service" }
+aidememo-store-local = { version = "0.1.0", path = "../aidememo-store-local" }
+axum = "0.8"
+clap = { version = "4.5", features = ["derive"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.11"
+tokio = { version = "1.35", features = ["macros", "net", "rt-multi-thread", "signal", "sync"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+ulid = "1.1"
+
+[dev-dependencies]
+http-body-util = "0.1"
+tempfile = "3.10"
+tower = { version = "0.5", features = ["util"] }
+
+[lints]
+workspace = true

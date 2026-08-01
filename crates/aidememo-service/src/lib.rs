@@ -6,9 +6,9 @@
 //! contains no transport, database, filesystem, or model assumptions.
 
 use aidememo_domain::{
-    AuthenticatedActor, AuthorizedCommand, ChangeBatch, ChangeCursor, ChangeOperation,
-    CommandEnvelope, CommandFingerprint, CommandReceipt, CommandStore, DomainError,
-    MutationCommand, ProjectAccess, ProjectMembership, ResourceRef,
+    AuthenticatedActor, AuthorizedCommand, CanonicalResource, ChangeBatch, ChangeCursor,
+    ChangeOperation, CommandEnvelope, CommandFingerprint, CommandReceipt, CommandStore,
+    DomainError, MutationCommand, ProjectAccess, ProjectId, ProjectMembership, ResourceRef,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -74,6 +74,10 @@ impl<S: CommandStore> CommandService<S> {
             });
         }
         let fingerprint = command_fingerprint(&envelope)?;
+        let resource_body = match change {
+            ChangeOperation::Upsert => Some(canonical_json_bytes(&envelope.payload)?),
+            ChangeOperation::Delete => None,
+        };
         let metadata = CommandEnvelope {
             command_id: envelope.command_id,
             project_id: envelope.project_id,
@@ -86,6 +90,7 @@ impl<S: CommandStore> CommandService<S> {
             fingerprint,
             resource,
             change,
+            resource_body,
         };
         self.store.execute(&command)
     }
@@ -108,6 +113,29 @@ impl<S: CommandStore> CommandService<S> {
     ) -> Result<ChangeBatch, DomainError> {
         let access = ProjectAccess::authorize(authenticated, membership)?;
         self.store.changes(&access.scope(), cursor, limit)
+    }
+
+    /// Fetch canonical resource state through active project membership.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stable [`DomainError`] for authorization, project scope, or
+    /// storage failure.
+    pub fn resource(
+        &self,
+        authenticated: &AuthenticatedActor,
+        membership: &ProjectMembership,
+        project_id: &ProjectId,
+        resource: &ResourceRef,
+    ) -> Result<Option<CanonicalResource>, DomainError> {
+        if &membership.project_id != project_id {
+            return Err(DomainError::ProjectScopeMismatch {
+                requested: project_id.clone(),
+                authorized: membership.project_id.clone(),
+            });
+        }
+        let access = ProjectAccess::authorize(authenticated, membership)?;
+        self.store.resource(&access.scope(), resource)
     }
 }
 
@@ -150,6 +178,18 @@ pub fn command_fingerprint<T: Serialize>(
             .map_err(|error| DomainError::InvalidCommand(error.to_string()))?;
     }
     CommandFingerprint::try_from(fingerprint)
+}
+
+/// Encode recursively key-sorted JSON for canonical resource storage.
+///
+/// # Errors
+///
+/// Returns [`DomainError::InvalidCommand`] when serialization fails.
+pub fn canonical_json_bytes<T: Serialize>(value: &T) -> Result<Vec<u8>, DomainError> {
+    let value = serde_json::to_value(value)
+        .map_err(|error| DomainError::InvalidCommand(error.to_string()))?;
+    serde_json::to_vec(&canonicalize_json(value))
+        .map_err(|error| DomainError::InvalidCommand(error.to_string()))
 }
 
 fn canonicalize_json(value: Value) -> Value {

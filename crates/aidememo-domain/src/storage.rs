@@ -1,7 +1,8 @@
 //! Portable canonical command ledger boundary.
 
 use crate::{
-    ChangeBatch, ChangeCursor, CommandReceipt, DomainError, MutationCommand, ProjectScope,
+    CanonicalResource, ChangeBatch, ChangeCursor, CommandReceipt, DomainError, MutationCommand,
+    ProjectScope, ResourceRef,
 };
 
 /// Atomic receipt, resource-revision, audit, and change-feed persistence.
@@ -30,4 +31,15 @@ pub trait CommandStore {
         cursor: &ChangeCursor,
         limit: usize,
     ) -> Result<ChangeBatch, DomainError>;
+
+    /// Fetch current canonical state or deletion tombstone by resource ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stable [`DomainError`] when the lookup cannot complete.
+    fn resource(
+        &self,
+        scope: &ProjectScope,
+        resource: &ResourceRef,
+    ) -> Result<Option<CanonicalResource>, DomainError>;
 }

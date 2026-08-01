@@ -1,8 +1,8 @@
 //! Mutation envelopes, authorization guards, receipts, and audit records.
 
 use crate::{
-    ActorId, CommandId, DomainError, ProjectAuthorization, ProjectId, ProjectSequence, ResourceId,
-    Revision, TenantId,
+    ActorId, CommandId, DomainError, ProjectAuthorization, ProjectId, ProjectScope,
+    ProjectSequence, ResourceId, Revision, TenantId,
 };
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{fmt, str::FromStr};
@@ -251,6 +251,34 @@ pub struct MutationCommand {
     pub resource: ResourceRef,
     /// Upsert or durable deletion tombstone.
     pub change: crate::ChangeOperation,
+    /// Canonical JSON resource body for upserts; absent for deletions.
+    pub resource_body: Option<Vec<u8>>,
+}
+
+/// Canonical resource state returned to replicas after a change notification.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct CanonicalResource {
+    /// Tenant-project scope.
+    pub scope: ProjectScope,
+    /// Resource coordinate.
+    pub resource: ResourceRef,
+    /// Current resource or tombstone revision.
+    pub revision: Revision,
+    /// Upsert body or durable deletion marker.
+    pub state: ResourceState,
+}
+
+/// Materialized canonical resource state.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum ResourceState {
+    /// Canonical JSON bytes for the current record.
+    Present {
+        /// Recursively key-sorted JSON representation.
+        body: Vec<u8>,
+    },
+    /// Durable deletion tombstone.
+    Deleted,
 }
 
 /// Stored result returned for both the first commit and an identical retry.

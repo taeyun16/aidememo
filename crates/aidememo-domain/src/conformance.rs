@@ -9,7 +9,7 @@ use crate::{
     CommandFingerprint, CommandId, CommandStore, DomainError, ErrorCode, MembershipRole,
     MembershipStatus, MutationCommand, OperationName, ProjectAuthorization, ProjectEpoch,
     ProjectId, ProjectMembership, ProjectScope, ProjectSequence, ResourceId, ResourceKind,
-    ResourceRef, Revision, TenantId,
+    ResourceRef, ResourceState, Revision, TenantId,
 };
 
 /// Successful fixture report suitable for test output or CI artifacts.
@@ -57,6 +57,15 @@ pub fn run<A: CommandStore>(
         created.project_seq == ProjectSequence::new(1) && created.revision.get() == 1,
         "initial_commit",
         "first mutation must commit sequence 1 and revision 1",
+    )?;
+    let created_resource = adapter.resource(&authorization_scope(&created), &created.resource)?;
+    check(
+        matches!(
+            created_resource.as_ref().map(|record| &record.state),
+            Some(ResourceState::Present { body }) if body == br#"{"fixture":"a"}"#
+        ),
+        "canonical_resource_upsert",
+        "upsert must materialize the canonical resource body",
     )?;
 
     let replayed = adapter.execute(&create)?;
@@ -143,6 +152,15 @@ pub fn run<A: CommandStore>(
         "delete_tombstone",
         "last change must be a deletion tombstone with the committed receipt coordinates",
     )?;
+    let deleted_resource = adapter.resource(&scope, &deleted.resource)?;
+    check(
+        matches!(
+            deleted_resource.as_ref().map(|record| &record.state),
+            Some(ResourceState::Deleted)
+        ),
+        "canonical_resource_tombstone",
+        "delete must retain a body-free canonical tombstone",
+    )?;
 
     let wrong_epoch_cursor = ChangeCursor {
         project_epoch: ProjectEpoch::try_from("epoch_replaced")?,
@@ -166,12 +184,14 @@ pub fn run<A: CommandStore>(
     Ok(ConformanceReport {
         checks: vec![
             "initial_commit",
+            "canonical_resource_upsert",
             "idempotent_replay",
             "command_id_conflict",
             "stale_revision",
             "compare_and_swap",
             "single_mutation_per_command",
             "delete_tombstone",
+            "canonical_resource_tombstone",
             "cursor_epoch_fail_closed",
             "cursor_sequence_fail_closed",
         ],
@@ -197,6 +217,10 @@ fn fixture_authorization() -> Result<ProjectAuthorization, DomainError> {
     )
 }
 
+fn authorization_scope(receipt: &crate::CommandReceipt) -> ProjectScope {
+    ProjectScope::new(receipt.tenant_id.clone(), receipt.project_id.clone())
+}
+
 #[allow(clippy::too_many_arguments)]
 fn fixture_command(
     authorization: ProjectAuthorization,
@@ -219,6 +243,12 @@ fn fixture_command(
         fingerprint: fingerprint(fingerprint_byte)?,
         resource,
         change,
+        resource_body: match change {
+            ChangeOperation::Upsert => {
+                Some(format!(r#"{{"fixture":"{fingerprint_byte}"}}"#).into_bytes())
+            }
+            ChangeOperation::Delete => None,
+        },
     })
 }
 
@@ -262,7 +292,7 @@ fn violation(check: &'static str, detail: &str) -> DomainError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ChangeBatch, ChangeEntry, CommandReceipt};
+    use crate::{CanonicalResource, ChangeBatch, ChangeEntry, CommandReceipt, ResourceState};
     use std::collections::HashMap;
 
     struct ReferenceAdapter {
@@ -271,6 +301,7 @@ mod tests {
         revisions: HashMap<ResourceRef, Revision>,
         receipts: HashMap<CommandId, CommandReceipt>,
         changes: Vec<ChangeEntry>,
+        resources: HashMap<(ProjectScope, ResourceRef), CanonicalResource>,
     }
 
     impl ReferenceAdapter {
@@ -281,6 +312,7 @@ mod tests {
                 revisions: HashMap::new(),
                 receipts: HashMap::new(),
                 changes: Vec::new(),
+                resources: HashMap::new(),
             }
         }
     }
@@ -323,6 +355,23 @@ mod tests {
                 committed_at_ms: 1_700_000_000_000 + sequence.get() as i64,
             };
             self.revisions.insert(command.resource.clone(), revision);
+            let state = match command.change {
+                ChangeOperation::Upsert => ResourceState::Present {
+                    body: command.resource_body.clone().ok_or_else(|| {
+                        DomainError::InvalidCommand("upsert body missing".to_owned())
+                    })?,
+                },
+                ChangeOperation::Delete => ResourceState::Deleted,
+            };
+            self.resources.insert(
+                (authorization.scope(), command.resource.clone()),
+                CanonicalResource {
+                    scope: authorization.scope(),
+                    resource: command.resource.clone(),
+                    revision,
+                    state,
+                },
+            );
             self.receipts
                 .insert(envelope.command_id.clone(), receipt.clone());
             self.changes.push(ChangeEntry {
@@ -373,6 +422,17 @@ mod tests {
                 > entries.len();
             ChangeBatch::new(scope.clone(), cursor.clone(), entries, has_more)
         }
+
+        fn resource(
+            &self,
+            scope: &ProjectScope,
+            resource: &ResourceRef,
+        ) -> Result<Option<CanonicalResource>, DomainError> {
+            Ok(self
+                .resources
+                .get(&(scope.clone(), resource.clone()))
+                .cloned())
+        }
     }
 
     #[test]
@@ -383,7 +443,7 @@ mod tests {
         let report = run(&mut adapter, epoch)?;
         assert_eq!(report.final_sequence, ProjectSequence::new(3));
         assert_eq!(report.tombstone_revision.get(), 3);
-        assert_eq!(report.checks.len(), 9);
+        assert_eq!(report.checks.len(), 11);
         Ok(())
     }
 }

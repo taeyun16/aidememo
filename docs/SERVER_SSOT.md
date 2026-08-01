@@ -5,7 +5,9 @@ description: Target architecture and staged contract for running AideMemo as a m
 
 # Server and SSOT Architecture
 
-> Status: accepted target direction; not the current production contract.
+> Status: accepted target direction. Phase 0 and a bounded single-node HTTP
+> resource slice are implemented, but this is not the current production
+> contract.
 
 AideMemo is local-first today. One embedded store is opened by the Rust core and
 can be coordinated through stdio MCP, the local daemon, or `aidememo mcp-serve`.
@@ -134,6 +136,13 @@ The authenticated gateway supplies tenant and actor identity. The service must:
 5. return the committed project sequence and resource revision; and
 6. never infer task success merely because a handoff worker process exited.
 
+The currently implemented `/v1/commands` slice deliberately accepts only the
+lower-level pairs `resource.put` + `upsert` and `resource.delete` + `delete`.
+A delete payload must be JSON `null`. Product operations such as `fact.add`,
+`session.handoff`, search, and MCP still require their domain adapters; they are
+not aliases accepted by this endpoint. This keeps the first server executable
+from claiming application semantics it does not yet enforce.
+
 Handoff claim and return invariants remain domain operations. A handoff result
 fact must match the same tenant, project, session, source, receiving actor, and
 active claim. A file written under an artifact path cannot complete a handoff
@@ -220,13 +229,52 @@ durable data directory, and supports exactly one application replica. It proves
 the remote identity, command, change-feed, and local-cache contracts without
 claiming high availability.
 
-Conceptual configuration:
+The bounded foundation is now executable from the workspace. Generate a
+high-entropy bearer token (not a password), keep the token file private, and
+bootstrap one active membership:
 
 ```bash
-aidememo server \
-  --database sqlite:///data/aidememo.sqlite \
-  --artifacts file:///data/artifacts
+openssl rand -hex 32 > /secure/aidememo-writer.token
+chmod 600 /secure/aidememo-writer.token
+
+cargo run -p aidememo-server -- bootstrap \
+  --database /data/aidememo-ssot.sqlite \
+  --tenant-id acme \
+  --project-id memory \
+  --actor-id codex-p1 \
+  --token-file /secure/aidememo-writer.token
+
+cargo run -p aidememo-server -- serve \
+  --database /data/aidememo-ssot.sqlite
 ```
+
+Bootstrap stores only the SHA-256 token digest and reuses an existing project
+epoch on retry. Existing labels and timestamps are retained; conflicting epoch,
+actor kind, membership role, or token ownership fails closed. The server binds
+to `127.0.0.1:3030` by default. A non-loopback plaintext bind is rejected unless
+`--allow-insecure-http` is explicit; production bearer traffic still requires a
+TLS ingress.
+
+The current HTTP surface is intentionally small:
+
+| Endpoint | Contract |
+|---|---|
+| `GET /health` | Process mode and SQLite schema version |
+| `POST /v1/commands` | Authenticated `resource.put` / `resource.delete`, idempotent receipt, revision CAS |
+| `GET /v1/projects/{project}/resources/{kind}/{id}` | Exact canonical body or tombstone |
+| `GET /v1/projects/{project}/changes` | Ordered change entries after an epoch/sequence cursor |
+
+Every protected request hashes the bearer value, resolves the persisted tenant
+and actor, and reloads active project membership. Command JSON uses
+`deny_unknown_fields`; tenant or actor identity in the body is rejected rather
+than ignored. Canonical resource bodies, receipt, resource revision, project
+sequence, change entry, and audit row commit in one SQLite transaction.
+
+This process supports one application replica and has no built-in TLS, token
+rotation/revocation command, rate limits, artifact directory, PostgreSQL,
+search, product fact/session/handoff commands, MCP remote profile, local read
+replica, or offline outbox yet. It is a server contract executable, not a
+released SaaS or a replacement for `aidememo mcp-serve`.
 
 ### Hosted Cloudflare edge
 
@@ -259,10 +307,10 @@ A development values file may install single-node dependencies, but that is not
 the high-availability profile. API replicas never share a live embedded SQLite
 file through a read-write-many volume.
 
-## Proposed code boundaries
+## Code boundaries
 
-The first three Phase 0 foundation crates now exist. The remaining names still
-describe intended boundaries and do not exist yet:
+The first four foundation crates now exist. The remaining names still describe
+intended boundaries and do not exist yet:
 
 ```text
 aidememo-domain          portable IDs, commands, records, invariants
@@ -270,7 +318,7 @@ aidememo-service         command/query orchestration and authorization context
 aidememo-store-local     separate single-node SQLite command ledger
 aidememo-store-postgres  server canonical adapter
 aidememo-artifacts       local and S3-compatible reservation/commit contract
-aidememo-server          MCP, HTTP, sync, admin, and health surfaces
+aidememo-server          bounded authenticated HTTP resource/change/health surface
 aidememo-client          remote transport, local replica, and offline outbox
 ```
 
@@ -287,7 +335,10 @@ Every lookup and feed batch carries the composite tenant-project scope.
 envelope, recursively canonicalizes its JSON fields, and computes the command
 fingerprint. `aidememo-store-local` persists receipt, resource revision, change,
 audit, and project sequence in one SQLite transaction in a database separate
-from the existing embedded store.
+from the existing embedded store. `aidememo-server` persists token bindings and
+memberships in that ledger, derives identity outside the request body, and
+exposes bootstrap, exact resource reads, resource commands, a change feed, and
+health over a loopback-first Axum process.
 
 The backend-neutral `conformance::run` fixture checks exact idempotent receipt
 replay, command-ID conflicts, stale revision rejection, monotonic project
@@ -295,11 +346,14 @@ sequences, deletion tombstones, fail-closed epoch changes, and rejection of
 cursors ahead of canonical history. Both its in-memory reference and the real
 SQLite adapter pass. SQLite integration tests
 also cover process reopen, duplicate submission through two concurrent
-connections, and identical project IDs isolated under two tenants. No remote
-server, PostgreSQL, Durable Object, artifact body, or sync adapter is wired yet.
-All three foundation crates are `publish = false` until a server-facing API and
-release order are defined, so they do not silently enter the existing v0.1.0
-crate publication workflow.
+connections, and identical project IDs isolated under two tenants. HTTP tests
+cover missing and unknown bearer rejection, identity-field injection, writer
+replay/conflict behavior, reader-only sync, and role enforcement. No
+PostgreSQL, Durable Object, artifact body, product-domain API, MCP remote
+profile, or local replica adapter is wired yet. All four foundation crates are
+`publish = false` until a server-facing public API and release order are
+approved, so they do not silently enter the existing v0.1.0 crate publication
+workflow.
 
 ## Phased delivery gates
 
@@ -316,9 +370,10 @@ submission produces one mutation; stale revisions fail; deletion reaches a
 replica through a tombstone.
 
 Current status: the Phase 0 code exit gate passes against the separate SQLite
-adapter without changing the existing embedded API or file formats. These
-crates are not reachable from the CLI or MCP server yet, so this closes the
-contract foundation rather than shipping server mode. Phase 1 remains open.
+adapter and authenticated HTTP tests without changing the existing embedded API
+or file formats. The bounded `aidememo-server` executable is reachable only as a
+workspace, unpublished resource API; it is not wired to the existing CLI or MCP
+product surfaces.
 
 ### Phase 1 — single-node remote SSOT
 
@@ -329,6 +384,12 @@ contract foundation rather than shipping server mode. Phase 1 remains open.
 Exit gate: Codex primary, Codex secondary, and Hermes complete a handoff through
 one remote project; an unavailable server preserves cached reads and creates no
 silent multi-primary writes.
+
+Current status: the first item is partially complete for canonical inline JSON
+resources, persisted bearer identity/membership, exact reads, and incremental
+change retrieval. Local artifact bodies, product-domain commands, CLI/MCP
+remote profiles, replica bootstrap/reset, offline behavior, and the three-agent
+handoff exit scenario remain open.
 
 ### Phase 2 — portable production backend
 

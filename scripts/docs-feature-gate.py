@@ -42,6 +42,8 @@ DOMAIN_LIB_RS = ROOT / "crates" / "aidememo-domain" / "src" / "lib.rs"
 DOMAIN_CONFORMANCE_RS = ROOT / "crates" / "aidememo-domain" / "src" / "conformance.rs"
 SERVICE_LIB_RS = ROOT / "crates" / "aidememo-service" / "src" / "lib.rs"
 LOCAL_STORE_LIB_RS = ROOT / "crates" / "aidememo-store-local" / "src" / "lib.rs"
+SERVER_LIB_RS = ROOT / "crates" / "aidememo-server" / "src" / "lib.rs"
+SERVER_MAIN_RS = ROOT / "crates" / "aidememo-server" / "src" / "main.rs"
 SIDEBAR_JS = ROOT / "website" / "sidebars.js"
 DOCUSAURUS_CONFIG = ROOT / "website" / "docusaurus.config.js"
 WEBSITE_PACKAGE = ROOT / "website" / "package.json"
@@ -143,9 +145,30 @@ DOC_CONTENT_REQUIREMENTS = [
         ],
     ),
     (
+        SERVER_LIB_RS,
+        [
+            "/v1/commands",
+            "bearer_token_digest",
+            "deny_unknown_fields",
+            "authenticate_token",
+            "resource.put",
+            "ResourceResponseState",
+        ],
+    ),
+    (
+        SERVER_MAIN_RS,
+        [
+            "BootstrapArgs",
+            "project_epoch",
+            "token_file",
+            "allow_insecure_http",
+            "bootstrap_project",
+        ],
+    ),
+    (
         SERVER_SSOT_DOC,
         [
-            "accepted target direction; not the current production contract",
+            "bounded single-node HTTP",
             "tenant_id",
             "project_id",
             "command_id",
@@ -160,8 +183,11 @@ DOC_CONTENT_REQUIREMENTS = [
             "aidememo-domain",
             "aidememo-service",
             "aidememo-store-local",
+            "aidememo-server",
             "conformance::run",
             "Phase 0 code exit gate passes",
+            "resource.put",
+            "/v1/commands",
             "aidememo-store-postgres",
             "Phase 4",
             "distributed POSIX filesystem",

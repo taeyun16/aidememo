@@ -12,6 +12,8 @@ pub enum ErrorCode {
     InvalidIdentifier,
     /// Authenticated identity and membership identity disagree.
     IdentityMismatch,
+    /// Bearer credentials are missing, malformed, or unknown.
+    AuthenticationFailed,
     /// The actor does not have an active writable project membership.
     ProjectUnauthorized,
     /// The command selected a project other than the authorized project.
@@ -54,6 +56,9 @@ pub enum DomainError {
     /// Authenticated identity differs from the membership record.
     #[error("authenticated identity does not match project membership")]
     IdentityMismatch,
+    /// Request did not carry valid server credentials.
+    #[error("authentication failed")]
+    AuthenticationFailed,
     /// The actor cannot mutate the requested project.
     #[error("actor is not authorized to mutate project {project_id}")]
     ProjectUnauthorized {
@@ -135,6 +140,7 @@ impl DomainError {
         match self {
             Self::InvalidIdentifier { .. } => ErrorCode::InvalidIdentifier,
             Self::IdentityMismatch => ErrorCode::IdentityMismatch,
+            Self::AuthenticationFailed => ErrorCode::AuthenticationFailed,
             Self::ProjectUnauthorized { .. } => ErrorCode::ProjectUnauthorized,
             Self::ProjectScopeMismatch { .. } => ErrorCode::ProjectScopeMismatch,
             Self::CommandConflict => ErrorCode::CommandConflict,

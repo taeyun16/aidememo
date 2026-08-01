@@ -17,8 +17,8 @@ mod storage;
 pub use artifact::{ArtifactBodyRef, ArtifactPath, ArtifactReference, ContentDigest};
 pub use change::{ChangeBatch, ChangeCursor, ChangeEntry, ChangeOperation};
 pub use command::{
-    AuditEntry, AuthorizedCommand, CommandEnvelope, CommandFingerprint, CommandReceipt,
-    MutationCommand, OperationName, ResourceKind, ResourceRef,
+    AuditEntry, AuthorizedCommand, CanonicalResource, CommandEnvelope, CommandFingerprint,
+    CommandReceipt, MutationCommand, OperationName, ResourceKind, ResourceRef, ResourceState,
 };
 pub use error::{DomainError, ErrorCode};
 pub use identity::{
