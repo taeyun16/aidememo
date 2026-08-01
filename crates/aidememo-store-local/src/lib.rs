@@ -366,6 +366,26 @@ impl SqliteCommandStore {
         authenticated: &AuthenticatedActor,
         project_id: &ProjectId,
     ) -> Result<Option<ProjectMembership>, DomainError> {
+        self.project_membership(
+            &ProjectScope::new(authenticated.tenant_id().clone(), project_id.clone()),
+            authenticated.actor_id(),
+        )
+    }
+
+    /// Load one active actor membership inside an exact tenant-project scope.
+    ///
+    /// This supports typed routing checks such as verifying a handoff receiver
+    /// before a canonical assignment is created.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DomainError::StorageFailure`] when SQLite cannot read or decode
+    /// the membership.
+    pub fn project_membership(
+        &self,
+        scope: &ProjectScope,
+        actor_id: &ActorId,
+    ) -> Result<Option<ProjectMembership>, DomainError> {
         let row: Option<(String, String)> = self
             .connection
             .query_row(
@@ -384,9 +404,9 @@ impl SqliteCommandStore {
                    AND tenant.status = 'active' AND project.status = 'active'
                    AND actor.status = 'active'",
                 params![
-                    authenticated.tenant_id().as_str(),
-                    project_id.as_str(),
-                    authenticated.actor_id().as_str(),
+                    scope.tenant_id.as_str(),
+                    scope.project_id.as_str(),
+                    actor_id.as_str(),
                 ],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
@@ -394,9 +414,9 @@ impl SqliteCommandStore {
             .map_err(|error| storage("membership_read", error))?;
         row.map(|(role, status)| {
             Ok(ProjectMembership {
-                tenant_id: authenticated.tenant_id().clone(),
-                project_id: project_id.clone(),
-                actor_id: authenticated.actor_id().clone(),
+                tenant_id: scope.tenant_id.clone(),
+                project_id: scope.project_id.clone(),
+                actor_id: actor_id.clone(),
                 role: parse_membership_role(&role)?,
                 status: parse_membership_status(&status)?,
             })
@@ -435,7 +455,9 @@ impl SqliteCommandStore {
 
         if let Some(row) = load_receipt(tx, &scope, &envelope.command_id)? {
             let receipt = row.decode()?;
-            if receipt.fingerprint != command.fingerprint {
+            if receipt.actor_id != *authorization.actor_id()
+                || receipt.fingerprint != command.fingerprint
+            {
                 return Err(DomainError::CommandConflict);
             }
             return Ok(receipt);
@@ -519,6 +541,16 @@ impl CommandStore for SqliteCommandStore {
         tx.commit()
             .map_err(|error| storage("command_commit", error))?;
         Ok(receipt)
+    }
+
+    fn receipt(
+        &self,
+        scope: &ProjectScope,
+        command_id: &CommandId,
+    ) -> Result<Option<CommandReceipt>, DomainError> {
+        load_receipt(&self.connection, scope, command_id)?
+            .map(ReceiptRow::decode)
+            .transpose()
     }
 
     fn changes(
@@ -1228,37 +1260,38 @@ fn insert_audit(
 }
 
 fn load_receipt(
-    tx: &Transaction<'_>,
+    connection: &Connection,
     scope: &ProjectScope,
     command_id: &CommandId,
 ) -> Result<Option<ReceiptRow>, DomainError> {
-    tx.query_row(
-        "SELECT command_id, fingerprint, tenant_id, project_id, actor_id, project_seq,
+    connection
+        .query_row(
+            "SELECT command_id, fingerprint, tenant_id, project_id, actor_id, project_seq,
                 resource_kind, resource_id, revision, committed_at_ms
          FROM ssot_receipts
          WHERE tenant_id = ?1 AND project_id = ?2 AND command_id = ?3",
-        params![
-            scope.tenant_id.as_str(),
-            scope.project_id.as_str(),
-            command_id.as_str()
-        ],
-        |row| {
-            Ok(ReceiptRow {
-                command_id: row.get(0)?,
-                fingerprint: row.get(1)?,
-                tenant_id: row.get(2)?,
-                project_id: row.get(3)?,
-                actor_id: row.get(4)?,
-                project_seq: row.get(5)?,
-                resource_kind: row.get(6)?,
-                resource_id: row.get(7)?,
-                revision: row.get(8)?,
-                committed_at_ms: row.get(9)?,
-            })
-        },
-    )
-    .optional()
-    .map_err(|error| storage("receipt_read", error))
+            params![
+                scope.tenant_id.as_str(),
+                scope.project_id.as_str(),
+                command_id.as_str()
+            ],
+            |row| {
+                Ok(ReceiptRow {
+                    command_id: row.get(0)?,
+                    fingerprint: row.get(1)?,
+                    tenant_id: row.get(2)?,
+                    project_id: row.get(3)?,
+                    actor_id: row.get(4)?,
+                    project_seq: row.get(5)?,
+                    resource_kind: row.get(6)?,
+                    resource_id: row.get(7)?,
+                    revision: row.get(8)?,
+                    committed_at_ms: row.get(9)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(|error| storage("receipt_read", error))
 }
 
 struct ReceiptRow {

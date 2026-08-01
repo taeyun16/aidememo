@@ -104,6 +104,11 @@ string_id!(CommandId, "command_id");
 string_id!(ProjectEpoch, "project_epoch");
 string_id!(ResourceId, "resource_id");
 string_id!(ArtifactId, "artifact_id");
+string_id!(SourceId, "source_id");
+string_id!(SessionId, "session_id");
+string_id!(FactId, "fact_id");
+string_id!(HandoffId, "handoff_id");
+string_id!(ClaimId, "claim_id");
 
 /// Composite scope used for every canonical lookup and uniqueness constraint.
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]

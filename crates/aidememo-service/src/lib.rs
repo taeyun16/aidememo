@@ -65,6 +65,108 @@ impl<S: CommandStore> CommandService<S> {
         resource: ResourceRef,
         change: ChangeOperation,
     ) -> Result<CommandReceipt, DomainError> {
+        let resource_body = match change {
+            ChangeOperation::Upsert => Some(canonical_json_bytes(&envelope.payload)?),
+            ChangeOperation::Delete => None,
+        };
+        self.execute_prepared(
+            authenticated,
+            membership,
+            envelope,
+            resource,
+            change,
+            resource_body,
+        )
+    }
+
+    /// Execute a command whose fingerprint payload and canonical resource body
+    /// are different typed representations.
+    ///
+    /// Typed state transitions use the stable client request for idempotency
+    /// while persisting the server-validated next record as the resource body.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stable [`DomainError`] for authorization, canonical encoding,
+    /// idempotency, CAS, or storage failure.
+    pub fn execute_with_body<T: Serialize, B: Serialize>(
+        &mut self,
+        authenticated: &AuthenticatedActor,
+        membership: &ProjectMembership,
+        envelope: CommandEnvelope<T>,
+        resource: ResourceRef,
+        change: ChangeOperation,
+        body: &B,
+    ) -> Result<CommandReceipt, DomainError> {
+        let resource_body = match change {
+            ChangeOperation::Upsert => Some(canonical_json_bytes(body)?),
+            ChangeOperation::Delete => {
+                return Err(DomainError::InvalidCommand(
+                    "execute_with_body only supports upsert commands".to_owned(),
+                ));
+            }
+        };
+        self.execute_prepared(
+            authenticated,
+            membership,
+            envelope,
+            resource,
+            change,
+            resource_body,
+        )
+    }
+
+    /// Replay an already committed command before inspecting mutable state.
+    ///
+    /// A matching receipt is returned only when project, authenticated actor,
+    /// full request fingerprint, resource coordinate, and change kind match.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DomainError::CommandConflict`] when a command ID belongs to a
+    /// different actor or request.
+    pub fn replay<T: Serialize>(
+        &self,
+        authenticated: &AuthenticatedActor,
+        membership: &ProjectMembership,
+        envelope: &CommandEnvelope<T>,
+        resource: &ResourceRef,
+        change: ChangeOperation,
+    ) -> Result<Option<CommandReceipt>, DomainError> {
+        let access = ProjectAccess::authorize(authenticated, membership)?;
+        let authorization = access.require_write()?;
+        if authorization.project_id() != &envelope.project_id {
+            return Err(DomainError::ProjectScopeMismatch {
+                requested: envelope.project_id.clone(),
+                authorized: authorization.project_id().clone(),
+            });
+        }
+        let fingerprint = command_fingerprint(envelope, resource, change)?;
+        let receipt = self
+            .store
+            .receipt(&authorization.scope(), &envelope.command_id)?;
+        match receipt {
+            None => Ok(None),
+            Some(receipt)
+                if receipt.actor_id == *authorization.actor_id()
+                    && receipt.fingerprint == fingerprint
+                    && receipt.resource == *resource =>
+            {
+                Ok(Some(receipt))
+            }
+            Some(_) => Err(DomainError::CommandConflict),
+        }
+    }
+
+    fn execute_prepared<T: Serialize>(
+        &mut self,
+        authenticated: &AuthenticatedActor,
+        membership: &ProjectMembership,
+        envelope: CommandEnvelope<T>,
+        resource: ResourceRef,
+        change: ChangeOperation,
+        resource_body: Option<Vec<u8>>,
+    ) -> Result<CommandReceipt, DomainError> {
         let access = ProjectAccess::authorize(authenticated, membership)?;
         let authorization = access.require_write()?;
         if authorization.project_id() != &envelope.project_id {
@@ -74,10 +176,6 @@ impl<S: CommandStore> CommandService<S> {
             });
         }
         let fingerprint = command_fingerprint(&envelope, &resource, change)?;
-        let resource_body = match change {
-            ChangeOperation::Upsert => Some(canonical_json_bytes(&envelope.payload)?),
-            ChangeOperation::Delete => None,
-        };
         let metadata = CommandEnvelope {
             command_id: envelope.command_id,
             project_id: envelope.project_id,

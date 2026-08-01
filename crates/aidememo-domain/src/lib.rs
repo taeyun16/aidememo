@@ -10,6 +10,7 @@ mod change;
 mod command;
 pub mod conformance;
 mod error;
+mod handoff;
 mod identity;
 mod record;
 mod storage;
@@ -21,10 +22,12 @@ pub use command::{
     CommandReceipt, MutationCommand, OperationName, ResourceKind, ResourceRef, ResourceState,
 };
 pub use error::{DomainError, ErrorCode};
+pub use handoff::{FactRecord, HandoffOutcome, HandoffRecord, HandoffStatus, SessionRecord};
 pub use identity::{
-    ActorId, ArtifactId, AuthenticatedActor, CommandId, MembershipRole, MembershipStatus,
-    ProjectAccess, ProjectAuthorization, ProjectEpoch, ProjectId, ProjectMembership, ProjectScope,
-    ProjectSequence, ResourceId, Revision, TenantId,
+    ActorId, ArtifactId, AuthenticatedActor, ClaimId, CommandId, FactId, HandoffId, MembershipRole,
+    MembershipStatus, ProjectAccess, ProjectAuthorization, ProjectEpoch, ProjectId,
+    ProjectMembership, ProjectScope, ProjectSequence, ResourceId, Revision, SessionId, SourceId,
+    TenantId,
 };
 pub use record::{ActorKind, ActorRecord, ProjectRecord, RecordStatus, TenantRecord};
 pub use storage::CommandStore;

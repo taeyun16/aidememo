@@ -74,6 +74,27 @@ pub fn run<A: CommandStore>(
         "idempotent_replay",
         "identical command retry must return the exact stored receipt",
     )?;
+    let looked_up = adapter.receipt(&authorization_scope(&created), &created.command_id)?;
+    check(
+        looked_up.as_ref() == Some(&created),
+        "receipt_lookup",
+        "receipt lookup must return the exact committed result",
+    )?;
+
+    let actor_conflict = fixture_command(
+        fixture_authorization_for("actor_other")?,
+        "command_create",
+        None,
+        "fact.add",
+        'a',
+        create.resource.clone(),
+        ChangeOperation::Upsert,
+    )?;
+    check_error_code(
+        adapter.execute(&actor_conflict),
+        ErrorCode::CommandConflict,
+        "command_actor_conflict",
+    )?;
 
     let mut conflicting = create.clone();
     conflicting.fingerprint = fingerprint('b')?;
@@ -186,6 +207,8 @@ pub fn run<A: CommandStore>(
             "initial_commit",
             "canonical_resource_upsert",
             "idempotent_replay",
+            "receipt_lookup",
+            "command_actor_conflict",
             "command_id_conflict",
             "stale_revision",
             "compare_and_swap",
@@ -201,16 +224,20 @@ pub fn run<A: CommandStore>(
 }
 
 fn fixture_authorization() -> Result<ProjectAuthorization, DomainError> {
+    fixture_authorization_for("actor_fixture")
+}
+
+fn fixture_authorization_for(actor_id: &str) -> Result<ProjectAuthorization, DomainError> {
     let authenticated = AuthenticatedActor::new(
         TenantId::try_from("tenant_fixture")?,
-        ActorId::try_from("actor_fixture")?,
+        ActorId::try_from(actor_id)?,
     );
     ProjectAuthorization::authorize(
         &authenticated,
         &ProjectMembership {
             tenant_id: TenantId::try_from("tenant_fixture")?,
             project_id: ProjectId::try_from("project_fixture")?,
-            actor_id: ActorId::try_from("actor_fixture")?,
+            actor_id: ActorId::try_from(actor_id)?,
             role: MembershipRole::Writer,
             status: MembershipStatus::Active,
         },
@@ -321,7 +348,9 @@ mod tests {
         fn execute(&mut self, command: &MutationCommand) -> Result<CommandReceipt, DomainError> {
             let envelope = command.command.envelope();
             if let Some(receipt) = self.receipts.get(&envelope.command_id) {
-                if receipt.fingerprint != command.fingerprint {
+                if receipt.actor_id != *command.command.authorization().actor_id()
+                    || receipt.fingerprint != command.fingerprint
+                {
                     return Err(DomainError::CommandConflict);
                 }
                 return Ok(receipt.clone());
@@ -389,6 +418,18 @@ mod tests {
             Ok(receipt)
         }
 
+        fn receipt(
+            &self,
+            scope: &ProjectScope,
+            command_id: &CommandId,
+        ) -> Result<Option<CommandReceipt>, DomainError> {
+            Ok(self
+                .receipts
+                .get(command_id)
+                .filter(|receipt| &authorization_scope(receipt) == scope)
+                .cloned())
+        }
+
         fn changes(
             &self,
             scope: &ProjectScope,
@@ -443,7 +484,7 @@ mod tests {
         let report = run(&mut adapter, epoch)?;
         assert_eq!(report.final_sequence, ProjectSequence::new(3));
         assert_eq!(report.tombstone_revision.get(), 3);
-        assert_eq!(report.checks.len(), 11);
+        assert_eq!(report.checks.len(), 13);
         Ok(())
     }
 }

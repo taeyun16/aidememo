@@ -5,6 +5,8 @@
 //! active membership is loaded from the same SQLite ledger before every read or
 //! mutation. This crate does not modify or expose the existing embedded store.
 
+mod product;
+
 use aidememo_domain::{
     CanonicalResource, ChangeCursor, ChangeOperation, CommandEnvelope, CommandId, DomainError,
     ErrorCode, OperationName, ProjectEpoch, ProjectId, ProjectSequence, ResourceId, ResourceKind,
@@ -57,6 +59,7 @@ pub fn router(state: ServerState) -> Router {
             "/v1/projects/{project_id}/resources/{resource_kind}/{resource_id}",
             get(resource),
         )
+        .merge(product::routes())
         .layer(DefaultBodyLimit::max(MAX_COMMAND_BODY_BYTES))
         .with_state(state)
 }
@@ -346,10 +349,13 @@ fn status_for_error(error: &DomainError) -> StatusCode {
     match error {
         DomainError::AuthenticationFailed => StatusCode::UNAUTHORIZED,
         DomainError::IdentityMismatch
+        | DomainError::HandoffActorMismatch
         | DomainError::ProjectUnauthorized { .. }
         | DomainError::ProjectScopeMismatch { .. } => StatusCode::FORBIDDEN,
         DomainError::ResourceNotFound => StatusCode::NOT_FOUND,
         DomainError::CommandConflict
+        | DomainError::ResourceAlreadyExists
+        | DomainError::HandoffConflict(_)
         | DomainError::StaleRevision { .. }
         | DomainError::CursorEpochMismatch { .. }
         | DomainError::CursorOutOfRange { .. } => StatusCode::CONFLICT,

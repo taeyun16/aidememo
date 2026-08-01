@@ -5,9 +5,9 @@ description: Target architecture and staged contract for running AideMemo as a m
 
 # Server and SSOT Architecture
 
-> Status: accepted target direction. Phase 0 and a bounded single-node HTTP
-> resource slice are implemented, but this is not the current production
-> contract.
+> Status: accepted target direction. Phase 0 and a bounded single-node typed
+> session/fact/handoff HTTP slice are implemented, but this is not the current
+> production contract.
 
 AideMemo is local-first today. One embedded store is opened by the Rust core and
 can be coordinated through stdio MCP, the local daemon, or `aidememo mcp-serve`.
@@ -141,10 +141,10 @@ lower-level pairs `resource.put` + `upsert` and `resource.delete` + `delete`.
 A delete payload must be JSON `null`, and the resource kind must use the
 `custom.*` extension namespace. Reserved product kinds such as `fact`,
 `session`, `handoff`, and `artifact` are rejected on the raw endpoint. Product
-operations such as `fact.add`, `session.handoff`, search, and MCP still require
-their typed domain adapters; they are not aliases accepted by this endpoint.
-This keeps the first server executable from claiming or bypassing application
-semantics it does not yet enforce.
+operations are never aliases accepted by this endpoint. The separate typed
+routes now cover session creation, session-attached fact creation, and handoff
+send/accept/return/status; search, inbox/outbox, heartbeat, and MCP integration
+remain open. This prevents the raw route from bypassing product semantics.
 
 The idempotency fingerprint binds project, revision precondition, operation,
 payload, full resource coordinate, and upsert/delete change kind. Consequently,
@@ -154,7 +154,9 @@ instead of replaying the first resource's receipt.
 Handoff claim and return invariants remain domain operations. A handoff result
 fact must match the same tenant, project, session, source, receiving actor, and
 active claim. A file written under an artifact path cannot complete a handoff
-by itself.
+by itself. The first typed HTTP slice now enforces these checks, requires the
+receiver to be an active writable project member, and keeps a failed return
+eligible only for a new exclusive claim.
 
 ## Ordered change feed
 
@@ -271,6 +273,29 @@ The current HTTP surface is intentionally small:
 | `POST /v1/commands` | Authenticated `custom.*` `resource.put` / `resource.delete`, idempotent receipt, revision CAS |
 | `GET /v1/projects/{project}/resources/{kind}/{id}` | Exact canonical body or tombstone |
 | `GET /v1/projects/{project}/changes` | Ordered change entries after an epoch/sequence cursor |
+| `POST /v1/projects/{project}/sessions` | Create one typed session; `source_id` is fixed here |
+| `POST /v1/projects/{project}/facts` | Create one fact attached to an existing session; source and actor are inherited server-side |
+| `POST /v1/projects/{project}/handoffs` | Send the session pointer to another active writer |
+| `POST .../handoffs/{id}/accept` | Claim with `expected_revision` and an exclusive `claim_id` |
+| `POST .../handoffs/{id}/return` | Validate claim plus result fact session/source/actor and return an outcome |
+| `GET .../handoffs/{id}` | Sender/receiver-only typed status |
+
+Create requests use `{"command_id":"...","payload":{...}}`. Transitions also
+carry the revision observed by the client:
+
+```json
+{
+  "command_id": "command_accept_01",
+  "expected_revision": 1,
+  "payload": {"claim_id": "worker_attempt_01"}
+}
+```
+
+Clients generate stable command and resource IDs so transport retries are
+deterministic. Before re-reading mutable handoff state, the server verifies and
+replays an existing receipt. This means a delayed accept retry still returns
+its original receipt even if the handoff has since completed. A different actor
+cannot replay the first actor's command ID.
 
 Every protected request hashes the bearer value, resolves the persisted tenant
 and actor, and reloads active project membership. Command JSON uses
@@ -280,9 +305,11 @@ sequence, change entry, and audit row commit in one SQLite transaction.
 
 This process supports one application replica and has no built-in TLS, token
 rotation/revocation command, rate limits, artifact directory, PostgreSQL,
-search, product fact/session/handoff commands, MCP remote profile, local read
-replica, or offline outbox yet. It is a server contract executable, not a
-released SaaS or a replacement for `aidememo mcp-serve`.
+search, handoff inbox/outbox index, heartbeat, MCP remote profile, local read
+replica, or offline outbox yet. Typed facts are result evidence in the canonical
+ledger and are not indexed by the existing embedded retrieval engine. This is a
+server contract executable, not a released SaaS or a replacement for
+`aidememo mcp-serve`.
 
 ### Hosted Cloudflare edge
 
@@ -337,7 +364,8 @@ embedded implementation boundary; a remote HTTP backend should not pretend to
 be a local `Path`-opened store.
 
 `aidememo-domain` provides validated tenant, project, actor, membership,
-command, revision, audit, change-feed, tombstone, and artifact-reference types.
+command, revision, audit, change-feed, tombstone, artifact-reference, typed
+session/fact, and handoff state-machine types.
 Every lookup and feed batch carries the composite tenant-project scope.
 `aidememo-service` binds authenticated identity and membership to the untrusted
 envelope, recursively canonicalizes its JSON fields, and computes the command
@@ -345,8 +373,9 @@ fingerprint. `aidememo-store-local` persists receipt, resource revision, change,
 audit, and project sequence in one SQLite transaction in a database separate
 from the existing embedded store. `aidememo-server` persists token bindings and
 memberships in that ledger, derives identity outside the request body, and
-exposes bootstrap, exact resource reads, resource commands, a change feed, and
-health over a loopback-first Axum process.
+exposes bootstrap, exact resource reads, extension resource commands, typed
+session/fact/handoff routes, a change feed, and health over a loopback-first
+Axum process.
 
 The backend-neutral `conformance::run` fixture checks exact idempotent receipt
 replay, command-ID conflicts, stale revision rejection, monotonic project
@@ -356,9 +385,10 @@ SQLite adapter pass. SQLite integration tests
 also cover process reopen, duplicate submission through two concurrent
 connections, and identical project IDs isolated under two tenants. HTTP tests
 cover missing and unknown bearer rejection, identity-field injection, writer
-replay/conflict behavior, reader-only sync, and role enforcement. No
-PostgreSQL, Durable Object, artifact body, product-domain API, MCP remote
-profile, or local replica adapter is wired yet. All four foundation crates are
+replay/conflict behavior, reader-only sync, role enforcement, and a
+`codex-p1 -> codex-p2 -> Hermes` typed handoff chain. No PostgreSQL, Durable
+Object, artifact body, handoff inbox index, search adapter, MCP remote profile,
+or local replica adapter is wired yet. All four foundation crates are
 `publish = false` until a server-facing public API and release order are
 approved, so they do not silently enter the existing v0.1.0 crate publication
 workflow.
@@ -394,10 +424,14 @@ one remote project; an unavailable server preserves cached reads and creates no
 silent multi-primary writes.
 
 Current status: the first item is partially complete for canonical inline JSON
-resources, persisted bearer identity/membership, exact reads, and incremental
-change retrieval. Local artifact bodies, product-domain commands, CLI/MCP
-remote profiles, replica bootstrap/reset, offline behavior, and the three-agent
-handoff exit scenario remain open.
+resources, persisted bearer identity/membership, exact reads, incremental
+change retrieval, and typed session/fact/handoff commands. An HTTP integration
+test completes a `codex-p1 -> codex-p2 -> Hermes` chain. Combined domain and
+HTTP tests reject wrong actor, claim, source/session evidence, read-only
+receiver, and non-participant reads.
+Actual CLI/MCP profile wiring, inbox/outbox indexes, local artifacts, replica
+bootstrap/reset, and unavailable-server offline behavior remain open, so the
+full Phase 1 exit gate is not yet closed.
 
 ### Phase 2 — portable production backend
 

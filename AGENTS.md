@@ -16,7 +16,7 @@ vectors) and exposes it to LLM agents via CLI, MCP server, and native bindings
 
 | Crate | Purpose |
 |---|---|
-| `aidememo-domain` | Portable server/SSOT identities, commands, receipts, revisions, change feed, artifacts, and conformance fixture |
+| `aidememo-domain` | Portable server/SSOT identities, commands, receipts, revisions, change feed, artifacts, typed handoff state machine, and conformance fixture |
 | `aidememo-service` | Authenticated command orchestration and canonical request fingerprinting |
 | `aidememo-store-local` | Separate single-node SQLite command ledger for the future server mode; does not replace the embedded core store |
 | `aidememo-server` | Authenticated single-node HTTP resource command, exact-read, change-feed, bootstrap, and health boundary |
@@ -381,6 +381,7 @@ crates/aidememo-domain/src/
   command.rs    envelope, authorization guard, receipt, audit
   change.rs     ordered project change feed + tombstones
   storage.rs    portable CommandStore adapter contract
+  handoff.rs    typed session/fact records + exclusive handoff claim/return invariants
   conformance.rs backend-neutral idempotency/CAS/epoch fixture
 
 crates/aidememo-service/src/lib.rs
@@ -392,6 +393,7 @@ crates/aidememo-store-local/src/lib.rs
 crates/aidememo-server/src/
   lib.rs        authenticated resource command, exact-read, change-feed, and health routes
   main.rs       retry-safe identity bootstrap and loopback-first server process
+  product.rs    typed session/fact/handoff send, accept, return, and status routes
 
 crates/aidememo-core/src/
   lib.rs        AideMemo public API (re-exports)
@@ -475,10 +477,17 @@ crates/aidememo-cli/src/
   reinterpret the current embedded `aidememo-core` file format.
 - `aidememo-server` derives tenant and actor identity only from a persisted
   SHA-256 bearer-token binding, reloads active membership for every request,
-  and currently exposes only `resource.put` / `resource.delete` for `custom.*`
-  extension kinds, exact resource reads, and the ordered change feed. Reserved
-  product kinds such as `fact`, `session`, and `handoff` require future typed
-  APIs; the raw endpoint must not bypass their invariants.
+  and exposes `resource.put` / `resource.delete` only for `custom.*` extension
+  kinds, exact resource reads, the ordered change feed, and bounded typed
+  product routes. Reserved product kinds such as `fact`, `session`, and
+  `handoff` are writable only through typed APIs; the raw endpoint must not
+  bypass their invariants. The first typed slice supports session create,
+  session-attached fact create, and handoff
+  send/accept/return/status. It does not yet provide inbox/outbox indexes,
+  heartbeat, search, MCP remote profiles, or local replicas.
+- Typed handoff return must match the canonical session, inherited `source_id`,
+  authenticated receiving actor, active `claim_id`, and result fact. The
+  receiver must be an active writable project member.
 - Every new canonical adapter must pass `aidememo_domain::conformance::run`.
 - The four foundation crates remain `publish = false` until a server-facing
   public API and dependency release order are approved.

@@ -1,8 +1,8 @@
 //! Portable canonical command ledger boundary.
 
 use crate::{
-    CanonicalResource, ChangeBatch, ChangeCursor, CommandReceipt, DomainError, MutationCommand,
-    ProjectScope, ResourceRef,
+    CanonicalResource, ChangeBatch, ChangeCursor, CommandId, CommandReceipt, DomainError,
+    MutationCommand, ProjectScope, ResourceRef,
 };
 
 /// Atomic receipt, resource-revision, audit, and change-feed persistence.
@@ -18,6 +18,17 @@ pub trait CommandStore {
     /// Returns a stable [`DomainError`] when scope, idempotency, CAS, or durable
     /// persistence rejects the mutation.
     fn execute(&mut self, command: &MutationCommand) -> Result<CommandReceipt, DomainError>;
+
+    /// Look up a committed receipt before re-evaluating mutable domain state.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stable [`DomainError`] when the lookup cannot complete.
+    fn receipt(
+        &self,
+        scope: &ProjectScope,
+        command_id: &CommandId,
+    ) -> Result<Option<CommandReceipt>, DomainError>;
 
     /// Pull ordered mutations after a replica cursor.
     ///

@@ -40,10 +40,12 @@ ISSUE_TEMPLATE_CONFIG = ROOT / ".github" / "ISSUE_TEMPLATE" / "config.yml"
 MCP_TOOLS_RS = ROOT / "crates" / "aidememo-cli" / "src" / "cmd" / "mcp_tools.rs"
 DOMAIN_LIB_RS = ROOT / "crates" / "aidememo-domain" / "src" / "lib.rs"
 DOMAIN_CONFORMANCE_RS = ROOT / "crates" / "aidememo-domain" / "src" / "conformance.rs"
+DOMAIN_HANDOFF_RS = ROOT / "crates" / "aidememo-domain" / "src" / "handoff.rs"
 SERVICE_LIB_RS = ROOT / "crates" / "aidememo-service" / "src" / "lib.rs"
 LOCAL_STORE_LIB_RS = ROOT / "crates" / "aidememo-store-local" / "src" / "lib.rs"
 SERVER_LIB_RS = ROOT / "crates" / "aidememo-server" / "src" / "lib.rs"
 SERVER_MAIN_RS = ROOT / "crates" / "aidememo-server" / "src" / "main.rs"
+SERVER_PRODUCT_RS = ROOT / "crates" / "aidememo-server" / "src" / "product.rs"
 SIDEBAR_JS = ROOT / "website" / "sidebars.js"
 DOCUSAURUS_CONFIG = ROOT / "website" / "docusaurus.config.js"
 WEBSITE_PACKAGE = ROOT / "website" / "package.json"
@@ -123,6 +125,20 @@ DOC_CONTENT_REQUIREMENTS = [
             "delete_tombstone",
             "cursor_epoch_fail_closed",
             "cursor_sequence_fail_closed",
+            "receipt_lookup",
+            "command_actor_conflict",
+        ],
+    ),
+    (
+        DOMAIN_HANDOFF_RS,
+        [
+            "SessionRecord",
+            "FactRecord",
+            "HandoffRecord",
+            "active handoff claim",
+            "result fact belongs to a different session",
+            "result fact belongs to a different source",
+            "result fact was not written by the receiving actor",
         ],
     ),
     (
@@ -134,6 +150,8 @@ DOC_CONTENT_REQUIREMENTS = [
             "canonicalize_json",
             "resource: &'a ResourceRef",
             "change: ChangeOperation",
+            "execute_with_body",
+            "pub fn replay",
         ],
     ),
     (
@@ -144,6 +162,7 @@ DOC_CONTENT_REQUIREMENTS = [
             "ssot_receipts",
             "ssot_changes",
             "ssot_audit",
+            "project_membership",
         ],
     ),
     (
@@ -169,9 +188,21 @@ DOC_CONTENT_REQUIREMENTS = [
         ],
     ),
     (
+        SERVER_PRODUCT_RS,
+        [
+            "/sessions",
+            "/facts",
+            "/handoffs",
+            "handoff.accept",
+            "handoff.return",
+            "project_membership",
+            "return_result",
+        ],
+    ),
+    (
         SERVER_SSOT_DOC,
         [
-            "bounded single-node HTTP",
+            "bounded single-node typed",
             "tenant_id",
             "project_id",
             "command_id",
@@ -192,6 +223,12 @@ DOC_CONTENT_REQUIREMENTS = [
             "resource.put",
             "custom.*",
             "/v1/commands",
+            "/sessions",
+            "/facts",
+            "/handoffs",
+            "codex-p1",
+            "codex-p2",
+            "Hermes",
             "aidememo-store-postgres",
             "Phase 4",
             "distributed POSIX filesystem",

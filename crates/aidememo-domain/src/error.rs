@@ -20,10 +20,16 @@ pub enum ErrorCode {
     ProjectScopeMismatch,
     /// A command ID was reused with a different request fingerprint.
     CommandConflict,
+    /// Authenticated actor is not a participant in the requested handoff action.
+    HandoffActorMismatch,
+    /// Handoff state, claim, or result evidence conflicts with canonical state.
+    HandoffConflict,
     /// Optimistic concurrency precondition did not match the current revision.
     StaleRevision,
     /// The requested resource does not exist.
     ResourceNotFound,
+    /// A create-only command targeted an existing canonical resource.
+    ResourceAlreadyExists,
     /// A cursor belongs to a replaced or restored project history.
     CursorEpochMismatch,
     /// A cursor claims a sequence newer than canonical project history.
@@ -76,6 +82,12 @@ pub enum DomainError {
     /// Existing receipt fingerprint differs for the same command ID.
     #[error("command ID was already used with a different request")]
     CommandConflict,
+    /// Actor is not allowed to perform this handoff transition.
+    #[error("authenticated actor is not allowed to perform this handoff action")]
+    HandoffActorMismatch,
+    /// Handoff state or evidence does not satisfy the transition contract.
+    #[error("handoff conflict: {0}")]
+    HandoffConflict(String),
     /// Expected revision differs from the canonical record.
     #[error("stale revision: expected {expected}, current {current}")]
     StaleRevision {
@@ -87,6 +99,9 @@ pub enum DomainError {
     /// The canonical resource was not found.
     #[error("resource not found")]
     ResourceNotFound,
+    /// Create-only operation cannot overwrite canonical state.
+    #[error("resource already exists")]
+    ResourceAlreadyExists,
     /// Cursor epoch differs from the canonical project epoch.
     #[error("cursor epoch {cursor} does not match current project epoch {current}")]
     CursorEpochMismatch {
@@ -144,8 +159,11 @@ impl DomainError {
             Self::ProjectUnauthorized { .. } => ErrorCode::ProjectUnauthorized,
             Self::ProjectScopeMismatch { .. } => ErrorCode::ProjectScopeMismatch,
             Self::CommandConflict => ErrorCode::CommandConflict,
+            Self::HandoffActorMismatch => ErrorCode::HandoffActorMismatch,
+            Self::HandoffConflict(_) => ErrorCode::HandoffConflict,
             Self::StaleRevision { .. } => ErrorCode::StaleRevision,
             Self::ResourceNotFound => ErrorCode::ResourceNotFound,
+            Self::ResourceAlreadyExists => ErrorCode::ResourceAlreadyExists,
             Self::CursorEpochMismatch { .. } => ErrorCode::CursorEpochMismatch,
             Self::CursorOutOfRange { .. } => ErrorCode::CursorOutOfRange,
             Self::InvalidChangeBatch(_) => ErrorCode::InvalidChangeBatch,
