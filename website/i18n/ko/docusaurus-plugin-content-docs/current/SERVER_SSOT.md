@@ -254,7 +254,8 @@ API replica는 read-write-many volume을 통해 live embedded SQLite 파일을 �
 
 ## 제안 코드 경계
 
-다음 이름은 의도한 경계를 설명하며 아직 crate가 존재하지 않습니다.
+`aidememo-domain`은 이제 portable Phase 0 계약 crate로 존재합니다. 나머지 이름은
+여전히 의도한 경계를 설명하며 아직 존재하지 않습니다.
 
 ```text
 aidememo-domain          portable ID, command, record, invariant
@@ -271,6 +272,14 @@ test를 local, PostgreSQL, 선택형 Durable Object adapter에 공통 실행할 
 합니다. 기존의 큰 동기식 `StoreBackend`는 embedded 구현 경계로 남깁니다. 원격
 HTTP backend가 로컬 `Path`로 여는 store인 것처럼 동작해서는 안 됩니다.
 
+현재 구현된 crate는 검증된 tenant, project, actor, membership, command, revision,
+audit, change-feed, tombstone, artifact reference type을 제공합니다. Backend 중립
+`conformance::run` fixture는 정확한 idempotent receipt replay, command ID 충돌,
+stale revision 거부, 단조 증가 project sequence, 삭제 tombstone, fail-closed epoch
+변경을 검사합니다. Crate 안의 in-memory adapter는 실행 가능한 reference test일
+뿐입니다. Production local, PostgreSQL, Durable Object, remote server, sync adapter는
+아직 이 계약에 연결되지 않았습니다.
+
 ## 단계별 delivery gate
 
 ### Phase 0 — 서버 계약 고정
@@ -284,6 +293,10 @@ HTTP backend가 로컬 `Path`로 여는 store인 것처럼 동작해서는 안 �
 종료 gate: 두 독립 client가 identity를 재정의할 수 없고, 중복 command submission이
 mutation 하나만 만들며, stale revision이 실패하고, 삭제가 tombstone으로
 replica에 도착합니다.
+
+현재 상태: portable schema와 reference conformance fixture가 준비됐습니다. 기존
+embedded API나 파일 format을 바꾸지 않고 production adapter가 이 계약을 사용해
+동일한 fixture를 통과할 때까지 Phase 0는 열린 상태입니다.
 
 ### Phase 1 — 단일 노드 원격 SSOT
 

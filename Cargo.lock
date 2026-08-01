@@ -139,6 +139,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "aidememo-domain"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "aidememo-ffi"
 version = "0.1.0"
 dependencies = [

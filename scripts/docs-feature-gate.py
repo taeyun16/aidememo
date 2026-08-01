@@ -38,6 +38,8 @@ BUG_TEMPLATE = ROOT / ".github" / "ISSUE_TEMPLATE" / "bug_report.yml"
 FEATURE_TEMPLATE = ROOT / ".github" / "ISSUE_TEMPLATE" / "feature_request.yml"
 ISSUE_TEMPLATE_CONFIG = ROOT / ".github" / "ISSUE_TEMPLATE" / "config.yml"
 MCP_TOOLS_RS = ROOT / "crates" / "aidememo-cli" / "src" / "cmd" / "mcp_tools.rs"
+DOMAIN_LIB_RS = ROOT / "crates" / "aidememo-domain" / "src" / "lib.rs"
+DOMAIN_CONFORMANCE_RS = ROOT / "crates" / "aidememo-domain" / "src" / "conformance.rs"
 SIDEBAR_JS = ROOT / "website" / "sidebars.js"
 DOCUSAURUS_CONFIG = ROOT / "website" / "docusaurus.config.js"
 WEBSITE_PACKAGE = ROOT / "website" / "package.json"
@@ -99,6 +101,26 @@ REQUIRED_HOMEPAGE_DOCS = [
 
 DOC_CONTENT_REQUIREMENTS = [
     (
+        DOMAIN_LIB_RS,
+        [
+            "Portable domain contracts",
+            "ArtifactReference",
+            "CommandReceipt",
+            "ProjectAuthorization",
+            "ProjectRecord",
+        ],
+    ),
+    (
+        DOMAIN_CONFORMANCE_RS,
+        [
+            "idempotent_replay",
+            "command_id_conflict",
+            "stale_revision",
+            "delete_tombstone",
+            "cursor_epoch_fail_closed",
+        ],
+    ),
+    (
         SERVER_SSOT_DOC,
         [
             "accepted target direction; not the current production contract",
@@ -114,6 +136,8 @@ DOC_CONTENT_REQUIREMENTS = [
             "tombstones",
             "Transactional outbox",
             "aidememo-domain",
+            "conformance::run",
+            "Phase 0 remains open",
             "aidememo-store-postgres",
             "Phase 4",
             "distributed POSIX filesystem",
