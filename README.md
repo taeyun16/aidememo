@@ -354,9 +354,10 @@ aidememo handoff --remote-profile codex-p2 inbox
 ```
 
 The server derives actor identity from each token; remote actor override flags
-are rejected. The connected CLI round trip is implemented now, while remote
-MCP profiles, retrieval replicas, and offline writes remain on the SSOT roadmap.
-See [Server and SSOT architecture](docs/SERVER_SSOT.md) for that boundary.
+are rejected. Add `--remote-profile codex-p1` to `mcp-install` to pin the same
+route into one stdio MCP account. Retrieval replicas, HTTP MCP gateway routing,
+and offline writes remain on the SSOT roadmap. See
+[Server and SSOT architecture](docs/SERVER_SSOT.md) for that boundary.
 
 <details>
 <summary>Protocol, receiver lifecycle, and measured boundaries</summary>

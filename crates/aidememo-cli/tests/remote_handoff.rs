@@ -4,7 +4,11 @@ use aidememo_domain::{
 };
 use aidememo_server::{ServerState, bearer_token_digest, router};
 use aidememo_store_local::SqliteCommandStore;
-use std::{path::Path, process::Command};
+use std::{
+    io::Write,
+    path::Path,
+    process::{Command, Stdio},
+};
 
 const P1_TOKEN: &str = "codex-p1-token-0123456789";
 const P2_TOKEN: &str = "codex-p2-token-0123456789";
@@ -61,6 +65,78 @@ fn assert_success(output: &std::process::Output) {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+fn mcp_tool(
+    home: &Path,
+    codex_home: &Path,
+    name: &str,
+    arguments: serde_json::Value,
+) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    let config: toml::Value = std::fs::read_to_string(codex_home.join("config.toml"))?.parse()?;
+    let entry = &config["mcp_servers"]["aidememo"];
+    let args = entry["args"]
+        .as_array()
+        .ok_or_else(|| std::io::Error::other("installed MCP args missing"))?
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .map(str::to_owned)
+                .ok_or_else(|| std::io::Error::other("installed MCP arg is not a string"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let env = entry["env"]
+        .as_table()
+        .ok_or_else(|| std::io::Error::other("installed MCP env missing"))?;
+    let mut command = Command::new(aidememo_bin());
+    command
+        .env("HOME", home)
+        .env_remove("AIDEMEMO_REMOTE_PROFILE")
+        .env_remove("AIDEMEMO_ACTOR_ID")
+        .env_remove("AIDEMEMO_SESSION_ID")
+        .env_remove("AIDEMEMO_SOURCE_ID")
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    for (key, value) in env {
+        command.env(
+            key,
+            value
+                .as_str()
+                .ok_or_else(|| std::io::Error::other("installed MCP env is not a string"))?,
+        );
+    }
+    let mut child = command.spawn()?;
+    let request = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {"name": name, "arguments": arguments},
+    });
+    writeln!(
+        child
+            .stdin
+            .as_mut()
+            .ok_or_else(|| std::io::Error::other("MCP stdin missing"))?,
+        "{request}"
+    )?;
+    drop(child.stdin.take());
+    let output = child.wait_with_output()?;
+    assert_success(&output);
+    let response: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    if response["result"]["isError"].as_bool() == Some(true) {
+        return Err(std::io::Error::other(format!(
+            "MCP tool failed: {}",
+            response["result"]["content"][0]["text"]
+        ))
+        .into());
+    }
+    let text = response["result"]["content"][0]["text"]
+        .as_str()
+        .ok_or_else(|| std::io::Error::other("MCP tool text missing"))?;
+    serde_json::from_str(text).map_err(Into::into)
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -317,6 +393,162 @@ async fn two_named_codex_profiles_complete_a_remote_handoff_round_trip()
     assert_eq!(
         outbox["assignments"][0]["record"]["result_fact_id"],
         result_fact_id
+    );
+
+    let p1_home = home.path().join("codex-p1-home");
+    let p2_home = home.path().join("codex-p2-home");
+    let overridden_install = run(
+        home.path(),
+        &[
+            "--store",
+            store,
+            "mcp-install",
+            "--target",
+            "codex",
+            "--codex-home",
+            p1_home
+                .to_str()
+                .ok_or_else(|| std::io::Error::other("non-UTF-8 Codex home"))?,
+            "--remote-profile",
+            "codex-p1",
+            "--actor-id",
+            "codex-p2",
+        ],
+    );
+    assert!(!overridden_install.status.success());
+    assert!(
+        String::from_utf8_lossy(&overridden_install.stderr)
+            .contains("cannot be combined with --actor-id")
+    );
+    for (profile, codex_home) in [("codex-p1", &p1_home), ("codex-p2", &p2_home)] {
+        let installed = run(
+            home.path(),
+            &[
+                "--store",
+                store,
+                "mcp-install",
+                "--target",
+                "codex",
+                "--codex-home",
+                codex_home
+                    .to_str()
+                    .ok_or_else(|| std::io::Error::other("non-UTF-8 Codex home"))?,
+                "--source-id",
+                "project:aidememo",
+                "--remote-profile",
+                profile,
+            ],
+        );
+        assert_success(&installed);
+        let config: toml::Value =
+            std::fs::read_to_string(codex_home.join("config.toml"))?.parse()?;
+        let entry = &config["mcp_servers"]["aidememo"];
+        assert_eq!(entry["env"]["AIDEMEMO_ACTOR_ID"].as_str(), Some(profile));
+        assert!(
+            entry["args"]
+                .as_array()
+                .is_some_and(|args| args.windows(2).any(|pair| {
+                    pair[0].as_str() == Some("--remote-profile")
+                        && pair[1].as_str() == Some(profile)
+                }))
+        );
+    }
+
+    let mcp_session = run(
+        home.path(),
+        &[
+            "--store",
+            store,
+            "--json",
+            "session",
+            "new",
+            "--source-id",
+            "project:aidememo",
+            "Remote MCP profile round trip",
+        ],
+    );
+    assert_success(&mcp_session);
+    let mcp_session: serde_json::Value = serde_json::from_slice(&mcp_session.stdout)?;
+    let mcp_session_id = mcp_session["session_id"]
+        .as_str()
+        .ok_or_else(|| std::io::Error::other("MCP session id missing"))?;
+
+    let mcp_sent = mcp_tool(
+        home.path(),
+        &p1_home,
+        "aidememo_handoff",
+        serde_json::json!({
+            "dispatch": true,
+            "session_id": mcp_session_id,
+            "source_id": "project:aidememo",
+            "to_actor": "codex-p2",
+            "focus": "Verify installed remote MCP routing",
+        }),
+    )?;
+    assert_eq!(mcp_sent["actor_id"], "codex-p1");
+    assert_eq!(mcp_sent["dispatched"], true);
+    let mcp_handoff_id = mcp_sent["handoff_id"]
+        .as_str()
+        .ok_or_else(|| std::io::Error::other("MCP handoff id missing"))?;
+
+    let mcp_inbox = mcp_tool(
+        home.path(),
+        &p2_home,
+        "aidememo_handoff_inbox",
+        serde_json::json!({"action": "list", "source_id": "project:aidememo"}),
+    )?;
+    assert_eq!(
+        mcp_inbox["assignments"][0]["record"]["handoff_id"],
+        mcp_handoff_id
+    );
+
+    let mcp_accepted = mcp_tool(
+        home.path(),
+        &p2_home,
+        "aidememo_handoff_inbox",
+        serde_json::json!({"action": "accept", "handoff_id": mcp_handoff_id}),
+    )?;
+    assert_eq!(mcp_accepted["remote_profile"], "codex-p2");
+
+    let mcp_fact = mcp_tool(
+        home.path(),
+        &p2_home,
+        "aidememo_fact_add",
+        serde_json::json!({
+            "content": "Installed remote MCP round trip passed",
+            "entities": ["RemoteMcpReview"],
+            "fact_type": "note",
+            "source_id": "project:aidememo",
+            "session_id": mcp_session_id,
+        }),
+    )?;
+    assert_eq!(mcp_fact["actor_id"], "codex-p2");
+    let mcp_fact_id = mcp_fact["id"]
+        .as_str()
+        .ok_or_else(|| std::io::Error::other("MCP result fact id missing"))?;
+
+    let mcp_returned = mcp_tool(
+        home.path(),
+        &p2_home,
+        "aidememo_handoff_inbox",
+        serde_json::json!({
+            "action": "return",
+            "handoff_id": mcp_handoff_id,
+            "outcome": "succeeded",
+            "result_fact_id": mcp_fact_id,
+        }),
+    )?;
+    assert_eq!(mcp_returned["outcome"], "succeeded");
+
+    let mcp_outbox = mcp_tool(
+        home.path(),
+        &p1_home,
+        "aidememo_handoff_inbox",
+        serde_json::json!({"action": "outbox"}),
+    )?;
+    assert_eq!(
+        mcp_outbox["assignments"][0]["record"]["result_fact_id"],
+        mcp_fact_id
     );
 
     server.abort();

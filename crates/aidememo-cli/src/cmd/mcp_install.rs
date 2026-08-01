@@ -35,6 +35,7 @@ pub struct McpInstallSub {
     pub no_verify: bool,
     pub source_id: Option<String>,
     pub actor_ids: Vec<String>,
+    pub remote_profile: Option<String>,
     /// Optional Codex profile homes. Repeat to install into several isolated
     /// Codex profiles while keeping one shared AideMemo store.
     pub codex_homes: Vec<PathBuf>,
@@ -80,6 +81,12 @@ pub fn mcp_install_command() -> impl Parser<Command> {
         )
         .argument::<String>("ACTOR_ID")
         .many();
+    let remote_profile = long("remote-profile")
+        .help(
+            "Use a named authenticated SSOT profile for MCP handoff tools; the server-bound actor is verified and installed automatically",
+        )
+        .argument::<String>("NAME")
+        .optional();
     let codex_homes = long("codex-home")
         .help(
             "Codex profile directory to update (the directory containing config.toml). \
@@ -96,6 +103,7 @@ pub fn mcp_install_command() -> impl Parser<Command> {
         no_verify,
         source_id,
         actor_ids,
+        remote_profile,
         codex_homes,
     })
     .map(Command::McpInstall)
@@ -121,6 +129,8 @@ struct InstallReport {
     source_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     actor_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    remote_profile: Option<String>,
     storage_backend: String,
     store_path: String,
     /// Result of the post-install best-effort check that the agent
@@ -208,7 +218,7 @@ pub fn run_mcp_install(
     }
 
     let source_id = normalise_identity_arg("--source-id", sub.source_id.as_deref())?;
-    let actor_ids = sub
+    let mut actor_ids = sub
         .actor_ids
         .iter()
         .map(|value| normalise_identity_arg("--actor-id", Some(value)))
@@ -216,6 +226,35 @@ pub fn run_mcp_install(
         .into_iter()
         .flatten()
         .collect::<Vec<_>>();
+    let remote_profile = sub
+        .remote_profile
+        .as_deref()
+        .map(str::trim)
+        .map(|value| {
+            if value.is_empty() {
+                Err(AideMemoError::InvalidInput(
+                    "--remote-profile must not be empty".to_owned(),
+                ))
+            } else {
+                Ok(value.to_owned())
+            }
+        })
+        .transpose()?;
+    if let Some(profile) = remote_profile.as_deref() {
+        if !actor_ids.is_empty() {
+            return Err(AideMemoError::InvalidInput(
+                "--remote-profile cannot be combined with --actor-id; actor identity comes from the bearer binding"
+                    .to_owned(),
+            ));
+        }
+        if sub.codex_homes.len() > 1 {
+            return Err(AideMemoError::InvalidInput(
+                "install one --remote-profile per Codex home so distinct account credentials cannot be copied to several profiles"
+                    .to_owned(),
+            ));
+        }
+        actor_ids.push(crate::cmd::remote_handoff::actor_id_for_profile(profile)?);
+    }
     if sub.target != "codex" && actor_ids.len() > 1 {
         return Err(AideMemoError::InvalidInput(
             "repeat --actor-id only with repeatable --codex-home profiles".to_string(),
@@ -227,12 +266,19 @@ pub fn run_mcp_install(
     let report = match sub.target.as_str() {
         "claude" | "claude-code" => install_via_cli(
             "claude",
-            claude_install_args(source_id.as_deref(), actor_id, storage_backend, &store_path),
+            claude_install_args(
+                source_id.as_deref(),
+                actor_id,
+                remote_profile.as_deref(),
+                storage_backend,
+                &store_path,
+            ),
             ShellInstallOptions {
                 print: sub.print,
                 no_verify: sub.no_verify,
                 source_id: source_id.as_deref(),
                 actor_id,
+                remote_profile: remote_profile.as_deref(),
                 storage_backend,
                 store_path: &store_path,
                 stdin_response: None,
@@ -240,12 +286,19 @@ pub fn run_mcp_install(
         )?,
         "hermes" => install_via_cli(
             "hermes",
-            hermes_install_args(source_id.as_deref(), actor_id, storage_backend, &store_path),
+            hermes_install_args(
+                source_id.as_deref(),
+                actor_id,
+                remote_profile.as_deref(),
+                storage_backend,
+                &store_path,
+            ),
             ShellInstallOptions {
                 print: sub.print,
                 no_verify: sub.no_verify,
                 source_id: source_id.as_deref(),
                 actor_id,
+                remote_profile: remote_profile.as_deref(),
                 storage_backend,
                 store_path: &store_path,
                 // Hermes 0.18+ discovers tools before saving the server and
@@ -257,22 +310,32 @@ pub fn run_mcp_install(
         )?,
         "openclaw" => install_via_cli(
             "openclaw",
-            openclaw_install_args(source_id.as_deref(), actor_id, storage_backend, &store_path),
+            openclaw_install_args(
+                source_id.as_deref(),
+                actor_id,
+                remote_profile.as_deref(),
+                storage_backend,
+                &store_path,
+            ),
             ShellInstallOptions {
                 print: sub.print,
                 no_verify: sub.no_verify,
                 source_id: source_id.as_deref(),
                 actor_id,
+                remote_profile: remote_profile.as_deref(),
                 storage_backend,
                 store_path: &store_path,
                 stdin_response: None,
             },
         )?,
         "codex" => install_codex(
-            sub.force,
-            sub.print,
-            source_id.as_deref(),
-            &actor_ids,
+            CodexInstallOptions {
+                force: sub.force,
+                print: sub.print,
+                source_id: source_id.as_deref(),
+                actor_ids: &actor_ids,
+                remote_profile: remote_profile.as_deref(),
+            },
             storage_backend,
             &store_path,
             &sub.codex_homes,
@@ -282,6 +345,7 @@ pub fn run_mcp_install(
             sub.print,
             source_id.as_deref(),
             actor_id,
+            remote_profile.as_deref(),
             storage_backend,
             &store_path,
         )?,
@@ -290,6 +354,7 @@ pub fn run_mcp_install(
             sub.print,
             source_id.as_deref(),
             actor_id,
+            remote_profile.as_deref(),
             storage_backend,
             &store_path,
         )?,
@@ -353,6 +418,7 @@ struct ShellInstallOptions<'a> {
     no_verify: bool,
     source_id: Option<&'a str>,
     actor_id: Option<&'a str>,
+    remote_profile: Option<&'a str>,
     storage_backend: &'a str,
     store_path: &'a Path,
     stdin_response: Option<&'a [u8]>,
@@ -368,6 +434,7 @@ fn install_via_cli(
         no_verify,
         source_id,
         actor_id,
+        remote_profile,
         storage_backend,
         store_path,
         stdin_response,
@@ -383,6 +450,7 @@ fn install_via_cli(
             overwrote: false,
             source_id: source_id.map(str::to_string),
             actor_id: actor_id.map(str::to_string),
+            remote_profile: remote_profile.map(str::to_string),
             storage_backend: storage_backend.to_string(),
             store_path: store_path.display().to_string(),
             verified: None,
@@ -464,6 +532,7 @@ fn install_via_cli(
         overwrote: false,
         source_id: source_id.map(str::to_string),
         actor_id: actor_id.map(str::to_string),
+        remote_profile: remote_profile.map(str::to_string),
         storage_backend: storage_backend.to_string(),
         store_path: store_path.display().to_string(),
         verified,
@@ -505,19 +574,28 @@ fn agent_env(source_id: Option<&str>, actor_id: Option<&str>) -> Vec<(String, St
     env
 }
 
-fn aidememo_mcp_args(storage_backend: &str, store_path: &Path) -> Vec<String> {
-    vec![
+fn aidememo_mcp_args(
+    storage_backend: &str,
+    store_path: &Path,
+    remote_profile: Option<&str>,
+) -> Vec<String> {
+    let mut args = vec![
         "--backend".to_string(),
         storage_backend.to_string(),
         "--store".to_string(),
         store_path.display().to_string(),
         "mcp".to_string(),
-    ]
+    ];
+    if let Some(remote_profile) = remote_profile {
+        args.extend(["--remote-profile".to_string(), remote_profile.to_string()]);
+    }
+    args
 }
 
 fn claude_install_args(
     source_id: Option<&str>,
     actor_id: Option<&str>,
+    remote_profile: Option<&str>,
     storage_backend: &str,
     store_path: &Path,
 ) -> Vec<String> {
@@ -530,13 +608,18 @@ fn claude_install_args(
         args.push(format!("{key}={value}"));
     }
     args.extend(["--", "aidememo"].into_iter().map(String::from));
-    args.extend(aidememo_mcp_args(storage_backend, store_path));
+    args.extend(aidememo_mcp_args(
+        storage_backend,
+        store_path,
+        remote_profile,
+    ));
     args
 }
 
 fn hermes_install_args(
     source_id: Option<&str>,
     actor_id: Option<&str>,
+    remote_profile: Option<&str>,
     storage_backend: &str,
     store_path: &Path,
 ) -> Vec<String> {
@@ -554,17 +637,22 @@ fn hermes_install_args(
     // Hermes declares --args as argparse.REMAINDER, so it must be the final
     // option and every following token belongs to the MCP server command.
     args.push("--args".to_string());
-    args.extend(aidememo_mcp_args(storage_backend, store_path));
+    args.extend(aidememo_mcp_args(
+        storage_backend,
+        store_path,
+        remote_profile,
+    ));
     args
 }
 
 fn openclaw_install_args(
     source_id: Option<&str>,
     actor_id: Option<&str>,
+    remote_profile: Option<&str>,
     storage_backend: &str,
     store_path: &Path,
 ) -> Vec<String> {
-    let aidememo_args = aidememo_mcp_args(storage_backend, store_path);
+    let aidememo_args = aidememo_mcp_args(storage_backend, store_path, remote_profile);
     let env: serde_json::Map<String, serde_json::Value> = agent_env(source_id, actor_id)
         .into_iter()
         .map(|(key, value)| (key, serde_json::Value::String(value)))
@@ -628,15 +716,27 @@ fn codex_config_path_for(codex_home: Option<&Path>) -> Result<PathBuf, AideMemoE
     Ok(root.join("config.toml"))
 }
 
-fn install_codex(
+struct CodexInstallOptions<'a> {
     force: bool,
     print: bool,
-    source_id: Option<&str>,
-    actor_ids: &[String],
+    source_id: Option<&'a str>,
+    actor_ids: &'a [String],
+    remote_profile: Option<&'a str>,
+}
+
+fn install_codex(
+    options: CodexInstallOptions<'_>,
     storage_backend: &str,
     store_path: &Path,
     codex_homes: &[PathBuf],
 ) -> Result<InstallReport, AideMemoError> {
+    let CodexInstallOptions {
+        force,
+        print,
+        source_id,
+        actor_ids,
+        remote_profile,
+    } = options;
     let paths = if codex_homes.is_empty() {
         vec![codex_config_path()?]
     } else {
@@ -680,6 +780,9 @@ fn install_codex(
     if let Some(actor_ids) = &report_actor_id {
         detail.push_str(&format!(" actor_ids={actor_ids}"));
     }
+    if let Some(remote_profile) = remote_profile {
+        detail.push_str(&format!(" remote_profile={remote_profile}"));
+    }
 
     if print {
         return Ok(InstallReport {
@@ -689,6 +792,7 @@ fn install_codex(
             overwrote: false,
             source_id: source_id.map(str::to_string),
             actor_id: report_actor_id,
+            remote_profile: remote_profile.map(str::to_string),
             storage_backend: storage_backend.to_string(),
             store_path: store_path.display().to_string(),
             verified: None,
@@ -739,7 +843,7 @@ fn install_codex(
         aidememo_entry.insert(
             "args".to_string(),
             toml::Value::Array(
-                aidememo_mcp_args(storage_backend, store_path)
+                aidememo_mcp_args(storage_backend, store_path, remote_profile)
                     .into_iter()
                     .map(toml::Value::String)
                     .collect(),
@@ -769,6 +873,7 @@ fn install_codex(
         overwrote,
         source_id: source_id.map(str::to_string),
         actor_id: report_actor_id,
+        remote_profile: remote_profile.map(str::to_string),
         storage_backend: storage_backend.to_string(),
         store_path: store_path.display().to_string(),
         verified: Some(true),
@@ -792,6 +897,7 @@ fn install_opencode(
     print: bool,
     source_id: Option<&str>,
     actor_id: Option<&str>,
+    remote_profile: Option<&str>,
     storage_backend: &str,
     store_path: &Path,
 ) -> Result<InstallReport, AideMemoError> {
@@ -803,6 +909,9 @@ fn install_opencode(
     if let Some(actor_id) = actor_id {
         detail.push_str(&format!(" env.AIDEMEMO_ACTOR_ID={actor_id}"));
     }
+    if let Some(remote_profile) = remote_profile {
+        detail.push_str(&format!(" remote_profile={remote_profile}"));
+    }
 
     if print {
         return Ok(InstallReport {
@@ -812,6 +921,7 @@ fn install_opencode(
             overwrote: false,
             source_id: source_id.map(str::to_string),
             actor_id: actor_id.map(str::to_string),
+            remote_profile: remote_profile.map(str::to_string),
             storage_backend: storage_backend.to_string(),
             store_path: store_path.display().to_string(),
             verified: None,
@@ -854,7 +964,11 @@ fn install_opencode(
         )));
     }
     let mut command = vec!["aidememo".to_string()];
-    command.extend(aidememo_mcp_args(storage_backend, store_path));
+    command.extend(aidememo_mcp_args(
+        storage_backend,
+        store_path,
+        remote_profile,
+    ));
     let mut aidememo_entry = serde_json::json!({
             "type": "local",
             "command": command,
@@ -880,6 +994,7 @@ fn install_opencode(
         overwrote: already,
         source_id: source_id.map(str::to_string),
         actor_id: actor_id.map(str::to_string),
+        remote_profile: remote_profile.map(str::to_string),
         storage_backend: storage_backend.to_string(),
         store_path: store_path.display().to_string(),
         verified: Some(true),
@@ -897,6 +1012,7 @@ fn install_cursor(
     print: bool,
     source_id: Option<&str>,
     actor_id: Option<&str>,
+    remote_profile: Option<&str>,
     storage_backend: &str,
     store_path: &Path,
 ) -> Result<InstallReport, AideMemoError> {
@@ -908,6 +1024,9 @@ fn install_cursor(
     if let Some(actor_id) = actor_id {
         detail.push_str(&format!(" env.AIDEMEMO_ACTOR_ID={actor_id}"));
     }
+    if let Some(remote_profile) = remote_profile {
+        detail.push_str(&format!(" remote_profile={remote_profile}"));
+    }
 
     if print {
         return Ok(InstallReport {
@@ -917,6 +1036,7 @@ fn install_cursor(
             overwrote: false,
             source_id: source_id.map(str::to_string),
             actor_id: actor_id.map(str::to_string),
+            remote_profile: remote_profile.map(str::to_string),
             storage_backend: storage_backend.to_string(),
             store_path: store_path.display().to_string(),
             verified: None,
@@ -955,7 +1075,7 @@ fn install_cursor(
     }
     let mut aidememo_entry = serde_json::json!({
         "command": "aidememo",
-        "args": aidememo_mcp_args(storage_backend, store_path)
+        "args": aidememo_mcp_args(storage_backend, store_path, remote_profile)
     });
     let env: serde_json::Map<String, serde_json::Value> = agent_env(source_id, actor_id)
         .into_iter()
@@ -977,6 +1097,7 @@ fn install_cursor(
         overwrote: already,
         source_id: source_id.map(str::to_string),
         actor_id: actor_id.map(str::to_string),
+        remote_profile: remote_profile.map(str::to_string),
         storage_backend: storage_backend.to_string(),
         store_path: store_path.display().to_string(),
         verified: Some(true),
@@ -1009,12 +1130,13 @@ mod tests {
         let store = Path::new("/tmp/aidememo-test.sqlite");
         let report = install_via_cli(
             "claude",
-            claude_install_args(None, None, "libsqlite", store),
+            claude_install_args(None, None, None, "libsqlite", store),
             ShellInstallOptions {
                 print: true,
                 no_verify: false,
                 source_id: None,
                 actor_id: None,
+                remote_profile: None,
                 storage_backend: "libsqlite",
                 store_path: store,
                 stdin_response: None,
@@ -1038,6 +1160,7 @@ mod tests {
             no_verify: false,
             source_id: None,
             actor_ids: Vec::new(),
+            remote_profile: None,
             codex_homes: Vec::new(),
         };
         let err = run_mcp_install(
@@ -1068,6 +1191,7 @@ mod tests {
                 no_verify: true,
                 source_id: None,
                 actor_id: None,
+                remote_profile: None,
                 storage_backend: "libsqlite",
                 store_path: Path::new("/tmp/aidememo-test.sqlite"),
                 stdin_response: None,
@@ -1137,11 +1261,15 @@ mod tests {
         let profile_a = dir.path().join("codex-a");
         let profile_b = dir.path().join("codex-b");
         let store = dir.path().join("shared.sqlite");
+        let actors = ["codex:account-a".to_string(), "codex:account-b".to_string()];
         let report = install_codex(
-            false,
-            false,
-            Some("project:aidememo"),
-            &["codex:account-a".to_string(), "codex:account-b".to_string()],
+            CodexInstallOptions {
+                force: false,
+                print: false,
+                source_id: Some("project:aidememo"),
+                actor_ids: &actors,
+                remote_profile: None,
+            },
             "libsqlite",
             &store,
             &[profile_a.clone(), profile_b.clone()],
@@ -1258,6 +1386,7 @@ mod tests {
             /*print*/ true,
             Some("project-alpha"),
             Some("codex:account-a"),
+            None,
             "libsqlite",
             Path::new("/tmp/aidememo-test.sqlite"),
         )
@@ -1277,6 +1406,7 @@ mod tests {
             claude_install_args(
                 Some("project-alpha"),
                 Some("codex:account-a"),
+                None,
                 "libsqlite",
                 store,
             ),
@@ -1301,6 +1431,7 @@ mod tests {
             hermes_install_args(
                 Some("project-alpha"),
                 Some("hermes:account-a"),
+                None,
                 "libsqlite",
                 store,
             ),
@@ -1322,7 +1453,7 @@ mod tests {
             ]
         );
         let openclaw_payload =
-            &openclaw_install_args(Some("project-alpha"), None, "libsqlite", store)[3];
+            &openclaw_install_args(Some("project-alpha"), None, None, "libsqlite", store)[3];
         assert!(openclaw_payload.contains("AIDEMEMO_SOURCE_ID"));
         assert!(openclaw_payload.contains("--backend"));
         assert!(openclaw_payload.contains("libsqlite"));

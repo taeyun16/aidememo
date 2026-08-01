@@ -24,6 +24,7 @@ SDK_DOC = ROOT / "docs" / "SDK.md"
 INSTALLATION_DOC = ROOT / "docs" / "INSTALLATION.md"
 QUICKSTART_DOC = ROOT / "docs" / "QUICKSTART.md"
 HANDOFF_DOC = ROOT / "docs" / "HANDOFF.md"
+MCP_DOC = ROOT / "docs" / "MCP.md"
 EVIDENCE_DOC = ROOT / "docs" / "EVIDENCE.md"
 MEASUREMENTS_DOC = ROOT / "docs" / "MEASUREMENTS.md"
 LFM_EXPERIMENTS_DOC = ROOT / "docs" / "LFM_EXPERIMENTS.md"
@@ -38,6 +39,8 @@ BUG_TEMPLATE = ROOT / ".github" / "ISSUE_TEMPLATE" / "bug_report.yml"
 FEATURE_TEMPLATE = ROOT / ".github" / "ISSUE_TEMPLATE" / "feature_request.yml"
 ISSUE_TEMPLATE_CONFIG = ROOT / ".github" / "ISSUE_TEMPLATE" / "config.yml"
 MCP_TOOLS_RS = ROOT / "crates" / "aidememo-cli" / "src" / "cmd" / "mcp_tools.rs"
+MCP_STDIO_RS = ROOT / "crates" / "aidememo-cli" / "src" / "cmd" / "mcp_stdio.rs"
+MCP_INSTALL_RS = ROOT / "crates" / "aidememo-cli" / "src" / "cmd" / "mcp_install.rs"
 CLI_AUTH_RS = ROOT / "crates" / "aidememo-cli" / "src" / "cmd" / "auth.rs"
 CLI_REMOTE_HANDOFF_RS = ROOT / "crates" / "aidememo-cli" / "src" / "cmd" / "remote_handoff.rs"
 DOMAIN_LIB_RS = ROOT / "crates" / "aidememo-domain" / "src" / "lib.rs"
@@ -232,6 +235,32 @@ DOC_CONTENT_REQUIREMENTS = [
         ],
     ),
     (
+        MCP_STDIO_RS,
+        [
+            "--remote-profile",
+            "actor_id_for_profile",
+            "does not match remote profile actor",
+            "dispatch_with_remote_profile",
+        ],
+    ),
+    (
+        MCP_INSTALL_RS,
+        [
+            "--remote-profile",
+            "actor identity comes from the bearer binding",
+            "actor_id_for_profile",
+            "install one --remote-profile per Codex home",
+        ],
+    ),
+    (
+        MCP_TOOLS_RS,
+        [
+            "execute_remote_handoff",
+            "remote_handoff_sub",
+            "remote dispatch requires to_actor",
+        ],
+    ),
+    (
         SERVER_SSOT_DOC,
         [
             "bounded single-node typed",
@@ -281,6 +310,16 @@ DOC_CONTENT_REQUIREMENTS = [
             "AIDEMEMO_REMOTE_PROFILE=codex-p2",
             "same tracked session",
             "not a message broker",
+        ],
+    ),
+    (
+        MCP_DOC,
+        [
+            "Authenticated remote handoff profiles",
+            "--remote-profile codex-p1",
+            "mcp --remote-profile NAME",
+            "one remote credential profile into several Codex homes",
+            "HTTP `mcp-serve`",
         ],
     ),
     (

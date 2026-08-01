@@ -17,30 +17,63 @@ use std::path::PathBuf;
 use bpaf::*;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
-use crate::cmd::mcp_tools::{JsonRpcRequest, JsonRpcResponse, dispatch};
+use crate::cmd::mcp_tools::{JsonRpcRequest, JsonRpcResponse, dispatch_with_remote_profile};
 use crate::{AideMemo, Config, cmd::Command};
 
 #[derive(Debug, Clone)]
 pub struct McpStdioSub {
+    pub remote_profile: Option<String>,
     pub wiki_root: Option<PathBuf>,
 }
 
 pub fn mcp_command() -> impl Parser<Command> {
+    let remote_profile = long("remote-profile")
+        .help("Route handoff tools through a named authenticated remote SSOT profile")
+        .argument::<String>("NAME")
+        .optional();
     let wiki_root = positional::<PathBuf>("WIKI_ROOT")
         .help("Path to wiki root (uses store path if omitted)")
         .optional();
 
-    construct!(McpStdioSub { wiki_root })
-        .map(Command::Mcp)
-        .to_options()
-        .command("mcp")
-        .help("Start MCP server over stdio (for Claude Code / Codex CLI)")
+    construct!(McpStdioSub {
+        remote_profile,
+        wiki_root,
+    })
+    .map(Command::Mcp)
+    .to_options()
+    .command("mcp")
+    .help("Start MCP server over stdio (for Claude Code / Codex CLI)")
 }
 
 pub fn run_mcp(
     store_path: PathBuf,
     config: Config,
+    remote_profile: Option<String>,
 ) -> Result<String, aidememo_core::AideMemoError> {
+    let remote_profile = remote_profile.or_else(|| {
+        std::env::var("AIDEMEMO_REMOTE_PROFILE")
+            .ok()
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty())
+    });
+    if let Some(profile) = remote_profile.as_deref() {
+        let authenticated_actor = crate::cmd::remote_handoff::actor_id_for_profile(profile)?;
+        let configured_actor = std::env::var("AIDEMEMO_ACTOR_ID")
+            .ok()
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                aidememo_core::AideMemoError::InvalidInput(
+                    "remote MCP requires AIDEMEMO_ACTOR_ID; use `aidememo mcp-install --remote-profile <NAME>` to derive it from the bearer binding"
+                        .to_owned(),
+                )
+            })?;
+        if configured_actor != authenticated_actor {
+            return Err(aidememo_core::AideMemoError::InvalidInput(format!(
+                "AIDEMEMO_ACTOR_ID {configured_actor:?} does not match remote profile actor {authenticated_actor:?}"
+            )));
+        }
+    }
     let wiki = AideMemo::open(store_path.as_ref(), config)?;
 
     let runtime = tokio::runtime::Runtime::new().map_err(|e| {
@@ -65,7 +98,7 @@ pub fn run_mcp(
             }
 
             let response = match serde_json::from_str::<JsonRpcRequest>(line) {
-                Ok(req) => dispatch(req, &wiki),
+                Ok(req) => dispatch_with_remote_profile(req, &wiki, remote_profile.as_deref()),
                 Err(e) => Some(JsonRpcResponse::error(
                     serde_json::Value::Null,
                     -32700,

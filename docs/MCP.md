@@ -46,6 +46,40 @@ and read-only hooks. Hermes, Cursor, OpenClaw, and OpenCode also have installer
 targets. pi is intentionally skill-only because it does not accept MCP. See
 [`Coding Agent Setup`](CODING_AGENTS.md) for the complete matrix.
 
+### Authenticated remote handoff profiles
+
+Install each isolated Codex account separately when handoff state should live
+in one remote SSOT project:
+
+```bash
+aidememo auth login https://memory.example.com \
+  --profile codex-p1 --project-id aidememo --token-file /secure/p1.token
+aidememo --store /absolute/project/_meta/wiki.sqlite mcp-install \
+  --target codex --codex-home /profiles/codex-p1 \
+  --source-id project:aidememo --remote-profile codex-p1
+
+aidememo auth login https://memory.example.com \
+  --profile codex-p2 --project-id aidememo --token-file /secure/p2.token
+aidememo --store /absolute/project/_meta/wiki.sqlite mcp-install \
+  --target codex --codex-home /profiles/codex-p2 \
+  --source-id project:aidememo --remote-profile codex-p2
+```
+
+The installer authenticates to the server, derives `AIDEMEMO_ACTOR_ID` from
+the persisted bearer binding, and pins `mcp --remote-profile NAME` in that
+account's config. It rejects a caller-provided actor override and refuses to
+copy one remote credential profile into several Codex homes. Run the command
+once per account, then restart that agent so it reloads MCP configuration.
+
+In this connected hybrid mode, `aidememo_handoff` previews from the embedded
+store and sends through the remote SSOT when `dispatch=true`.
+`aidememo_handoff_inbox` routes list, outbox, show/status, accept, and return to
+the authenticated server. Other memory tools continue to use the pinned local
+store; a receiver result fact is uploaded as canonical evidence during return.
+The server must be reachable at install, MCP startup, and remote handoff calls.
+HTTP `mcp-serve`, local read replicas, and offline writes are not part of this
+profile path yet.
+
 ## HTTP MCP server
 
 Use HTTP when multiple agents should share one warm process:

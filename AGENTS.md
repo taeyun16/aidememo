@@ -90,6 +90,9 @@ aidememo init --agent claude --agent-force <wiki-root>   overwrite existing agen
 aidememo --store <PATH> mcp-install --target codex       pin the resolved store in Codex MCP config
          [--source-id ID] [--codex-home PATH --actor-id ID]...
                                                           install isolated Codex profiles with source scope + writer provenance
+aidememo --store <PATH> mcp-install --target codex --codex-home PATH
+         --source-id ID --remote-profile PROFILE          verify bearer identity and pin one connected
+                                                          remote handoff route to one Codex account
 ```
 
 ### Read / search
@@ -488,9 +491,9 @@ crates/aidememo-cli/src/
   bypass their invariants. The first typed slice supports session create,
   session-attached fact create, and handoff send/indexed inbox/outbox/accept/
   return/status plus bearer-bound identity inspection. Mailbox actor identity is
-  always derived from authentication. Named CLI profiles support the connected
-  handoff round trip; the server does not yet provide heartbeat, search, MCP
-  remote profiles, or local replicas.
+  always derived from authentication. Named CLI and installed stdio MCP profiles
+  support the connected handoff round trip; the server does not yet provide
+  heartbeat, search, HTTP MCP gateway profiles, or local replicas.
 - Typed handoff return must match the canonical session, inherited `source_id`,
   authenticated receiving actor, active `claim_id`, and result fact. The
   receiver must be an active writable project member.
@@ -507,6 +510,11 @@ crates/aidememo-cli/src/
 |---|---|---|
 | `aidememo mcp` | stdio (newline-delimited JSON-RPC) | local agents (Claude Code, Codex CLI) |
 | `aidememo mcp-serve --port 3000` | HTTP POST `/mcp` + SSE `/sse` | browser/remote clients |
+
+`aidememo mcp --remote-profile NAME` keeps normal memory tools on the pinned
+embedded store while routing handoff dispatch/inbox/accept/return through the
+authenticated remote SSOT. Prefer `mcp-install --remote-profile NAME`, which
+verifies and installs the bearer-bound actor instead of trusting an alias.
 
 **Tool surface — 7 core, then standard, then advanced.** Agent prompts
 should lead with the core 7; the rest are there when needed.

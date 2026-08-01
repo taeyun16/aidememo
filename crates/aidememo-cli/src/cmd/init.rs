@@ -275,6 +275,7 @@ fn run_agent_setup(
                 no_verify: true,
                 source_id: source_id.map(str::to_string),
                 actor_ids: actor_id.map(str::to_string).into_iter().collect(),
+                remote_profile: None,
                 codex_homes: Vec::new(),
             },
             false,

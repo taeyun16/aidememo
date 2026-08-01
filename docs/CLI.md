@@ -172,8 +172,10 @@ aidememo handoff --remote-profile codex-p2 inbox
 
 The bearer binding supplies actor identity, so remote commands reject actor
 override flags. The supported connected flow is `send`, `inbox`, `outbox`,
-`show/status`, `accept`, and `return`; local execution adapters and remote MCP
-profiles are separate surfaces. See [`Hand off a tracked task`](HANDOFF.md).
+`show/status`, `accept`, and `return`. Install the same route into one stdio MCP
+profile with `mcp-install --remote-profile NAME`; local execution adapters and
+the HTTP MCP gateway remain separate surfaces. See
+[`Hand off a tracked task`](HANDOFF.md).
 
 For repeated local accounts, use the shorter agent-oriented surface:
 `agent add --type ... --home ...`, `handoff send ALIAS`, then

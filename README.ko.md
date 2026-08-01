@@ -338,7 +338,8 @@ aidememo handoff --remote-profile codex-p2 inbox
 ```
 
 서버가 각 token에서 actor identity를 결정하므로 원격 actor override flag는
-거부됩니다. Connected CLI 왕복은 구현됐지만 원격 MCP profile, retrieval replica,
+거부됩니다. `mcp-install`에 `--remote-profile codex-p1`을 추가하면 같은 route를
+stdio MCP 계정 하나에 고정합니다. Retrieval replica, HTTP MCP gateway routing,
 offline write는 SSOT roadmap에 남아 있습니다. 경계는
 [서버 및 SSOT 아키텍처](website/i18n/ko/docusaurus-plugin-content-docs/current/SERVER_SSOT.md)를
 참고하세요.

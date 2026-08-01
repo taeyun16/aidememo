@@ -45,6 +45,39 @@ aidememo --store /absolute/project/_meta/wiki.sqlite mcp-install \
 있습니다. pi는 MCP를 받지 않으므로 의도적으로 스킬 전용입니다. 전체 표는
 [`코딩 에이전트 설치`](CODING_AGENTS.md)를 참고하세요.
 
+### 인증된 원격 handoff profile
+
+Handoff 상태를 하나의 원격 SSOT project에 둘 때 격리된 Codex 계정을 각각
+설치합니다.
+
+```bash
+aidememo auth login https://memory.example.com \
+  --profile codex-p1 --project-id aidememo --token-file /secure/p1.token
+aidememo --store /absolute/project/_meta/wiki.sqlite mcp-install \
+  --target codex --codex-home /profiles/codex-p1 \
+  --source-id project:aidememo --remote-profile codex-p1
+
+aidememo auth login https://memory.example.com \
+  --profile codex-p2 --project-id aidememo --token-file /secure/p2.token
+aidememo --store /absolute/project/_meta/wiki.sqlite mcp-install \
+  --target codex --codex-home /profiles/codex-p2 \
+  --source-id project:aidememo --remote-profile codex-p2
+```
+
+Installer는 서버에 인증하고 저장된 bearer binding에서 `AIDEMEMO_ACTOR_ID`를
+파생한 뒤 해당 계정 config에 `mcp --remote-profile NAME`을 고정합니다. 호출자가
+actor를 덮어쓰는 설정을 거부하고 하나의 원격 credential profile을 여러 Codex
+home에 복사하지도 않습니다. 계정마다 한 번씩 실행한 뒤 agent를 재시작해 MCP
+설정을 다시 읽게 합니다.
+
+이 connected hybrid mode에서 `aidememo_handoff`는 embedded store에서 preview하고
+`dispatch=true`일 때 원격 SSOT로 보냅니다. `aidememo_handoff_inbox`의 list,
+outbox, show/status, accept, return은 인증 서버로 라우팅됩니다. 다른 memory tool은
+고정된 local store를 계속 사용하고, 수신자 result fact는 return 시 canonical
+evidence로 upload됩니다. 설치, MCP 시작, 원격 handoff 호출 시 서버가 연결돼 있어야
+합니다. HTTP `mcp-serve`, local read replica, offline write는 아직 이 profile
+경로에 포함되지 않습니다.
+
 ## HTTP MCP 서버
 
 여러 에이전트가 하나의 웜 프로세스를 공유해야 할 때 HTTP를 사용합니다.

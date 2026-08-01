@@ -126,10 +126,12 @@ This is currently a connected-write bridge. The CLI uploads the typed session
 pointer and the receiver's result fact to the canonical server ledger, while
 the embedded local store still provides packet construction, session resume,
 and retrieval. Remote `send`, `inbox`, `outbox`, `show/status`, `accept`, and
-`return` are implemented; remote `run`, heartbeat, board, offline outbox, local
-read replica, and MCP profile routing remain future work. Typed server facts are
-canonical handoff evidence but are not yet indexed by the embedded search
-engine.
+`return` are implemented. Stdio MCP can use the same path after
+`mcp-install --remote-profile NAME`; the installer verifies the bearer actor and
+pins it to one agent profile. Remote `run`, heartbeat, board, HTTP MCP gateway
+routing, offline outbox, and local read replica remain future work. Typed server
+facts are canonical handoff evidence but are not yet indexed by the embedded
+search engine.
 
 ## What stays the same
 

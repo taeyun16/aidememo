@@ -16,6 +16,20 @@ pub fn run_remote_handoff(
     sub: HandoffSub,
     json_output: bool,
 ) -> Result<String, AideMemoError> {
+    let wiki = if matches!(&sub, HandoffSub::Send { .. } | HandoffSub::Return { .. }) {
+        Some(AideMemo::open(store_path, config)?)
+    } else {
+        None
+    };
+    let value = execute_remote_handoff(wiki.as_ref(), profile_name, sub)?;
+    render(value, json_output)
+}
+
+pub(crate) fn execute_remote_handoff(
+    wiki: Option<&AideMemo>,
+    profile_name: &str,
+    sub: HandoffSub,
+) -> Result<Value, AideMemoError> {
     let client = RemoteHandoffClient::new(auth::load_remote_profile(profile_name)?)?;
     let identity = client.identity()?;
     let value = match sub {
@@ -37,9 +51,9 @@ pub fn run_remote_handoff(
             }
             validate_id("receiver actor", &installation)?;
             let source_id = source_id.or_else(default_source_id);
-            let wiki = AideMemo::open(store_path, config)?;
+            let wiki = required_wiki(wiki, "remote handoff send")?;
             let artifact = artifacts::agent_handoff(
-                &wiki,
+                wiki,
                 session.as_deref(),
                 80,
                 false,
@@ -53,6 +67,7 @@ pub fn run_remote_handoff(
             )?;
             let topic = artifact
                 .topic
+                .clone()
                 .unwrap_or_else(|| artifact.session_id.clone());
             client.ensure_session(&artifact.session_id, source_id.as_deref(), &topic)?;
             let handoff_id = generated_id("handoff");
@@ -61,18 +76,41 @@ pub fn run_remote_handoff(
                 json!({
                     "command_id": generated_id("command_send"),
                     "payload": {
-                        "handoff_id": handoff_id,
-                        "session_id": artifact.session_id,
-                        "to_actor": installation,
-                        "focus": focus,
-                        "done_when": done_when,
+                        "handoff_id": handoff_id.clone(),
+                        "session_id": artifact.session_id.clone(),
+                        "to_actor": installation.clone(),
+                        "focus": focus.clone(),
+                        "done_when": done_when.clone(),
                     }
                 }),
             )?;
+            let session_id = artifact.session_id.clone();
             json!({
+                "artifact": "agent_handoff",
                 "remote_profile": client.profile.name,
                 "actor_id": identity["actor_id"],
                 "handoff_id": handoff_id,
+                "status": "pending",
+                "dispatched": true,
+                "session_id": session_id.clone(),
+                "topic": artifact.topic,
+                "source_id": source_id.clone(),
+                "to_actor": installation,
+                "focus": focus,
+                "done_when": done_when,
+                "fact_count": artifact.fact_count,
+                "bytes": artifact.body.len(),
+                "resume": {
+                    "command": artifacts::session_resume_command(
+                        &session_id,
+                        source_id.as_deref(),
+                    ),
+                    "env": {
+                        "AIDEMEMO_SESSION_ID": session_id,
+                        "AIDEMEMO_SOURCE_ID": source_id,
+                    }
+                },
+                "content": artifact.body,
                 "receipt": receipt,
             })
         }
@@ -159,7 +197,7 @@ pub fn run_remote_handoff(
             let source_id = optional_str(record, "source_id")?;
             let actor_id = required_str(&identity, "actor_id")?;
 
-            let wiki = AideMemo::open(store_path, config)?;
+            let wiki = required_wiki(wiki, "remote handoff return")?;
             let fact_id = result_fact_id
                 .trim()
                 .parse::<aidememo_core::ulid::Ulid>()
@@ -218,7 +256,25 @@ pub fn run_remote_handoff(
             ));
         }
     };
-    render(value, json_output)
+    Ok(value)
+}
+
+pub(crate) fn identity_for_profile(profile_name: &str) -> Result<Value, AideMemoError> {
+    RemoteHandoffClient::new(auth::load_remote_profile(profile_name)?)?.identity()
+}
+
+pub(crate) fn actor_id_for_profile(profile_name: &str) -> Result<String, AideMemoError> {
+    let identity = identity_for_profile(profile_name)?;
+    required_str(&identity, "actor_id").map(str::to_owned)
+}
+
+fn required_wiki<'a>(
+    wiki: Option<&'a AideMemo>,
+    operation: &str,
+) -> Result<&'a AideMemo, AideMemoError> {
+    wiki.ok_or_else(|| {
+        AideMemoError::Internal(format!("{operation} requires the embedded session store"))
+    })
 }
 
 struct RemoteHandoffClient {

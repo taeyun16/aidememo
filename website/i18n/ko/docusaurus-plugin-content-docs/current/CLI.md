@@ -185,8 +185,10 @@ aidememo handoff --remote-profile codex-p2 inbox
 
 Bearer binding이 actor identity를 제공하므로 원격 명령은 actor override flag를
 거부합니다. 연결 상태에서 지원하는 흐름은 `send`, `inbox`, `outbox`,
-`show/status`, `accept`, `return`입니다. 로컬 실행 adapter와 원격 MCP profile은
-별도 surface입니다. [`추적 작업 핸드오프`](HANDOFF.md)를 참고하세요.
+`show/status`, `accept`, `return`입니다. `mcp-install --remote-profile NAME`으로
+같은 route를 stdio MCP profile 하나에 설치할 수 있습니다. 로컬 실행 adapter와
+HTTP MCP gateway는 별도 surface입니다. [`추적 작업 핸드오프`](HANDOFF.md)를
+참고하세요.
 
 이 인터페이스에는 topic, offset, consumer group, lease, retry, payload 복제,
 exactly-once delivery가 없습니다. 모든 할당은 기존 추적 세션을 가리킵니다.

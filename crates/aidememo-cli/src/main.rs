@@ -132,7 +132,7 @@ fn main() {
             // Honour the global --store / --project resolution if the
             // user didn't pass an explicit positional WIKI_ROOT.
             let path = sub.wiki_root.unwrap_or_else(|| store_path.clone());
-            cmd::mcp_stdio::run_mcp(path, config)
+            cmd::mcp_stdio::run_mcp(path, config, sub.remote_profile)
         }
         cmd::Command::McpInstall(sub) => {
             cmd::mcp_install::run_mcp_install(sub, json, &config.store.backend, &store_path)
