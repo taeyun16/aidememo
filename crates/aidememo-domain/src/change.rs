@@ -1,7 +1,8 @@
 //! Ordered per-project change-feed types and validation.
 
 use crate::{
-    ActorId, DomainError, ProjectEpoch, ProjectId, ProjectSequence, ResourceRef, Revision,
+    ActorId, DomainError, ProjectEpoch, ProjectId, ProjectScope, ProjectSequence, ResourceRef,
+    Revision, TenantId,
 };
 use serde::{Deserialize, Serialize};
 
@@ -18,6 +19,8 @@ pub enum ChangeOperation {
 /// One ordered project mutation.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ChangeEntry {
+    /// Tenant scope.
+    pub tenant_id: TenantId,
     /// Project scope.
     pub project_id: ProjectId,
     /// History generation containing this entry.
@@ -65,8 +68,8 @@ pub struct ChangeCursor {
 /// Validated incremental feed response.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ChangeBatch {
-    /// Project selected by the authenticated route.
-    pub project_id: ProjectId,
+    /// Tenant-project scope selected by the authenticated route.
+    pub scope: ProjectScope,
     /// Input cursor.
     pub cursor: ChangeCursor,
     /// Strictly increasing entries after the input cursor.
@@ -86,7 +89,7 @@ impl ChangeBatch {
     /// project or epoch, does not advance the cursor, or an empty batch claims
     /// that more entries are available.
     pub fn new(
-        project_id: ProjectId,
+        scope: ProjectScope,
         cursor: ChangeCursor,
         entries: Vec<ChangeEntry>,
         has_more: bool,
@@ -94,7 +97,7 @@ impl ChangeBatch {
         let mut previous = cursor.after_seq;
         for entry in &entries {
             entry.validate()?;
-            if entry.project_id != project_id {
+            if entry.tenant_id != scope.tenant_id || entry.project_id != scope.project_id {
                 return Err(DomainError::InvalidChangeBatch(
                     "entry project does not match requested project".to_owned(),
                 ));
@@ -121,7 +124,7 @@ impl ChangeBatch {
             after_seq: previous,
         };
         Ok(Self {
-            project_id,
+            scope,
             cursor,
             entries,
             next_cursor,
@@ -137,7 +140,8 @@ mod tests {
 
     fn entry(seq: u64, operation: ChangeOperation) -> Result<ChangeEntry, DomainError> {
         Ok(ChangeEntry {
-            project_id: ProjectId::try_from("project_a")?,
+            tenant_id: TenantId::try_from("tenant_a")?,
+            project_id: crate::ProjectId::try_from("project_a")?,
             project_epoch: ProjectEpoch::try_from("epoch_a")?,
             seq: ProjectSequence::new(seq),
             resource: ResourceRef {
@@ -158,7 +162,10 @@ mod tests {
             after_seq: ProjectSequence::ZERO,
         };
         let batch = ChangeBatch::new(
-            ProjectId::try_from("project_a")?,
+            ProjectScope::new(
+                TenantId::try_from("tenant_a")?,
+                crate::ProjectId::try_from("project_a")?,
+            ),
             cursor,
             vec![
                 entry(1, ChangeOperation::Upsert)?,
@@ -179,7 +186,10 @@ mod tests {
         };
         assert!(
             ChangeBatch::new(
-                ProjectId::try_from("project_a")?,
+                ProjectScope::new(
+                    TenantId::try_from("tenant_a")?,
+                    crate::ProjectId::try_from("project_a")?,
+                ),
                 cursor,
                 vec![
                     entry(2, ChangeOperation::Upsert)?,

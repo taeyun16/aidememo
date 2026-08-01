@@ -191,6 +191,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "aidememo-service"
+version = "0.1.0"
+dependencies = [
+ "aidememo-domain",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+]
+
+[[package]]
+name = "aidememo-store-local"
+version = "0.1.0"
+dependencies = [
+ "aidememo-domain",
+ "aidememo-service",
+ "rusqlite",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "aligned"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"

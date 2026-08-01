@@ -241,7 +241,7 @@ semantic conflicts between competing decisions remain application policy.
 | CLI commands and parsers | `crates/aidememo-cli/src/cmd/mod.rs`, `crates/aidememo-cli/src/main.rs` | [`CLI Usage`](CLI.md), [`Feature Inventory`](FEATURES.md) |
 | MCP tools and schemas | `crates/aidememo-cli/src/cmd/mcp_tools.rs` | [`MCP Setup`](MCP.md), [`Agent Workflows`](AGENT_WORKFLOWS.md) |
 | Shared-memory identity boundary | `crates/aidememo-cli/src/cmd/mcp_serve.rs`, `crates/aidememo-core/src/backend.rs` | [`Shared Memory Layer`](SHARED_MEMORY.md), [`MCP Setup`](MCP.md) |
-| Server / SSOT target contract | `crates/aidememo-domain` portable schemas + conformance fixture; remaining server, PostgreSQL, artifact, and client boundaries proposed | [`Server and SSOT Architecture`](SERVER_SSOT.md) |
+| Server / SSOT target contract | `crates/aidememo-domain`, `aidememo-service`, and `aidememo-store-local`; remaining server, PostgreSQL, artifact, and client boundaries proposed | [`Server and SSOT Architecture`](SERVER_SSOT.md) |
 | Core API and retrieval | `crates/aidememo-core/src/lib.rs`, `search.rs`, `graph.rs` | [`Architecture`](ARCHITECTURE.md), [`Operations`](OPERATIONS.md) |
 | Storage dispatch | `crates/aidememo-core/src/backend.rs`, `sqlite_store.rs`, `store.rs` | [`Operations`](OPERATIONS.md), [`Feature Inventory`](FEATURES.md) |
 | Python agent SDK | `packages/aidememo-agent-sdk/src/aidememo_agent/sdk.py` | [`Python SDK`](SDK.md), [`Agent Workflows`](AGENT_WORKFLOWS.md) |

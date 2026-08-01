@@ -12,6 +12,7 @@ pub mod conformance;
 mod error;
 mod identity;
 mod record;
+mod storage;
 
 pub use artifact::{ArtifactBodyRef, ArtifactPath, ArtifactReference, ContentDigest};
 pub use change::{ChangeBatch, ChangeCursor, ChangeEntry, ChangeOperation};
@@ -22,7 +23,8 @@ pub use command::{
 pub use error::{DomainError, ErrorCode};
 pub use identity::{
     ActorId, ArtifactId, AuthenticatedActor, CommandId, MembershipRole, MembershipStatus,
-    ProjectAuthorization, ProjectEpoch, ProjectId, ProjectMembership, ProjectSequence, ResourceId,
-    Revision, TenantId,
+    ProjectAccess, ProjectAuthorization, ProjectEpoch, ProjectId, ProjectMembership, ProjectScope,
+    ProjectSequence, ResourceId, Revision, TenantId,
 };
 pub use record::{ActorKind, ActorRecord, ProjectRecord, RecordStatus, TenantRecord};
+pub use storage::CommandStore;

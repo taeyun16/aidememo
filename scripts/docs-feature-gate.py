@@ -40,6 +40,8 @@ ISSUE_TEMPLATE_CONFIG = ROOT / ".github" / "ISSUE_TEMPLATE" / "config.yml"
 MCP_TOOLS_RS = ROOT / "crates" / "aidememo-cli" / "src" / "cmd" / "mcp_tools.rs"
 DOMAIN_LIB_RS = ROOT / "crates" / "aidememo-domain" / "src" / "lib.rs"
 DOMAIN_CONFORMANCE_RS = ROOT / "crates" / "aidememo-domain" / "src" / "conformance.rs"
+SERVICE_LIB_RS = ROOT / "crates" / "aidememo-service" / "src" / "lib.rs"
+LOCAL_STORE_LIB_RS = ROOT / "crates" / "aidememo-store-local" / "src" / "lib.rs"
 SIDEBAR_JS = ROOT / "website" / "sidebars.js"
 DOCUSAURUS_CONFIG = ROOT / "website" / "docusaurus.config.js"
 WEBSITE_PACKAGE = ROOT / "website" / "package.json"
@@ -118,6 +120,26 @@ DOC_CONTENT_REQUIREMENTS = [
             "stale_revision",
             "delete_tombstone",
             "cursor_epoch_fail_closed",
+            "cursor_sequence_fail_closed",
+        ],
+    ),
+    (
+        SERVICE_LIB_RS,
+        [
+            "CommandService",
+            "ProjectAccess::authorize",
+            "command_fingerprint",
+            "canonicalize_json",
+        ],
+    ),
+    (
+        LOCAL_STORE_LIB_RS,
+        [
+            "SqliteCommandStore",
+            "TransactionBehavior::Immediate",
+            "ssot_receipts",
+            "ssot_changes",
+            "ssot_audit",
         ],
     ),
     (
@@ -136,8 +158,10 @@ DOC_CONTENT_REQUIREMENTS = [
             "tombstones",
             "Transactional outbox",
             "aidememo-domain",
+            "aidememo-service",
+            "aidememo-store-local",
             "conformance::run",
-            "Phase 0 remains open",
+            "Phase 0 code exit gate passes",
             "aidememo-store-postgres",
             "Phase 4",
             "distributed POSIX filesystem",

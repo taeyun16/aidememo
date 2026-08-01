@@ -254,13 +254,13 @@ API replica는 read-write-many volume을 통해 live embedded SQLite 파일을 �
 
 ## 제안 코드 경계
 
-`aidememo-domain`은 이제 portable Phase 0 계약 crate로 존재합니다. 나머지 이름은
-여전히 의도한 경계를 설명하며 아직 존재하지 않습니다.
+첫 세 개의 Phase 0 기반 crate가 이제 존재합니다. 나머지 이름은 여전히 의도한
+경계를 설명하며 아직 존재하지 않습니다.
 
 ```text
 aidememo-domain          portable ID, command, record, invariant
 aidememo-service         command/query orchestration과 authorization context
-aidememo-store-local     기존 embedded SQLite/redb adapter
+aidememo-store-local     별도 single-node SQLite command ledger
 aidememo-store-postgres  서버 정본 adapter
 aidememo-artifacts       local 및 S3 호환 reservation/commit 계약
 aidememo-server          MCP, HTTP, sync, admin, health surface
@@ -272,13 +272,23 @@ test를 local, PostgreSQL, 선택형 Durable Object adapter에 공통 실행할 
 합니다. 기존의 큰 동기식 `StoreBackend`는 embedded 구현 경계로 남깁니다. 원격
 HTTP backend가 로컬 `Path`로 여는 store인 것처럼 동작해서는 안 됩니다.
 
-현재 구현된 crate는 검증된 tenant, project, actor, membership, command, revision,
-audit, change-feed, tombstone, artifact reference type을 제공합니다. Backend 중립
-`conformance::run` fixture는 정확한 idempotent receipt replay, command ID 충돌,
-stale revision 거부, 단조 증가 project sequence, 삭제 tombstone, fail-closed epoch
-변경을 검사합니다. Crate 안의 in-memory adapter는 실행 가능한 reference test일
-뿐입니다. Production local, PostgreSQL, Durable Object, remote server, sync adapter는
-아직 이 계약에 연결되지 않았습니다.
+`aidememo-domain`은 검증된 tenant, project, actor, membership, command, revision,
+audit, change-feed, tombstone, artifact reference type을 제공합니다. 모든 lookup과
+feed batch는 tenant-project 복합 scope를 가집니다. `aidememo-service`는 인증 identity와
+membership을 untrusted envelope에 결합하고 JSON field를 재귀적으로 canonicalize하여
+command fingerprint를 계산합니다. `aidememo-store-local`은 기존 embedded store와
+분리된 SQLite database에서 receipt, resource revision, change, audit, project sequence를
+한 transaction으로 저장합니다.
+
+Backend 중립 `conformance::run` fixture는 정확한 idempotent receipt replay, command ID
+충돌, stale revision 거부, 단조 증가 project sequence, 삭제 tombstone, fail-closed
+epoch 변경, 정본 이력보다 앞선 cursor 거부를 검사합니다. In-memory reference와
+실제 SQLite adapter가 모두 통과합니다. SQLite integration test는 process reopen,
+두 concurrent connection의
+duplicate submission, 두 tenant 아래 같은 project ID 격리도 검증합니다. Remote
+server, PostgreSQL, Durable Object, artifact body, sync adapter는 아직 연결되지 않았습니다.
+세 기반 crate는 server-facing API와 release 순서를 정할 때까지 모두
+`publish = false`이며 기존 v0.1.0 crate 배포 흐름에 조용히 포함되지 않습니다.
 
 ## 단계별 delivery gate
 
@@ -294,9 +304,10 @@ stale revision 거부, 단조 증가 project sequence, 삭제 tombstone, fail-cl
 mutation 하나만 만들며, stale revision이 실패하고, 삭제가 tombstone으로
 replica에 도착합니다.
 
-현재 상태: portable schema와 reference conformance fixture가 준비됐습니다. 기존
-embedded API나 파일 format을 바꾸지 않고 production adapter가 이 계약을 사용해
-동일한 fixture를 통과할 때까지 Phase 0는 열린 상태입니다.
+현재 상태: 기존 embedded API나 파일 format을 변경하지 않고 별도 SQLite adapter가
+Phase 0 code 종료 gate를 통과합니다. 이 crate들은 아직 CLI나 MCP server에서 접근할
+수 없으므로 server mode 출시가 아니라 계약 기반을 닫은 것입니다. Phase 1은 열린
+상태입니다.
 
 ### Phase 1 — 단일 노드 원격 SSOT
 

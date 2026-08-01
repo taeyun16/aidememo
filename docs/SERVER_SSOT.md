@@ -261,13 +261,13 @@ file through a read-write-many volume.
 
 ## Proposed code boundaries
 
-`aidememo-domain` now exists as the portable Phase 0 contract crate. The other
-names still describe intended boundaries and do not exist yet:
+The first three Phase 0 foundation crates now exist. The remaining names still
+describe intended boundaries and do not exist yet:
 
 ```text
 aidememo-domain          portable IDs, commands, records, invariants
 aidememo-service         command/query orchestration and authorization context
-aidememo-store-local     existing embedded SQLite/redb adapters
+aidememo-store-local     separate single-node SQLite command ledger
 aidememo-store-postgres  server canonical adapter
 aidememo-artifacts       local and S3-compatible reservation/commit contract
 aidememo-server          MCP, HTTP, sync, admin, and health surfaces
@@ -280,14 +280,26 @@ Object adapters. The existing large synchronous `StoreBackend` remains the
 embedded implementation boundary; a remote HTTP backend should not pretend to
 be a local `Path`-opened store.
 
-The implemented crate currently provides validated tenant, project, actor,
-membership, command, revision, audit, change-feed, tombstone, and artifact
-reference types. Its backend-neutral `conformance::run` fixture checks exact
-idempotent receipt replay, command-ID conflicts, stale revision rejection,
-monotonic project sequences, deletion tombstones, and fail-closed epoch changes.
-The in-memory adapter in the crate is an executable reference test only; no
-production local, PostgreSQL, Durable Object, remote server, or sync adapter is
-wired to this contract yet.
+`aidememo-domain` provides validated tenant, project, actor, membership,
+command, revision, audit, change-feed, tombstone, and artifact-reference types.
+Every lookup and feed batch carries the composite tenant-project scope.
+`aidememo-service` binds authenticated identity and membership to the untrusted
+envelope, recursively canonicalizes its JSON fields, and computes the command
+fingerprint. `aidememo-store-local` persists receipt, resource revision, change,
+audit, and project sequence in one SQLite transaction in a database separate
+from the existing embedded store.
+
+The backend-neutral `conformance::run` fixture checks exact idempotent receipt
+replay, command-ID conflicts, stale revision rejection, monotonic project
+sequences, deletion tombstones, fail-closed epoch changes, and rejection of
+cursors ahead of canonical history. Both its in-memory reference and the real
+SQLite adapter pass. SQLite integration tests
+also cover process reopen, duplicate submission through two concurrent
+connections, and identical project IDs isolated under two tenants. No remote
+server, PostgreSQL, Durable Object, artifact body, or sync adapter is wired yet.
+All three foundation crates are `publish = false` until a server-facing API and
+release order are defined, so they do not silently enter the existing v0.1.0
+crate publication workflow.
 
 ## Phased delivery gates
 
@@ -303,10 +315,10 @@ Exit gate: two independent clients cannot override identity; duplicate command
 submission produces one mutation; stale revisions fail; deletion reaches a
 replica through a tombstone.
 
-Current status: the portable schemas and reference conformance fixture are in
-place. Phase 0 remains open until a production adapter uses the contract and
-passes the same fixture without changing the existing embedded API or file
-formats.
+Current status: the Phase 0 code exit gate passes against the separate SQLite
+adapter without changing the existing embedded API or file formats. These
+crates are not reachable from the CLI or MCP server yet, so this closes the
+contract foundation rather than shipping server mode. Phase 1 remains open.
 
 ### Phase 1 — single-node remote SSOT
 

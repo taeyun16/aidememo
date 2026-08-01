@@ -16,6 +16,9 @@ vectors) and exposes it to LLM agents via CLI, MCP server, and native bindings
 
 | Crate | Purpose |
 |---|---|
+| `aidememo-domain` | Portable server/SSOT identities, commands, receipts, revisions, change feed, artifacts, and conformance fixture |
+| `aidememo-service` | Authenticated command orchestration and canonical request fingerprinting |
+| `aidememo-store-local` | Separate single-node SQLite command ledger for the future server mode; does not replace the embedded core store |
 | `aidememo-core` | SQLite default store, optional redb store, ingest, search, traverse, lint, validity windows |
 | `aidememo-cli` | `aidememo` binary (CLI + stdio/HTTP MCP) |
 | `aidememo-napi`, `aidememo-python`, `aidememo-nif`, `aidememo-ffi` | language bindings (full API; SQLite default, optional `redb` Cargo feature) |
@@ -36,6 +39,7 @@ cargo check -p aidememo-core --no-default-features --features redb
 cargo check -p aidememo-cli --features s3
 cargo test -p aidememo-core --features semantic
 cargo test -p aidememo-cli --bin aidememo
+cargo test -p aidememo-domain -p aidememo-service -p aidememo-store-local
 ./scripts/ci-local.sh lint
 ./scripts/ci-local.sh demo               # first-run workflow memory smoke
 ./scripts/ci-local.sh test
@@ -371,6 +375,19 @@ daemon path.
 ## Code map
 
 ```
+crates/aidememo-domain/src/
+  identity.rs   tenant/project/actor scope, membership, revisions
+  command.rs    envelope, authorization guard, receipt, audit
+  change.rs     ordered project change feed + tombstones
+  storage.rs    portable CommandStore adapter contract
+  conformance.rs backend-neutral idempotency/CAS/epoch fixture
+
+crates/aidememo-service/src/lib.rs
+  authenticated orchestration + canonical command fingerprint
+
+crates/aidememo-store-local/src/lib.rs
+  separate SQLite receipt/revision/change/audit transaction ledger
+
 crates/aidememo-core/src/
   lib.rs        AideMemo public API (re-exports)
   sqlite_store.rs SQLite CRUD (default backend)
@@ -438,6 +455,21 @@ crates/aidememo-cli/src/
   layer owns the file.
 - Time helpers: `parse_iso_to_epoch_ms` (YYYY-MM-DD or RFC3339),
   `parse_duration_to_ms` (`30d`, `12h`, `4w`, `1y`).
+
+### Server / SSOT foundations
+
+- `aidememo-domain` must remain free of database, filesystem, network, model,
+  and async-runtime dependencies.
+- Every canonical lookup uses `ProjectScope { tenant_id, project_id }`;
+  `source_id` and actor aliases are not tenant credentials.
+- `aidememo-service` computes the command fingerprint from canonical project,
+  revision precondition, operation, and payload fields. `command_id` is the
+  receipt lookup key and is excluded from its own fingerprint.
+- `aidememo-store-local` uses a separate SQLite database and must not migrate or
+  reinterpret the current embedded `aidememo-core` file format.
+- Every new canonical adapter must pass `aidememo_domain::conformance::run`.
+- The three foundation crates remain `publish = false` until a server-facing
+  public API and dependency release order are approved.
 
 ## MCP integration
 

@@ -24,6 +24,8 @@ pub enum ErrorCode {
     ResourceNotFound,
     /// A cursor belongs to a replaced or restored project history.
     CursorEpochMismatch,
+    /// A cursor claims a sequence newer than canonical project history.
+    CursorOutOfRange,
     /// A change batch violates sequence, scope, or cursor invariants.
     InvalidChangeBatch,
     /// A logical artifact path is not canonical.
@@ -32,6 +34,10 @@ pub enum ErrorCode {
     InvalidArtifactReference,
     /// A backend failed a portable conformance check.
     ConformanceViolation,
+    /// A command payload could not be converted into its canonical form.
+    InvalidCommand,
+    /// A durable adapter could not complete an operation.
+    StorageFailure,
 }
 
 /// Portable error returned by domain validation and conforming adapters.
@@ -84,6 +90,14 @@ pub enum DomainError {
         /// Current canonical epoch.
         current: ProjectEpoch,
     },
+    /// Cursor is ahead of the canonical project sequence.
+    #[error("cursor sequence {after_seq} is ahead of current project sequence {current}")]
+    CursorOutOfRange {
+        /// Sequence claimed as already applied by the replica.
+        after_seq: crate::ProjectSequence,
+        /// Current canonical sequence.
+        current: crate::ProjectSequence,
+    },
     /// Change-feed batch is invalid.
     #[error("invalid change batch: {0}")]
     InvalidChangeBatch(String),
@@ -101,6 +115,17 @@ pub enum DomainError {
         /// Observed mismatch.
         detail: String,
     },
+    /// Command payload cannot be represented by the canonical encoder.
+    #[error("invalid command: {0}")]
+    InvalidCommand(String),
+    /// Durable adapter failure. Transport layers should log detail server-side.
+    #[error("storage operation '{operation}' failed: {detail}")]
+    StorageFailure {
+        /// Stable storage operation name.
+        operation: &'static str,
+        /// Adapter diagnostic detail.
+        detail: String,
+    },
 }
 
 impl DomainError {
@@ -116,10 +141,13 @@ impl DomainError {
             Self::StaleRevision { .. } => ErrorCode::StaleRevision,
             Self::ResourceNotFound => ErrorCode::ResourceNotFound,
             Self::CursorEpochMismatch { .. } => ErrorCode::CursorEpochMismatch,
+            Self::CursorOutOfRange { .. } => ErrorCode::CursorOutOfRange,
             Self::InvalidChangeBatch(_) => ErrorCode::InvalidChangeBatch,
             Self::InvalidArtifactPath(_) => ErrorCode::InvalidArtifactPath,
             Self::InvalidArtifactReference(_) => ErrorCode::InvalidArtifactReference,
             Self::ConformanceViolation { .. } => ErrorCode::ConformanceViolation,
+            Self::InvalidCommand(_) => ErrorCode::InvalidCommand,
+            Self::StorageFailure { .. } => ErrorCode::StorageFailure,
         }
     }
 }

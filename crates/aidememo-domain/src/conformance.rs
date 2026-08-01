@@ -1,40 +1,16 @@
 //! Backend-neutral command and change-feed conformance fixture.
 //!
-//! Adapter crates implement [`ConformanceAdapter`] in their test targets and
+//! Adapter crates implement [`CommandStore`] and
 //! invoke [`run`]. The fixture is synchronous because it describes outcomes,
 //! not I/O: async adapters can execute their runtime inside the wrapper.
 
 use crate::{
-    ActorId, AuthenticatedActor, AuthorizedCommand, ChangeBatch, ChangeCursor, ChangeOperation,
-    CommandEnvelope, CommandFingerprint, CommandId, CommandReceipt, DomainError, ErrorCode,
-    MembershipRole, MembershipStatus, MutationCommand, OperationName, ProjectAuthorization,
-    ProjectEpoch, ProjectId, ProjectMembership, ProjectSequence, ResourceId, ResourceKind,
+    ActorId, AuthenticatedActor, AuthorizedCommand, ChangeCursor, ChangeOperation, CommandEnvelope,
+    CommandFingerprint, CommandId, CommandStore, DomainError, ErrorCode, MembershipRole,
+    MembershipStatus, MutationCommand, OperationName, ProjectAuthorization, ProjectEpoch,
+    ProjectId, ProjectMembership, ProjectScope, ProjectSequence, ResourceId, ResourceKind,
     ResourceRef, Revision, TenantId,
 };
-
-/// Minimal boundary an adapter exposes to the portable invariant suite.
-pub trait ConformanceAdapter {
-    /// Atomically apply a command or replay its stored receipt.
-    ///
-    /// # Errors
-    ///
-    /// Returns a stable [`DomainError`] when authorization, idempotency, CAS,
-    /// or persistence rejects the mutation.
-    fn execute(&mut self, command: &MutationCommand) -> Result<CommandReceipt, DomainError>;
-
-    /// Pull ordered mutations after the supplied cursor.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DomainError::CursorEpochMismatch`] for invalidated history or
-    /// another stable [`DomainError`] when the read cannot complete.
-    fn changes(
-        &self,
-        project_id: &ProjectId,
-        cursor: &ChangeCursor,
-        limit: usize,
-    ) -> Result<ChangeBatch, DomainError>;
-}
 
 /// Successful fixture report suitable for test output or CI artifacts.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -57,7 +33,7 @@ pub struct ConformanceReport {
 /// Returns the adapter's stable domain error, or
 /// [`DomainError::ConformanceViolation`] when an observed result breaks a
 /// Phase 0 invariant.
-pub fn run<A: ConformanceAdapter>(
+pub fn run<A: CommandStore>(
     adapter: &mut A,
     project_epoch: ProjectEpoch,
 ) -> Result<ConformanceReport, DomainError> {
@@ -144,7 +120,11 @@ pub fn run<A: ConformanceAdapter>(
         project_epoch: project_epoch.clone(),
         after_seq: ProjectSequence::ZERO,
     };
-    let changes = adapter.changes(&ProjectId::try_from("project_fixture")?, &cursor, 100)?;
+    let scope = ProjectScope::new(
+        TenantId::try_from("tenant_fixture")?,
+        ProjectId::try_from("project_fixture")?,
+    );
+    let changes = adapter.changes(&scope, &cursor, 100)?;
     check(
         changes.entries.len() == 3,
         "single_mutation_per_command",
@@ -169,13 +149,18 @@ pub fn run<A: ConformanceAdapter>(
         after_seq: ProjectSequence::ZERO,
     };
     check_error_code(
-        adapter.changes(
-            &ProjectId::try_from("project_fixture")?,
-            &wrong_epoch_cursor,
-            100,
-        ),
+        adapter.changes(&scope, &wrong_epoch_cursor, 100),
         ErrorCode::CursorEpochMismatch,
         "cursor_epoch_fail_closed",
+    )?;
+    let future_cursor = ChangeCursor {
+        project_epoch,
+        after_seq: ProjectSequence::new(deleted.project_seq.get() + 1),
+    };
+    check_error_code(
+        adapter.changes(&scope, &future_cursor, 100),
+        ErrorCode::CursorOutOfRange,
+        "cursor_sequence_fail_closed",
     )?;
 
     Ok(ConformanceReport {
@@ -188,6 +173,7 @@ pub fn run<A: ConformanceAdapter>(
             "single_mutation_per_command",
             "delete_tombstone",
             "cursor_epoch_fail_closed",
+            "cursor_sequence_fail_closed",
         ],
         final_sequence: deleted.project_seq,
         tombstone_revision: deleted.revision,
@@ -276,7 +262,7 @@ fn violation(check: &'static str, detail: &str) -> DomainError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ChangeEntry;
+    use crate::{ChangeBatch, ChangeEntry, CommandReceipt};
     use std::collections::HashMap;
 
     struct ReferenceAdapter {
@@ -299,7 +285,7 @@ mod tests {
         }
     }
 
-    impl ConformanceAdapter for ReferenceAdapter {
+    impl CommandStore for ReferenceAdapter {
         fn execute(&mut self, command: &MutationCommand) -> Result<CommandReceipt, DomainError> {
             let envelope = command.command.envelope();
             if let Some(receipt) = self.receipts.get(&envelope.command_id) {
@@ -340,6 +326,7 @@ mod tests {
             self.receipts
                 .insert(envelope.command_id.clone(), receipt.clone());
             self.changes.push(ChangeEntry {
+                tenant_id: authorization.tenant_id().clone(),
                 project_id: authorization.project_id().clone(),
                 project_epoch: self.epoch.clone(),
                 seq: sequence,
@@ -355,7 +342,7 @@ mod tests {
 
         fn changes(
             &self,
-            project_id: &ProjectId,
+            scope: &ProjectScope,
             cursor: &ChangeCursor,
             limit: usize,
         ) -> Result<ChangeBatch, DomainError> {
@@ -363,6 +350,12 @@ mod tests {
                 return Err(DomainError::CursorEpochMismatch {
                     cursor: cursor.project_epoch.clone(),
                     current: self.epoch.clone(),
+                });
+            }
+            if cursor.after_seq > self.sequence {
+                return Err(DomainError::CursorOutOfRange {
+                    after_seq: cursor.after_seq,
+                    current: self.sequence,
                 });
             }
             let entries: Vec<_> = self
@@ -378,7 +371,7 @@ mod tests {
                 .filter(|entry| entry.seq > cursor.after_seq)
                 .count()
                 > entries.len();
-            ChangeBatch::new(project_id.clone(), cursor.clone(), entries, has_more)
+            ChangeBatch::new(scope.clone(), cursor.clone(), entries, has_more)
         }
     }
 
@@ -390,7 +383,7 @@ mod tests {
         let report = run(&mut adapter, epoch)?;
         assert_eq!(report.final_sequence, ProjectSequence::new(3));
         assert_eq!(report.tombstone_revision.get(), 3);
-        assert_eq!(report.checks.len(), 8);
+        assert_eq!(report.checks.len(), 9);
         Ok(())
     }
 }

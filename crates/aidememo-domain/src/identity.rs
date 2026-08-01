@@ -105,6 +105,26 @@ string_id!(ProjectEpoch, "project_epoch");
 string_id!(ResourceId, "resource_id");
 string_id!(ArtifactId, "artifact_id");
 
+/// Composite scope used for every canonical lookup and uniqueness constraint.
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
+pub struct ProjectScope {
+    /// Owning tenant.
+    pub tenant_id: TenantId,
+    /// Project within the tenant.
+    pub project_id: ProjectId,
+}
+
+impl ProjectScope {
+    /// Create a tenant-project scope.
+    #[must_use]
+    pub const fn new(tenant_id: TenantId, project_id: ProjectId) -> Self {
+        Self {
+            tenant_id,
+            project_id,
+        }
+    }
+}
+
 /// Positive optimistic-concurrency revision of one canonical resource.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -270,6 +290,82 @@ pub struct ProjectAuthorization {
     role: MembershipRole,
 }
 
+/// Server-owned authorization context for project reads.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProjectAccess {
+    tenant_id: TenantId,
+    project_id: ProjectId,
+    actor_id: ActorId,
+    role: MembershipRole,
+}
+
+impl ProjectAccess {
+    /// Bind verified identity to an active membership, including readers.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DomainError::IdentityMismatch`] when tenant or actor differs,
+    /// or [`DomainError::ProjectUnauthorized`] when membership is suspended.
+    pub fn authorize(
+        authenticated: &AuthenticatedActor,
+        membership: &ProjectMembership,
+    ) -> Result<Self, DomainError> {
+        if authenticated.tenant_id() != &membership.tenant_id
+            || authenticated.actor_id() != &membership.actor_id
+        {
+            return Err(DomainError::IdentityMismatch);
+        }
+        if membership.status != MembershipStatus::Active {
+            return Err(DomainError::ProjectUnauthorized {
+                project_id: membership.project_id.clone(),
+            });
+        }
+        Ok(Self {
+            tenant_id: membership.tenant_id.clone(),
+            project_id: membership.project_id.clone(),
+            actor_id: membership.actor_id.clone(),
+            role: membership.role,
+        })
+    }
+
+    /// Authenticated tenant-project scope.
+    #[must_use]
+    pub fn scope(&self) -> ProjectScope {
+        ProjectScope::new(self.tenant_id.clone(), self.project_id.clone())
+    }
+
+    /// Authenticated actor.
+    #[must_use]
+    pub const fn actor_id(&self) -> &ActorId {
+        &self.actor_id
+    }
+
+    /// Effective membership role.
+    #[must_use]
+    pub const fn role(&self) -> MembershipRole {
+        self.role
+    }
+
+    /// Require write permission for a mutating command.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DomainError::ProjectUnauthorized`] for a read-only member.
+    pub fn require_write(self) -> Result<ProjectAuthorization, DomainError> {
+        if !self.role.can_mutate() {
+            return Err(DomainError::ProjectUnauthorized {
+                project_id: self.project_id,
+            });
+        }
+        Ok(ProjectAuthorization {
+            tenant_id: self.tenant_id,
+            project_id: self.project_id,
+            actor_id: self.actor_id,
+            role: self.role,
+        })
+    }
+}
+
 impl ProjectAuthorization {
     /// Bind verified identity to an active writable membership.
     ///
@@ -282,22 +378,7 @@ impl ProjectAuthorization {
         authenticated: &AuthenticatedActor,
         membership: &ProjectMembership,
     ) -> Result<Self, DomainError> {
-        if authenticated.tenant_id() != &membership.tenant_id
-            || authenticated.actor_id() != &membership.actor_id
-        {
-            return Err(DomainError::IdentityMismatch);
-        }
-        if membership.status != MembershipStatus::Active || !membership.role.can_mutate() {
-            return Err(DomainError::ProjectUnauthorized {
-                project_id: membership.project_id.clone(),
-            });
-        }
-        Ok(Self {
-            tenant_id: membership.tenant_id.clone(),
-            project_id: membership.project_id.clone(),
-            actor_id: membership.actor_id.clone(),
-            role: membership.role,
-        })
+        ProjectAccess::authorize(authenticated, membership)?.require_write()
     }
 
     /// Authorized tenant.
@@ -322,6 +403,12 @@ impl ProjectAuthorization {
     #[must_use]
     pub const fn role(&self) -> MembershipRole {
         self.role
+    }
+
+    /// Composite tenant-project scope fixed by authentication and membership.
+    #[must_use]
+    pub fn scope(&self) -> ProjectScope {
+        ProjectScope::new(self.tenant_id.clone(), self.project_id.clone())
     }
 }
 
