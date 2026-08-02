@@ -218,6 +218,94 @@ Artifact layer는 POSIX open handle, lock, `mmap`, sparse write 또는 database-
 원격 namespace를 통해 직접 열면 안 됩니다. 선택형 FUSE 또는 Python `fsspec`
 client는 공유 database volume이 아니라 materialized workspace를 노출합니다.
 
+### Artifact transport 및 garbage collection 결정
+
+연구 snapshot은 2026-08-02이며 `cf-vfs` main의
+`69963db6072683ff030d629cfe3288ea565d6913`을 검토했습니다. 차용할 부분은 Bash
+runtime이나 POSIX 형태 namespace가 아니라 opaque body lifecycle입니다. AideMemo는
+이미 Rust로 구현한 더 작은 artifact 계약을 유지하고 다음 adapter 경계를 세 역할로
+분리합니다.
+
+| 역할 | 소유하는 것 | 소유하면 안 되는 것 |
+|---|---|---|
+| Metadata coordinator | 인증된 scope, 논리 path, mutation token, reservation/verification lease, publication receipt, read retention, GC intent | 큰 body byte 또는 agent에게 반환되는 provider credential |
+| Body store | 조건부 immutable create, `HEAD`, range/full read, idempotent delete, 선택형 multipart operation | tenant authorization 또는 논리 path conflict resolution |
+| Upload authority | 제한된 local proxy 또는 수명이 짧고 exact-key에 고정된 upload/download capability | publication 정본 또는 다른 object key를 선택할 권한 |
+
+`LocalArtifactStore`는 이 의미론의 Phase-1 reference adapter이지 최종 trait 형태가
+아닙니다. Portable protocol은 Rust domain type과 HTTP로 유지합니다. Cloudflare
+binding, S3 SDK, FUSE 또는 Python에 의존하는 계약으로 만들지 않습니다.
+
+Typed HTTP surface는 임의의 논리 path를 URL에 직접 넣지 않고 opaque reservation
+ID를 사용해야 합니다.
+
+| Route | 의미론 |
+|---|---|
+| `POST /v1/projects/{project}/artifact-reservations` | Writer가 논리 path를 reserve하고 만료 시간과 제한된 proxy target, presigned single `PUT` 또는 multipart instruction 중 하나를 받습니다. |
+| `PUT /v1/projects/{project}/artifact-reservations/{reservation}/body` | 단일 노드/local 제한 업로드입니다. Hosted large body는 이 route를 통과하지 않습니다. |
+| `POST /v1/projects/{project}/artifact-reservations/{reservation}/publish` | Coordinator가 신뢰된 body-store observation을 얻고 path token과 verification lease를 다시 확인한 뒤 metadata를 원자적으로 publish합니다. |
+| `DELETE /v1/projects/{project}/artifact-reservations/{reservation}` | 마지막 published path를 바꾸지 않고 abort하고 generation의 추후 삭제를 durable하게 예약합니다. |
+| `GET /v1/projects/{project}/artifacts/resolve?path=...` | Reader membership으로 현재 metadata를 resolve합니다. |
+| `POST /v1/projects/{project}/artifacts/{artifact}/downloads` | Durable read retention을 연장하며 exact-generation read를 부여하거나 proxy합니다. |
+
+모든 control-plane call에서 bearer binding이 tenant와 actor identity를 제공합니다.
+Reader는 resolve/download, writer는 reserve/upload/publish/abort할 수 있습니다. Upload
+capability 자체도 bearer credential입니다. 수명이 짧고 provider가 지원하는 범위에서
+하나의 random generation key, method, content type, expected size/checksum, expiry,
+conditional create에 고정합니다. 이를 log에 남기거나 artifact record에 저장하지
+않습니다. Presigned URL은 만료 전 재사용할 수 있으므로 one-shot 보장이 아닙니다.
+Publication에는 여전히 immutable key, 신뢰된 `HEAD`/checksum observation, 논리 path
+compare-and-swap이 모두 필요합니다. 조건부 single 및 multipart completion 지원은
+모든 S3-compatible 제품에 있다고 가정하지 않고 adapter conformance 항목으로
+검증합니다.
+
+R2의 직접 Workers 및 S3 API는 object write, read, delete, list에 strong consistency를
+제공합니다. Cache가 활성화된 custom-domain response는 이 보장에 포함되지 않으며
+publish 검증에 사용하면 안 됩니다. Hosted upload 검증은 binding 또는 S3 API를 직접
+사용합니다. Portable hosted 첫 slice는 single `PUT`이며 설정된 threshold보다 크면
+multipart를 선택하고 신뢰된 completion만 observed generation을 생성할 수 있습니다.
+
+Garbage collection은 bucket listing이 아니라 metadata로 구동합니다.
+
+1. Replacement, abort, expiry, verification 실패 또는 publication CAS 상실 시 generation을
+   unreachable하게 만드는 같은 metadata transaction에서 durable GC candidate 하나를
+   기록합니다.
+2. `not_before`는 upload-capability expiry와 settlement grace의 합보다 이르지 않고,
+   마지막으로 부여한 download retention보다도 이르지 않습니다. 늦은 `PUT`이 방금
+   삭제한 object를 재생성하거나 활성 signed download가 body를 잃는 것을 막습니다.
+3. 제한된 worker가 due candidate를 lease한 뒤 published path, live reservation 또는
+   read retention이 exact generation/version을 참조하지 않는지 다시 확인합니다.
+4. 제한된 batch로 idempotent exact-key delete를 실행합니다. 성공하면 candidate를
+   제거하고 실패하면 attempt, error, exponential retry time을 기록합니다.
+5. 느린 reconciliation sweep이 adapter-owned object prefix와 catalog reachability를
+   비교할 수 있지만 listing은 repair evidence일 뿐 canonical liveness가 아닙니다.
+
+같은 table/queue 구현은 단일 노드 서버 또는 Kubernetes worker에서 실행할 수
+있습니다. Cloudflare profile에서는 project 단위 Durable Object가 짧은 metadata
+transaction을 소유하고 하나의 alarm으로 가장 이른 expiry/GC retry를 예약할 수
+있습니다. PostgreSQL은 초기 hosted canonical adapter로 유지하며 Durable Object를
+global singleton이나 PostgreSQL 옆의 두 번째 암묵적 writer로 만들면 안 됩니다.
+
+PyO3는 storage-server 경계가 아닙니다. 기존 Rust/Python binding이 추후
+`fsspec`-compatible materialization client를 노출할 수 있지만 upload, publication,
+conflict 의미론은 동일한 인증 HTTP protocol을 사용합니다. 별도 PyO3 VFS는
+authorization, CAS, retry, GC를 중복 구현하고 Workers, Node 또는 Kubernetes client에는
+도움이 되지 않습니다.
+
+구현 gate는 failure-oriented합니다.
+
+- Reservation, upload, verification claim, metadata commit, object delete 직후 crash
+- 정확한 reserve/upload/publish retry와 changed-body 또는 changed-command 재사용 구분
+- Abort/expiry 이후 늦은 upload와 동일 path의 concurrent replacement
+- Digest, size, ETag/version, tenant, project, actor role, object prefix mismatch
+- Signed-download retention과 replacement/GC race
+- 영구 실패 delete에서 bounded batching/backoff
+- Local filesystem, R2, AWS S3, 선택한 on-premises S3-compatible 구현에 같은 lifecycle suite 적용
+
+구현 순서는 local authenticated HTTP와 durable GC, conditional single-`PUT` S3
+adapter, multipart/resume, 마지막으로 선택형 project Durable Object coordinator입니다.
+Provider-specific scale machinery보다 Phase 1 behavior를 먼저 닫습니다.
+
 ## 검색 일관성
 
 Fact와 graph 레코드가 정본이며 lexical/vector index는 재구축 가능한
@@ -471,8 +559,9 @@ snapshot을 요구합니다. 도메인과 HTTP test를 합쳐 잘못된 actor, c
 read-only mutation, 비참여자 read, mailbox actor filter 주입을 거부합니다.
 Indexed inbox/outbox query는 completed/source filter와 exclusive sequence
 pagination을 지원하며 schema v2 migration backfill도 검사합니다. Artifact HTTP
-integration과 unreachable-generation GC, HTTP MCP gateway 연결, retrieval indexing,
-offline write outbox는 아직 열려 있으므로
+integration과 unreachable-generation GC(위 transport/GC 계약은 고정했지만 코드는 아직
+열려 있음), HTTP MCP gateway 연결, retrieval indexing, offline write outbox는 아직
+열려 있으므로
 Phase 1 종료 gate 전체는 닫히지 않았습니다.
 
 ### Phase 2 — 이식 가능한 프로덕션 backend
@@ -523,6 +612,10 @@ tenant export/import를 문서 명령으로 재현할 수 있습니다.
 - [Cloudflare Durable Objects 규칙](https://developers.cloudflare.com/durable-objects/best-practices/rules-of-durable-objects/)
 - [Cloudflare SQLite-backed Durable Object storage](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/)
 - [Cloudflare R2 S3 호환성](https://developers.cloudflare.com/r2/api/s3/api/)
+- [Cloudflare R2 일관성](https://developers.cloudflare.com/r2/reference/consistency/)
+- [Cloudflare R2 presigned URL](https://developers.cloudflare.com/r2/api/s3/presigned-urls/)
+- [Amazon S3 conditional write](https://docs.aws.amazon.com/AmazonS3/latest/userguide/conditional-writes.html)
+- [Amazon S3 multipart checksum](https://docs.aws.amazon.com/AmazonS3/latest/userguide/checking-object-integrity-upload.html)
 - [Cloudflare Hyperdrive](https://developers.cloudflare.com/hyperdrive/)
 - [Kubernetes workload](https://kubernetes.io/docs/concepts/workloads/)
-- [`cf-vfs`](https://github.com/corca-ai/cf-vfs) — AideMemo database용 POSIX backend가 아니라 revisioned namespace와 immutable-object lifecycle 참고 구현.
+- [연구 revision의 `cf-vfs` architecture](https://github.com/corca-ai/cf-vfs/blob/69963db6072683ff030d629cfe3288ea565d6913/docs/architecture.md) — AideMemo database용 POSIX backend가 아니라 revisioned namespace와 immutable-object lifecycle 참고 구현.

@@ -227,6 +227,105 @@ files must never be opened directly through this remote namespace. Optional
 FUSE or Python `fsspec` clients expose a materialized workspace, not a shared
 database volume.
 
+### Artifact transport and garbage-collection decision
+
+Research snapshot: 2026-08-02, with `cf-vfs` main inspected at
+`69963db6072683ff030d629cfe3288ea565d6913`. The useful transfer is its opaque
+body lifecycle, not its Bash runtime or POSIX-shaped namespace. AideMemo keeps
+the smaller artifact contract already implemented in Rust and splits its next
+adapter boundary into three roles:
+
+| Role | Owns | Must not own |
+|---|---|---|
+| Metadata coordinator | authenticated scope, logical path, mutation token, reservation/verification leases, publication receipt, read retention, GC intent | large body bytes or provider credentials returned to an agent |
+| Body store | conditional immutable create, `HEAD`, ranged/full read, idempotent delete, optional multipart operations | tenant authorization or logical-path conflict resolution |
+| Upload authority | bounded local proxy or short-lived exact-key upload/download capability | publication truth or the ability to select another object key |
+
+`LocalArtifactStore` is the Phase-1 reference adapter for these semantics, not
+the final trait shape. The portable protocol remains Rust domain types plus
+HTTP. It does not become dependent on Cloudflare bindings, an S3 SDK, FUSE, or
+Python.
+
+The typed HTTP surface should use an opaque reservation ID rather than putting
+an arbitrary logical path into a URL:
+
+| Route | Semantics |
+|---|---|
+| `POST /v1/projects/{project}/artifact-reservations` | Writer reserves a logical path and receives expiry plus either a bounded proxy target, a presigned single `PUT`, or multipart instructions. |
+| `PUT /v1/projects/{project}/artifact-reservations/{reservation}/body` | Single-node/local bounded upload; hosted large bodies do not traverse this route. |
+| `POST /v1/projects/{project}/artifact-reservations/{reservation}/publish` | Coordinator obtains a trusted body-store observation, rechecks the path token and verification lease, then publishes metadata atomically. |
+| `DELETE /v1/projects/{project}/artifact-reservations/{reservation}` | Abort and durably schedule the generation for later deletion without changing the last published path. |
+| `GET /v1/projects/{project}/artifacts/resolve?path=...` | Resolve current metadata under reader membership. |
+| `POST /v1/projects/{project}/artifacts/{artifact}/downloads` | Grant a bounded exact-generation read or proxy it, while extending durable read retention. |
+
+The bearer binding supplies tenant and actor identity on every control-plane
+call. Readers may resolve/download; writers may reserve/upload/publish/abort.
+An upload capability is itself a bearer credential. It is short-lived and
+bound, where the provider supports it, to one random generation key, one
+method, content type, expected size/checksum, expiry, and conditional create.
+It is never logged or persisted in an artifact record. A presigned URL can be
+reused until it expires, so it is not a one-shot guarantee: publication still
+requires an immutable key, a trusted `HEAD`/checksum observation, and the
+logical-path compare-and-swap. Provider support for conditional single and
+multipart completion is an adapter conformance item, not an assumed property
+of every product described as S3-compatible.
+
+R2's direct Workers and S3 APIs are strongly consistent for object writes,
+reads, deletes, and listings. A cached custom-domain response is not part of
+that guarantee and must not be used for publish verification. Hosted upload
+verification therefore uses the binding or S3 API directly. Single `PUT` is
+the first portable hosted slice; multipart is selected above a configured
+threshold and only trusted completion may create the observed generation.
+
+Garbage collection is metadata-driven rather than bucket-list driven:
+
+1. Replacement, abort, expiry, failed verification, or a lost publication CAS
+   writes one durable GC candidate in the same metadata transaction that makes
+   the generation unreachable.
+2. `not_before` is at least the upload-capability expiry plus settlement grace,
+   and at least the latest granted download retention. This prevents a late
+   `PUT` from recreating an object just deleted and prevents an active signed
+   download from losing its body.
+3. A bounded worker leases due candidates and rechecks that no published path,
+   live reservation, or read retention names the exact generation/version.
+4. It issues idempotent exact-key deletes in bounded batches. Success removes
+   the candidate; failure records attempts, error, and exponential retry time.
+5. A slower reconciliation sweep may compare the adapter-owned object prefix
+   with catalog reachability, but listing is repair evidence, never canonical
+   liveness.
+
+The same table/queue implementation can run from the single-node server or a
+Kubernetes worker. In a Cloudflare profile, a project-sized Durable Object may
+own the short metadata transactions and schedule its earliest expiry/GC retry
+with one alarm. PostgreSQL remains the initial hosted canonical adapter, and a
+Durable Object must not become a global singleton or a second implicit writer
+beside PostgreSQL.
+
+PyO3 is not a storage-server boundary. The existing Rust/Python binding can
+later expose an `fsspec`-compatible materialization client, while upload,
+publication, and conflict semantics continue through the same authenticated
+HTTP protocol. A separate PyO3 VFS would duplicate authorization, CAS, retry,
+and GC logic and would not help Workers, Node, or Kubernetes clients.
+
+The implementation gate is failure-oriented:
+
+- crash after reservation, upload, verification claim, metadata commit, and
+  object delete;
+- exact reserve/upload/publish retry versus changed-body or changed-command
+  reuse;
+- late upload after abort/expiry and concurrent replacement of one path;
+- digest, size, ETag/version, tenant, project, actor-role, and object-prefix
+  mismatch;
+- signed-download retention racing replacement and GC;
+- bounded batching/backoff with a permanently failing delete; and
+- the same lifecycle suite against local filesystem, R2, AWS S3, and the
+  selected on-premises S3-compatible implementation.
+
+Delivery order is local authenticated HTTP plus durable GC, then a conditional
+single-`PUT` S3 adapter, then multipart/resume, and only then the optional
+project Durable Object coordinator. This closes Phase 1 behavior before adding
+provider-specific scale machinery.
+
 ## Search consistency
 
 Facts and graph records are authoritative; lexical and vector indexes are
@@ -491,9 +590,10 @@ instead of being reconstructed from newer state. Combined domain and HTTP tests 
 source/session evidence, read-only mutation, non-participant reads, and mailbox
 actor-filter injection. Indexed inbox/outbox queries support completed/source
 filters and exclusive sequence pagination; schema v2 migration backfill is
-tested. Artifact HTTP integration and unreachable-generation GC, HTTP MCP
-gateway wiring, retrieval indexing, and offline write outbox remain open, so the full Phase 1 exit gate is not yet
-closed.
+tested. Artifact HTTP integration and unreachable-generation GC (the
+transport/GC contract above is frozen, but code is still open), HTTP MCP gateway
+wiring, retrieval indexing, and offline write outbox remain open, so the full
+Phase 1 exit gate is not yet closed.
 
 ### Phase 2 — portable production backend
 
@@ -544,6 +644,10 @@ and complete tenant export/import are reproducible from documented commands.
 - [Cloudflare Durable Objects rules](https://developers.cloudflare.com/durable-objects/best-practices/rules-of-durable-objects/)
 - [Cloudflare SQLite-backed Durable Object storage](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/)
 - [Cloudflare R2 S3 compatibility](https://developers.cloudflare.com/r2/api/s3/api/)
+- [Cloudflare R2 consistency](https://developers.cloudflare.com/r2/reference/consistency/)
+- [Cloudflare R2 presigned URLs](https://developers.cloudflare.com/r2/api/s3/presigned-urls/)
+- [Amazon S3 conditional writes](https://docs.aws.amazon.com/AmazonS3/latest/userguide/conditional-writes.html)
+- [Amazon S3 multipart checksums](https://docs.aws.amazon.com/AmazonS3/latest/userguide/checking-object-integrity-upload.html)
 - [Cloudflare Hyperdrive](https://developers.cloudflare.com/hyperdrive/)
 - [Kubernetes workloads](https://kubernetes.io/docs/concepts/workloads/)
-- [`cf-vfs`](https://github.com/corca-ai/cf-vfs) — revisioned namespace and immutable-object lifecycle reference, not a POSIX storage backend for AideMemo databases.
+- [`cf-vfs` architecture at the researched revision](https://github.com/corca-ai/cf-vfs/blob/69963db6072683ff030d629cfe3288ea565d6913/docs/architecture.md) — revisioned namespace and immutable-object lifecycle reference, not a POSIX storage backend for AideMemo databases.
