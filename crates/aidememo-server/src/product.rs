@@ -492,7 +492,7 @@ async fn get_handoff(
     Ok(Json(TypedRecordResponse { revision, record }))
 }
 
-fn request_context(
+pub(super) fn request_context(
     service: &CommandService<SqliteCommandStore>,
     headers: &HeaderMap,
     project_id: &ProjectId,

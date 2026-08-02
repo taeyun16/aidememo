@@ -20,10 +20,16 @@ use tempfile::NamedTempFile;
 use thiserror::Error;
 use ulid::Ulid;
 
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 const MAX_TTL_MS: i64 = 24 * 60 * 60 * 1_000;
-const MAX_UPLOAD_BYTES: usize = 64 * 1024 * 1024;
+/// Maximum body accepted by the bounded local direct-upload path.
+pub const MAX_DIRECT_UPLOAD_BYTES: usize = 64 * 1024 * 1024;
 const DEFAULT_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
+const GC_SETTLEMENT_GRACE_MS: i64 = 60_000;
+const GC_LEASE_MS: i64 = 30_000;
+const MAX_GC_BATCH: usize = 100;
+const MAX_REQUEST_ID_BYTES: usize = 1_024;
+const RECEIPT_RETENTION_MS: i64 = 24 * 60 * 60 * 1_000;
 
 /// Errors from the isolated local artifact repository.
 #[derive(Debug, Error)]
@@ -72,6 +78,8 @@ pub enum ArtifactStoreError {
 /// Input to an exclusive path reservation.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReserveRequest {
+    /// Client-generated idempotency key for exact reservation replay.
+    pub request_id: String,
     /// Tenant-project scope owning the logical path.
     pub scope: ProjectScope,
     /// Canonical logical namespace path.
@@ -82,6 +90,21 @@ pub struct ReserveRequest {
     pub now_ms: i64,
     /// Positive reservation lifetime, bounded to 24 hours.
     pub ttl_ms: i64,
+}
+
+/// Outcome of one bounded durable garbage-collection pass.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct GarbageCollectionReport {
+    /// Expired reservations moved to durable GC intent.
+    pub expired_reservations: usize,
+    /// Due object generations claimed by this pass.
+    pub claimed: usize,
+    /// Object generations deleted or already absent.
+    pub deleted: usize,
+    /// Object generations retained for a later retry.
+    pub failed: usize,
+    /// Expired reservation/publication replay receipts removed from the catalog.
+    pub pruned_receipts: usize,
 }
 
 /// Separate SQLite catalog plus immutable local object directory.
@@ -141,6 +164,7 @@ impl LocalArtifactStore {
         &mut self,
         request: ReserveRequest,
     ) -> Result<ArtifactReservation, ArtifactStoreError> {
+        validate_request_id(&request.request_id)?;
         if request.now_ms <= 0 || request.ttl_ms <= 0 || request.ttl_ms > MAX_TTL_MS {
             return Err(DomainError::InvalidArtifactReference(format!(
                 "reservation time must be positive and ttl_ms must be between 1 and {MAX_TTL_MS}"
@@ -154,27 +178,41 @@ impl LocalArtifactStore {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| storage("reserve_begin", error))?;
+        if let Some(reservation) = load_reservation_receipt(&transaction, &request)? {
+            return Ok(reservation);
+        }
         let published = load_published_row(&transaction, &request.scope, &request.path)?;
         match (&published, request.expected_mutation_token.as_deref()) {
             (None, None) => {}
             (Some(current), Some(expected)) if current.mutation_token == expected => {}
             _ => return Err(ArtifactStoreError::Conflict),
         }
-        let active_expiry: Option<i64> = transaction
+        let active: Option<(String, i64)> = transaction
             .query_row(
-                "SELECT expires_at_ms FROM artifact_reservations
+                "SELECT generation, expires_at_ms FROM artifact_reservations
                  WHERE tenant_id = ?1 AND project_id = ?2 AND logical_path = ?3",
                 params![
                     request.scope.tenant_id.as_str(),
                     request.scope.project_id.as_str(),
                     request.path.as_str(),
                 ],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .optional()
             .map_err(|error| storage("reservation_current", error))?;
-        if active_expiry.is_some_and(|expiry| expiry > request.now_ms) {
+        if active
+            .as_ref()
+            .is_some_and(|(_, expiry)| *expiry > request.now_ms)
+        {
             return Err(ArtifactStoreError::Conflict);
+        }
+        if let Some((generation, expiry)) = &active {
+            queue_gc_candidate(
+                &transaction,
+                &request.scope,
+                generation,
+                expiry.saturating_add(GC_SETTLEMENT_GRACE_MS),
+            )?;
         }
         transaction
             .execute(
@@ -197,8 +235,8 @@ impl LocalArtifactStore {
             .map_or_else(|| Revision::new(1), |current| current.revision.next())?;
         let reservation = ArtifactReservation {
             artifact_id,
-            scope: request.scope,
-            path: request.path,
+            scope: request.scope.clone(),
+            path: request.path.clone(),
             revision,
             mutation_token: format!("mut_{}", new_id()),
             generation: format!("gen_{}", new_id()),
@@ -223,6 +261,7 @@ impl LocalArtifactStore {
                 ],
             )
             .map_err(|error| storage("reservation_insert", error))?;
+        insert_reservation_receipt(&transaction, &request, &reservation)?;
         transaction
             .commit()
             .map_err(|error| storage("reserve_commit", error))?;
@@ -245,9 +284,9 @@ impl LocalArtifactStore {
     ) -> Result<ArtifactObservation, ArtifactStoreError> {
         reservation.validate()?;
         self.ensure_live_reservation(reservation, now_ms)?;
-        if bytes.len() > MAX_UPLOAD_BYTES {
+        if bytes.len() > MAX_DIRECT_UPLOAD_BYTES {
             return Err(ArtifactStoreError::UploadTooLarge {
-                limit_bytes: MAX_UPLOAD_BYTES,
+                limit_bytes: MAX_DIRECT_UPLOAD_BYTES,
             });
         }
         let digest = digest_bytes(bytes)?;
@@ -294,6 +333,38 @@ impl LocalArtifactStore {
         })
     }
 
+    /// Observe a previously uploaded immutable generation using trusted local I/O.
+    ///
+    /// # Errors
+    ///
+    /// Returns a missing-body or filesystem error. Publication separately
+    /// verifies that the reservation is live or is an exact committed retry.
+    pub fn observe(
+        &self,
+        reservation: &ArtifactReservation,
+        _now_ms: i64,
+    ) -> Result<ArtifactObservation, ArtifactStoreError> {
+        reservation.validate()?;
+        let object_key = object_key(&reservation.scope, &reservation.generation);
+        let path = self.object_path(&object_key)?;
+        let bytes = fs::read(&path).map_err(|error| {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                ArtifactStoreError::NotFound
+            } else {
+                filesystem_error("object_observe", &path, error)
+            }
+        })?;
+        let digest = digest_bytes(&bytes)?;
+        Ok(ArtifactObservation {
+            object_key,
+            generation: reservation.generation.clone(),
+            size_bytes: bytes.len() as u64,
+            etag: digest.as_str().to_owned(),
+            version: None,
+            digest: Some(digest),
+        })
+    }
+
     /// Publish observed immutable body metadata under the reserved logical path.
     ///
     /// Publication re-reads and hashes the local object, then updates canonical
@@ -324,6 +395,16 @@ impl LocalArtifactStore {
         if observation.etag != digest.as_str() {
             return Err(ArtifactStoreError::BodyMismatch);
         }
+        if let Some(reference) = load_publication_receipt(
+            &self.connection,
+            &reservation.scope,
+            &reservation.mutation_token,
+        )? {
+            if publication_matches(&reference, reservation, observation) {
+                return Ok(reference);
+            }
+            return Err(ArtifactStoreError::BodyMismatch);
+        }
         verify_file(
             &self.object_path(&expected_key)?,
             observation.size_bytes,
@@ -351,6 +432,17 @@ impl LocalArtifactStore {
                 return Err(ArtifactStoreError::NotFound);
             }
             Err(error) => return Err(error),
+        }
+        if let Some(previous) =
+            load_published_row(&transaction, &reservation.scope, &reservation.path)?
+            && previous.object_key != observation.object_key
+        {
+            queue_gc_candidate(
+                &transaction,
+                &reservation.scope,
+                &previous.generation,
+                now_ms,
+            )?;
         }
         transaction
             .execute(
@@ -387,10 +479,6 @@ impl LocalArtifactStore {
                 ],
             )
             .map_err(|error| storage("publication_write", error))?;
-        delete_reservation(&transaction, reservation)?;
-        transaction
-            .commit()
-            .map_err(|error| storage("publish_commit", error))?;
         let reference = ArtifactReference {
             artifact_id: reservation.artifact_id.clone(),
             scope: reservation.scope.clone(),
@@ -400,6 +488,11 @@ impl LocalArtifactStore {
             body,
         };
         reference.validate()?;
+        insert_publication_receipt(&transaction, &reference, now_ms)?;
+        delete_reservation(&transaction, reservation)?;
+        transaction
+            .commit()
+            .map_err(|error| storage("publish_commit", error))?;
         Ok(reference)
     }
 
@@ -414,6 +507,14 @@ impl LocalArtifactStore {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| storage("abort_begin", error))?;
+        queue_gc_candidate(
+            &transaction,
+            &reservation.scope,
+            &reservation.generation,
+            reservation
+                .expires_at_ms
+                .saturating_add(GC_SETTLEMENT_GRACE_MS),
+        )?;
         let deleted = delete_reservation(&transaction, reservation)?;
         if deleted != 1 {
             return Err(ArtifactStoreError::NotFound);
@@ -438,6 +539,206 @@ impl LocalArtifactStore {
             reference.validate()?;
             Ok(Some(reference))
         })
+    }
+
+    /// Load one canonical reservation by its opaque mutation token.
+    ///
+    /// # Errors
+    ///
+    /// Returns a validation or storage error when the persisted row is invalid.
+    pub fn reservation_by_token(
+        &self,
+        scope: &ProjectScope,
+        mutation_token: &str,
+    ) -> Result<Option<ArtifactReservation>, ArtifactStoreError> {
+        let row: Option<(String, String, i64, String, i64)> = self
+            .connection
+            .query_row(
+                "SELECT logical_path, artifact_id, revision, generation, expires_at_ms
+                 FROM artifact_reservations
+                 WHERE tenant_id = ?1 AND project_id = ?2 AND mutation_token = ?3",
+                params![
+                    scope.tenant_id.as_str(),
+                    scope.project_id.as_str(),
+                    mutation_token,
+                ],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(|error| storage("reservation_by_token", error))?;
+        row.map(|(path, artifact_id, revision, generation, expires_at_ms)| {
+            let reservation = ArtifactReservation {
+                artifact_id: ArtifactId::try_from(artifact_id)?,
+                scope: scope.clone(),
+                path: ArtifactPath::try_from(path)?,
+                revision: Revision::new(from_i64(revision, "revision")?)?,
+                mutation_token: mutation_token.to_owned(),
+                generation,
+                expires_at_ms,
+            };
+            reservation.validate()?;
+            Ok(reservation)
+        })
+        .transpose()
+    }
+
+    /// Load a reservation receipt by token after the live reservation was consumed.
+    ///
+    /// This supports an exact publish retry without making the upload authority
+    /// live again.
+    ///
+    /// # Errors
+    ///
+    /// Returns a validation or storage error when the persisted receipt is invalid.
+    pub fn reservation_receipt_by_token(
+        &self,
+        scope: &ProjectScope,
+        mutation_token: &str,
+    ) -> Result<Option<ArtifactReservation>, ArtifactStoreError> {
+        let row: Option<(String, String, i64, String, i64)> = self
+            .connection
+            .query_row(
+                "SELECT logical_path, artifact_id, revision, generation, expires_at_ms
+                 FROM artifact_reservation_receipts
+                 WHERE tenant_id = ?1 AND project_id = ?2 AND mutation_token = ?3",
+                params![
+                    scope.tenant_id.as_str(),
+                    scope.project_id.as_str(),
+                    mutation_token,
+                ],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(|error| storage("reservation_receipt_by_token", error))?;
+        row.map(|(path, artifact_id, revision, generation, expires_at_ms)| {
+            let reservation = ArtifactReservation {
+                artifact_id: ArtifactId::try_from(artifact_id)?,
+                scope: scope.clone(),
+                path: ArtifactPath::try_from(path)?,
+                revision: Revision::new(from_i64(revision, "revision")?)?,
+                mutation_token: mutation_token.to_owned(),
+                generation,
+                expires_at_ms,
+            };
+            reservation.validate()?;
+            Ok(reservation)
+        })
+        .transpose()
+    }
+
+    /// Load a committed publication receipt by its reservation token.
+    ///
+    /// This supports exact response replay even after a later replacement and
+    /// garbage collection make the original generation unreachable.
+    ///
+    /// # Errors
+    ///
+    /// Returns a validation or storage error when the persisted receipt is invalid.
+    pub fn publication_receipt_by_token(
+        &self,
+        scope: &ProjectScope,
+        mutation_token: &str,
+    ) -> Result<Option<ArtifactReference>, ArtifactStoreError> {
+        load_publication_receipt(&self.connection, scope, mutation_token)
+    }
+
+    /// Resolve the current published metadata by stable artifact identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns a validation or storage error when the persisted row is invalid.
+    pub fn get_by_id(
+        &self,
+        scope: &ProjectScope,
+        artifact_id: &ArtifactId,
+    ) -> Result<Option<ArtifactReference>, ArtifactStoreError> {
+        let path: Option<String> = self
+            .connection
+            .query_row(
+                "SELECT logical_path FROM artifact_paths
+                 WHERE tenant_id = ?1 AND project_id = ?2 AND artifact_id = ?3",
+                params![
+                    scope.tenant_id.as_str(),
+                    scope.project_id.as_str(),
+                    artifact_id.as_str(),
+                ],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| storage("published_by_id", error))?;
+        path.map(ArtifactPath::try_from)
+            .transpose()?
+            .map_or(Ok(None), |path| self.get(scope, &path))
+    }
+
+    /// Reap expired reservations and delete a bounded batch of unreachable bodies.
+    ///
+    /// Delete is idempotent. A crash after filesystem deletion but before the
+    /// catalog acknowledgement leaves the candidate available for retry.
+    ///
+    /// # Errors
+    ///
+    /// Returns a validation, catalog, or filesystem error. Individual filesystem
+    /// failures are recorded for retry and reflected in the report.
+    pub fn drain_garbage(
+        &mut self,
+        now_ms: i64,
+        limit: usize,
+    ) -> Result<GarbageCollectionReport, ArtifactStoreError> {
+        if now_ms <= 0 || limit == 0 || limit > MAX_GC_BATCH {
+            return Err(DomainError::InvalidArtifactReference(format!(
+                "garbage collection requires positive now_ms and limit between 1 and {MAX_GC_BATCH}"
+            ))
+            .into());
+        }
+        let mut report = GarbageCollectionReport::default();
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| storage("gc_begin", error))?;
+        report.expired_reservations =
+            reap_expired_reservations(&transaction, now_ms, MAX_GC_BATCH)?;
+        let candidates = claim_gc_candidates(&transaction, now_ms, limit)?;
+        report.claimed = candidates.len();
+        report.pruned_receipts = prune_expired_receipts(&transaction, now_ms, MAX_GC_BATCH)?;
+        transaction
+            .commit()
+            .map_err(|error| storage("gc_claim_commit", error))?;
+
+        for candidate in candidates {
+            let path = self.object_path(&candidate.object_key)?;
+            match fs::remove_file(&path) {
+                Ok(()) => {
+                    acknowledge_gc(&self.connection, &candidate)?;
+                    report.deleted += 1;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    acknowledge_gc(&self.connection, &candidate)?;
+                    report.deleted += 1;
+                }
+                Err(error) => {
+                    fail_gc(&self.connection, &candidate, now_ms, &error)?;
+                    report.failed += 1;
+                }
+            }
+        }
+        Ok(report)
     }
 
     /// Read and re-verify the immutable bytes named by a published reference.
@@ -521,6 +822,13 @@ struct PublishedSqlRow {
     digest: String,
 }
 
+#[derive(Debug)]
+struct GarbageCandidate {
+    object_key: String,
+    lease_token: String,
+    attempts: u32,
+}
+
 impl PublishedRow {
     fn reference(
         self,
@@ -580,16 +888,542 @@ fn migrate(connection: &Connection) -> Result<(), ArtifactStoreError> {
                     expires_at_ms INTEGER NOT NULL CHECK (expires_at_ms > 0),
                     PRIMARY KEY (tenant_id, project_id, logical_path)
                  ) STRICT;
-                 PRAGMA user_version = 1;
+                 CREATE UNIQUE INDEX IF NOT EXISTS artifact_reservation_token
+                    ON artifact_reservations (tenant_id, project_id, mutation_token);
+                 CREATE TABLE IF NOT EXISTS artifact_reservation_receipts (
+                    tenant_id TEXT NOT NULL,
+                    project_id TEXT NOT NULL,
+                    request_id TEXT NOT NULL,
+                    logical_path TEXT NOT NULL,
+                    expected_mutation_token TEXT,
+                    ttl_ms INTEGER NOT NULL CHECK (ttl_ms > 0),
+                    artifact_id TEXT NOT NULL,
+                    revision INTEGER NOT NULL CHECK (revision > 0),
+                    mutation_token TEXT NOT NULL,
+                    generation TEXT NOT NULL,
+                    expires_at_ms INTEGER NOT NULL CHECK (expires_at_ms > 0),
+                    retain_until_ms INTEGER NOT NULL CHECK (retain_until_ms > 0),
+                    PRIMARY KEY (tenant_id, project_id, request_id)
+                 ) STRICT;
+                 CREATE UNIQUE INDEX IF NOT EXISTS artifact_receipt_token
+                    ON artifact_reservation_receipts (tenant_id, project_id, mutation_token);
+                 CREATE TABLE IF NOT EXISTS artifact_publication_receipts (
+                    tenant_id TEXT NOT NULL,
+                    project_id TEXT NOT NULL,
+                    mutation_token TEXT NOT NULL,
+                    reference_json TEXT NOT NULL,
+                    retain_until_ms INTEGER NOT NULL CHECK (retain_until_ms > 0),
+                    PRIMARY KEY (tenant_id, project_id, mutation_token)
+                 ) STRICT;
+                 CREATE TABLE IF NOT EXISTS artifact_gc_queue (
+                    tenant_id TEXT NOT NULL,
+                    project_id TEXT NOT NULL,
+                    generation TEXT NOT NULL,
+                    object_key TEXT NOT NULL PRIMARY KEY,
+                    not_before_ms INTEGER NOT NULL CHECK (not_before_ms > 0),
+                    next_attempt_ms INTEGER NOT NULL CHECK (next_attempt_ms > 0),
+                    attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+                    lease_token TEXT,
+                    lease_until_ms INTEGER,
+                    last_error TEXT
+                 ) STRICT;
+                 CREATE INDEX IF NOT EXISTS artifact_gc_due
+                    ON artifact_gc_queue (next_attempt_ms, not_before_ms);
+                 PRAGMA user_version = 2;
                  COMMIT;",
             )
             .map_err(|error| storage("schema_create", error)),
+        1 => connection
+            .execute_batch(
+                "BEGIN IMMEDIATE;
+                 CREATE UNIQUE INDEX IF NOT EXISTS artifact_reservation_token
+                    ON artifact_reservations (tenant_id, project_id, mutation_token);
+                 CREATE TABLE IF NOT EXISTS artifact_reservation_receipts (
+                    tenant_id TEXT NOT NULL,
+                    project_id TEXT NOT NULL,
+                    request_id TEXT NOT NULL,
+                    logical_path TEXT NOT NULL,
+                    expected_mutation_token TEXT,
+                    ttl_ms INTEGER NOT NULL CHECK (ttl_ms > 0),
+                    artifact_id TEXT NOT NULL,
+                    revision INTEGER NOT NULL CHECK (revision > 0),
+                    mutation_token TEXT NOT NULL,
+                    generation TEXT NOT NULL,
+                    expires_at_ms INTEGER NOT NULL CHECK (expires_at_ms > 0),
+                    retain_until_ms INTEGER NOT NULL CHECK (retain_until_ms > 0),
+                    PRIMARY KEY (tenant_id, project_id, request_id)
+                 ) STRICT;
+                 CREATE UNIQUE INDEX IF NOT EXISTS artifact_receipt_token
+                    ON artifact_reservation_receipts (tenant_id, project_id, mutation_token);
+                 CREATE TABLE IF NOT EXISTS artifact_publication_receipts (
+                    tenant_id TEXT NOT NULL,
+                    project_id TEXT NOT NULL,
+                    mutation_token TEXT NOT NULL,
+                    reference_json TEXT NOT NULL,
+                    retain_until_ms INTEGER NOT NULL CHECK (retain_until_ms > 0),
+                    PRIMARY KEY (tenant_id, project_id, mutation_token)
+                 ) STRICT;
+                 CREATE TABLE IF NOT EXISTS artifact_gc_queue (
+                    tenant_id TEXT NOT NULL,
+                    project_id TEXT NOT NULL,
+                    generation TEXT NOT NULL,
+                    object_key TEXT NOT NULL PRIMARY KEY,
+                    not_before_ms INTEGER NOT NULL CHECK (not_before_ms > 0),
+                    next_attempt_ms INTEGER NOT NULL CHECK (next_attempt_ms > 0),
+                    attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+                    lease_token TEXT,
+                    lease_until_ms INTEGER,
+                    last_error TEXT
+                 ) STRICT;
+                 CREATE INDEX IF NOT EXISTS artifact_gc_due
+                    ON artifact_gc_queue (next_attempt_ms, not_before_ms);
+                 PRAGMA user_version = 2;
+                 COMMIT;",
+            )
+            .map_err(|error| storage("schema_migrate_v2", error)),
         SCHEMA_VERSION => Ok(()),
         other => Err(ArtifactStoreError::Storage {
             operation: "schema_version",
             detail: format!("artifact schema {other} is not supported by version {SCHEMA_VERSION}"),
         }),
     }
+}
+
+fn validate_request_id(request_id: &str) -> Result<(), ArtifactStoreError> {
+    if request_id.is_empty()
+        || request_id.len() > MAX_REQUEST_ID_BYTES
+        || request_id
+            .chars()
+            .any(|character| character.is_whitespace() || character.is_control())
+    {
+        return Err(DomainError::InvalidArtifactReference(
+            "artifact reservation request_id must be non-empty, bounded, and contain no whitespace or control characters"
+                .to_owned(),
+        )
+        .into());
+    }
+    Ok(())
+}
+
+fn load_reservation_receipt(
+    transaction: &Transaction<'_>,
+    request: &ReserveRequest,
+) -> Result<Option<ArtifactReservation>, ArtifactStoreError> {
+    type ReceiptRow = (
+        String,
+        Option<String>,
+        i64,
+        String,
+        i64,
+        String,
+        String,
+        i64,
+    );
+    let row: Option<ReceiptRow> = transaction
+        .query_row(
+            "SELECT logical_path, expected_mutation_token, ttl_ms, artifact_id,
+                    revision, mutation_token, generation, expires_at_ms
+             FROM artifact_reservation_receipts
+             WHERE tenant_id = ?1 AND project_id = ?2 AND request_id = ?3",
+            params![
+                request.scope.tenant_id.as_str(),
+                request.scope.project_id.as_str(),
+                &request.request_id,
+            ],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                    row.get(7)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|error| storage("reservation_receipt_read", error))?;
+    let Some((
+        path,
+        expected_mutation_token,
+        ttl_ms,
+        artifact_id,
+        revision,
+        mutation_token,
+        generation,
+        expires_at_ms,
+    )) = row
+    else {
+        return Ok(None);
+    };
+    if path != request.path.as_str()
+        || expected_mutation_token != request.expected_mutation_token
+        || ttl_ms != request.ttl_ms
+    {
+        return Err(ArtifactStoreError::Conflict);
+    }
+    let reservation = ArtifactReservation {
+        artifact_id: ArtifactId::try_from(artifact_id)?,
+        scope: request.scope.clone(),
+        path: ArtifactPath::try_from(path)?,
+        revision: Revision::new(from_i64(revision, "revision")?)?,
+        mutation_token,
+        generation,
+        expires_at_ms,
+    };
+    reservation.validate()?;
+    Ok(Some(reservation))
+}
+
+fn insert_reservation_receipt(
+    transaction: &Transaction<'_>,
+    request: &ReserveRequest,
+    reservation: &ArtifactReservation,
+) -> Result<(), ArtifactStoreError> {
+    let retain_until_ms = reservation
+        .expires_at_ms
+        .saturating_add(RECEIPT_RETENTION_MS);
+    transaction
+        .execute(
+            "INSERT INTO artifact_reservation_receipts
+                (tenant_id, project_id, request_id, logical_path,
+                 expected_mutation_token, ttl_ms, artifact_id, revision,
+                 mutation_token, generation, expires_at_ms, retain_until_ms)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            params![
+                reservation.scope.tenant_id.as_str(),
+                reservation.scope.project_id.as_str(),
+                &request.request_id,
+                reservation.path.as_str(),
+                request.expected_mutation_token.as_deref(),
+                request.ttl_ms,
+                reservation.artifact_id.as_str(),
+                to_i64(reservation.revision.get(), "revision")?,
+                &reservation.mutation_token,
+                &reservation.generation,
+                reservation.expires_at_ms,
+                retain_until_ms,
+            ],
+        )
+        .map_err(|error| storage("reservation_receipt_insert", error))?;
+    Ok(())
+}
+
+fn insert_publication_receipt(
+    transaction: &Transaction<'_>,
+    reference: &ArtifactReference,
+    now_ms: i64,
+) -> Result<(), ArtifactStoreError> {
+    let reference_json =
+        serde_json::to_string(reference).map_err(|error| ArtifactStoreError::Storage {
+            operation: "publication_receipt_encode",
+            detail: error.to_string(),
+        })?;
+    let retain_until_ms = now_ms.saturating_add(RECEIPT_RETENTION_MS);
+    transaction
+        .execute(
+            "INSERT INTO artifact_publication_receipts
+                (tenant_id, project_id, mutation_token, reference_json, retain_until_ms)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                reference.scope.tenant_id.as_str(),
+                reference.scope.project_id.as_str(),
+                &reference.mutation_token,
+                reference_json,
+                retain_until_ms,
+            ],
+        )
+        .map_err(|error| storage("publication_receipt_insert", error))?;
+    Ok(())
+}
+
+fn load_publication_receipt(
+    connection: &Connection,
+    scope: &ProjectScope,
+    mutation_token: &str,
+) -> Result<Option<ArtifactReference>, ArtifactStoreError> {
+    let reference_json: Option<String> = connection
+        .query_row(
+            "SELECT reference_json FROM artifact_publication_receipts
+             WHERE tenant_id = ?1 AND project_id = ?2 AND mutation_token = ?3",
+            params![
+                scope.tenant_id.as_str(),
+                scope.project_id.as_str(),
+                mutation_token,
+            ],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|error| storage("publication_receipt_read", error))?;
+    reference_json
+        .map(|json| {
+            let reference: ArtifactReference =
+                serde_json::from_str(&json).map_err(|error| ArtifactStoreError::Storage {
+                    operation: "publication_receipt_decode",
+                    detail: error.to_string(),
+                })?;
+            reference.validate()?;
+            if &reference.scope != scope || reference.mutation_token != mutation_token {
+                return Err(ArtifactStoreError::BodyMismatch);
+            }
+            Ok(reference)
+        })
+        .transpose()
+}
+
+fn queue_gc_candidate(
+    transaction: &Transaction<'_>,
+    scope: &ProjectScope,
+    generation: &str,
+    not_before_ms: i64,
+) -> Result<(), ArtifactStoreError> {
+    queue_gc_candidate_parts(
+        transaction,
+        scope.tenant_id.as_str(),
+        scope.project_id.as_str(),
+        generation,
+        not_before_ms,
+    )
+}
+
+fn queue_gc_candidate_parts(
+    transaction: &Transaction<'_>,
+    tenant_id: &str,
+    project_id: &str,
+    generation: &str,
+    not_before_ms: i64,
+) -> Result<(), ArtifactStoreError> {
+    if not_before_ms <= 0 {
+        return Err(DomainError::InvalidArtifactReference(
+            "artifact GC not_before must be positive".to_owned(),
+        )
+        .into());
+    }
+    let object_key = format!("objects/{tenant_id}/{project_id}/{generation}.blob");
+    transaction
+        .execute(
+            "INSERT INTO artifact_gc_queue
+                (tenant_id, project_id, generation, object_key, not_before_ms,
+                 next_attempt_ms, attempts)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?5, 0)
+             ON CONFLICT (object_key) DO UPDATE SET
+                not_before_ms = max(artifact_gc_queue.not_before_ms, excluded.not_before_ms),
+                next_attempt_ms = max(artifact_gc_queue.next_attempt_ms, excluded.next_attempt_ms)",
+            params![tenant_id, project_id, generation, object_key, not_before_ms],
+        )
+        .map_err(|error| storage("gc_queue", error))?;
+    Ok(())
+}
+
+fn reap_expired_reservations(
+    transaction: &Transaction<'_>,
+    now_ms: i64,
+    limit: usize,
+) -> Result<usize, ArtifactStoreError> {
+    let limit = i64::try_from(limit).map_err(|_| ArtifactStoreError::Storage {
+        operation: "gc_reap_limit",
+        detail: "limit exceeds i64".to_owned(),
+    })?;
+    let rows = {
+        let mut statement = transaction
+            .prepare(
+                "SELECT tenant_id, project_id, logical_path, generation, expires_at_ms
+                 FROM artifact_reservations
+                 WHERE expires_at_ms <= ?1
+                 ORDER BY expires_at_ms ASC
+                 LIMIT ?2",
+            )
+            .map_err(|error| storage("gc_expired_prepare", error))?;
+        statement
+            .query_map(params![now_ms, limit], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, i64>(4)?,
+                ))
+            })
+            .map_err(|error| storage("gc_expired_query", error))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| storage("gc_expired_collect", error))?
+    };
+    let mut reaped = 0;
+    for (tenant_id, project_id, logical_path, generation, expires_at_ms) in rows {
+        queue_gc_candidate_parts(
+            transaction,
+            &tenant_id,
+            &project_id,
+            &generation,
+            expires_at_ms.saturating_add(GC_SETTLEMENT_GRACE_MS),
+        )?;
+        reaped += transaction
+            .execute(
+                "DELETE FROM artifact_reservations
+                 WHERE tenant_id = ?1 AND project_id = ?2 AND logical_path = ?3
+                   AND generation = ?4 AND expires_at_ms = ?5",
+                params![
+                    tenant_id,
+                    project_id,
+                    logical_path,
+                    generation,
+                    expires_at_ms,
+                ],
+            )
+            .map_err(|error| storage("gc_expired_delete", error))?;
+    }
+    Ok(reaped)
+}
+
+fn prune_expired_receipts(
+    transaction: &Transaction<'_>,
+    now_ms: i64,
+    limit: usize,
+) -> Result<usize, ArtifactStoreError> {
+    let sql_limit = i64::try_from(limit).map_err(|_| ArtifactStoreError::Storage {
+        operation: "receipt_prune_limit",
+        detail: "limit exceeds i64".to_owned(),
+    })?;
+    let reservations = transaction
+        .execute(
+            "DELETE FROM artifact_reservation_receipts
+             WHERE rowid IN (
+                 SELECT rowid FROM artifact_reservation_receipts
+                 WHERE retain_until_ms <= ?1
+                 ORDER BY retain_until_ms ASC
+                 LIMIT ?2
+             )",
+            params![now_ms, sql_limit],
+        )
+        .map_err(|error| storage("reservation_receipt_prune", error))?;
+    let remaining = limit.saturating_sub(reservations);
+    if remaining == 0 {
+        return Ok(reservations);
+    }
+    let remaining = i64::try_from(remaining).map_err(|_| ArtifactStoreError::Storage {
+        operation: "receipt_prune_limit",
+        detail: "remaining limit exceeds i64".to_owned(),
+    })?;
+    let publications = transaction
+        .execute(
+            "DELETE FROM artifact_publication_receipts
+             WHERE rowid IN (
+                 SELECT rowid FROM artifact_publication_receipts
+                 WHERE retain_until_ms <= ?1
+                 ORDER BY retain_until_ms ASC
+                 LIMIT ?2
+             )",
+            params![now_ms, remaining],
+        )
+        .map_err(|error| storage("publication_receipt_prune", error))?;
+    Ok(reservations.saturating_add(publications))
+}
+
+fn claim_gc_candidates(
+    transaction: &Transaction<'_>,
+    now_ms: i64,
+    limit: usize,
+) -> Result<Vec<GarbageCandidate>, ArtifactStoreError> {
+    let limit = i64::try_from(limit).map_err(|_| ArtifactStoreError::Storage {
+        operation: "gc_claim_limit",
+        detail: "limit exceeds i64".to_owned(),
+    })?;
+    let rows = {
+        let mut statement = transaction
+            .prepare(
+                "SELECT queue.object_key, queue.attempts
+                 FROM artifact_gc_queue AS queue
+                 WHERE queue.not_before_ms <= ?1 AND queue.next_attempt_ms <= ?1
+                   AND (queue.lease_until_ms IS NULL OR queue.lease_until_ms <= ?1)
+                   AND NOT EXISTS (
+                       SELECT 1 FROM artifact_paths AS paths
+                       WHERE paths.object_key = queue.object_key
+                   )
+                   AND NOT EXISTS (
+                       SELECT 1 FROM artifact_reservations AS reservations
+                       WHERE reservations.tenant_id = queue.tenant_id
+                         AND reservations.project_id = queue.project_id
+                         AND reservations.generation = queue.generation
+                   )
+                 ORDER BY queue.next_attempt_ms ASC, queue.object_key ASC
+                 LIMIT ?2",
+            )
+            .map_err(|error| storage("gc_claim_prepare", error))?;
+        statement
+            .query_map(params![now_ms, limit], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })
+            .map_err(|error| storage("gc_claim_query", error))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| storage("gc_claim_collect", error))?
+    };
+    let lease_until_ms = now_ms.saturating_add(GC_LEASE_MS);
+    let mut claimed = Vec::with_capacity(rows.len());
+    for (object_key, attempts) in rows {
+        let lease_token = format!("lease_{}", new_id());
+        let updated = transaction
+            .execute(
+                "UPDATE artifact_gc_queue
+                 SET lease_token = ?2, lease_until_ms = ?3
+                 WHERE object_key = ?1
+                   AND (lease_until_ms IS NULL OR lease_until_ms <= ?4)",
+                params![&object_key, &lease_token, lease_until_ms, now_ms],
+            )
+            .map_err(|error| storage("gc_claim_update", error))?;
+        if updated == 1 {
+            claimed.push(GarbageCandidate {
+                object_key,
+                lease_token,
+                attempts: u32::try_from(attempts).map_err(|_| ArtifactStoreError::Storage {
+                    operation: "gc_attempts_decode",
+                    detail: "attempt count is outside u32".to_owned(),
+                })?,
+            });
+        }
+    }
+    Ok(claimed)
+}
+
+fn acknowledge_gc(
+    connection: &Connection,
+    candidate: &GarbageCandidate,
+) -> Result<(), ArtifactStoreError> {
+    connection
+        .execute(
+            "DELETE FROM artifact_gc_queue WHERE object_key = ?1 AND lease_token = ?2",
+            params![&candidate.object_key, &candidate.lease_token],
+        )
+        .map_err(|error| storage("gc_ack", error))?;
+    Ok(())
+}
+
+fn fail_gc(
+    connection: &Connection,
+    candidate: &GarbageCandidate,
+    now_ms: i64,
+    error: &std::io::Error,
+) -> Result<(), ArtifactStoreError> {
+    let exponent = candidate.attempts.min(10);
+    let delay_ms = 1_000_i64.saturating_mul(1_i64 << exponent);
+    let next_attempt_ms = now_ms.saturating_add(delay_ms);
+    let detail = error.to_string();
+    connection
+        .execute(
+            "UPDATE artifact_gc_queue
+             SET attempts = attempts + 1, next_attempt_ms = ?3,
+                 lease_token = NULL, lease_until_ms = NULL, last_error = ?4
+             WHERE object_key = ?1 AND lease_token = ?2",
+            params![
+                &candidate.object_key,
+                &candidate.lease_token,
+                next_attempt_ms,
+                detail,
+            ],
+        )
+        .map_err(|storage_error| storage("gc_retry", storage_error))?;
+    Ok(())
 }
 
 fn load_published_row(
@@ -865,6 +1699,7 @@ mod tests {
         now_ms: i64,
     ) -> ReserveRequest {
         ReserveRequest {
+            request_id: format!("request_{}", new_id()),
             scope,
             path,
             expected_mutation_token,
@@ -903,6 +1738,9 @@ mod tests {
         let replaced = store.publish(&second, &second_observation, 2_002)?;
         assert_eq!(replaced.revision.get(), 2);
         assert_eq!(store.read(&replaced)?, b"two");
+        let gc = store.drain_garbage(2_003, 100)?;
+        assert_eq!(gc.deleted, 1);
+        assert_eq!(store.publish(&first, &observation, 2_004)?, published);
         assert_eq!(store.get(&scope, &path)?, Some(replaced));
         Ok(())
     }
@@ -915,6 +1753,7 @@ mod tests {
         let scope = scope("tenant_a", "project_a")?;
         let path = ArtifactPath::try_from("/sessions/session_a/canvas.md")?;
         let reservation = store.reserve(ReserveRequest {
+            request_id: "request_expiring".to_owned(),
             scope: scope.clone(),
             path: path.clone(),
             expected_mutation_token: None,
@@ -1004,6 +1843,139 @@ mod tests {
         let reopened = LocalArtifactStore::open(directory.path())?;
         assert_eq!(reopened.get(&scope, &path)?, Some(published.clone()));
         assert_eq!(reopened.read(&published)?, b"durable");
+        Ok(())
+    }
+
+    #[test]
+    fn reservation_request_replays_exactly_and_rejects_changed_reuse()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let mut store = LocalArtifactStore::open(directory.path())?;
+        let scope = scope("tenant_replay", "project_replay")?;
+        let path = ArtifactPath::try_from("/sessions/replay/result.json")?;
+        let request = ReserveRequest {
+            request_id: "request_replay".to_owned(),
+            scope: scope.clone(),
+            path: path.clone(),
+            expected_mutation_token: None,
+            now_ms: 1_000,
+            ttl_ms: 60_000,
+        };
+        let first = store.reserve(request.clone())?;
+        let mut retry = request.clone();
+        retry.now_ms = 2_000;
+        assert_eq!(store.reserve(retry)?, first);
+
+        let mut changed = request;
+        changed.path = ArtifactPath::try_from("/sessions/replay/other.json")?;
+        assert!(matches!(
+            store.reserve(changed),
+            Err(ArtifactStoreError::Conflict)
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn abort_and_replacement_queue_only_unreachable_generations()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let mut store = LocalArtifactStore::open(directory.path())?;
+        let scope = scope("tenant_gc", "project_gc")?;
+        let aborted_path = ArtifactPath::try_from("/sessions/gc/aborted.bin")?;
+        let aborted = store.reserve(reserve_request(scope.clone(), aborted_path, None, 1_000))?;
+        let aborted_observation = store.upload(&aborted, b"aborted", 1_001)?;
+        let aborted_object = store.object_path(&aborted_observation.object_key)?;
+        store.abort(&aborted)?;
+        assert_eq!(store.drain_garbage(120_999, 10)?.claimed, 0);
+        assert!(aborted_object.exists());
+        let aborted_report = store.drain_garbage(121_000, 10)?;
+        assert_eq!(aborted_report.deleted, 1);
+        assert!(!aborted_object.exists());
+
+        let path = ArtifactPath::try_from("/sessions/gc/current.bin")?;
+        let first = store.reserve(reserve_request(scope.clone(), path.clone(), None, 200_000))?;
+        let first_observation = store.upload(&first, b"first", 200_001)?;
+        let first_object = store.object_path(&first_observation.object_key)?;
+        let first_reference = store.publish(&first, &first_observation, 200_002)?;
+        let second = store.reserve(reserve_request(
+            scope.clone(),
+            path.clone(),
+            Some(first_reference.mutation_token),
+            201_000,
+        ))?;
+        let second_observation = store.upload(&second, b"second", 201_001)?;
+        let second_reference = store.publish(&second, &second_observation, 201_002)?;
+        let replacement_report = store.drain_garbage(201_002, 10)?;
+        assert_eq!(replacement_report.deleted, 1);
+        assert!(!first_object.exists());
+        assert_eq!(store.read(&second_reference)?, b"second");
+        Ok(())
+    }
+
+    #[test]
+    fn expired_reservations_are_reaped_before_durable_gc() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let directory = tempfile::tempdir()?;
+        let mut store = LocalArtifactStore::open(directory.path())?;
+        let reservation = store.reserve(ReserveRequest {
+            request_id: "request_gc_expiry".to_owned(),
+            scope: scope("tenant_expiry", "project_expiry")?,
+            path: ArtifactPath::try_from("/sessions/expiry/body.bin")?,
+            expected_mutation_token: None,
+            now_ms: 1_000,
+            ttl_ms: 10,
+        })?;
+        let observation = store.upload(&reservation, b"expires", 1_001)?;
+        let object_path = store.object_path(&observation.object_key)?;
+        let first = store.drain_garbage(1_010, 10)?;
+        assert_eq!(first.expired_reservations, 1);
+        assert_eq!(first.claimed, 0);
+        assert!(object_path.exists());
+        let second = store.drain_garbage(61_010, 10)?;
+        assert_eq!(second.deleted, 1);
+        assert!(!object_path.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn schema_v1_catalog_migrates_to_replay_and_gc_tables() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let directory = tempfile::tempdir()?;
+        let connection = Connection::open(directory.path().join("catalog.sqlite"))?;
+        connection.execute_batch(
+            "CREATE TABLE artifact_paths (
+                tenant_id TEXT NOT NULL, project_id TEXT NOT NULL,
+                logical_path TEXT NOT NULL, artifact_id TEXT NOT NULL,
+                revision INTEGER NOT NULL, mutation_token TEXT NOT NULL,
+                generation TEXT NOT NULL, object_key TEXT NOT NULL,
+                size_bytes INTEGER NOT NULL, etag TEXT NOT NULL, version TEXT,
+                digest TEXT NOT NULL, published_at_ms INTEGER NOT NULL,
+                PRIMARY KEY (tenant_id, project_id, logical_path)
+             ) STRICT;
+             CREATE TABLE artifact_reservations (
+                tenant_id TEXT NOT NULL, project_id TEXT NOT NULL,
+                logical_path TEXT NOT NULL, artifact_id TEXT NOT NULL,
+                revision INTEGER NOT NULL, mutation_token TEXT NOT NULL,
+                generation TEXT NOT NULL, expires_at_ms INTEGER NOT NULL,
+                PRIMARY KEY (tenant_id, project_id, logical_path)
+             ) STRICT;
+             PRAGMA user_version = 1;",
+        )?;
+        drop(connection);
+
+        let mut store = LocalArtifactStore::open(directory.path())?;
+        let version: i64 = store
+            .connection
+            .pragma_query_value(None, "user_version", |row| row.get(0))?;
+        assert_eq!(version, SCHEMA_VERSION);
+        let request = reserve_request(
+            scope("tenant_migrate", "project_migrate")?,
+            ArtifactPath::try_from("/sessions/migrate/result.bin")?,
+            None,
+            1_000,
+        );
+        let reservation = store.reserve(request.clone())?;
+        assert_eq!(store.reserve(request)?, reservation);
         Ok(())
     }
 

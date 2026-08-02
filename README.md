@@ -361,10 +361,12 @@ route into one stdio MCP account. `replica pull` maintains a separate,
 snapshot-bootstrapped and revision-pinned `<store>.replica.sqlite` exact-read
 cache; `replica get KIND ID` remains usable
 when the server is down. This cache does not replace the embedded search store.
-A separate unreleased local artifact repository now proves immutable
-reserve/upload/publish semantics, but it is not exposed through the server or
-CLI yet. Artifact HTTP/S3 integration, retrieval indexing, HTTP MCP gateway
-routing, and offline writes remain on the SSOT roadmap. See
+A separate unreleased local artifact repository is exposed through the
+workspace-only server with bearer-derived reader/writer authorization,
+idempotent reserve/upload/publish, exact-revision download, and durable garbage
+collection. It is not exposed through the public CLI; S3/R2 streaming,
+retrieval indexing, HTTP MCP gateway routing, and offline writes remain on the
+SSOT roadmap. See
 [Server and SSOT architecture](docs/SERVER_SSOT.md) for that boundary.
 
 <details>

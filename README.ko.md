@@ -345,8 +345,9 @@ stdio MCP 계정 하나에 고정합니다. `replica pull`은 snapshot으로 boo
 revision-pinned change를 적용하는 별도 `<store>.replica.sqlite` exact-read cache를
 유지하며 서버 중단 중에도 `replica get KIND ID`로 읽을 수 있습니다. 이 cache는
 embedded search store를 대체하지 않습니다. 별도 미출시 local artifact
-repository도 immutable reserve/upload/publish 의미론을 검증하지만 아직 server나
-CLI에는 노출되지 않습니다. Artifact HTTP/S3 integration, retrieval indexing,
+repository는 workspace 전용 server를 통해 bearer 기반 reader/writer authorization,
+idempotent reserve/upload/publish, exact-revision download, durable garbage collection을
+지원합니다. Public CLI에는 노출되지 않으며 S3/R2 streaming, retrieval indexing,
 HTTP MCP gateway routing, offline write는 SSOT roadmap에 남아 있습니다. 경계는
 [서버 및 SSOT 아키텍처](website/i18n/ko/docusaurus-plugin-content-docs/current/SERVER_SSOT.md)를
 참고하세요.

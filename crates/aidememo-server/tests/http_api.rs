@@ -16,7 +16,7 @@ const RECEIVER_TOKEN: &str = "receiver-token-0123456789";
 const HERMES_TOKEN: &str = "hermes-token-0123456789";
 const READER_TOKEN: &str = "reader-token-0123456789";
 
-fn test_app() -> Result<(Router, ProjectEpoch), Box<dyn std::error::Error>> {
+fn test_store() -> Result<(SqliteCommandStore, ProjectEpoch), Box<dyn std::error::Error>> {
     let timestamp = 1_700_000_000_000;
     let tenant = TenantRecord {
         tenant_id: TenantId::try_from("tenant_http")?,
@@ -75,7 +75,21 @@ fn test_app() -> Result<(Router, ProjectEpoch), Box<dyn std::error::Error>> {
         READER_TOKEN,
         timestamp,
     )?;
+    Ok((store, epoch))
+}
+
+fn test_app() -> Result<(Router, ProjectEpoch), Box<dyn std::error::Error>> {
+    let (store, epoch) = test_store()?;
     Ok((router(ServerState::new(store)), epoch))
+}
+
+fn artifact_test_app()
+-> Result<(Router, ProjectEpoch, tempfile::TempDir, ServerState), Box<dyn std::error::Error>> {
+    let (store, epoch) = test_store()?;
+    let directory = tempfile::tempdir()?;
+    let artifacts = LocalArtifactStore::open(directory.path())?;
+    let state = ServerState::with_artifacts(store, artifacts);
+    Ok((router(state.clone()), epoch, directory, state))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -130,6 +144,29 @@ fn post_request(
 
 fn get_request(uri: &str, token: Option<&str>) -> Result<Request<Body>, axum::http::Error> {
     let mut builder = Request::builder().method("GET").uri(uri);
+    if let Some(token) = token {
+        builder = builder.header("authorization", format!("Bearer {token}"));
+    }
+    builder.body(Body::empty())
+}
+
+fn put_bytes_request(
+    uri: &str,
+    token: Option<&str>,
+    bytes: &'static [u8],
+) -> Result<Request<Body>, axum::http::Error> {
+    let mut builder = Request::builder()
+        .method("PUT")
+        .uri(uri)
+        .header("content-type", "application/octet-stream");
+    if let Some(token) = token {
+        builder = builder.header("authorization", format!("Bearer {token}"));
+    }
+    builder.body(Body::from(bytes))
+}
+
+fn delete_request(uri: &str, token: Option<&str>) -> Result<Request<Body>, axum::http::Error> {
+    let mut builder = Request::builder().method("DELETE").uri(uri);
     if let Some(token) = token {
         builder = builder.header("authorization", format!("Bearer {token}"));
     }
@@ -244,6 +281,247 @@ async fn authentication_and_identity_override_fail_closed() -> Result<(), Box<dy
         response_json(override_attempt).await?["error"]["code"],
         "invalid_command"
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn authenticated_artifact_round_trip_retries_and_garbage_collection()
+-> Result<(), Box<dyn std::error::Error>> {
+    let (app, _, artifact_directory, state) = artifact_test_app()?;
+    let reserve_body = json!({
+        "request_id": "artifact_reserve_http",
+        "path": "/sessions/http/result.bin",
+        "expected_mutation_token": null,
+        "ttl_ms": 60_000
+    });
+    let reader_reserve = app
+        .clone()
+        .oneshot(post_request(
+            "/v1/projects/project_http/artifact-reservations",
+            Some(READER_TOKEN),
+            reserve_body.clone(),
+        )?)
+        .await?;
+    assert_eq!(reader_reserve.status(), 403);
+
+    let reserved = app
+        .clone()
+        .oneshot(post_request(
+            "/v1/projects/project_http/artifact-reservations",
+            Some(WRITER_TOKEN),
+            reserve_body.clone(),
+        )?)
+        .await?;
+    assert_eq!(reserved.status(), 200);
+    let reservation = response_json(reserved).await?;
+    let reservation_token = reservation["mutation_token"]
+        .as_str()
+        .ok_or_else(|| std::io::Error::other("missing reservation token"))?
+        .to_owned();
+    let artifact_id = reservation["artifact_id"]
+        .as_str()
+        .ok_or_else(|| std::io::Error::other("missing artifact id"))?
+        .to_owned();
+
+    let replay = app
+        .clone()
+        .oneshot(post_request(
+            "/v1/projects/project_http/artifact-reservations",
+            Some(WRITER_TOKEN),
+            reserve_body,
+        )?)
+        .await?;
+    assert_eq!(response_json(replay).await?, reservation);
+    let changed_reuse = app
+        .clone()
+        .oneshot(post_request(
+            "/v1/projects/project_http/artifact-reservations",
+            Some(WRITER_TOKEN),
+            json!({
+                "request_id": "artifact_reserve_http",
+                "path": "/sessions/http/changed.bin",
+                "expected_mutation_token": null,
+                "ttl_ms": 60_000
+            }),
+        )?)
+        .await?;
+    assert_eq!(changed_reuse.status(), 409);
+
+    let upload_uri =
+        format!("/v1/projects/project_http/artifact-reservations/{reservation_token}/body");
+    let reader_upload = app
+        .clone()
+        .oneshot(put_bytes_request(
+            &upload_uri,
+            Some(READER_TOKEN),
+            b"artifact-v1",
+        )?)
+        .await?;
+    assert_eq!(reader_upload.status(), 403);
+    let uploaded = app
+        .clone()
+        .oneshot(put_bytes_request(
+            &upload_uri,
+            Some(WRITER_TOKEN),
+            b"artifact-v1",
+        )?)
+        .await?;
+    assert_eq!(uploaded.status(), 200);
+    let observation = response_json(uploaded).await?;
+    let first_object_key = observation["object_key"]
+        .as_str()
+        .ok_or_else(|| std::io::Error::other("missing object key"))?
+        .to_owned();
+    let first_object_path = artifact_directory.path().join(&first_object_key);
+    assert!(first_object_path.exists());
+
+    let publish_uri =
+        format!("/v1/projects/project_http/artifact-reservations/{reservation_token}/publish");
+    let published = app
+        .clone()
+        .oneshot(post_request(&publish_uri, Some(WRITER_TOKEN), json!({}))?)
+        .await?;
+    assert_eq!(published.status(), 200);
+    let published = response_json(published).await?;
+    assert_eq!(published["revision"], 1);
+    let publish_replay = app
+        .clone()
+        .oneshot(post_request(&publish_uri, Some(WRITER_TOKEN), json!({}))?)
+        .await?;
+    assert_eq!(response_json(publish_replay).await?, published);
+
+    let resolved = app
+        .clone()
+        .oneshot(get_request(
+            "/v1/projects/project_http/artifacts/resolve?path=%2Fsessions%2Fhttp%2Fresult.bin",
+            Some(READER_TOKEN),
+        )?)
+        .await?;
+    assert_eq!(resolved.status(), 200);
+    assert_eq!(response_json(resolved).await?, published);
+
+    let download_uri = format!("/v1/projects/project_http/artifacts/{artifact_id}/downloads");
+    let stale_download = app
+        .clone()
+        .oneshot(post_request(
+            &download_uri,
+            Some(READER_TOKEN),
+            json!({"revision": 2}),
+        )?)
+        .await?;
+    assert_eq!(stale_download.status(), 409);
+    let downloaded = app
+        .clone()
+        .oneshot(post_request(
+            &download_uri,
+            Some(READER_TOKEN),
+            json!({"revision": 1}),
+        )?)
+        .await?;
+    assert_eq!(downloaded.status(), 200);
+    assert!(downloaded.headers().contains_key("etag"));
+    assert_eq!(
+        downloaded.into_body().collect().await?.to_bytes(),
+        &b"artifact-v1"[..]
+    );
+
+    let replacement = app
+        .clone()
+        .oneshot(post_request(
+            "/v1/projects/project_http/artifact-reservations",
+            Some(WRITER_TOKEN),
+            json!({
+                "request_id": "artifact_replace_http",
+                "path": "/sessions/http/result.bin",
+                "expected_mutation_token": published["mutation_token"],
+                "ttl_ms": 60_000
+            }),
+        )?)
+        .await?;
+    let replacement = response_json(replacement).await?;
+    let replacement_token = replacement["mutation_token"]
+        .as_str()
+        .ok_or_else(|| std::io::Error::other("missing replacement token"))?;
+    let replacement_upload_uri =
+        format!("/v1/projects/project_http/artifact-reservations/{replacement_token}/body");
+    let replacement_upload = app
+        .clone()
+        .oneshot(put_bytes_request(
+            &replacement_upload_uri,
+            Some(WRITER_TOKEN),
+            b"artifact-v2",
+        )?)
+        .await?;
+    assert_eq!(replacement_upload.status(), 200);
+    let replacement_publish_uri =
+        format!("/v1/projects/project_http/artifact-reservations/{replacement_token}/publish");
+    let replacement_published = app
+        .clone()
+        .oneshot(post_request(
+            &replacement_publish_uri,
+            Some(WRITER_TOKEN),
+            json!({}),
+        )?)
+        .await?;
+    assert_eq!(response_json(replacement_published).await?["revision"], 2);
+    let replacement_gc_at = replacement["expires_at_ms"]
+        .as_i64()
+        .ok_or_else(|| std::io::Error::other("missing replacement expiry"))?
+        .saturating_sub(59_000);
+    let replacement_gc = state.drain_artifact_garbage(replacement_gc_at, 100).await?;
+    assert_eq!(replacement_gc.map(|report| report.deleted), Some(1));
+    assert!(!first_object_path.exists());
+    let late_publish_replay = app
+        .clone()
+        .oneshot(post_request(&publish_uri, Some(WRITER_TOKEN), json!({}))?)
+        .await?;
+    assert_eq!(response_json(late_publish_replay).await?, published);
+
+    let aborted = app
+        .clone()
+        .oneshot(post_request(
+            "/v1/projects/project_http/artifact-reservations",
+            Some(WRITER_TOKEN),
+            json!({
+                "request_id": "artifact_abort_http",
+                "path": "/sessions/http/aborted.bin",
+                "expected_mutation_token": null,
+                "ttl_ms": 60_000
+            }),
+        )?)
+        .await?;
+    let aborted = response_json(aborted).await?;
+    let aborted_token = aborted["mutation_token"]
+        .as_str()
+        .ok_or_else(|| std::io::Error::other("missing aborted token"))?;
+    let aborted_upload_uri =
+        format!("/v1/projects/project_http/artifact-reservations/{aborted_token}/body");
+    let aborted_upload = app
+        .clone()
+        .oneshot(put_bytes_request(
+            &aborted_upload_uri,
+            Some(WRITER_TOKEN),
+            b"aborted-body",
+        )?)
+        .await?;
+    let aborted_observation = response_json(aborted_upload).await?;
+    let aborted_object = artifact_directory.path().join(
+        aborted_observation["object_key"]
+            .as_str()
+            .ok_or_else(|| std::io::Error::other("missing aborted object key"))?,
+    );
+    let aborted_uri = format!("/v1/projects/project_http/artifact-reservations/{aborted_token}");
+    let aborted_response = app
+        .oneshot(delete_request(&aborted_uri, Some(WRITER_TOKEN))?)
+        .await?;
+    assert_eq!(aborted_response.status(), 204);
+    let delete_after_ms = aborted["expires_at_ms"]
+        .as_i64()
+        .ok_or_else(|| std::io::Error::other("missing reservation expiry"))?
+        .saturating_add(60_000);
+    let aborted_gc = state.drain_artifact_garbage(delete_after_ms, 100).await?;
+    assert_eq!(aborted_gc.map(|report| report.deleted), Some(1));
+    assert!(!aborted_object.exists());
     Ok(())
 }
 
@@ -867,3 +1145,4 @@ async fn authenticated_replica_bootstraps_pulls_incrementally_and_reads_offline(
     ));
     Ok(())
 }
+use aidememo_artifacts::LocalArtifactStore;

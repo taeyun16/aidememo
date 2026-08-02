@@ -236,8 +236,9 @@ runtime이나 POSIX 형태 namespace가 아니라 opaque body lifecycle입니다
 아닙니다. Portable protocol은 Rust domain type과 HTTP로 유지합니다. Cloudflare
 binding, S3 SDK, FUSE 또는 Python에 의존하는 계약으로 만들지 않습니다.
 
-Typed HTTP surface는 임의의 논리 path를 URL에 직접 넣지 않고 opaque reservation
-ID를 사용해야 합니다.
+로컬 reference server는 임의의 논리 path를 URL에 직접 넣지 않고 opaque
+reservation ID를 사용합니다. Hosted adapter는 제한된 body 전송만 교체하고 같은
+control-plane 형태를 유지합니다.
 
 | Route | 의미론 |
 |---|---|
@@ -246,10 +247,14 @@ ID를 사용해야 합니다.
 | `POST /v1/projects/{project}/artifact-reservations/{reservation}/publish` | Coordinator가 신뢰된 body-store observation을 얻고 path token과 verification lease를 다시 확인한 뒤 metadata를 원자적으로 publish합니다. |
 | `DELETE /v1/projects/{project}/artifact-reservations/{reservation}` | 마지막 published path를 바꾸지 않고 abort하고 generation의 추후 삭제를 durable하게 예약합니다. |
 | `GET /v1/projects/{project}/artifacts/resolve?path=...` | Reader membership으로 현재 metadata를 resolve합니다. |
-| `POST /v1/projects/{project}/artifacts/{artifact}/downloads` | Durable read retention을 연장하며 exact-generation read를 부여하거나 proxy합니다. |
+| `POST /v1/projects/{project}/artifacts/{artifact}/downloads` | 정확한 revision의 제한된 local body를 반환합니다. 향후 signed hosted grant는 durable read retention도 연장합니다. |
 
 모든 control-plane call에서 bearer binding이 tenant와 actor identity를 제공합니다.
 Reader는 resolve/download, writer는 reserve/upload/publish/abort할 수 있습니다. Upload
+Local reference는 reservation expiry 또는 publication 후 24시간 동안 exact
+reservation/publication replay receipt를 유지한 뒤 bounded GC pass에서 정리합니다.
+이 기간에는 이후 replacement와 GC로 원래 body가 삭제됐어도 publish retry가 최초
+reference를 반환합니다.
 capability 자체도 bearer credential입니다. 수명이 짧고 provider가 지원하는 범위에서
 하나의 random generation key, method, content type, expected size/checksum, expiry,
 conditional create에 고정합니다. 이를 log에 남기거나 artifact record에 저장하지
@@ -302,9 +307,10 @@ authorization, CAS, retry, GC를 중복 구현하고 Workers, Node 또는 Kubern
 - 영구 실패 delete에서 bounded batching/backoff
 - Local filesystem, R2, AWS S3, 선택한 on-premises S3-compatible 구현에 같은 lifecycle suite 적용
 
-구현 순서는 local authenticated HTTP와 durable GC, conditional single-`PUT` S3
-adapter, multipart/resume, 마지막으로 선택형 project Durable Object coordinator입니다.
-Provider-specific scale machinery보다 Phase 1 behavior를 먼저 닫습니다.
+Local authenticated HTTP와 durable GC 구간은 구현됐습니다. 다음 구현 순서는
+conditional single-`PUT` S3 adapter, multipart/resume, 마지막으로 선택형 project
+Durable Object coordinator입니다. Provider-specific scale machinery보다 local
+artifact behavior를 먼저 닫습니다.
 
 ## 검색 일관성
 
@@ -348,8 +354,11 @@ cargo run -p aidememo-server -- bootstrap \
   --token-file /secure/aidememo-writer.token
 
 cargo run -p aidememo-server -- serve \
-  --database /data/aidememo-ssot.sqlite
+  --database /data/aidememo-ssot.sqlite \
+  --artifact-root /data/aidememo-artifacts
 ```
+
+`--artifact-root`를 생략하면 서버는 `<database>.artifacts`를 사용합니다.
 
 Bootstrap은 SHA-256 token digest만 저장하고 재시도 시 기존 project epoch를
 재사용합니다. 처음 저장한 label과 timestamp를 유지하며 epoch, actor kind,
@@ -376,6 +385,12 @@ membership role, token 소유권 충돌은 fail closed로 처리합니다. 서�
 | `POST .../handoffs/{id}/accept` | `expected_revision`과 exclusive `claim_id`로 claim |
 | `POST .../handoffs/{id}/return` | Claim과 결과 fact의 session/source/actor를 검증하고 outcome 반환 |
 | `GET .../handoffs/{id}` | 송신자/수신자 전용 typed status |
+| `POST /v1/projects/{project}/artifact-reservations` | Writer 전용 idempotent logical-path reservation |
+| `PUT .../artifact-reservations/{reservation}/body` | Writer 전용 direct local upload, 최대 64 MiB |
+| `POST .../artifact-reservations/{reservation}/publish` | Byte를 다시 관찰하고 예약 generation을 원자적으로 publish |
+| `DELETE .../artifact-reservations/{reservation}` | 현재 path를 교체하지 않고 abort한 뒤 eventual deletion queue 기록 |
+| `GET /v1/projects/{project}/artifacts/resolve?path=...` | Reader가 볼 수 있는 현재 artifact metadata |
+| `POST .../artifacts/{artifact}/downloads` | Reader가 볼 수 있는 exact-revision local body download |
 
 생성 요청은 `{"command_id":"...","payload":{...}}`를 사용합니다. 상태 전이는
 클라이언트가 관찰한 revision도 전달합니다.
@@ -409,11 +424,12 @@ resource body, receipt, resource revision, project sequence, change entry, audit
 row는 한 SQLite transaction으로 commit됩니다.
 
 현재 process는 application replica 하나만 지원하며 내장 TLS, token
-rotation/revocation command, rate limit, artifact HTTP route, PostgreSQL/S3,
-search, heartbeat, HTTP MCP gateway profile, retrieval-index replica, offline
-outbox가 아직 없습니다. 별도 local artifact repository는 exclusive path
-reservation, immutable upload, 관측된 SHA-256/size 검증, CAS publication, abort,
-재시작 후 read를 검증하지만 아직 server에 연결되지 않았습니다. CLI와 stdio MCP는 named connected handoff profile을 지원하고
+rotation/revocation command, rate limit, PostgreSQL/S3, search, heartbeat, HTTP MCP
+gateway profile, retrieval-index replica, offline outbox가 아직 없습니다. 별도 local
+artifact repository는 인증된 reader/writer route에 연결됐고 idempotent reservation,
+immutable upload, 신뢰 가능한 SHA-256/size 재관찰, CAS publication, exact-revision
+read, abort, 재시작에 안전한 durable GC를 검증합니다. Direct body는 64 MiB로
+제한되며 향후 hosted streaming 계약은 아닙니다. CLI와 stdio MCP는 named connected handoff profile을 지원하고
 client는 별도 exact-read replica를 유지할 수 있지만 일반 원격 storage backend는
 아닙니다. Typed fact는 정본 ledger의 결과 증거이며 기존 embedded retrieval
 engine에 index되지 않습니다. 서버 계약 실행 파일이지 출시된 SaaS나
@@ -488,9 +504,11 @@ batch를 원자적으로 적용합니다. Scope 또는 epoch가 바뀌면 명시
 `aidememo-artifacts`는 별도 SQLite logical-path catalog와 immutable generation
 file을 유지합니다. Replacement에는 현재 published mutation token이 필요하고, live
 경쟁 reservation을 거부하며, publication 전에 byte를 다시 hash하고, abort 시 이전
-version을 보존하며, logical artifact path를 OS path로 해석하지 않습니다. 직접 local
-upload는 64 MiB로 제한되고 unpublished object GC와 S3/R2 streaming은 아직 열려
-있습니다.
+version을 보존하며, logical artifact path를 OS path로 해석하지 않습니다.
+Replacement, abort, expired reservation은 durable exact-generation GC intent를 쓰고,
+leased bounded worker는 liveness를 다시 검사한 뒤 idempotent delete와 failure
+backoff를 수행합니다. 직접 local upload는 64 MiB로 제한되고 S3/R2 streaming과
+multipart transfer는 아직 열려 있습니다.
 
 Backend 중립 `conformance::run` fixture는 정확한 idempotent receipt replay, command ID
 충돌, stale revision 거부, 단조 증가 project sequence, 삭제 tombstone, fail-closed
@@ -503,9 +521,12 @@ Hermes` typed handoff chain도 검사합니다. Binary 수준 test도 URL 하나
 profile 두 개를 저장하고 CLI와 설치된 stdio MCP 모두에서
 send/inbox/accept/return/outbox `codex-p1 -> codex-p2` 흐름을 완료한 뒤
 exact-read replica를 bootstrap하고 서버 종료 후 완료 handoff를 읽으며 guarded
-reset도 검사합니다. PostgreSQL, Durable Object, artifact server route/S3 adapter,
-search adapter, HTTP MCP gateway profile, retrieval projection, offline outbox는 아직
-연결되지 않았습니다. 여섯 기반 crate는 server-facing 공개 API와 release
+reset도 검사합니다. PostgreSQL, Durable Object, S3 artifact adapter, search adapter,
+HTTP MCP gateway profile, retrieval projection, offline outbox는 아직 연결되지
+않았습니다. Artifact HTTP test는 reader/writer authorization, exact reservation과
+publication replay, 변경된 request reuse, revision-pinned download, replacement,
+abort, expiry, durable garbage collection을 검사합니다. 여섯 기반 crate는
+server-facing 공개 API와 release
 순서를 승인할 때까지 모두 `publish = false`이며 기존 v0.1.0 crate 배포 흐름에
 조용히 포함되지 않습니다.
 
@@ -538,10 +559,10 @@ replica에 도착합니다.
 handoff를 완료합니다. 서버가 중단되면 cache read는 유지되지만 조용한
 multi-primary write는 만들지 않습니다.
 
-현재 상태: 정본 inline JSON resource, 별도 local immutable artifact repository,
-저장된 bearer identity/membership, exact read, incremental change 조회,
-typed session/fact/handoff command에 대해서는 첫
-항목이 일부 완료됐습니다. HTTP integration test는 `codex-p1 -> codex-p2 ->
+현재 상태: 제한된 single-node profile에서는 첫 항목이 완료됐습니다. 정본 inline
+JSON resource, 인증된 local immutable artifact repository, 저장된 bearer
+identity/membership, exact read, incremental change 조회, typed
+session/fact/handoff command를 지원합니다. HTTP integration test는 `codex-p1 -> codex-p2 ->
 Hermes` chain을 완료합니다. Named CLI profile은 같은 URL/project에 서로 다른
 bearer token을 보관할 수 있고, connected CLI 경로는 actor override를 거부하며
 로컬 결과 provenance를 인증된 서버 identity와 대조한 뒤
@@ -558,10 +579,11 @@ fail-closed하며 `replica status/get`은 network-free이고 서버 종료 뒤�
 snapshot을 요구합니다. 도메인과 HTTP test를 합쳐 잘못된 actor, claim, source/session 증거,
 read-only mutation, 비참여자 read, mailbox actor filter 주입을 거부합니다.
 Indexed inbox/outbox query는 completed/source filter와 exclusive sequence
-pagination을 지원하며 schema v2 migration backfill도 검사합니다. Artifact HTTP
-integration과 unreachable-generation GC(위 transport/GC 계약은 고정했지만 코드는 아직
-열려 있음), HTTP MCP gateway 연결, retrieval indexing, offline write outbox는 아직
-열려 있으므로
+pagination을 지원하며 schema v2 migration backfill도 검사합니다. Artifact
+reservation과 publication은 retry-safe이고, direct upload는 body를 읽기 전에
+authorization을 거치며, exact-revision download는 reader에게 열리고,
+replacement/abort/expiry는 leased durable GC worker로 전달됩니다. HTTP MCP gateway
+연결, retrieval indexing, offline write outbox는 아직 열려 있으므로
 Phase 1 종료 gate 전체는 닫히지 않았습니다.
 
 ### Phase 2 — 이식 가능한 프로덕션 backend

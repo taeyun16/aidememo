@@ -5,8 +5,12 @@
 //! active membership is loaded from the same SQLite ledger before every read or
 //! mutation. This crate does not modify or expose the existing embedded store.
 
+mod artifact;
 mod product;
 
+use aidememo_artifacts::{
+    ArtifactStoreError, GarbageCollectionReport, LocalArtifactStore, MAX_DIRECT_UPLOAD_BYTES,
+};
 use aidememo_domain::{
     CanonicalResource, ChangeCursor, ChangeEntry, ChangeOperation, CommandEnvelope, CommandId,
     DomainError, ErrorCode, MaterializedChangeBatch, OperationName, ProjectEpoch, ProjectId,
@@ -38,6 +42,7 @@ const EXTENSION_RESOURCE_PREFIX: &str = "custom.";
 #[derive(Clone)]
 pub struct ServerState {
     service: Arc<Mutex<CommandService<SqliteCommandStore>>>,
+    artifacts: Option<Arc<Mutex<LocalArtifactStore>>>,
 }
 
 impl ServerState {
@@ -46,7 +51,34 @@ impl ServerState {
     pub fn new(store: SqliteCommandStore) -> Self {
         Self {
             service: Arc::new(Mutex::new(CommandService::new(store))),
+            artifacts: None,
         }
+    }
+
+    /// Wrap the command ledger together with an isolated local artifact repository.
+    #[must_use]
+    pub fn with_artifacts(store: SqliteCommandStore, artifacts: LocalArtifactStore) -> Self {
+        Self {
+            service: Arc::new(Mutex::new(CommandService::new(store))),
+            artifacts: Some(Arc::new(Mutex::new(artifacts))),
+        }
+    }
+
+    /// Run one bounded artifact garbage-collection pass when artifacts are configured.
+    ///
+    /// # Errors
+    ///
+    /// Returns an artifact catalog or filesystem error from the durable drain.
+    pub async fn drain_artifact_garbage(
+        &self,
+        now_ms: i64,
+        limit: usize,
+    ) -> Result<Option<GarbageCollectionReport>, ArtifactStoreError> {
+        let Some(artifacts) = &self.artifacts else {
+            return Ok(None);
+        };
+        let mut artifacts = artifacts.lock().await;
+        artifacts.drain_garbage(now_ms, limit).map(Some)
     }
 }
 
@@ -67,6 +99,7 @@ pub fn router(state: ServerState) -> Router {
         )
         .merge(product::routes())
         .layer(DefaultBodyLimit::max(MAX_COMMAND_BODY_BYTES))
+        .merge(artifact::routes().layer(DefaultBodyLimit::max(MAX_DIRECT_UPLOAD_BYTES)))
         .with_state(state)
 }
 

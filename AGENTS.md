@@ -21,7 +21,7 @@ vectors) and exposes it to LLM agents via CLI, MCP server, and native bindings
 | `aidememo-store-local` | Separate single-node SQLite command ledger for the future server mode; does not replace the embedded core store |
 | `aidememo-server` | Authenticated single-node HTTP resource command, exact-read, change-feed, bootstrap, and health boundary |
 | `aidememo-client` | Authenticated SSOT HTTP transport plus a separate SQLite exact-read replica and durable project cursor |
-| `aidememo-artifacts` | Separate local immutable-body repository with SQLite path reservations and CAS publication; not yet exposed by the server |
+| `aidememo-artifacts` | Separate local immutable-body repository with SQLite path reservations, CAS publication, and durable exact-generation garbage collection |
 | `aidememo-core` | SQLite default store, optional redb store, ingest, search, traverse, lint, validity windows |
 | `aidememo-cli` | `aidememo` binary (CLI + stdio/HTTP MCP) |
 | `aidememo-napi`, `aidememo-python`, `aidememo-nif`, `aidememo-ffi` | language bindings (full API; SQLite default, optional `redb` Cargo feature) |
@@ -507,7 +507,9 @@ crates/aidememo-cli/src/
   return/status plus bearer-bound identity inspection. Mailbox actor identity is
   always derived from authentication. Named CLI and installed stdio MCP profiles
   support the connected handoff round trip; the server does not yet provide
-  heartbeat, search, HTTP MCP gateway profiles, or retrieval indexing.
+  heartbeat, search, HTTP MCP gateway profiles, retrieval indexing, or hosted
+  S3/R2 artifact transfer. Its local artifact routes are authenticated and
+  enforce bounded upload, trusted observation, CAS publication, and exact reads.
 - `aidememo-client` uses `<store>.replica.sqlite` as a separate exact-read
   cache. It bootstraps from one atomic current-state snapshot, validates
   scope/epoch, applies revision-pinned change batches and cursor advancement in
@@ -517,9 +519,10 @@ crates/aidememo-cli/src/
 - `aidememo-artifacts` keeps its SQLite path catalog and immutable `objects/`
   bodies under a separate root. Publication requires the current path token,
   a live reservation, and server-observed size/SHA-256. Logical paths never
-  become filesystem paths. Uploaded but unpublished generations are unreachable
-  and reserved for a later idempotent GC pass. The 64 MiB direct-upload limit is
-  a bounded local profile, not the future S3/R2 streaming contract.
+  become filesystem paths. Replacement, abort, and expired reservations enqueue
+  unreachable generations for a leased, retrying, idempotent GC pass. The 64 MiB
+  direct-upload limit is a bounded local profile, not the future S3/R2 streaming
+  contract.
 - Typed handoff return must match the canonical session, inherited `source_id`,
   authenticated receiving actor, active `claim_id`, and result fact. The
   receiver must be an active writable project member.

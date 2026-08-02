@@ -225,6 +225,7 @@ dependencies = [
 name = "aidememo-server"
 version = "0.1.0"
 dependencies = [
+ "aidememo-artifacts",
  "aidememo-client",
  "aidememo-domain",
  "aidememo-service",

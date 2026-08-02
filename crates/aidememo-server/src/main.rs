@@ -65,6 +65,10 @@ struct ServeArgs {
     /// Separate server ledger SQLite path.
     #[arg(long)]
     database: PathBuf,
+    /// Separate local artifact catalog and immutable-object directory.
+    /// Defaults to `<database>.artifacts`.
+    #[arg(long)]
+    artifact_root: Option<PathBuf>,
     /// HTTP bind address. Loopback is required unless explicitly overridden.
     #[arg(long, default_value = "127.0.0.1:3030")]
     bind: SocketAddr,
@@ -199,12 +203,61 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn Error>> {
         .into());
     }
     let store = SqliteCommandStore::open(&args.database)?;
+    let artifact_root = args
+        .artifact_root
+        .unwrap_or_else(|| default_artifact_root(&args.database));
+    let artifacts = LocalArtifactStore::open(&artifact_root)?;
+    let state = ServerState::with_artifacts(store, artifacts);
     let listener = tokio::net::TcpListener::bind(args.bind).await?;
-    info!(address = %args.bind, "AideMemo single-node SSOT foundation listening");
-    axum::serve(listener, router(ServerState::new(store)))
+    info!(address = %args.bind, artifact_root = %artifact_root.display(), "AideMemo single-node SSOT foundation listening");
+    let gc_state = state.clone();
+    let gc_task = tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            interval.tick().await;
+            let now_ms = match unix_time_ms() {
+                Ok(now_ms) => now_ms,
+                Err(error) => {
+                    tracing::error!(%error, "artifact garbage collection clock failed");
+                    continue;
+                }
+            };
+            match gc_state.drain_artifact_garbage(now_ms, 100).await {
+                Ok(Some(report))
+                    if report.claimed > 0
+                        || report.expired_reservations > 0
+                        || report.pruned_receipts > 0 =>
+                {
+                    tracing::info!(
+                        expired_reservations = report.expired_reservations,
+                        claimed = report.claimed,
+                        deleted = report.deleted,
+                        failed = report.failed,
+                        pruned_receipts = report.pruned_receipts,
+                        "artifact garbage collection pass completed"
+                    );
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    tracing::error!(%error, "artifact garbage collection pass failed");
+                }
+            }
+        }
+    });
+    let result = axum::serve(listener, router(state))
         .with_graceful_shutdown(shutdown_signal())
-        .await?;
+        .await;
+    gc_task.abort();
+    let _ = gc_task.await;
+    result?;
     Ok(())
+}
+
+fn default_artifact_root(database: &Path) -> PathBuf {
+    let mut path = database.as_os_str().to_os_string();
+    path.push(".artifacts");
+    PathBuf::from(path)
 }
 
 async fn shutdown_signal() {
@@ -253,3 +306,4 @@ fn unix_time_ms() -> Result<i64, Box<dyn Error>> {
     let duration = SystemTime::now().duration_since(UNIX_EPOCH)?;
     Ok(i64::try_from(duration.as_millis())?)
 }
+use aidememo_artifacts::LocalArtifactStore;

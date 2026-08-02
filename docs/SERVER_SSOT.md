@@ -246,8 +246,9 @@ the final trait shape. The portable protocol remains Rust domain types plus
 HTTP. It does not become dependent on Cloudflare bindings, an S3 SDK, FUSE, or
 Python.
 
-The typed HTTP surface should use an opaque reservation ID rather than putting
-an arbitrary logical path into a URL:
+The local reference server now uses an opaque reservation ID rather than
+putting an arbitrary logical path into a URL. Hosted adapters keep the same
+control-plane shape while replacing the bounded body transfer:
 
 | Route | Semantics |
 |---|---|
@@ -256,10 +257,14 @@ an arbitrary logical path into a URL:
 | `POST /v1/projects/{project}/artifact-reservations/{reservation}/publish` | Coordinator obtains a trusted body-store observation, rechecks the path token and verification lease, then publishes metadata atomically. |
 | `DELETE /v1/projects/{project}/artifact-reservations/{reservation}` | Abort and durably schedule the generation for later deletion without changing the last published path. |
 | `GET /v1/projects/{project}/artifacts/resolve?path=...` | Resolve current metadata under reader membership. |
-| `POST /v1/projects/{project}/artifacts/{artifact}/downloads` | Grant a bounded exact-generation read or proxy it, while extending durable read retention. |
+| `POST /v1/projects/{project}/artifacts/{artifact}/downloads` | Return the bounded local body for an exact revision. A future signed hosted grant also extends durable read retention. |
 
 The bearer binding supplies tenant and actor identity on every control-plane
 call. Readers may resolve/download; writers may reserve/upload/publish/abort.
+The local reference keeps exact reservation and publication replay receipts for
+24 hours after reservation expiry or publication, then prunes them in bounded
+GC passes. Within that window, a publish retry returns its original reference
+even if a later replacement and GC removed the original body.
 An upload capability is itself a bearer credential. It is short-lived and
 bound, where the provider supports it, to one random generation key, one
 method, content type, expected size/checksum, expiry, and conditional create.
@@ -321,10 +326,10 @@ The implementation gate is failure-oriented:
 - the same lifecycle suite against local filesystem, R2, AWS S3, and the
   selected on-premises S3-compatible implementation.
 
-Delivery order is local authenticated HTTP plus durable GC, then a conditional
-single-`PUT` S3 adapter, then multipart/resume, and only then the optional
-project Durable Object coordinator. This closes Phase 1 behavior before adding
-provider-specific scale machinery.
+The local authenticated HTTP plus durable-GC slice is implemented. The next
+delivery order is a conditional single-`PUT` S3 adapter, then multipart/resume,
+and only then the optional project Durable Object coordinator. This closes the
+local artifact behavior before adding provider-specific scale machinery.
 
 ## Search consistency
 
@@ -369,8 +374,12 @@ cargo run -p aidememo-server -- bootstrap \
   --token-file /secure/aidememo-writer.token
 
 cargo run -p aidememo-server -- serve \
-  --database /data/aidememo-ssot.sqlite
+  --database /data/aidememo-ssot.sqlite \
+  --artifact-root /data/aidememo-artifacts
 ```
+
+If `--artifact-root` is omitted, the server uses
+`<database>.artifacts`.
 
 Bootstrap stores only the SHA-256 token digest and reuses an existing project
 epoch on retry. Existing labels and timestamps are retained; conflicting epoch,
@@ -397,6 +406,12 @@ The current HTTP surface is intentionally small:
 | `POST .../handoffs/{id}/accept` | Claim with `expected_revision` and an exclusive `claim_id` |
 | `POST .../handoffs/{id}/return` | Validate claim plus result fact session/source/actor and return an outcome |
 | `GET .../handoffs/{id}` | Sender/receiver-only typed status |
+| `POST /v1/projects/{project}/artifact-reservations` | Writer-only idempotent logical-path reservation |
+| `PUT .../artifact-reservations/{reservation}/body` | Writer-only direct local upload, capped at 64 MiB |
+| `POST .../artifact-reservations/{reservation}/publish` | Re-observe bytes and atomically publish the reserved generation |
+| `DELETE .../artifact-reservations/{reservation}` | Abort without replacing the current path and queue eventual deletion |
+| `GET /v1/projects/{project}/artifacts/resolve?path=...` | Reader-visible current artifact metadata |
+| `POST .../artifacts/{artifact}/downloads` | Reader-visible exact-revision local body download |
 
 Create requests use `{"command_id":"...","payload":{...}}`. Transitions also
 carry the revision observed by the client:
@@ -431,11 +446,13 @@ than ignored. Canonical resource bodies, receipt, resource revision, project
 sequence, change entry, and audit row commit in one SQLite transaction.
 
 This process supports one application replica and has no built-in TLS, token
-rotation/revocation command, rate limits, artifact HTTP route, PostgreSQL/S3,
-search, heartbeat, HTTP MCP gateway profile, retrieval-index replica, or offline
-outbox yet. A separate local artifact repository now proves exclusive path
-reservation, immutable upload, observed SHA-256/size verification, CAS
-publication, abort, and restart-safe reads, but it is not wired into the server.
+rotation/revocation command, rate limits, PostgreSQL/S3, search, heartbeat,
+HTTP MCP gateway profile, retrieval-index replica, or offline outbox yet. Its
+separate local artifact repository is wired to authenticated reader/writer
+routes and proves idempotent reservation, immutable upload, trusted
+SHA-256/size re-observation, CAS publication, exact-revision reads, abort, and
+restart-safe durable GC. Direct bodies are capped at 64 MiB; this is not the
+future hosted streaming contract.
 The CLI and stdio MCP support named connected handoff profiles, and
 the client can maintain a separate exact-read replica, but this is not a general
 remote storage backend. Typed facts are result evidence in the canonical ledger
@@ -515,8 +532,10 @@ It does not open or reinterpret the embedded search store.
 generation files. It requires the current published mutation token for
 replacement, rejects live competing reservations, re-hashes bytes before
 publication, preserves the prior version on abort, and never resolves a logical
-artifact path as an OS path. Its direct local upload is bounded to 64 MiB;
-unpublished object GC and S3/R2 streaming remain open.
+artifact path as an OS path. Replacement, abort, and expired reservations write
+durable exact-generation GC intents; a leased bounded worker rechecks liveness,
+deletes idempotently, and backs off failures. Its direct local upload is bounded
+to 64 MiB; S3/R2 streaming and multipart transfer remain open.
 
 The backend-neutral `conformance::run` fixture checks exact idempotent receipt
 replay, command-ID conflicts, stale revision rejection, monotonic project
@@ -532,8 +551,11 @@ also stores two bearer profiles for one URL and completes both CLI and installed
 stdio MCP `codex-p1 -> codex-p2` flows through
 send/inbox/accept/return/outbox, then bootstraps the exact-read replica, reads a
 completed handoff after the server stops, and exercises guarded reset. No
-PostgreSQL, Durable Object, artifact server route/S3 adapter, search adapter,
-HTTP MCP gateway profile, retrieval projection, or offline outbox is wired yet.
+PostgreSQL, Durable Object, S3 artifact adapter, search adapter, HTTP MCP gateway
+profile, retrieval projection, or offline outbox is wired yet. Artifact HTTP
+tests cover reader/writer authorization, exact reservation and publication
+replay, changed request reuse, revision-pinned download, replacement, abort,
+expiry, and durable garbage collection.
 All six
 foundation crates are `publish = false` until a server-facing public API and
 release order are approved, so they do not silently enter the existing v0.1.0
@@ -569,8 +591,9 @@ Exit gate: Codex primary, Codex secondary, and Hermes complete a handoff through
 one remote project; an unavailable server preserves cached reads and creates no
 silent multi-primary writes.
 
-Current status: the first item is partially complete for canonical inline JSON
-resources, a separate local immutable artifact repository, persisted bearer
+Current status: the first item is complete for the bounded single-node profile:
+canonical inline JSON resources, an authenticated local immutable artifact
+repository, persisted bearer
 identity/membership, exact reads, incremental
 change retrieval, and typed session/fact/handoff commands. An HTTP integration
 test completes a `codex-p1 -> codex-p2 -> Hermes` chain. Named CLI profiles can
@@ -590,8 +613,9 @@ instead of being reconstructed from newer state. Combined domain and HTTP tests 
 source/session evidence, read-only mutation, non-participant reads, and mailbox
 actor-filter injection. Indexed inbox/outbox queries support completed/source
 filters and exclusive sequence pagination; schema v2 migration backfill is
-tested. Artifact HTTP integration and unreachable-generation GC (the
-transport/GC contract above is frozen, but code is still open), HTTP MCP gateway
+tested. Artifact reservations and publication are retry-safe, direct upload is
+authorized before its body is read, exact-revision download is reader-visible,
+and replacement/abort/expiry feed the leased durable GC worker. HTTP MCP gateway
 wiring, retrieval indexing, and offline write outbox remain open, so the full
 Phase 1 exit gate is not yet closed.
 
