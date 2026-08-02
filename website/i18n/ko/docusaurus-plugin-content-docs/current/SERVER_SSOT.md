@@ -270,6 +270,18 @@ publish 검증에 사용하면 안 됩니다. Hosted upload 검증은 binding �
 사용합니다. Portable hosted 첫 slice는 single `PUT`이며 설정된 threshold보다 크면
 multipart를 선택하고 신뢰된 completion만 observed generation을 생성할 수 있습니다.
 
+2026-08-02에 확인한 공식
+[R2 S3 compatibility table](https://developers.cloudflare.com/r2/api/s3/api/)은
+`If-None-Match`를 포함한 conditional `PutObject`를 지원하며,
+[presigned URL contract](https://developers.cloudflare.com/r2/api/s3/presigned-urls/)은
+만료 전까지 재사용 가능한 exact-key `PUT`/`GET` grant를 지원합니다. 따라서
+feature-gated Rust adapter는 `If-None-Match: *`, 정확한 content length/type,
+generation metadata를 signing하고 URL을 redacted bearer capability로 취급합니다.
+또한 trusted `HEAD`의 size/generation/ETag를 확인하고 signed GET이 coordinator에
+저장된 read retention보다 오래 유지되는 것을 거부합니다. R2는 이에 대응하는
+conditional `DeleteObject` header를 문서화하지 않으므로 delete는 random generation
+key를 절대 재사용하지 않는 더 강한 AideMemo invariant에 의존합니다.
+
 Garbage collection은 bucket listing이 아니라 metadata로 구동합니다.
 
 1. Replacement, abort, expiry, verification 실패 또는 publication CAS 상실 시 generation을
@@ -307,10 +319,11 @@ authorization, CAS, retry, GC를 중복 구현하고 Workers, Node 또는 Kubern
 - 영구 실패 delete에서 bounded batching/backoff
 - Local filesystem, R2, AWS S3, 선택한 on-premises S3-compatible 구현에 같은 lifecycle suite 적용
 
-Local authenticated HTTP와 durable GC 구간은 구현됐습니다. 다음 구현 순서는
-conditional single-`PUT` S3 adapter, multipart/resume, 마지막으로 선택형 project
-Durable Object coordinator입니다. Provider-specific scale machinery보다 local
-artifact behavior를 먼저 닫습니다.
+Local authenticated HTTP와 durable GC 구간, feature-gated conditional single-`PUT`
+S3/R2 adapter는 구현됐습니다. Adapter는 아직 library 경계이며 server metadata
+publication, durable read-retention/GC wiring, live R2/MinIO conformance는 열려
+있습니다. 그 wiring을 먼저 하고 multipart/resume, 마지막으로 선택형 project
+Durable Object coordinator를 추가합니다.
 
 ## 검색 일관성
 
@@ -476,7 +489,7 @@ aidememo-domain          portable ID, command, record, invariant
 aidememo-service         command/query orchestration과 authorization context
 aidememo-store-local     SQLite command ledger와 transactional handoff index
 aidememo-client          인증 transport와 격리된 exact-read replica
-aidememo-artifacts       local immutable body와 reservation/commit 계약
+aidememo-artifacts       local lifecycle과 선택형 S3/R2 direct-transfer adapter
 aidememo-store-postgres  planned 서버 정본 adapter
 aidememo-server          제한된 인증 HTTP resource/change/handoff surface
 ```
@@ -507,8 +520,11 @@ file을 유지합니다. Replacement에는 현재 published mutation token이 �
 version을 보존하며, logical artifact path를 OS path로 해석하지 않습니다.
 Replacement, abort, expired reservation은 durable exact-generation GC intent를 쓰고,
 leased bounded worker는 liveness를 다시 검사한 뒤 idempotent delete와 failure
-backoff를 수행합니다. 직접 local upload는 64 MiB로 제한되고 S3/R2 streaming과
-multipart transfer는 아직 열려 있습니다.
+backoff를 수행합니다. 직접 local upload는 64 MiB로 제한됩니다. `s3` feature는 검증된 provider config,
+credential-chain loading, conditional presigned single-`PUT`, trusted `HEAD`, read
+retention 범위의 exact GET grant, bounded exact read, immutable-key delete를
+제공합니다. Presigned capability의 `Debug` 출력에서는 URL을 redact합니다. Server
+metadata/GC wiring, live R2/MinIO conformance, multipart transfer는 아직 열려 있습니다.
 
 Backend 중립 `conformance::run` fixture는 정확한 idempotent receipt replay, command ID
 충돌, stale revision 거부, 단조 증가 project sequence, 삭제 tombstone, fail-closed
@@ -521,7 +537,7 @@ Hermes` typed handoff chain도 검사합니다. Binary 수준 test도 URL 하나
 profile 두 개를 저장하고 CLI와 설치된 stdio MCP 모두에서
 send/inbox/accept/return/outbox `codex-p1 -> codex-p2` 흐름을 완료한 뒤
 exact-read replica를 bootstrap하고 서버 종료 후 완료 handoff를 읽으며 guarded
-reset도 검사합니다. PostgreSQL, Durable Object, S3 artifact adapter, search adapter,
+reset도 검사합니다. PostgreSQL, Durable Object, S3 artifact server wiring, search adapter,
 HTTP MCP gateway profile, retrieval projection, offline outbox는 아직 연결되지
 않았습니다. Artifact HTTP test는 reader/writer authorization, exact reservation과
 publication replay, 변경된 request reuse, revision-pinned download, replacement,
@@ -588,7 +604,8 @@ Phase 1 종료 gate 전체는 닫히지 않았습니다.
 
 ### Phase 2 — 이식 가능한 프로덕션 backend
 
-- PostgreSQL과 S3 호환 artifact adapter를 추가합니다.
+- PostgreSQL을 추가하고 S3 호환 artifact adapter를 metadata, read-retention, GC
+  orchestration에 연결합니다.
 - Transactional outbox indexer와 sequence watermark를 추가합니다.
 - Logical backup/restore 및 tenant export/delete 훈련을 추가합니다.
 

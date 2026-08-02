@@ -347,8 +347,11 @@ revision-pinned change를 적용하는 별도 `<store>.replica.sqlite` exact-rea
 embedded search store를 대체하지 않습니다. 별도 미출시 local artifact
 repository는 workspace 전용 server를 통해 bearer 기반 reader/writer authorization,
 idempotent reserve/upload/publish, exact-revision download, durable garbage collection을
-지원합니다. Public CLI에는 노출되지 않으며 S3/R2 streaming, retrieval indexing,
-HTTP MCP gateway routing, offline write는 SSOT roadmap에 남아 있습니다. 경계는
+지원합니다. Public CLI에는 노출되지 않으며 server-side S3/R2 wiring, multipart
+streaming, retrieval indexing, HTTP MCP gateway routing, offline write는 SSOT roadmap에 남아 있습니다. Workspace
+전용 `aidememo-artifacts/s3` feature는 AWS S3/R2/MinIO 호환 presigned single-`PUT`,
+신뢰된 `HEAD`, exact GET, immutable-key delete adapter를 제공하지만 아직 server
+metadata/GC coordinator에는 연결되지 않았습니다. 경계는
 [서버 및 SSOT 아키텍처](website/i18n/ko/docusaurus-plugin-content-docs/current/SERVER_SSOT.md)를
 참고하세요.
 

@@ -45,11 +45,17 @@ name = "aidememo-artifacts"
 version = "0.1.0"
 dependencies = [
  "aidememo-domain",
+ "aws-config",
+ "aws-credential-types",
+ "aws-sdk-s3",
+ "axum",
  "rusqlite",
+ "serde",
  "serde_json",
  "sha2 0.11.0",
  "tempfile",
  "thiserror 2.0.18",
+ "tokio",
  "ulid",
 ]
 

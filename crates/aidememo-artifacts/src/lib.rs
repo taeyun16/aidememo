@@ -5,17 +5,25 @@
 //! A caller must reserve a path, upload the selected generation, and publish
 //! the server-observed metadata before readers can discover it.
 
+#[cfg(feature = "s3")]
+mod s3;
+
+#[cfg(feature = "s3")]
+pub use s3::{DirectBodyGrant, S3BodyStore, S3BodyStoreConfig};
+
 use aidememo_domain::{
     ArtifactBodyRef, ArtifactId, ArtifactObservation, ArtifactPath, ArtifactReference,
     ArtifactReservation, ContentDigest, DomainError, ProjectScope, Revision,
 };
-use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
+use rusqlite::{
+    Connection, ErrorCode, OptionalExtension, Transaction, TransactionBehavior, params,
+};
 use sha2::{Digest, Sha256};
 use std::fmt::Write as FmtWrite;
 use std::fs;
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tempfile::NamedTempFile;
 use thiserror::Error;
 use ulid::Ulid;
@@ -72,6 +80,14 @@ pub enum ArtifactStoreError {
     UploadTooLarge {
         /// Maximum accepted body size.
         limit_bytes: usize,
+    },
+    /// S3-compatible provider request or response failed.
+    #[error("artifact body-store operation '{operation}' failed: {detail}")]
+    Provider {
+        /// Stable operation label without bucket, key, or credentials.
+        operation: &'static str,
+        /// Sanitized provider diagnostic.
+        detail: String,
     },
 }
 
@@ -141,9 +157,7 @@ impl LocalArtifactStore {
         connection
             .pragma_update(None, "foreign_keys", true)
             .map_err(|error| storage("foreign_keys", error))?;
-        connection
-            .pragma_update(None, "journal_mode", "WAL")
-            .map_err(|error| storage("journal_mode", error))?;
+        configure_wal(&connection)?;
         migrate(&connection)?;
         Ok(Self {
             root: root.to_path_buf(),
@@ -794,6 +808,40 @@ impl LocalArtifactStore {
             return Err(ArtifactStoreError::BodyMismatch);
         }
         Ok(self.root.join(object_key))
+    }
+}
+
+fn configure_wal(connection: &Connection) -> Result<(), ArtifactStoreError> {
+    let started = Instant::now();
+    loop {
+        match connection.query_row("PRAGMA journal_mode", [], |row| row.get::<_, String>(0)) {
+            Ok(mode) if mode.eq_ignore_ascii_case("wal") => return Ok(()),
+            Ok(_) => {}
+            Err(error)
+                if matches!(
+                    error.sqlite_error_code(),
+                    Some(ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked)
+                ) && started.elapsed() < DEFAULT_BUSY_TIMEOUT =>
+            {
+                let remaining = DEFAULT_BUSY_TIMEOUT.saturating_sub(started.elapsed());
+                std::thread::sleep(remaining.min(Duration::from_millis(20)));
+                continue;
+            }
+            Err(error) => return Err(storage("journal_mode_read", error)),
+        }
+        match connection.pragma_update(None, "journal_mode", "WAL") {
+            Ok(()) => return Ok(()),
+            Err(error)
+                if matches!(
+                    error.sqlite_error_code(),
+                    Some(ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked)
+                ) && started.elapsed() < DEFAULT_BUSY_TIMEOUT =>
+            {
+                let remaining = DEFAULT_BUSY_TIMEOUT.saturating_sub(started.elapsed());
+                std::thread::sleep(remaining.min(Duration::from_millis(20)));
+            }
+            Err(error) => return Err(storage("journal_mode", error)),
+        }
     }
 }
 
@@ -2008,17 +2056,20 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let directory = tempfile::tempdir()?;
         let root = directory.path().to_path_buf();
+        let stores = [
+            LocalArtifactStore::open(&root)?,
+            LocalArtifactStore::open(&root)?,
+        ];
         let scope = scope("tenant_race", "project_race")?;
         let path = ArtifactPath::try_from("/sessions/race/result.json")?;
         let barrier = Arc::new(Barrier::new(2));
-        let handles = (0..2)
-            .map(|_| {
-                let root = root.clone();
+        let handles = stores
+            .into_iter()
+            .map(|mut store| {
                 let scope = scope.clone();
                 let path = path.clone();
                 let barrier = Arc::clone(&barrier);
                 std::thread::spawn(move || {
-                    let mut store = LocalArtifactStore::open(root)?;
                     barrier.wait();
                     store.reserve(reserve_request(scope, path, None, 1_000))
                 })
@@ -2038,6 +2089,29 @@ mod tests {
         }
         assert_eq!(success, 1);
         assert_eq!(conflict, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn concurrent_opens_both_configure_wal() -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let root = directory.path().to_path_buf();
+        let barrier = Arc::new(Barrier::new(2));
+        let handles = (0..2)
+            .map(|_| {
+                let root = root.clone();
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    LocalArtifactStore::open(root)
+                })
+            })
+            .collect::<Vec<_>>();
+        for handle in handles {
+            handle
+                .join()
+                .map_err(|_| std::io::Error::other("open thread panicked"))??;
+        }
         Ok(())
     }
 }

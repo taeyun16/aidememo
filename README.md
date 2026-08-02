@@ -364,9 +364,12 @@ when the server is down. This cache does not replace the embedded search store.
 A separate unreleased local artifact repository is exposed through the
 workspace-only server with bearer-derived reader/writer authorization,
 idempotent reserve/upload/publish, exact-revision download, and durable garbage
-collection. It is not exposed through the public CLI; S3/R2 streaming,
-retrieval indexing, HTTP MCP gateway routing, and offline writes remain on the
-SSOT roadmap. See
+collection. It is not exposed through the public CLI; server-side S3/R2 wiring,
+multipart streaming, retrieval indexing, HTTP MCP gateway routing, and offline
+writes remain on the SSOT roadmap. The workspace-only `aidememo-artifacts/s3` feature provides
+an AWS S3/R2/MinIO-compatible presigned single-`PUT`, trusted `HEAD`, exact
+GET, and immutable-key delete adapter, but it is not wired into the server
+metadata/GC coordinator yet. See
 [Server and SSOT architecture](docs/SERVER_SSOT.md) for that boundary.
 
 <details>

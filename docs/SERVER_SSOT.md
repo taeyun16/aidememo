@@ -282,6 +282,18 @@ verification therefore uses the binding or S3 API directly. Single `PUT` is
 the first portable hosted slice; multipart is selected above a configured
 threshold and only trusted completion may create the observed generation.
 
+As checked on 2026-08-02, the official
+[R2 S3 compatibility table](https://developers.cloudflare.com/r2/api/s3/api/)
+lists conditional `PutObject`, including `If-None-Match`, and the
+[presigned URL contract](https://developers.cloudflare.com/r2/api/s3/presigned-urls/)
+supports exact-key `PUT`/`GET` grants that remain reusable until expiry. The
+feature-gated Rust adapter therefore signs `If-None-Match: *`, exact content
+length/type, and generation metadata; treats the URL as a redacted bearer
+capability; verifies trusted `HEAD` size/generation/ETag; and refuses a signed
+GET that outlives coordinator-persisted read retention. R2 does not document a
+matching conditional `DeleteObject` header, so deletion relies on the stronger
+AideMemo invariant that random generation keys are never reused.
+
 Garbage collection is metadata-driven rather than bucket-list driven:
 
 1. Replacement, abort, expiry, failed verification, or a lost publication CAS
@@ -326,10 +338,12 @@ The implementation gate is failure-oriented:
 - the same lifecycle suite against local filesystem, R2, AWS S3, and the
   selected on-premises S3-compatible implementation.
 
-The local authenticated HTTP plus durable-GC slice is implemented. The next
-delivery order is a conditional single-`PUT` S3 adapter, then multipart/resume,
-and only then the optional project Durable Object coordinator. This closes the
-local artifact behavior before adding provider-specific scale machinery.
+The local authenticated HTTP plus durable-GC slice and feature-gated
+conditional single-`PUT` S3/R2 adapter are implemented. The adapter is still a
+library boundary: server metadata publication, durable read-retention/GC
+wiring, and live R2/MinIO conformance remain open. That wiring comes next, then
+multipart/resume, and only then the optional project Durable Object
+coordinator.
 
 ## Search consistency
 
@@ -500,7 +514,7 @@ aidememo-domain          portable IDs, commands, records, invariants
 aidememo-service         command/query orchestration and authorization context
 aidememo-store-local     SQLite command ledger and transactional handoff index
 aidememo-client          authenticated transport and isolated exact-read replica
-aidememo-artifacts       local immutable body + reservation/commit contract
+aidememo-artifacts       local lifecycle + optional S3/R2 direct-transfer adapter
 aidememo-store-postgres  planned server canonical adapter
 aidememo-server          bounded authenticated HTTP resource/change/handoff surface
 ```
@@ -535,7 +549,12 @@ publication, preserves the prior version on abort, and never resolves a logical
 artifact path as an OS path. Replacement, abort, and expired reservations write
 durable exact-generation GC intents; a leased bounded worker rechecks liveness,
 deletes idempotently, and backs off failures. Its direct local upload is bounded
-to 64 MiB; S3/R2 streaming and multipart transfer remain open.
+to 64 MiB. The `s3` feature now provides validated provider configuration,
+credential-chain loading, conditional presigned single-`PUT`, trusted `HEAD`,
+read-retention-bounded exact GET grants, bounded exact reads, and immutable-key
+delete. Presigned capability values redact their URL from `Debug`. Server
+metadata/GC wiring, live R2/MinIO conformance, and multipart transfer remain
+open.
 
 The backend-neutral `conformance::run` fixture checks exact idempotent receipt
 replay, command-ID conflicts, stale revision rejection, monotonic project
@@ -551,8 +570,8 @@ also stores two bearer profiles for one URL and completes both CLI and installed
 stdio MCP `codex-p1 -> codex-p2` flows through
 send/inbox/accept/return/outbox, then bootstraps the exact-read replica, reads a
 completed handoff after the server stops, and exercises guarded reset. No
-PostgreSQL, Durable Object, S3 artifact adapter, search adapter, HTTP MCP gateway
-profile, retrieval projection, or offline outbox is wired yet. Artifact HTTP
+PostgreSQL, Durable Object, S3 artifact server wiring, search adapter, HTTP MCP
+gateway profile, retrieval projection, or offline outbox is wired yet. Artifact HTTP
 tests cover reader/writer authorization, exact reservation and publication
 replay, changed request reuse, revision-pinned download, replacement, abort,
 expiry, and durable garbage collection.
@@ -621,7 +640,8 @@ Phase 1 exit gate is not yet closed.
 
 ### Phase 2 — portable production backend
 
-- Add PostgreSQL and S3-compatible artifact adapters.
+- Add PostgreSQL and wire the S3-compatible artifact adapter into metadata,
+  read-retention, and GC orchestration.
 - Add transactional outbox indexers and sequence watermarks.
 - Add logical backup/restore and tenant export/delete drills.
 

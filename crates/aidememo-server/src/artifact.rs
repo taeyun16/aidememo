@@ -350,6 +350,7 @@ impl IntoResponse for ArtifactHttpError {
                     ),
                     ArtifactStoreError::Storage { .. }
                     | ArtifactStoreError::Filesystem { .. }
+                    | ArtifactStoreError::Provider { .. }
                     | ArtifactStoreError::Domain(_) => (
                         StatusCode::INTERNAL_SERVER_ERROR,
                         "artifact_internal_error",

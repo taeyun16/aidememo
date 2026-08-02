@@ -21,7 +21,7 @@ vectors) and exposes it to LLM agents via CLI, MCP server, and native bindings
 | `aidememo-store-local` | Separate single-node SQLite command ledger for the future server mode; does not replace the embedded core store |
 | `aidememo-server` | Authenticated single-node HTTP resource command, exact-read, change-feed, bootstrap, and health boundary |
 | `aidememo-client` | Authenticated SSOT HTTP transport plus a separate SQLite exact-read replica and durable project cursor |
-| `aidememo-artifacts` | Separate local immutable-body repository with SQLite path reservations, CAS publication, and durable exact-generation garbage collection |
+| `aidememo-artifacts` | Separate immutable-body layer with local SQLite/path storage plus an optional S3/R2/MinIO direct-transfer adapter; CAS publication and durable exact-generation garbage collection |
 | `aidememo-core` | SQLite default store, optional redb store, ingest, search, traverse, lint, validity windows |
 | `aidememo-cli` | `aidememo` binary (CLI + stdio/HTTP MCP) |
 | `aidememo-napi`, `aidememo-python`, `aidememo-nif`, `aidememo-ffi` | language bindings (full API; SQLite default, optional `redb` Cargo feature) |
@@ -43,6 +43,7 @@ cargo check -p aidememo-cli --features s3
 cargo test -p aidememo-core --features semantic
 cargo test -p aidememo-cli --bin aidememo
 cargo test -p aidememo-domain -p aidememo-service -p aidememo-store-local -p aidememo-server -p aidememo-client -p aidememo-artifacts
+cargo test -p aidememo-artifacts --features s3
 ./scripts/ci-local.sh lint
 ./scripts/ci-local.sh demo               # first-run workflow memory smoke
 ./scripts/ci-local.sh test
@@ -412,6 +413,8 @@ crates/aidememo-client/src/lib.rs
 
 crates/aidememo-artifacts/src/lib.rs
   local reserve/upload/publish/abort lifecycle + immutable generation bodies
+crates/aidememo-artifacts/src/s3.rs
+  feature-gated conditional PUT grants + trusted HEAD/exact GET/delete adapter
 
 crates/aidememo-core/src/
   lib.rs        AideMemo public API (re-exports)
@@ -522,7 +525,9 @@ crates/aidememo-cli/src/
   become filesystem paths. Replacement, abort, and expired reservations enqueue
   unreachable generations for a leased, retrying, idempotent GC pass. The 64 MiB
   direct-upload limit is a bounded local profile, not the future S3/R2 streaming
-  contract.
+  contract. With the `s3` feature it can sign conditional single-`PUT` and exact
+  retained GET capabilities and perform trusted HEAD/read/delete operations for
+  AWS S3, R2, or MinIO; this adapter is not yet connected to server metadata or GC.
 - Typed handoff return must match the canonical session, inherited `source_id`,
   authenticated receiving actor, active `claim_id`, and result fact. The
   receiver must be an active writable project member.
