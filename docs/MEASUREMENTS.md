@@ -49,12 +49,31 @@ scripts/demo-workflow.sh
 scripts/ci-local.sh demo
 scripts/sdk-promotion-check.sh
 scripts/ci-local.sh sdk
+scripts/artifact-s3-minio-conformance.sh
 ```
 
 The gbrain adapter path is documented in
 [`benchmarks/gbrain-evals-adapter/README.md`](https://github.com/taeyun16/aidememo/blob/main/benchmarks/gbrain-evals-adapter/README.md),
 with current scorecards in
 [`benchmarks/gbrain-evals-adapter/RESULTS.md`](https://github.com/taeyun16/aidememo/blob/main/benchmarks/gbrain-evals-adapter/RESULTS.md).
+
+## S3-Compatible Artifact Conformance
+
+On 2026-08-02, `scripts/artifact-s3-minio-conformance.sh` passed 1/1 lifecycle
+test against a disposable local MinIO
+`RELEASE.2025-10-15T17-29-55Z` process on macOS arm64. The harness creates an
+isolated temporary data directory and bucket, consumes the adapter's actual
+presigned HTTP `PUT` and `GET` capabilities, requires the immutable-key replay
+to return `412 Precondition Failed`, verifies trusted `HEAD` metadata and exact
+SDK bytes, then performs idempotent deletion and confirms absence. It cleans up
+the process and temporary directory on success or failure.
+
+This closes only the reproducible local MinIO slice. No managed Cloudflare R2,
+AWS S3, latency, cost, multipart, or long-duration reliability result was
+measured in that run. The same ignored Rust test can target a disposable
+managed bucket by explicitly setting `AWS_ACCESS_KEY_ID`,
+`AWS_SECRET_ACCESS_KEY`, `AIDEMEMO_S3_TEST_BUCKET`,
+`AIDEMEMO_S3_TEST_ENDPOINT`, region, prefix, and path-style mode.
 
 ## Agent UX
 

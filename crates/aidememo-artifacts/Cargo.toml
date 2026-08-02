@@ -28,6 +28,7 @@ ulid = "1.1"
 [dev-dependencies]
 aws-credential-types = "1.2.14"
 axum = "0.8"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 tokio = { version = "1.35", features = ["macros", "net", "rt-multi-thread", "sync"] }
 
 [lints]

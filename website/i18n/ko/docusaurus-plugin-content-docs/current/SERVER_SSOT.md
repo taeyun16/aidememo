@@ -332,9 +332,10 @@ authorization, CAS, retry, GC를 중복 구현하고 Workers, Node 또는 Kubern
 Local authenticated HTTP와 durable GC 구간, feature-gated S3/R2 server wiring은
 구현됐습니다. Hosted 경로는 writer-only upload grant를 발급하고 신뢰된 `HEAD`만
 publish하며, reader GET을 signing하기 전에 read retention을 저장하고 같은 durable
-GC intent를 exact-generation provider delete로 처리합니다. Live R2/MinIO conformance가
-남아 있으며 이후 multipart/resume, 마지막으로 선택형 project Durable Object
-coordinator를 추가합니다.
+GC intent를 exact-generation provider delete로 처리합니다. Disposable local MinIO
+process는 `./scripts/artifact-s3-minio-conformance.sh`를 통한 실제 presigned HTTP
+lifecycle을 통과했습니다. Managed R2/AWS 실행은 남아 있으며 이후 multipart/resume,
+마지막으로 선택형 project Durable Object coordinator를 추가합니다.
 
 ## 검색 일관성
 
@@ -558,8 +559,10 @@ retention 범위의 exact GET grant, bounded exact read, immutable-key delete를
 제공합니다. Presigned capability의 `Debug` 출력에서는 URL을 redact합니다. Server
 feature는 이 capability를 인증된 writer/reader route에 연결하고, trusted hosted
 observation에서만 nullable digest를 허용하며, GET signing 전에 read retention을
-저장하고 durable GC queue에서 provider delete를 실행합니다. Live R2/MinIO
-conformance와 multipart transfer는 아직 열려 있습니다.
+저장하고 durable GC queue에서 provider delete를 실행합니다. Ignored provider test와
+local MinIO harness는 실제 S3-compatible process에서 conditional presigned PUT,
+replay 거부, trusted HEAD, presigned/SDK exact GET, idempotent delete를 검사합니다.
+Managed R2/AWS conformance와 multipart transfer는 아직 열려 있습니다.
 
 Backend 중립 `conformance::run` fixture는 정확한 idempotent receipt replay, command ID
 충돌, stale revision 거부, 단조 증가 project sequence, 삭제 tombstone, fail-closed
@@ -577,7 +580,10 @@ profile, retrieval projection, offline outbox는 아직 연결되지 않았습�
 HTTP test는 reader/writer authorization, exact reservation과 publication replay,
 변경된 request reuse, revision-pinned local download, hosted upload/download grant,
 durable read retention, replacement, abort, expiry, mock provider를 통한 local/S3 garbage
-collection을 검사합니다. 여섯 기반 crate는
+collection을 검사합니다. Ignored provider test와 local MinIO harness는 실제
+S3-compatible process에서 conditional presigned PUT, replay 거부, trusted HEAD,
+presigned/SDK exact GET, idempotent delete를 검사합니다. Managed R2/AWS conformance와
+multipart transfer는 아직 열려 있습니다. 여섯 기반 crate는
 server-facing 공개 API와 release
 순서를 승인할 때까지 모두 `publish = false`이며 기존 v0.1.0 crate 배포 흐름에
 조용히 포함되지 않습니다.
@@ -641,8 +647,9 @@ Phase 1 종료 gate 전체는 닫히지 않았습니다.
 
 ### Phase 2 — 이식 가능한 프로덕션 backend
 
-- PostgreSQL을 추가하고 연결된 S3 호환 artifact lifecycle을 실제 R2/AWS S3/on-premises
-  구현에서 conformance 검증합니다.
+- PostgreSQL을 추가하고 연결된 S3 호환 artifact lifecycle을 managed R2/AWS S3와 선택한
+  production on-premises 구현에서 conformance 검증합니다. Disposable local MinIO
+  profile은 이미 opt-in lifecycle harness를 통과합니다.
 - Transactional outbox indexer와 sequence watermark를 추가합니다.
 - Logical backup/restore 및 tenant export/delete 훈련을 추가합니다.
 

@@ -45,6 +45,7 @@ cargo test -p aidememo-cli --bin aidememo
 cargo test -p aidememo-domain -p aidememo-service -p aidememo-store-local -p aidememo-server -p aidememo-client -p aidememo-artifacts
 cargo test -p aidememo-artifacts --features s3
 cargo test -p aidememo-server --features s3
+./scripts/artifact-s3-minio-conformance.sh  # opt-in real presigned lifecycle against disposable local MinIO
 ./scripts/ci-local.sh lint
 ./scripts/ci-local.sh demo               # first-run workflow memory smoke
 ./scripts/ci-local.sh test
@@ -533,7 +534,9 @@ crates/aidememo-cli/src/
   retained GET capabilities and perform trusted HEAD/read/delete operations for
   AWS S3, R2, or MinIO. The `aidememo-server/s3` feature connects it to authenticated
   upload/download grants, trusted publication, durable read retention, and exact-generation
-  GC; live provider conformance and multipart transfer remain open. Each catalog
+  GC. A reproducible opt-in harness passes the same presigned lifecycle against
+  a disposable local MinIO process; managed R2/AWS conformance and multipart
+  transfer remain open. Each catalog
   is durably pinned to the exact local layout or credential-free digest of its
   S3 bucket/prefix/endpoint/region/addressing configuration, and startup rejects
   accidental backend reuse.

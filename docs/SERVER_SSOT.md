@@ -353,8 +353,11 @@ The local authenticated HTTP plus durable-GC slice and feature-gated S3/R2
 server wiring are implemented. The hosted path issues writer-only upload
 grants, publishes only a trusted `HEAD`, persists read retention before signing
 a reader GET, and drains the same durable GC intents through exact-generation
-provider deletion. Live R2/MinIO conformance remains open, followed by
-multipart/resume and only then the optional project Durable Object coordinator.
+provider deletion. A disposable local MinIO process now passes the real
+presigned HTTP lifecycle through
+`./scripts/artifact-s3-minio-conformance.sh`; managed R2/AWS runs remain open,
+followed by multipart/resume and only then the optional project Durable Object
+coordinator.
 
 ## Search consistency
 
@@ -588,7 +591,10 @@ delete. Presigned capability values redact their URL from `Debug`. The server
 feature connects those capabilities to authenticated writer/reader routes,
 permits a nullable digest only for trusted hosted observations, persists read
 retention before signing GET, and runs provider deletion from the durable GC
-queue. Live R2/MinIO conformance and multipart transfer remain open.
+queue. The ignored provider test and local MinIO harness cover conditional
+presigned PUT, replay rejection, trusted HEAD, exact presigned/SDK GET, and
+idempotent delete against a real S3-compatible process. Managed R2/AWS
+conformance and multipart transfer remain open.
 
 The backend-neutral `conformance::run` fixture checks exact idempotent receipt
 replay, command-ID conflicts, stale revision rejection, monotonic project
@@ -676,8 +682,9 @@ Phase 1 exit gate is not yet closed.
 
 ### Phase 2 — portable production backend
 
-- Add PostgreSQL and run live R2/AWS S3/on-premises conformance for the wired
-  S3-compatible artifact lifecycle.
+- Add PostgreSQL and run managed R2/AWS S3 plus selected production on-premises
+  conformance for the wired S3-compatible artifact lifecycle. The disposable
+  local MinIO profile already passes the opt-in lifecycle harness.
 - Add transactional outbox indexers and sequence watermarks.
 - Add logical backup/restore and tenant export/delete drills.
 

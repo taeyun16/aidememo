@@ -353,8 +353,9 @@ HTTP MCP gateway routing, offline write는 SSOT roadmap에 남아 있습니다. 
 신뢰된 `HEAD`, retention이 적용된 exact GET, immutable-generation GC adapter를 인증된
 artifact control plane에 연결합니다. Metadata catalog는 정확한 body-store 설정의
 credential-free digest에 고정되므로 bucket, prefix, endpoint 또는 local/S3 전환 실수는
-서버 시작 시 실패합니다. 실제 provider conformance와 multipart transfer는 아직 열려
-있습니다. 경계는
+서버 시작 시 실패합니다. Disposable local MinIO conformance harness는 구현·통과했으며
+managed R2/AWS 실행과 multipart transfer는 아직 열려 있습니다. `minio`와 `mc`가
+설치된 환경에서는 `./scripts/artifact-s3-minio-conformance.sh`로 재현할 수 있습니다. 경계는
 [서버 및 SSOT 아키텍처](website/i18n/ko/docusaurus-plugin-content-docs/current/SERVER_SSOT.md)를
 참고하세요.
 

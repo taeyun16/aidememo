@@ -371,8 +371,10 @@ feature connects the AWS S3/R2/MinIO-compatible presigned single-`PUT`, trusted
 `HEAD`, retained exact GET, and immutable-generation GC adapter to the
 authenticated artifact control plane. Its metadata catalog is pinned to a
 credential-free digest of the exact body-store configuration so an accidental
-bucket, prefix, endpoint, or local/S3 switch fails at startup. Live provider
-conformance and multipart transfer remain open. See
+bucket, prefix, endpoint, or local/S3 switch fails at startup. Provider
+conformance now includes a disposable local MinIO harness; managed R2/AWS runs
+and multipart transfer remain open. Run
+`./scripts/artifact-s3-minio-conformance.sh` when `minio` and `mc` are installed. See
 [Server and SSOT architecture](docs/SERVER_SSOT.md) for that boundary.
 
 <details>
