@@ -1,3 +1,6 @@
+use aidememo_artifacts::LocalArtifactStore;
+#[cfg(feature = "s3")]
+use aidememo_artifacts::{S3BodyStore, S3BodyStoreConfig};
 use aidememo_client::{HttpReplicaClient, RemoteProfile, ReplicaStore, pull_to_current};
 use aidememo_domain::{
     ActorId, ActorKind, ActorRecord, MembershipRole, MembershipStatus, ProjectEpoch, ProjectId,
@@ -10,6 +13,11 @@ use axum::{Router, body::Body, http::Request};
 use http_body_util::BodyExt;
 use serde_json::{Value, json};
 use tower::ServiceExt;
+
+#[cfg(feature = "s3")]
+use std::sync::Arc;
+#[cfg(feature = "s3")]
+use tokio::sync::Mutex;
 
 const WRITER_TOKEN: &str = "writer-token-0123456789";
 const RECEIVER_TOKEN: &str = "receiver-token-0123456789";
@@ -88,8 +96,82 @@ fn artifact_test_app()
     let (store, epoch) = test_store()?;
     let directory = tempfile::tempdir()?;
     let artifacts = LocalArtifactStore::open(directory.path())?;
-    let state = ServerState::with_artifacts(store, artifacts);
+    let state = ServerState::with_artifacts(store, artifacts)?;
     Ok((router(state.clone()), epoch, directory, state))
+}
+
+#[cfg(feature = "s3")]
+#[derive(Clone, Default)]
+struct S3MockState {
+    requests: Arc<Mutex<Vec<(axum::http::Method, String)>>>,
+}
+
+#[cfg(feature = "s3")]
+async fn s3_mock(
+    axum::extract::State(state): axum::extract::State<S3MockState>,
+    request: axum::extract::Request,
+) -> axum::response::Response {
+    use axum::{
+        http::{HeaderMap, HeaderValue, Method, StatusCode, header},
+        response::IntoResponse,
+    };
+
+    let method = request.method().clone();
+    let uri = request.uri().to_string();
+    state.requests.lock().await.push((method.clone(), uri));
+    match method {
+        Method::HEAD => {
+            let generation = request
+                .uri()
+                .path()
+                .rsplit('/')
+                .next()
+                .and_then(|name| name.strip_suffix(".blob"))
+                .unwrap_or("unknown");
+            let mut headers = HeaderMap::new();
+            headers.insert(header::CONTENT_LENGTH, HeaderValue::from_static("12"));
+            headers.insert(header::ETAG, HeaderValue::from_static("\"etag-server\""));
+            if let Ok(value) = HeaderValue::from_str(generation) {
+                headers.insert("x-amz-meta-aidememo-generation", value);
+            }
+            headers.insert(
+                "x-amz-version-id",
+                HeaderValue::from_static("version-server"),
+            );
+            (StatusCode::OK, headers, Body::empty()).into_response()
+        }
+        Method::DELETE => StatusCode::NO_CONTENT.into_response(),
+        _ => StatusCode::METHOD_NOT_ALLOWED.into_response(),
+    }
+}
+
+#[cfg(feature = "s3")]
+fn s3_artifact_test_app(
+    endpoint: &str,
+) -> Result<(Router, ServerState, tempfile::TempDir), Box<dyn std::error::Error>> {
+    use aws_credential_types::Credentials;
+    use aws_sdk_s3::config::Region;
+
+    let (store, _) = test_store()?;
+    let directory = tempfile::tempdir()?;
+    let catalog = LocalArtifactStore::open(directory.path())?;
+    let config = S3BodyStoreConfig::new(
+        "artifacts",
+        "aidememo/v1",
+        "us-east-1",
+        Some(endpoint.to_owned()),
+        true,
+    )?;
+    let sdk = aws_sdk_s3::Config::builder()
+        .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
+        .credentials_provider(Credentials::for_tests())
+        .region(Region::new("us-east-1"))
+        .endpoint_url(endpoint)
+        .force_path_style(true)
+        .build();
+    let bodies = S3BodyStore::from_client(aws_sdk_s3::Client::from_conf(sdk), config);
+    let state = ServerState::with_s3_artifacts(store, catalog, bodies)?;
+    Ok((router(state.clone()), state, directory))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -522,6 +604,179 @@ async fn authenticated_artifact_round_trip_retries_and_garbage_collection()
     let aborted_gc = state.drain_artifact_garbage(delete_after_ms, 100).await?;
     assert_eq!(aborted_gc.map(|report| report.deleted), Some(1));
     assert!(!aborted_object.exists());
+    Ok(())
+}
+
+#[cfg(feature = "s3")]
+#[tokio::test]
+async fn authenticated_s3_grants_publication_retention_and_gc_are_connected()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mock_state = S3MockState::default();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let address = listener.local_addr()?;
+    let mock = axum::Router::new()
+        .route("/{*path}", axum::routing::any(s3_mock))
+        .with_state(mock_state.clone());
+    let mock_server = tokio::spawn(async move { axum::serve(listener, mock).await });
+    let (app, state, _directory) = s3_artifact_test_app(&format!("http://{address}"))?;
+
+    let reserved = app
+        .clone()
+        .oneshot(post_request(
+            "/v1/projects/project_http/artifact-reservations",
+            Some(WRITER_TOKEN),
+            json!({
+                "request_id": "artifact_s3_server_v1",
+                "path": "/sessions/http/hosted.bin",
+                "expected_mutation_token": null,
+                "ttl_ms": 120_000
+            }),
+        )?)
+        .await?;
+    assert_eq!(reserved.status(), 200);
+    let reserved = response_json(reserved).await?;
+    let token = reserved["mutation_token"]
+        .as_str()
+        .ok_or_else(|| std::io::Error::other("missing hosted reservation token"))?;
+    let artifact_id = reserved["artifact_id"]
+        .as_str()
+        .ok_or_else(|| std::io::Error::other("missing hosted artifact id"))?;
+
+    let upload_grant_uri =
+        format!("/v1/projects/project_http/artifact-reservations/{token}/upload-grants");
+    let reader_grant = app
+        .clone()
+        .oneshot(post_request(
+            &upload_grant_uri,
+            Some(READER_TOKEN),
+            json!({
+                "content_length": 12,
+                "content_type": "application/octet-stream",
+                "ttl_ms": 30_000
+            }),
+        )?)
+        .await?;
+    assert_eq!(reader_grant.status(), 403);
+    let upload_grant = app
+        .clone()
+        .oneshot(post_request(
+            &upload_grant_uri,
+            Some(WRITER_TOKEN),
+            json!({
+                "content_length": 12,
+                "content_type": "application/octet-stream",
+                "ttl_ms": 30_000
+            }),
+        )?)
+        .await?;
+    assert_eq!(upload_grant.status(), 200);
+    let upload_grant = response_json(upload_grant).await?;
+    assert_eq!(upload_grant["method"], "PUT");
+    assert_eq!(upload_grant["headers"]["if-none-match"], "*");
+    assert!(
+        upload_grant["url"]
+            .as_str()
+            .is_some_and(|url| url.contains("X-Amz-Signature="))
+    );
+
+    let raw_upload = app
+        .clone()
+        .oneshot(put_bytes_request(
+            &format!("/v1/projects/project_http/artifact-reservations/{token}/body"),
+            Some(WRITER_TOKEN),
+            b"artifact-s3",
+        )?)
+        .await?;
+    assert_eq!(raw_upload.status(), 409);
+
+    let publish_uri = format!("/v1/projects/project_http/artifact-reservations/{token}/publish");
+    let published = app
+        .clone()
+        .oneshot(post_request(
+            &publish_uri,
+            Some(WRITER_TOKEN),
+            json!({"size_bytes": 12}),
+        )?)
+        .await?;
+    assert_eq!(published.status(), 200);
+    let published = response_json(published).await?;
+    assert_eq!(published["revision"], 1);
+    assert!(published["body"]["digest"].is_null());
+
+    let raw_download = app
+        .clone()
+        .oneshot(post_request(
+            &format!("/v1/projects/project_http/artifacts/{artifact_id}/downloads"),
+            Some(READER_TOKEN),
+            json!({"revision": 1}),
+        )?)
+        .await?;
+    assert_eq!(raw_download.status(), 409);
+    let download_grant = app
+        .clone()
+        .oneshot(post_request(
+            &format!("/v1/projects/project_http/artifacts/{artifact_id}/download-grants"),
+            Some(READER_TOKEN),
+            json!({"revision": 1, "ttl_ms": 1_000}),
+        )?)
+        .await?;
+    assert_eq!(download_grant.status(), 200);
+    let download_grant = response_json(download_grant).await?;
+    assert_eq!(download_grant["method"], "GET");
+    assert_eq!(download_grant["headers"]["if-match"], "etag-server");
+    let retain_until_ms = download_grant["expires_at_ms"]
+        .as_i64()
+        .ok_or_else(|| std::io::Error::other("missing download grant expiry"))?
+        .saturating_add(60_000);
+
+    let replacement = app
+        .clone()
+        .oneshot(post_request(
+            "/v1/projects/project_http/artifact-reservations",
+            Some(WRITER_TOKEN),
+            json!({
+                "request_id": "artifact_s3_server_v2",
+                "path": "/sessions/http/hosted.bin",
+                "expected_mutation_token": published["mutation_token"],
+                "ttl_ms": 120_000
+            }),
+        )?)
+        .await?;
+    let replacement = response_json(replacement).await?;
+    let replacement_token = replacement["mutation_token"]
+        .as_str()
+        .ok_or_else(|| std::io::Error::other("missing replacement token"))?;
+    let replaced = app
+        .oneshot(post_request(
+            &format!("/v1/projects/project_http/artifact-reservations/{replacement_token}/publish"),
+            Some(WRITER_TOKEN),
+            json!({"size_bytes": 12}),
+        )?)
+        .await?;
+    assert_eq!(response_json(replaced).await?["revision"], 2);
+
+    let retained = state
+        .drain_artifact_garbage(retain_until_ms.saturating_sub(1), 100)
+        .await?
+        .ok_or_else(|| std::io::Error::other("missing hosted GC report"))?;
+    assert_eq!(retained.claimed, 0);
+    let collected = state
+        .drain_artifact_garbage(retain_until_ms, 100)
+        .await?
+        .ok_or_else(|| std::io::Error::other("missing hosted GC report"))?;
+    assert_eq!(collected.deleted, 1);
+    assert_eq!(collected.pruned_read_retentions, 1);
+    assert!(
+        mock_state
+            .requests
+            .lock()
+            .await
+            .iter()
+            .any(|(method, _)| method == axum::http::Method::DELETE)
+    );
+
+    mock_server.abort();
+    let _ = mock_server.await;
     Ok(())
 }
 
@@ -1145,4 +1400,3 @@ async fn authenticated_replica_bootstraps_pulls_incrementally_and_reads_offline(
     ));
     Ok(())
 }
-use aidememo_artifacts::LocalArtifactStore;

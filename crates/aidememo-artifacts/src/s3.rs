@@ -16,6 +16,7 @@ use std::{
 };
 
 const MAX_PRESIGN_TTL_MS: i64 = 7 * 24 * 60 * 60 * 1_000;
+const MAX_SINGLE_PUT_BYTES: u64 = 5_000_000_000;
 const MAX_S3_KEY_BYTES: usize = 1_024;
 const MAX_CONTENT_TYPE_BYTES: usize = 256;
 const GENERATION_METADATA_KEY: &str = "aidememo-generation";
@@ -170,6 +171,26 @@ impl S3BodyStore {
         Self::from_client(Client::from_conf(builder.build()), config)
     }
 
+    /// Return a credential-free digest that pins this catalog to the exact
+    /// bucket, prefix, endpoint, signing region, and addressing mode.
+    ///
+    /// # Errors
+    ///
+    /// Returns a domain error only if the SHA-256 digest cannot be represented
+    /// by the portable content-digest type.
+    pub fn catalog_identity(&self) -> Result<String, ArtifactStoreError> {
+        let canonical = format!(
+            "s3:v1\0{}\0{}\0{}\0{}\0{}",
+            self.config.bucket,
+            self.config.prefix,
+            self.config.region,
+            self.config.endpoint_url.as_deref().unwrap_or_default(),
+            self.config.force_path_style
+        );
+        let digest = digest_bytes(canonical.as_bytes())?;
+        Ok(format!("s3:v1:{}", digest.as_str()))
+    }
+
     /// Return the exact provider object key for one reservation.
     ///
     /// # Errors
@@ -202,6 +223,11 @@ impl S3BodyStore {
     ) -> Result<DirectBodyGrant, ArtifactStoreError> {
         reservation.validate()?;
         validate_content_type(content_type)?;
+        if content_length > MAX_SINGLE_PUT_BYTES {
+            return Err(invalid(
+                "single PUT content length exceeds the portable five-gigabyte bound",
+            ));
+        }
         let expires_at_ms = validate_grant_window(now_ms, ttl_ms, Some(reservation.expires_at_ms))?;
         let content_length =
             i64::try_from(content_length).map_err(|_| invalid("S3 content length exceeds i64"))?;
@@ -447,6 +473,72 @@ impl S3BodyStore {
         Ok(())
     }
 
+    /// Idempotently delete one adapter-owned generation selected by GC metadata.
+    ///
+    /// A trusted `HEAD` first captures the current provider version when one is
+    /// available. Generation keys are random and never reused, so an absent key
+    /// is already a successful deletion.
+    ///
+    /// # Errors
+    ///
+    /// Returns validation or sanitized provider errors.
+    pub async fn delete_generation(
+        &self,
+        scope: &ProjectScope,
+        generation: &str,
+    ) -> Result<(), ArtifactStoreError> {
+        let object_key = self.generation_key(scope, generation)?;
+        let head = self
+            .client
+            .head_object()
+            .bucket(&self.config.bucket)
+            .key(&object_key)
+            .send()
+            .await;
+        let version = match head {
+            Ok(output) => output
+                .version_id()
+                .filter(|value| !value.is_empty())
+                .map(str::to_owned),
+            Err(error)
+                if error
+                    .raw_response()
+                    .is_some_and(|response| response.status().as_u16() == 404) =>
+            {
+                return Ok(());
+            }
+            Err(error) => {
+                return Err(provider(
+                    "gc_head",
+                    error
+                        .raw_response()
+                        .map(|response| response.status().as_u16())
+                        .map(|value| value.to_string())
+                        .as_deref(),
+                ));
+            }
+        };
+        let mut delete = self
+            .client
+            .delete_object()
+            .bucket(&self.config.bucket)
+            .key(object_key);
+        if let Some(version) = version {
+            delete = delete.version_id(version);
+        }
+        delete.send().await.map_err(|error| {
+            provider(
+                "gc_delete",
+                error
+                    .raw_response()
+                    .map(|response| response.status().as_u16())
+                    .map(|value| value.to_string())
+                    .as_deref(),
+            )
+        })?;
+        Ok(())
+    }
+
     fn generation_key(
         &self,
         scope: &ProjectScope,
@@ -660,6 +752,17 @@ mod tests {
         })
     }
 
+    #[test]
+    fn catalog_identity_is_stable_and_credential_free() -> Result<(), Box<dyn std::error::Error>> {
+        let store = store()?;
+        let first = store.catalog_identity()?;
+        assert_eq!(first, store.catalog_identity()?);
+        assert!(first.starts_with("s3:v1:"));
+        assert_eq!(first.len(), "s3:v1:".len() + 64);
+        assert!(!first.contains("account.r2.cloudflarestorage.com"));
+        Ok(())
+    }
+
     #[tokio::test]
     async fn conditional_put_grant_is_exact_bounded_and_redacted()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -708,6 +811,18 @@ mod tests {
                 .await,
             Err(ArtifactStoreError::Domain(_))
         ));
+        assert!(
+            store
+                .presign_put(
+                    &reservation,
+                    MAX_SINGLE_PUT_BYTES + 1,
+                    "application/octet-stream",
+                    NOW_MS,
+                    1_000,
+                )
+                .await
+                .is_err()
+        );
         assert!(S3BodyStoreConfig::new("artifacts", "../escape", "auto", None, false,).is_err());
         assert!(
             S3BodyStoreConfig::new(
@@ -832,6 +947,8 @@ mod tests {
         assert_eq!(observation.etag, "etag-s3");
         assert_eq!(observation.version.as_deref(), Some("version-s3"));
         assert!(observation.digest.is_none());
+        let gc_scope = reservation.scope.clone();
+        let gc_generation = reservation.generation.clone();
 
         let reference = ArtifactReference {
             artifact_id: reservation.artifact_id,
@@ -844,6 +961,7 @@ mod tests {
         assert!(store.read(&reference, 11).await.is_err());
         assert_eq!(store.read(&reference, 12).await?, b"artifact-s3!");
         store.delete(&reference).await?;
+        store.delete_generation(&gc_scope, &gc_generation).await?;
 
         let requests = state.requests.lock().await;
         let get = requests
@@ -855,11 +973,16 @@ mod tests {
             Some("etag-s3")
         );
         assert!(get.1.contains("versionId=version-s3"));
-        let delete = requests
+        let deletes = requests
             .iter()
-            .find(|(method, _, _)| method == Method::DELETE)
-            .ok_or_else(|| std::io::Error::other("missing exact DELETE request"))?;
-        assert!(delete.1.contains("versionId=version-s3"));
+            .filter(|(method, _, _)| method == Method::DELETE)
+            .collect::<Vec<_>>();
+        assert_eq!(deletes.len(), 2);
+        assert!(
+            deletes
+                .iter()
+                .all(|(_, uri, _)| uri.contains("versionId=version-s3"))
+        );
         drop(requests);
         server.abort();
         let _ = server.await;

@@ -1,6 +1,8 @@
 //! Authenticated local artifact HTTP lifecycle for single-node SSOT mode.
 
-use super::{ApiError, ServerState, product::request_context};
+use super::{ApiError, ArtifactBodies, ArtifactState, ServerState, product::request_context};
+#[cfg(feature = "s3")]
+use aidememo_artifacts::DirectBodyGrant;
 use aidememo_artifacts::{
     ArtifactStoreError, LocalArtifactStore, MAX_DIRECT_UPLOAD_BYTES, ReserveRequest,
 };
@@ -21,10 +23,12 @@ use std::{
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
-use tokio::sync::Mutex;
+
+#[cfg(feature = "s3")]
+const DIRECT_READ_SETTLEMENT_GRACE_MS: i64 = 60_000;
 
 pub(super) fn routes() -> Router<ServerState> {
-    Router::new()
+    let routes = Router::new()
         .route(
             "/v1/projects/{project_id}/artifact-reservations",
             post(reserve_artifact),
@@ -48,7 +52,18 @@ pub(super) fn routes() -> Router<ServerState> {
         .route(
             "/v1/projects/{project_id}/artifacts/{artifact_id}/downloads",
             post(download_artifact),
+        );
+    #[cfg(feature = "s3")]
+    let routes = routes
+        .route(
+            "/v1/projects/{project_id}/artifact-reservations/{reservation_token}/upload-grants",
+            post(upload_grant),
         )
+        .route(
+            "/v1/projects/{project_id}/artifacts/{artifact_id}/download-grants",
+            post(download_grant),
+        );
+    routes
 }
 
 #[derive(Debug, Deserialize)]
@@ -72,6 +87,30 @@ struct DownloadArtifactRequest {
     revision: Revision,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PublishArtifactRequest {
+    #[cfg(feature = "s3")]
+    size_bytes: Option<u64>,
+}
+
+#[cfg(feature = "s3")]
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UploadGrantRequest {
+    content_length: u64,
+    content_type: String,
+    ttl_ms: i64,
+}
+
+#[cfg(feature = "s3")]
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DownloadGrantRequest {
+    revision: Revision,
+    ttl_ms: i64,
+}
+
 async fn reserve_artifact(
     State(state): State<ServerState>,
     headers: HeaderMap,
@@ -83,8 +122,8 @@ async fn reserve_artifact(
     let Json(request) = decode_json(payload)?;
     let now_ms = unix_time_ms()?;
     let artifacts = artifact_store(&state)?;
-    let mut artifacts = artifacts.lock().await;
-    let reservation = artifacts.reserve(ReserveRequest {
+    let mut catalog = artifacts.catalog.lock().await;
+    let reservation = catalog.reserve(ReserveRequest {
         request_id: request.request_id,
         scope,
         path: request.path,
@@ -103,33 +142,87 @@ async fn upload_artifact(
     let project_id = ProjectId::try_from(project_id)?;
     let scope = authorize(&state, request.headers(), &project_id, true).await?;
     let artifacts = artifact_store(&state)?;
+    if !matches!(&artifacts.bodies, ArtifactBodies::Local) {
+        return Err(ArtifactHttpError::TransferMode);
+    }
     let body = to_bytes(request.into_body(), MAX_DIRECT_UPLOAD_BYTES)
         .await
         .map_err(|_| ArtifactStoreError::UploadTooLarge {
             limit_bytes: MAX_DIRECT_UPLOAD_BYTES,
         })?;
-    let artifacts = artifacts.lock().await;
-    let reservation = live_reservation(&artifacts, &scope, &reservation_token)?;
-    let observation = artifacts.upload(&reservation, &body, unix_time_ms()?)?;
+    let catalog = artifacts.catalog.lock().await;
+    let reservation = live_reservation(&catalog, &scope, &reservation_token)?;
+    let observation = catalog.upload(&reservation, &body, unix_time_ms()?)?;
     Ok((StatusCode::OK, Json(observation)))
+}
+
+#[cfg(feature = "s3")]
+async fn upload_grant(
+    State(state): State<ServerState>,
+    headers: HeaderMap,
+    Path((project_id, reservation_token)): Path<(String, String)>,
+    payload: Result<Json<UploadGrantRequest>, JsonRejection>,
+) -> Result<(StatusCode, Json<DirectBodyGrant>), ArtifactHttpError> {
+    let project_id = ProjectId::try_from(project_id)?;
+    let scope = authorize(&state, &headers, &project_id, true).await?;
+    let Json(request) = decode_json(payload)?;
+    let artifacts = artifact_store(&state)?;
+    let ArtifactBodies::S3(bodies) = &artifacts.bodies else {
+        return Err(ArtifactHttpError::TransferMode);
+    };
+    let reservation = {
+        let catalog = artifacts.catalog.lock().await;
+        live_reservation(&catalog, &scope, &reservation_token)?
+    };
+    let now_ms = unix_time_ms()?;
+    let grant = bodies
+        .presign_put(
+            &reservation,
+            request.content_length,
+            &request.content_type,
+            now_ms,
+            request.ttl_ms,
+        )
+        .await?;
+    Ok((StatusCode::OK, Json(grant)))
 }
 
 async fn publish_artifact(
     State(state): State<ServerState>,
     headers: HeaderMap,
     Path((project_id, reservation_token)): Path<(String, String)>,
+    payload: Result<Json<PublishArtifactRequest>, JsonRejection>,
 ) -> Result<impl IntoResponse, ArtifactHttpError> {
     let project_id = ProjectId::try_from(project_id)?;
     let scope = authorize(&state, &headers, &project_id, true).await?;
+    let Json(request) = decode_json(payload)?;
+    #[cfg(not(feature = "s3"))]
+    let _ = request;
     let artifacts = artifact_store(&state)?;
-    let mut artifacts = artifacts.lock().await;
-    if let Some(reference) = artifacts.publication_receipt_by_token(&scope, &reservation_token)? {
+    let mut catalog = artifacts.catalog.lock().await;
+    if let Some(reference) = catalog.publication_receipt_by_token(&scope, &reservation_token)? {
         return Ok((StatusCode::OK, Json(reference)));
     }
-    let reservation = reservation_for_publish(&artifacts, &scope, &reservation_token)?;
+    let reservation = reservation_for_publish(&catalog, &scope, &reservation_token)?;
     let now_ms = unix_time_ms()?;
-    let observation = artifacts.observe(&reservation, now_ms)?;
-    let reference = artifacts.publish(&reservation, &observation, now_ms)?;
+    let reference = match &artifacts.bodies {
+        ArtifactBodies::Local => {
+            let observation = catalog.observe(&reservation, now_ms)?;
+            catalog.publish(&reservation, &observation, now_ms)?
+        }
+        #[cfg(feature = "s3")]
+        ArtifactBodies::S3(bodies) => {
+            let expected_size = request.size_bytes.ok_or_else(|| {
+                DomainError::InvalidArtifactReference(
+                    "S3 publication requires provider-observed size_bytes".to_owned(),
+                )
+            })?;
+            drop(catalog);
+            let observation = bodies.observe(&reservation, expected_size).await?;
+            let mut catalog = artifacts.catalog.lock().await;
+            catalog.publish_trusted_observation(&reservation, &observation, now_ms)?
+        }
+    };
     Ok((StatusCode::OK, Json(reference)))
 }
 
@@ -141,9 +234,9 @@ async fn abort_artifact(
     let project_id = ProjectId::try_from(project_id)?;
     let scope = authorize(&state, &headers, &project_id, true).await?;
     let artifacts = artifact_store(&state)?;
-    let mut artifacts = artifacts.lock().await;
-    let reservation = live_reservation(&artifacts, &scope, &reservation_token)?;
-    artifacts.abort(&reservation)?;
+    let mut catalog = artifacts.catalog.lock().await;
+    let reservation = live_reservation(&catalog, &scope, &reservation_token)?;
+    catalog.abort(&reservation)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -158,8 +251,8 @@ async fn resolve_artifact(
     let Query(query) = query.map_err(|error| DomainError::InvalidCommand(error.body_text()))?;
     let path = ArtifactPath::try_from(query.path)?;
     let artifacts = artifact_store(&state)?;
-    let artifacts = artifacts.lock().await;
-    let reference = artifacts
+    let catalog = artifacts.catalog.lock().await;
+    let reference = catalog
         .get(&scope, &path)?
         .ok_or(ArtifactStoreError::NotFound)?;
     Ok((StatusCode::OK, Json(reference)))
@@ -176,8 +269,11 @@ async fn download_artifact(
     let artifact_id = ArtifactId::try_from(artifact_id)?;
     let Json(request) = decode_json(payload)?;
     let artifacts = artifact_store(&state)?;
-    let artifacts = artifacts.lock().await;
-    let reference = artifacts
+    if !matches!(&artifacts.bodies, ArtifactBodies::Local) {
+        return Err(ArtifactHttpError::TransferMode);
+    }
+    let catalog = artifacts.catalog.lock().await;
+    let reference = catalog
         .get_by_id(&scope, &artifact_id)?
         .ok_or(ArtifactStoreError::NotFound)?;
     if reference.revision != request.revision {
@@ -192,7 +288,7 @@ async fn download_artifact(
     };
     let etag = HeaderValue::from_str(&format!("\"{etag}\""))
         .map_err(|_| ArtifactStoreError::BodyMismatch)?;
-    let bytes = artifacts.read(&reference)?;
+    let bytes = catalog.read(&reference)?;
     let mut response = Response::new(Body::from(bytes));
     *response.status_mut() = StatusCode::OK;
     response.headers_mut().insert(
@@ -201,6 +297,51 @@ async fn download_artifact(
     );
     response.headers_mut().insert(header::ETAG, etag);
     Ok(response)
+}
+
+#[cfg(feature = "s3")]
+async fn download_grant(
+    State(state): State<ServerState>,
+    headers: HeaderMap,
+    Path((project_id, artifact_id)): Path<(String, String)>,
+    payload: Result<Json<DownloadGrantRequest>, JsonRejection>,
+) -> Result<(StatusCode, Json<DirectBodyGrant>), ArtifactHttpError> {
+    let project_id = ProjectId::try_from(project_id)?;
+    let scope = authorize(&state, &headers, &project_id, false).await?;
+    let artifact_id = ArtifactId::try_from(artifact_id)?;
+    let Json(request) = decode_json(payload)?;
+    let artifacts = artifact_store(&state)?;
+    let ArtifactBodies::S3(bodies) = &artifacts.bodies else {
+        return Err(ArtifactHttpError::TransferMode);
+    };
+    let now_ms = unix_time_ms()?;
+    let expires_at_ms = now_ms
+        .checked_add(request.ttl_ms)
+        .ok_or_else(|| DomainError::InvalidArtifactReference("grant expiry overflow".to_owned()))?;
+    let retained_until_ms = expires_at_ms
+        .checked_add(DIRECT_READ_SETTLEMENT_GRACE_MS)
+        .ok_or_else(|| {
+            DomainError::InvalidArtifactReference("read retention overflow".to_owned())
+        })?;
+    let reference = {
+        let mut catalog = artifacts.catalog.lock().await;
+        let reference = catalog
+            .get_by_id(&scope, &artifact_id)?
+            .ok_or(ArtifactStoreError::NotFound)?;
+        if reference.revision != request.revision {
+            return Err(DomainError::StaleRevision {
+                expected: request.revision,
+                current: reference.revision,
+            }
+            .into());
+        }
+        catalog.retain_for_read(&reference, now_ms, retained_until_ms)?;
+        reference
+    };
+    let grant = bodies
+        .presign_get(&reference, now_ms, request.ttl_ms, retained_until_ms)
+        .await?;
+    Ok((StatusCode::OK, Json(grant)))
 }
 
 async fn authorize(
@@ -223,9 +364,7 @@ async fn authorize(
     ))
 }
 
-fn artifact_store(
-    state: &ServerState,
-) -> Result<Arc<Mutex<LocalArtifactStore>>, ArtifactHttpError> {
+fn artifact_store(state: &ServerState) -> Result<Arc<ArtifactState>, ArtifactHttpError> {
     state
         .artifacts
         .clone()
@@ -290,6 +429,7 @@ enum ArtifactHttpError {
     Domain(DomainError),
     Store(ArtifactStoreError),
     Unavailable,
+    TransferMode,
 }
 
 impl From<DomainError> for ArtifactHttpError {
@@ -315,6 +455,11 @@ impl IntoResponse for ArtifactHttpError {
                 StatusCode::SERVICE_UNAVAILABLE,
                 "artifact_store_unavailable",
                 "artifact storage is not configured".to_owned(),
+            ),
+            Self::TransferMode => artifact_error(
+                StatusCode::CONFLICT,
+                "artifact_transfer_mode_mismatch",
+                "artifact transfer route does not match the configured body store".to_owned(),
             ),
             Self::Store(error) => {
                 let (status, code, message, internal) = match &error {
@@ -351,6 +496,8 @@ impl IntoResponse for ArtifactHttpError {
                     ArtifactStoreError::Storage { .. }
                     | ArtifactStoreError::Filesystem { .. }
                     | ArtifactStoreError::Provider { .. }
+                    | ArtifactStoreError::BodyStoreMismatch
+                    | ArtifactStoreError::BodyStoreIdentityMissing
                     | ArtifactStoreError::Domain(_) => (
                         StatusCode::INTERNAL_SERVER_ERROR,
                         "artifact_internal_error",

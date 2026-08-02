@@ -13,7 +13,7 @@ pub use s3::{DirectBodyGrant, S3BodyStore, S3BodyStoreConfig};
 
 use aidememo_domain::{
     ArtifactBodyRef, ArtifactId, ArtifactObservation, ArtifactPath, ArtifactReference,
-    ArtifactReservation, ContentDigest, DomainError, ProjectScope, Revision,
+    ArtifactReservation, ContentDigest, DomainError, ProjectId, ProjectScope, Revision, TenantId,
 };
 use rusqlite::{
     Connection, ErrorCode, OptionalExtension, Transaction, TransactionBehavior, params,
@@ -28,13 +28,16 @@ use tempfile::NamedTempFile;
 use thiserror::Error;
 use ulid::Ulid;
 
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 4;
+/// Stable identity for the repository-owned local immutable-body layout.
+pub const LOCAL_BODY_STORE_IDENTITY: &str = "local:v1";
 const MAX_TTL_MS: i64 = 24 * 60 * 60 * 1_000;
 /// Maximum body accepted by the bounded local direct-upload path.
 pub const MAX_DIRECT_UPLOAD_BYTES: usize = 64 * 1024 * 1024;
 const DEFAULT_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 const GC_SETTLEMENT_GRACE_MS: i64 = 60_000;
 const GC_LEASE_MS: i64 = 30_000;
+const MAX_READ_RETENTION_MS: i64 = 8 * 24 * 60 * 60 * 1_000;
 const MAX_GC_BATCH: usize = 100;
 const MAX_REQUEST_ID_BYTES: usize = 1_024;
 const RECEIPT_RETENTION_MS: i64 = 24 * 60 * 60 * 1_000;
@@ -75,6 +78,12 @@ pub enum ArtifactStoreError {
     /// Uploaded bytes differ from the observation supplied for publication.
     #[error("artifact body does not match the observed immutable metadata")]
     BodyMismatch,
+    /// The metadata catalog is already bound to another immutable-body store.
+    #[error("artifact catalog is bound to a different immutable body store")]
+    BodyStoreMismatch,
+    /// A populated catalog predates body-store identity and cannot be bound safely.
+    #[error("populated artifact catalog has no immutable body-store identity")]
+    BodyStoreIdentityMissing,
     /// The bounded direct-upload API rejected an oversized body.
     #[error("artifact upload exceeds the local limit of {limit_bytes} bytes")]
     UploadTooLarge {
@@ -121,6 +130,30 @@ pub struct GarbageCollectionReport {
     pub failed: usize,
     /// Expired reservation/publication replay receipts removed from the catalog.
     pub pruned_receipts: usize,
+    /// Expired direct-download retention records removed from the catalog.
+    pub pruned_read_retentions: usize,
+}
+
+/// One durably leased, unreachable immutable generation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GarbageLease {
+    /// Tenant-project scope that owns the generation.
+    pub scope: ProjectScope,
+    /// Adapter-selected immutable generation.
+    pub generation: String,
+    /// Catalog key used for local body deletion and exact lease acknowledgement.
+    pub object_key: String,
+    lease_token: String,
+    attempts: u32,
+}
+
+/// Catalog work claimed before a body adapter performs external deletion.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct GarbageClaim {
+    /// Reaping, pruning, and lease counts committed with this claim.
+    pub report: GarbageCollectionReport,
+    /// Exact generations leased to the caller.
+    pub leases: Vec<GarbageLease>,
 }
 
 /// Separate SQLite catalog plus immutable local object directory.
@@ -163,6 +196,67 @@ impl LocalArtifactStore {
             root: root.to_path_buf(),
             connection,
         })
+    }
+
+    /// Bind this catalog to one immutable-body adapter identity.
+    ///
+    /// An empty catalog is bound exactly once. Existing catalogs from the
+    /// local-only schema are migrated as `local:v1`; a populated catalog with
+    /// no trustworthy legacy identity fails closed instead of guessing.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ArtifactStoreError::BodyStoreMismatch`] when the catalog is
+    /// already bound to another adapter, or
+    /// [`ArtifactStoreError::BodyStoreIdentityMissing`] when populated legacy
+    /// state cannot be attributed safely.
+    pub fn bind_body_store(&mut self, identity: &str) -> Result<(), ArtifactStoreError> {
+        validate_body_store_identity(identity)?;
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| storage("body_store_bind_begin", error))?;
+        let existing: Option<String> = transaction
+            .query_row(
+                "SELECT value FROM artifact_repository_meta WHERE key = 'body_store_identity'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| storage("body_store_identity_read", error))?;
+        if let Some(existing) = existing {
+            if existing != identity {
+                return Err(ArtifactStoreError::BodyStoreMismatch);
+            }
+            transaction
+                .commit()
+                .map_err(|error| storage("body_store_bind_commit", error))?;
+            return Ok(());
+        }
+        let populated: bool = transaction
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM artifact_paths LIMIT 1)
+                     OR EXISTS(SELECT 1 FROM artifact_reservations LIMIT 1)
+                     OR EXISTS(SELECT 1 FROM artifact_gc_queue LIMIT 1)
+                     OR EXISTS(SELECT 1 FROM artifact_read_retentions LIMIT 1)",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|error| storage("body_store_identity_probe", error))?;
+        if populated {
+            return Err(ArtifactStoreError::BodyStoreIdentityMissing);
+        }
+        transaction
+            .execute(
+                "INSERT INTO artifact_repository_meta (key, value)
+                 VALUES ('body_store_identity', ?1)",
+                params![identity],
+            )
+            .map_err(|error| storage("body_store_identity_write", error))?;
+        transaction
+            .commit()
+            .map_err(|error| storage("body_store_bind_commit", error))?;
+        Ok(())
     }
 
     /// Reserve one logical path for a new immutable generation.
@@ -394,7 +488,6 @@ impl LocalArtifactStore {
         now_ms: i64,
     ) -> Result<ArtifactReference, ArtifactStoreError> {
         reservation.validate()?;
-        let body = observation.body_ref()?;
         if observation.generation != reservation.generation {
             return Err(ArtifactStoreError::BodyMismatch);
         }
@@ -424,6 +517,50 @@ impl LocalArtifactStore {
             observation.size_bytes,
             digest,
         )?;
+        self.commit_publication(reservation, observation, now_ms)
+    }
+
+    /// Publish metadata obtained from a trusted external body-store observation.
+    ///
+    /// The caller must obtain `observation` directly from the configured body
+    /// adapter after it validates the reservation-owned immutable key. Unlike
+    /// [`Self::publish`], this method does not read a local file and permits a
+    /// provider that exposes no portable full-object digest.
+    ///
+    /// # Errors
+    ///
+    /// Returns an expiry, conflict, body-mismatch, or storage error.
+    pub fn publish_trusted_observation(
+        &mut self,
+        reservation: &ArtifactReservation,
+        observation: &ArtifactObservation,
+        now_ms: i64,
+    ) -> Result<ArtifactReference, ArtifactStoreError> {
+        reservation.validate()?;
+        observation.body_ref()?;
+        if observation.generation != reservation.generation {
+            return Err(ArtifactStoreError::BodyMismatch);
+        }
+        if let Some(reference) = load_publication_receipt(
+            &self.connection,
+            &reservation.scope,
+            &reservation.mutation_token,
+        )? {
+            if publication_matches(&reference, reservation, observation) {
+                return Ok(reference);
+            }
+            return Err(ArtifactStoreError::BodyMismatch);
+        }
+        self.commit_publication(reservation, observation, now_ms)
+    }
+
+    fn commit_publication(
+        &mut self,
+        reservation: &ArtifactReservation,
+        observation: &ArtifactObservation,
+        now_ms: i64,
+    ) -> Result<ArtifactReference, ArtifactStoreError> {
+        let body = observation.body_ref()?;
 
         let transaction = self
             .connection
@@ -488,7 +625,7 @@ impl LocalArtifactStore {
                     to_i64(observation.size_bytes, "size_bytes")?,
                     &observation.etag,
                     observation.version.as_deref(),
-                    digest.as_str(),
+                    observation.digest.as_ref().map(ContentDigest::as_str),
                     now_ms,
                 ],
             )
@@ -701,6 +838,131 @@ impl LocalArtifactStore {
             .map_or(Ok(None), |path| self.get(scope, &path))
     }
 
+    /// Durably retain the exact current generation through a direct-read grant.
+    ///
+    /// This transaction must commit before a body adapter signs the grant. A
+    /// later replacement may enqueue the generation, but garbage collection
+    /// will not lease it until this retention expires.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stale/body-mismatch, validation, or storage error.
+    pub fn retain_for_read(
+        &mut self,
+        reference: &ArtifactReference,
+        now_ms: i64,
+        retain_until_ms: i64,
+    ) -> Result<(), ArtifactStoreError> {
+        reference.validate()?;
+        if now_ms <= 0
+            || retain_until_ms <= now_ms
+            || retain_until_ms.saturating_sub(now_ms) > MAX_READ_RETENTION_MS
+        {
+            return Err(DomainError::InvalidArtifactReference(
+                "artifact read retention must be positive, future, and bounded".to_owned(),
+            )
+            .into());
+        }
+        if self
+            .get_by_id(&reference.scope, &reference.artifact_id)?
+            .as_ref()
+            != Some(reference)
+        {
+            return Err(ArtifactStoreError::BodyMismatch);
+        }
+        let ArtifactBodyRef::Object {
+            object_key,
+            generation,
+            ..
+        } = &reference.body
+        else {
+            return Err(ArtifactStoreError::BodyMismatch);
+        };
+        self.connection
+            .execute(
+                "INSERT INTO artifact_read_retentions
+                    (tenant_id, project_id, generation, object_key, retain_until_ms)
+                 VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT (tenant_id, project_id, generation) DO UPDATE SET
+                    object_key = excluded.object_key,
+                    retain_until_ms = max(
+                        artifact_read_retentions.retain_until_ms,
+                        excluded.retain_until_ms
+                    )",
+                params![
+                    reference.scope.tenant_id.as_str(),
+                    reference.scope.project_id.as_str(),
+                    generation,
+                    object_key,
+                    retain_until_ms,
+                ],
+            )
+            .map_err(|error| storage("read_retention_write", error))?;
+        Ok(())
+    }
+
+    /// Reap metadata and durably lease a bounded batch of unreachable bodies.
+    ///
+    /// The caller must delete each generation through its configured body
+    /// adapter, then call [`Self::acknowledge_garbage`] or
+    /// [`Self::fail_garbage`].
+    ///
+    /// # Errors
+    ///
+    /// Returns a validation or catalog error.
+    pub fn claim_garbage(
+        &mut self,
+        now_ms: i64,
+        limit: usize,
+    ) -> Result<GarbageClaim, ArtifactStoreError> {
+        validate_gc_request(now_ms, limit)?;
+        let mut report = GarbageCollectionReport::default();
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| storage("gc_begin", error))?;
+        report.expired_reservations =
+            reap_expired_reservations(&transaction, now_ms, MAX_GC_BATCH)?;
+        report.pruned_read_retentions =
+            prune_expired_read_retentions(&transaction, now_ms, MAX_GC_BATCH)?;
+        let leases = claim_gc_candidates(&transaction, now_ms, limit)?;
+        report.claimed = leases.len();
+        report.pruned_receipts = prune_expired_receipts(&transaction, now_ms, MAX_GC_BATCH)?;
+        transaction
+            .commit()
+            .map_err(|error| storage("gc_claim_commit", error))?;
+        Ok(GarbageClaim { report, leases })
+    }
+
+    /// Acknowledge successful or already-absent deletion for one exact lease.
+    ///
+    /// # Errors
+    ///
+    /// Returns a catalog error.
+    pub fn acknowledge_garbage(&mut self, lease: &GarbageLease) -> Result<(), ArtifactStoreError> {
+        acknowledge_gc(&self.connection, lease)
+    }
+
+    /// Release one failed lease with bounded exponential retry metadata.
+    ///
+    /// # Errors
+    ///
+    /// Returns a validation or catalog error.
+    pub fn fail_garbage(
+        &mut self,
+        lease: &GarbageLease,
+        now_ms: i64,
+        detail: &str,
+    ) -> Result<(), ArtifactStoreError> {
+        if now_ms <= 0 {
+            return Err(DomainError::InvalidArtifactReference(
+                "artifact GC failure time must be positive".to_owned(),
+            )
+            .into());
+        }
+        fail_gc(&self.connection, lease, now_ms, detail)
+    }
+
     /// Reap expired reservations and delete a bounded batch of unreachable bodies.
     ///
     /// Delete is idempotent. A crash after filesystem deletion but before the
@@ -715,39 +977,21 @@ impl LocalArtifactStore {
         now_ms: i64,
         limit: usize,
     ) -> Result<GarbageCollectionReport, ArtifactStoreError> {
-        if now_ms <= 0 || limit == 0 || limit > MAX_GC_BATCH {
-            return Err(DomainError::InvalidArtifactReference(format!(
-                "garbage collection requires positive now_ms and limit between 1 and {MAX_GC_BATCH}"
-            ))
-            .into());
-        }
-        let mut report = GarbageCollectionReport::default();
-        let transaction = self
-            .connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(|error| storage("gc_begin", error))?;
-        report.expired_reservations =
-            reap_expired_reservations(&transaction, now_ms, MAX_GC_BATCH)?;
-        let candidates = claim_gc_candidates(&transaction, now_ms, limit)?;
-        report.claimed = candidates.len();
-        report.pruned_receipts = prune_expired_receipts(&transaction, now_ms, MAX_GC_BATCH)?;
-        transaction
-            .commit()
-            .map_err(|error| storage("gc_claim_commit", error))?;
+        let GarbageClaim { mut report, leases } = self.claim_garbage(now_ms, limit)?;
 
-        for candidate in candidates {
-            let path = self.object_path(&candidate.object_key)?;
+        for lease in leases {
+            let path = self.object_path(&lease.object_key)?;
             match fs::remove_file(&path) {
                 Ok(()) => {
-                    acknowledge_gc(&self.connection, &candidate)?;
+                    self.acknowledge_garbage(&lease)?;
                     report.deleted += 1;
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                    acknowledge_gc(&self.connection, &candidate)?;
+                    self.acknowledge_garbage(&lease)?;
                     report.deleted += 1;
                 }
                 Err(error) => {
-                    fail_gc(&self.connection, &candidate, now_ms, &error)?;
+                    self.fail_garbage(&lease, now_ms, &error.to_string())?;
                     report.failed += 1;
                 }
             }
@@ -855,7 +1099,7 @@ struct PublishedRow {
     size_bytes: u64,
     etag: String,
     version: Option<String>,
-    digest: ContentDigest,
+    digest: Option<ContentDigest>,
 }
 
 struct PublishedSqlRow {
@@ -867,14 +1111,7 @@ struct PublishedSqlRow {
     size_bytes: i64,
     etag: String,
     version: Option<String>,
-    digest: String,
-}
-
-#[derive(Debug)]
-struct GarbageCandidate {
-    object_key: String,
-    lease_token: String,
-    attempts: u32,
+    digest: Option<String>,
 }
 
 impl PublishedRow {
@@ -895,7 +1132,7 @@ impl PublishedRow {
                 size_bytes: self.size_bytes,
                 etag: self.etag,
                 version: self.version,
-                digest: Some(self.digest),
+                digest: self.digest,
             },
         })
     }
@@ -921,7 +1158,7 @@ fn migrate(connection: &Connection) -> Result<(), ArtifactStoreError> {
                     size_bytes INTEGER NOT NULL CHECK (size_bytes >= 0),
                     etag TEXT NOT NULL,
                     version TEXT,
-                    digest TEXT NOT NULL,
+                    digest TEXT,
                     published_at_ms INTEGER NOT NULL,
                     PRIMARY KEY (tenant_id, project_id, logical_path)
                  ) STRICT;
@@ -977,7 +1214,21 @@ fn migrate(connection: &Connection) -> Result<(), ArtifactStoreError> {
                  ) STRICT;
                  CREATE INDEX IF NOT EXISTS artifact_gc_due
                     ON artifact_gc_queue (next_attempt_ms, not_before_ms);
-                 PRAGMA user_version = 2;
+                 CREATE TABLE IF NOT EXISTS artifact_read_retentions (
+                    tenant_id TEXT NOT NULL,
+                    project_id TEXT NOT NULL,
+                    generation TEXT NOT NULL,
+                    object_key TEXT NOT NULL,
+                    retain_until_ms INTEGER NOT NULL CHECK (retain_until_ms > 0),
+                    PRIMARY KEY (tenant_id, project_id, generation)
+                 ) STRICT;
+                 CREATE INDEX IF NOT EXISTS artifact_read_retention_expiry
+                    ON artifact_read_retentions (retain_until_ms);
+                 CREATE TABLE IF NOT EXISTS artifact_repository_meta (
+                    key TEXT NOT NULL PRIMARY KEY,
+                    value TEXT NOT NULL
+                 ) STRICT;
+                 PRAGMA user_version = 4;
                  COMMIT;",
             )
             .map_err(|error| storage("schema_create", error)),
@@ -1025,10 +1276,78 @@ fn migrate(connection: &Connection) -> Result<(), ArtifactStoreError> {
                  ) STRICT;
                  CREATE INDEX IF NOT EXISTS artifact_gc_due
                     ON artifact_gc_queue (next_attempt_ms, not_before_ms);
+                 CREATE TABLE IF NOT EXISTS artifact_repository_meta (
+                    key TEXT NOT NULL PRIMARY KEY,
+                    value TEXT NOT NULL
+                 ) STRICT;
+                 INSERT OR IGNORE INTO artifact_repository_meta (key, value)
+                    VALUES ('body_store_identity', 'local:v1');
                  PRAGMA user_version = 2;
                  COMMIT;",
             )
-            .map_err(|error| storage("schema_migrate_v2", error)),
+            .map_err(|error| storage("schema_migrate_v2", error))
+            .and_then(|()| migrate(connection)),
+        2 => connection
+            .execute_batch(
+                "BEGIN IMMEDIATE;
+                 ALTER TABLE artifact_paths RENAME TO artifact_paths_v2;
+                 CREATE TABLE artifact_paths (
+                    tenant_id TEXT NOT NULL,
+                    project_id TEXT NOT NULL,
+                    logical_path TEXT NOT NULL,
+                    artifact_id TEXT NOT NULL,
+                    revision INTEGER NOT NULL CHECK (revision > 0),
+                    mutation_token TEXT NOT NULL,
+                    generation TEXT NOT NULL,
+                    object_key TEXT NOT NULL,
+                    size_bytes INTEGER NOT NULL CHECK (size_bytes >= 0),
+                    etag TEXT NOT NULL,
+                    version TEXT,
+                    digest TEXT,
+                    published_at_ms INTEGER NOT NULL,
+                    PRIMARY KEY (tenant_id, project_id, logical_path)
+                 ) STRICT;
+                 INSERT INTO artifact_paths
+                    (tenant_id, project_id, logical_path, artifact_id, revision,
+                     mutation_token, generation, object_key, size_bytes, etag,
+                     version, digest, published_at_ms)
+                 SELECT tenant_id, project_id, logical_path, artifact_id, revision,
+                        mutation_token, generation, object_key, size_bytes, etag,
+                        version, digest, published_at_ms
+                 FROM artifact_paths_v2;
+                 DROP TABLE artifact_paths_v2;
+                 CREATE TABLE artifact_read_retentions (
+                    tenant_id TEXT NOT NULL,
+                    project_id TEXT NOT NULL,
+                    generation TEXT NOT NULL,
+                    object_key TEXT NOT NULL,
+                    retain_until_ms INTEGER NOT NULL CHECK (retain_until_ms > 0),
+                    PRIMARY KEY (tenant_id, project_id, generation)
+                 ) STRICT;
+                 CREATE INDEX artifact_read_retention_expiry
+                    ON artifact_read_retentions (retain_until_ms);
+                 CREATE TABLE IF NOT EXISTS artifact_repository_meta (
+                    key TEXT NOT NULL PRIMARY KEY,
+                    value TEXT NOT NULL
+                 ) STRICT;
+                 INSERT OR IGNORE INTO artifact_repository_meta (key, value)
+                    VALUES ('body_store_identity', 'local:v1');
+                 PRAGMA user_version = 3;
+                 COMMIT;",
+            )
+            .map_err(|error| storage("schema_migrate_v3", error))
+            .and_then(|()| migrate(connection)),
+        3 => connection
+            .execute_batch(
+                "BEGIN IMMEDIATE;
+                 CREATE TABLE IF NOT EXISTS artifact_repository_meta (
+                    key TEXT NOT NULL PRIMARY KEY,
+                    value TEXT NOT NULL
+                 ) STRICT;
+                 PRAGMA user_version = 4;
+                 COMMIT;",
+            )
+            .map_err(|error| storage("schema_migrate_v4", error)),
         SCHEMA_VERSION => Ok(()),
         other => Err(ArtifactStoreError::Storage {
             operation: "schema_version",
@@ -1046,6 +1365,22 @@ fn validate_request_id(request_id: &str) -> Result<(), ArtifactStoreError> {
     {
         return Err(DomainError::InvalidArtifactReference(
             "artifact reservation request_id must be non-empty, bounded, and contain no whitespace or control characters"
+                .to_owned(),
+        )
+        .into());
+    }
+    Ok(())
+}
+
+fn validate_body_store_identity(identity: &str) -> Result<(), ArtifactStoreError> {
+    if identity.is_empty()
+        || identity.len() > 256
+        || identity
+            .chars()
+            .any(|character| character.is_whitespace() || character.is_control())
+    {
+        return Err(DomainError::InvalidArtifactReference(
+            "body-store identity must be non-empty, bounded, and contain no whitespace or control characters"
                 .to_owned(),
         )
         .into());
@@ -1369,11 +1704,44 @@ fn prune_expired_receipts(
     Ok(reservations.saturating_add(publications))
 }
 
+fn prune_expired_read_retentions(
+    transaction: &Transaction<'_>,
+    now_ms: i64,
+    limit: usize,
+) -> Result<usize, ArtifactStoreError> {
+    let limit = i64::try_from(limit).map_err(|_| ArtifactStoreError::Storage {
+        operation: "read_retention_prune_limit",
+        detail: "limit exceeds i64".to_owned(),
+    })?;
+    transaction
+        .execute(
+            "DELETE FROM artifact_read_retentions
+             WHERE rowid IN (
+                 SELECT rowid FROM artifact_read_retentions
+                 WHERE retain_until_ms <= ?1
+                 ORDER BY retain_until_ms ASC
+                 LIMIT ?2
+             )",
+            params![now_ms, limit],
+        )
+        .map_err(|error| storage("read_retention_prune", error))
+}
+
+fn validate_gc_request(now_ms: i64, limit: usize) -> Result<(), ArtifactStoreError> {
+    if now_ms <= 0 || limit == 0 || limit > MAX_GC_BATCH {
+        return Err(DomainError::InvalidArtifactReference(format!(
+            "garbage collection requires positive now_ms and limit between 1 and {MAX_GC_BATCH}"
+        ))
+        .into());
+    }
+    Ok(())
+}
+
 fn claim_gc_candidates(
     transaction: &Transaction<'_>,
     now_ms: i64,
     limit: usize,
-) -> Result<Vec<GarbageCandidate>, ArtifactStoreError> {
+) -> Result<Vec<GarbageLease>, ArtifactStoreError> {
     let limit = i64::try_from(limit).map_err(|_| ArtifactStoreError::Storage {
         operation: "gc_claim_limit",
         detail: "limit exceeds i64".to_owned(),
@@ -1381,7 +1749,8 @@ fn claim_gc_candidates(
     let rows = {
         let mut statement = transaction
             .prepare(
-                "SELECT queue.object_key, queue.attempts
+                "SELECT queue.tenant_id, queue.project_id, queue.generation,
+                        queue.object_key, queue.attempts
                  FROM artifact_gc_queue AS queue
                  WHERE queue.not_before_ms <= ?1 AND queue.next_attempt_ms <= ?1
                    AND (queue.lease_until_ms IS NULL OR queue.lease_until_ms <= ?1)
@@ -1395,13 +1764,26 @@ fn claim_gc_candidates(
                          AND reservations.project_id = queue.project_id
                          AND reservations.generation = queue.generation
                    )
+                   AND NOT EXISTS (
+                       SELECT 1 FROM artifact_read_retentions AS retention
+                       WHERE retention.tenant_id = queue.tenant_id
+                         AND retention.project_id = queue.project_id
+                         AND retention.generation = queue.generation
+                         AND retention.retain_until_ms > ?1
+                   )
                  ORDER BY queue.next_attempt_ms ASC, queue.object_key ASC
                  LIMIT ?2",
             )
             .map_err(|error| storage("gc_claim_prepare", error))?;
         statement
             .query_map(params![now_ms, limit], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, i64>(4)?,
+                ))
             })
             .map_err(|error| storage("gc_claim_query", error))?
             .collect::<Result<Vec<_>, _>>()
@@ -1409,7 +1791,7 @@ fn claim_gc_candidates(
     };
     let lease_until_ms = now_ms.saturating_add(GC_LEASE_MS);
     let mut claimed = Vec::with_capacity(rows.len());
-    for (object_key, attempts) in rows {
+    for (tenant_id, project_id, generation, object_key, attempts) in rows {
         let lease_token = format!("lease_{}", new_id());
         let updated = transaction
             .execute(
@@ -1421,7 +1803,12 @@ fn claim_gc_candidates(
             )
             .map_err(|error| storage("gc_claim_update", error))?;
         if updated == 1 {
-            claimed.push(GarbageCandidate {
+            claimed.push(GarbageLease {
+                scope: ProjectScope::new(
+                    TenantId::try_from(tenant_id)?,
+                    ProjectId::try_from(project_id)?,
+                ),
+                generation,
                 object_key,
                 lease_token,
                 attempts: u32::try_from(attempts).map_err(|_| ArtifactStoreError::Storage {
@@ -1436,7 +1823,7 @@ fn claim_gc_candidates(
 
 fn acknowledge_gc(
     connection: &Connection,
-    candidate: &GarbageCandidate,
+    candidate: &GarbageLease,
 ) -> Result<(), ArtifactStoreError> {
     connection
         .execute(
@@ -1449,14 +1836,24 @@ fn acknowledge_gc(
 
 fn fail_gc(
     connection: &Connection,
-    candidate: &GarbageCandidate,
+    candidate: &GarbageLease,
     now_ms: i64,
-    error: &std::io::Error,
+    detail: &str,
 ) -> Result<(), ArtifactStoreError> {
     let exponent = candidate.attempts.min(10);
     let delay_ms = 1_000_i64.saturating_mul(1_i64 << exponent);
     let next_attempt_ms = now_ms.saturating_add(delay_ms);
-    let detail = error.to_string();
+    let detail = detail
+        .chars()
+        .map(|character| {
+            if character.is_control() {
+                ' '
+            } else {
+                character
+            }
+        })
+        .take(2_048)
+        .collect::<String>();
     connection
         .execute(
             "UPDATE artifact_gc_queue
@@ -1516,7 +1913,7 @@ fn load_published_row(
             size_bytes: from_i64(row.size_bytes, "size_bytes")?,
             etag: row.etag,
             version: row.version,
-            digest: ContentDigest::try_from(row.digest)?,
+            digest: row.digest.map(ContentDigest::try_from).transpose()?,
         })
     })
     .transpose()
@@ -2089,6 +2486,180 @@ mod tests {
         }
         assert_eq!(success, 1);
         assert_eq!(conflict, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn trusted_hosted_publication_preserves_optional_digest()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let scope = scope("tenant_hosted", "project_hosted")?;
+        let path = ArtifactPath::try_from("/sessions/hosted/result.bin")?;
+        let published = {
+            let mut store = LocalArtifactStore::open(directory.path())?;
+            let reservation =
+                store.reserve(reserve_request(scope.clone(), path.clone(), None, 1_000))?;
+            let observation = ArtifactObservation {
+                object_key: format!(
+                    "hosted/objects/{}/{}/{}.blob",
+                    scope.tenant_id, scope.project_id, reservation.generation
+                ),
+                generation: reservation.generation.clone(),
+                size_bytes: 12,
+                etag: "provider-etag".to_owned(),
+                version: Some("provider-version".to_owned()),
+                digest: None,
+            };
+            let published = store.publish_trusted_observation(&reservation, &observation, 1_001)?;
+            assert_eq!(
+                store.publish_trusted_observation(&reservation, &observation, 1_002)?,
+                published
+            );
+            published
+        };
+        let reopened = LocalArtifactStore::open(directory.path())?;
+        assert_eq!(reopened.get(&scope, &path)?, Some(published.clone()));
+        assert!(matches!(
+            published.body,
+            ArtifactBodyRef::Object { digest: None, .. }
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn durable_read_retention_blocks_gc_leases_until_expiry()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let mut store = LocalArtifactStore::open(directory.path())?;
+        let scope = scope("tenant_retention", "project_retention")?;
+        let path = ArtifactPath::try_from("/sessions/retention/result.bin")?;
+        let first = store.reserve(reserve_request(scope.clone(), path.clone(), None, 1_000))?;
+        let first_observation = store.upload(&first, b"first", 1_001)?;
+        let first_reference = store.publish(&first, &first_observation, 1_002)?;
+        store.retain_for_read(&first_reference, 1_003, 5_000)?;
+
+        let second = store.reserve(reserve_request(
+            scope,
+            path,
+            Some(first_reference.mutation_token.clone()),
+            2_000,
+        ))?;
+        let second_observation = store.upload(&second, b"second", 2_001)?;
+        store.publish(&second, &second_observation, 2_002)?;
+
+        let early = store.claim_garbage(4_999, 10)?;
+        assert_eq!(early.report.claimed, 0);
+        assert!(early.leases.is_empty());
+        let due = store.claim_garbage(5_000, 10)?;
+        assert_eq!(due.report.claimed, 1);
+        assert_eq!(due.report.pruned_read_retentions, 1);
+        assert_eq!(due.leases[0].generation, first.generation);
+        store.acknowledge_garbage(&due.leases[0])?;
+        Ok(())
+    }
+
+    #[test]
+    fn schema_v2_catalog_migrates_digest_to_optional_and_keeps_publication()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let scope = scope("tenant_v2", "project_v2")?;
+        let path = ArtifactPath::try_from("/sessions/v2/result.bin")?;
+        let published = {
+            let mut store = LocalArtifactStore::open(directory.path())?;
+            let reservation =
+                store.reserve(reserve_request(scope.clone(), path.clone(), None, 1_000))?;
+            let observation = store.upload(&reservation, b"v2-body", 1_001)?;
+            store.publish(&reservation, &observation, 1_002)?
+        };
+        let database = directory.path().join("catalog.sqlite");
+        let connection = Connection::open(&database)?;
+        connection.execute_batch(
+            "BEGIN IMMEDIATE;
+             DROP TABLE artifact_read_retentions;
+             ALTER TABLE artifact_paths RENAME TO artifact_paths_v3;
+             CREATE TABLE artifact_paths (
+                tenant_id TEXT NOT NULL,
+                project_id TEXT NOT NULL,
+                logical_path TEXT NOT NULL,
+                artifact_id TEXT NOT NULL,
+                revision INTEGER NOT NULL CHECK (revision > 0),
+                mutation_token TEXT NOT NULL,
+                generation TEXT NOT NULL,
+                object_key TEXT NOT NULL,
+                size_bytes INTEGER NOT NULL CHECK (size_bytes >= 0),
+                etag TEXT NOT NULL,
+                version TEXT,
+                digest TEXT NOT NULL,
+                published_at_ms INTEGER NOT NULL,
+                PRIMARY KEY (tenant_id, project_id, logical_path)
+             ) STRICT;
+             INSERT INTO artifact_paths SELECT * FROM artifact_paths_v3;
+             DROP TABLE artifact_paths_v3;
+             PRAGMA user_version = 2;
+             COMMIT;",
+        )?;
+        drop(connection);
+
+        let reopened = LocalArtifactStore::open(directory.path())?;
+        assert_eq!(reopened.get(&scope, &path)?, Some(published));
+        let version: i64 = reopened
+            .connection
+            .pragma_query_value(None, "user_version", |row| row.get(0))?;
+        assert_eq!(version, SCHEMA_VERSION);
+        let digest_not_null: i64 = reopened.connection.query_row(
+            "SELECT \"notnull\" FROM pragma_table_info('artifact_paths') WHERE name = 'digest'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(digest_not_null, 0);
+        let identity: String = reopened.connection.query_row(
+            "SELECT value FROM artifact_repository_meta WHERE key = 'body_store_identity'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(identity, LOCAL_BODY_STORE_IDENTITY);
+        Ok(())
+    }
+
+    #[test]
+    fn body_store_identity_binds_once_and_rejects_adapter_changes()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let mut store = LocalArtifactStore::open(directory.path())?;
+        store.bind_body_store(LOCAL_BODY_STORE_IDENTITY)?;
+        store.bind_body_store(LOCAL_BODY_STORE_IDENTITY)?;
+        assert!(matches!(
+            store.bind_body_store(
+                "s3:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            ),
+            Err(ArtifactStoreError::BodyStoreMismatch)
+        ));
+        drop(store);
+
+        let mut reopened = LocalArtifactStore::open(directory.path())?;
+        assert!(matches!(
+            reopened.bind_body_store(
+                "s3:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            ),
+            Err(ArtifactStoreError::BodyStoreMismatch)
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn populated_unidentified_catalog_fails_closed() -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let mut store = LocalArtifactStore::open(directory.path())?;
+        store.reserve(reserve_request(
+            scope("tenant_unbound", "project_unbound")?,
+            ArtifactPath::try_from("/sessions/unbound/result.bin")?,
+            None,
+            1_000,
+        ))?;
+        assert!(matches!(
+            store.bind_body_store(LOCAL_BODY_STORE_IDENTITY),
+            Err(ArtifactStoreError::BodyStoreIdentityMissing)
+        ));
         Ok(())
     }
 

@@ -44,6 +44,7 @@ cargo test -p aidememo-core --features semantic
 cargo test -p aidememo-cli --bin aidememo
 cargo test -p aidememo-domain -p aidememo-service -p aidememo-store-local -p aidememo-server -p aidememo-client -p aidememo-artifacts
 cargo test -p aidememo-artifacts --features s3
+cargo test -p aidememo-server --features s3
 ./scripts/ci-local.sh lint
 ./scripts/ci-local.sh demo               # first-run workflow memory smoke
 ./scripts/ci-local.sh test
@@ -510,9 +511,10 @@ crates/aidememo-cli/src/
   return/status plus bearer-bound identity inspection. Mailbox actor identity is
   always derived from authentication. Named CLI and installed stdio MCP profiles
   support the connected handoff round trip; the server does not yet provide
-  heartbeat, search, HTTP MCP gateway profiles, retrieval indexing, or hosted
-  S3/R2 artifact transfer. Its local artifact routes are authenticated and
-  enforce bounded upload, trusted observation, CAS publication, and exact reads.
+  heartbeat, search, HTTP MCP gateway profiles, retrieval indexing, multipart
+  artifact transfer, or live-provider conformance. Its local and feature-gated
+  S3 artifact routes are authenticated and enforce bounded grants, trusted
+  observation, CAS publication, durable read retention, and exact-generation GC.
 - `aidememo-client` uses `<store>.replica.sqlite` as a separate exact-read
   cache. It bootstraps from one atomic current-state snapshot, validates
   scope/epoch, applies revision-pinned change batches and cursor advancement in
@@ -521,13 +523,20 @@ crates/aidememo-cli/src/
   open, migrate, or reinterpret the embedded `aidememo-core` store.
 - `aidememo-artifacts` keeps its SQLite path catalog and immutable `objects/`
   bodies under a separate root. Publication requires the current path token,
-  a live reservation, and server-observed size/SHA-256. Logical paths never
+  a live reservation, and a trusted body observation; local publication also
+  requires server-observed SHA-256. Logical paths never
   become filesystem paths. Replacement, abort, and expired reservations enqueue
   unreachable generations for a leased, retrying, idempotent GC pass. The 64 MiB
-  direct-upload limit is a bounded local profile, not the future S3/R2 streaming
-  contract. With the `s3` feature it can sign conditional single-`PUT` and exact
+  direct-upload limit is a bounded local profile; the feature-gated hosted path
+  currently uses a portable 5 GB single-`PUT` bound. With the `s3` feature it can
+  sign conditional single-`PUT` and exact
   retained GET capabilities and perform trusted HEAD/read/delete operations for
-  AWS S3, R2, or MinIO; this adapter is not yet connected to server metadata or GC.
+  AWS S3, R2, or MinIO. The `aidememo-server/s3` feature connects it to authenticated
+  upload/download grants, trusted publication, durable read retention, and exact-generation
+  GC; live provider conformance and multipart transfer remain open. Each catalog
+  is durably pinned to the exact local layout or credential-free digest of its
+  S3 bucket/prefix/endpoint/region/addressing configuration, and startup rejects
+  accidental backend reuse.
 - Typed handoff return must match the canonical session, inherited `source_id`,
   authenticated receiving actor, active `claim_id`, and result fact. The
   receiver must be an active writable project member.

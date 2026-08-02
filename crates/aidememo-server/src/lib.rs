@@ -9,8 +9,11 @@ mod artifact;
 mod product;
 
 use aidememo_artifacts::{
-    ArtifactStoreError, GarbageCollectionReport, LocalArtifactStore, MAX_DIRECT_UPLOAD_BYTES,
+    ArtifactStoreError, GarbageCollectionReport, LOCAL_BODY_STORE_IDENTITY, LocalArtifactStore,
+    MAX_DIRECT_UPLOAD_BYTES,
 };
+#[cfg(feature = "s3")]
+use aidememo_artifacts::{GarbageClaim, S3BodyStore};
 use aidememo_domain::{
     CanonicalResource, ChangeCursor, ChangeEntry, ChangeOperation, CommandEnvelope, CommandId,
     DomainError, ErrorCode, MaterializedChangeBatch, OperationName, ProjectEpoch, ProjectId,
@@ -42,7 +45,18 @@ const EXTENSION_RESOURCE_PREFIX: &str = "custom.";
 #[derive(Clone)]
 pub struct ServerState {
     service: Arc<Mutex<CommandService<SqliteCommandStore>>>,
-    artifacts: Option<Arc<Mutex<LocalArtifactStore>>>,
+    artifacts: Option<Arc<ArtifactState>>,
+}
+
+pub(crate) struct ArtifactState {
+    pub(crate) catalog: Mutex<LocalArtifactStore>,
+    pub(crate) bodies: ArtifactBodies,
+}
+
+pub(crate) enum ArtifactBodies {
+    Local,
+    #[cfg(feature = "s3")]
+    S3(S3BodyStore),
 }
 
 impl ServerState {
@@ -56,12 +70,44 @@ impl ServerState {
     }
 
     /// Wrap the command ledger together with an isolated local artifact repository.
-    #[must_use]
-    pub fn with_artifacts(store: SqliteCommandStore, artifacts: LocalArtifactStore) -> Self {
-        Self {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the catalog is already bound to another body store.
+    pub fn with_artifacts(
+        store: SqliteCommandStore,
+        mut artifacts: LocalArtifactStore,
+    ) -> Result<Self, ArtifactStoreError> {
+        artifacts.bind_body_store(LOCAL_BODY_STORE_IDENTITY)?;
+        Ok(Self {
             service: Arc::new(Mutex::new(CommandService::new(store))),
-            artifacts: Some(Arc::new(Mutex::new(artifacts))),
-        }
+            artifacts: Some(Arc::new(ArtifactState {
+                catalog: Mutex::new(artifacts),
+                bodies: ArtifactBodies::Local,
+            })),
+        })
+    }
+
+    /// Wrap the command ledger and artifact catalog with an S3-compatible body store.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the catalog is already bound to another S3
+    /// configuration or to the local body layout.
+    #[cfg(feature = "s3")]
+    pub fn with_s3_artifacts(
+        store: SqliteCommandStore,
+        mut catalog: LocalArtifactStore,
+        bodies: S3BodyStore,
+    ) -> Result<Self, ArtifactStoreError> {
+        catalog.bind_body_store(&bodies.catalog_identity()?)?;
+        Ok(Self {
+            service: Arc::new(Mutex::new(CommandService::new(store))),
+            artifacts: Some(Arc::new(ArtifactState {
+                catalog: Mutex::new(catalog),
+                bodies: ArtifactBodies::S3(bodies),
+            })),
+        })
     }
 
     /// Run one bounded artifact garbage-collection pass when artifacts are configured.
@@ -77,8 +123,37 @@ impl ServerState {
         let Some(artifacts) = &self.artifacts else {
             return Ok(None);
         };
-        let mut artifacts = artifacts.lock().await;
-        artifacts.drain_garbage(now_ms, limit).map(Some)
+        match &artifacts.bodies {
+            ArtifactBodies::Local => {
+                let mut catalog = artifacts.catalog.lock().await;
+                catalog.drain_garbage(now_ms, limit).map(Some)
+            }
+            #[cfg(feature = "s3")]
+            ArtifactBodies::S3(bodies) => {
+                let GarbageClaim { mut report, leases } = {
+                    let mut catalog = artifacts.catalog.lock().await;
+                    catalog.claim_garbage(now_ms, limit)?
+                };
+                for lease in leases {
+                    match bodies
+                        .delete_generation(&lease.scope, &lease.generation)
+                        .await
+                    {
+                        Ok(()) => {
+                            let mut catalog = artifacts.catalog.lock().await;
+                            catalog.acknowledge_garbage(&lease)?;
+                            report.deleted += 1;
+                        }
+                        Err(error) => {
+                            let mut catalog = artifacts.catalog.lock().await;
+                            catalog.fail_garbage(&lease, now_ms, &error.to_string())?;
+                            report.failed += 1;
+                        }
+                    }
+                }
+                Ok(Some(report))
+            }
+        }
     }
 }
 

@@ -236,6 +236,8 @@ dependencies = [
  "aidememo-domain",
  "aidememo-service",
  "aidememo-store-local",
+ "aws-credential-types",
+ "aws-sdk-s3",
  "axum",
  "clap",
  "http-body-util",

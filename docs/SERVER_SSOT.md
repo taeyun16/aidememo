@@ -252,12 +252,22 @@ control-plane shape while replacing the bounded body transfer:
 
 | Route | Semantics |
 |---|---|
-| `POST /v1/projects/{project}/artifact-reservations` | Writer reserves a logical path and receives expiry plus either a bounded proxy target, a presigned single `PUT`, or multipart instructions. |
+| `POST /v1/projects/{project}/artifact-reservations` | Writer reserves a logical path and receives the opaque generation token and expiry. |
 | `PUT /v1/projects/{project}/artifact-reservations/{reservation}/body` | Single-node/local bounded upload; hosted large bodies do not traverse this route. |
-| `POST /v1/projects/{project}/artifact-reservations/{reservation}/publish` | Coordinator obtains a trusted body-store observation, rechecks the path token and verification lease, then publishes metadata atomically. |
+| `POST /v1/projects/{project}/artifact-reservations/{reservation}/upload-grants` | S3-feature writer receives a conditional, exact-length/type single-`PUT` capability that cannot outlive the reservation. |
+| `POST /v1/projects/{project}/artifact-reservations/{reservation}/publish` | Coordinator obtains a trusted local observation or S3 `HEAD`, rechecks the path token and reservation, then publishes metadata atomically. Hosted publication includes expected `size_bytes`. |
 | `DELETE /v1/projects/{project}/artifact-reservations/{reservation}` | Abort and durably schedule the generation for later deletion without changing the last published path. |
 | `GET /v1/projects/{project}/artifacts/resolve?path=...` | Resolve current metadata under reader membership. |
-| `POST /v1/projects/{project}/artifacts/{artifact}/downloads` | Return the bounded local body for an exact revision. A future signed hosted grant also extends durable read retention. |
+| `POST /v1/projects/{project}/artifacts/{artifact}/downloads` | Return the bounded local body for an exact revision. |
+| `POST /v1/projects/{project}/artifacts/{artifact}/download-grants` | S3-feature reader durably retains the exact current generation before receiving an ETag/version-bound GET capability. |
+
+The catalog also persists a credential-free identity digest for its immutable
+body adapter. Local storage is pinned to its repository layout; S3-compatible
+storage is pinned to the exact bucket, prefix, endpoint, signing region, and
+addressing mode. Server startup rejects a mismatch before serving traffic.
+Changing any of those values therefore requires an explicit artifact migration
+or a separate empty `--artifact-root`; it is never interpreted as an in-place
+backend switch.
 
 The bearer binding supplies tenant and actor identity on every control-plane
 call. Readers may resolve/download; writers may reserve/upload/publish/abort.
@@ -279,8 +289,9 @@ R2's direct Workers and S3 APIs are strongly consistent for object writes,
 reads, deletes, and listings. A cached custom-domain response is not part of
 that guarantee and must not be used for publish verification. Hosted upload
 verification therefore uses the binding or S3 API directly. Single `PUT` is
-the first portable hosted slice; multipart is selected above a configured
-threshold and only trusted completion may create the observed generation.
+the first portable hosted slice and is capped at the common 5 GB S3/R2 bound.
+Multipart remains a separate future path; only trusted completion may create
+its observed generation.
 
 As checked on 2026-08-02, the official
 [R2 S3 compatibility table](https://developers.cloudflare.com/r2/api/s3/api/)
@@ -338,12 +349,12 @@ The implementation gate is failure-oriented:
 - the same lifecycle suite against local filesystem, R2, AWS S3, and the
   selected on-premises S3-compatible implementation.
 
-The local authenticated HTTP plus durable-GC slice and feature-gated
-conditional single-`PUT` S3/R2 adapter are implemented. The adapter is still a
-library boundary: server metadata publication, durable read-retention/GC
-wiring, and live R2/MinIO conformance remain open. That wiring comes next, then
-multipart/resume, and only then the optional project Durable Object
-coordinator.
+The local authenticated HTTP plus durable-GC slice and feature-gated S3/R2
+server wiring are implemented. The hosted path issues writer-only upload
+grants, publishes only a trusted `HEAD`, persists read retention before signing
+a reader GET, and drains the same durable GC intents through exact-generation
+provider deletion. Live R2/MinIO conformance remains open, followed by
+multipart/resume and only then the optional project Durable Object coordinator.
 
 ## Search consistency
 
@@ -367,10 +378,11 @@ It must not silently claim read-your-writes when the index is behind.
 
 ### Single-node server
 
-The first executable server profile keeps SQLite and local artifacts, binds one
-durable data directory, and supports exactly one application replica. It proves
-the remote identity, command, change-feed, and local-cache contracts without
-claiming high availability.
+The first executable server profile keeps SQLite metadata and defaults to local
+artifact bodies. A feature-gated process may instead keep the same catalog with
+S3/R2/MinIO bodies. It supports exactly one application replica and proves the
+remote identity, command, change-feed, artifact-lifecycle, and local-cache
+contracts without claiming high availability.
 
 The bounded foundation is now executable from the workspace. Generate a
 high-entropy bearer token (not a password), keep the token file private, and
@@ -393,7 +405,25 @@ cargo run -p aidememo-server -- serve \
 ```
 
 If `--artifact-root` is omitted, the server uses
-`<database>.artifacts`.
+`<database>.artifacts`. For an R2 body store, keep that path as the separate
+metadata/GC catalog and provide credentials through the standard AWS provider
+chain rather than command-line arguments:
+
+```bash
+AWS_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID" \
+AWS_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY" \
+cargo run -p aidememo-server --features s3 -- serve \
+  --database /data/aidememo-ssot.sqlite \
+  --artifact-root /data/aidememo-artifact-catalog \
+  --artifact-backend s3 \
+  --artifact-s3-bucket aidememo \
+  --artifact-s3-region auto \
+  --artifact-s3-endpoint https://ACCOUNT_ID.r2.cloudflarestorage.com
+```
+
+Use `--artifact-s3-force-path-style` when the selected S3-compatible provider,
+such as a local MinIO deployment, requires path-style addressing. Capability
+URLs are bearer credentials and must not be logged.
 
 Bootstrap stores only the SHA-256 token digest and reuses an existing project
 epoch on retry. Existing labels and timestamps are retained; conflicting epoch,
@@ -422,10 +452,12 @@ The current HTTP surface is intentionally small:
 | `GET .../handoffs/{id}` | Sender/receiver-only typed status |
 | `POST /v1/projects/{project}/artifact-reservations` | Writer-only idempotent logical-path reservation |
 | `PUT .../artifact-reservations/{reservation}/body` | Writer-only direct local upload, capped at 64 MiB |
-| `POST .../artifact-reservations/{reservation}/publish` | Re-observe bytes and atomically publish the reserved generation |
+| `POST .../artifact-reservations/{reservation}/upload-grants` | S3-feature writer-only conditional single-`PUT` capability |
+| `POST .../artifact-reservations/{reservation}/publish` | Re-observe local bytes or trusted S3 `HEAD` and atomically publish the reserved generation |
 | `DELETE .../artifact-reservations/{reservation}` | Abort without replacing the current path and queue eventual deletion |
 | `GET /v1/projects/{project}/artifacts/resolve?path=...` | Reader-visible current artifact metadata |
 | `POST .../artifacts/{artifact}/downloads` | Reader-visible exact-revision local body download |
+| `POST .../artifacts/{artifact}/download-grants` | S3-feature reader-only retained exact-generation GET capability |
 
 Create requests use `{"command_id":"...","payload":{...}}`. Transitions also
 carry the revision observed by the client:
@@ -544,7 +576,7 @@ change batch atomically, and requires explicit reset on scope or epoch changes.
 It does not open or reinterpret the embedded search store.
 `aidememo-artifacts` keeps a separate SQLite logical-path catalog and immutable
 generation files. It requires the current published mutation token for
-replacement, rejects live competing reservations, re-hashes bytes before
+replacement, rejects live competing reservations, re-hashes bytes before local
 publication, preserves the prior version on abort, and never resolves a logical
 artifact path as an OS path. Replacement, abort, and expired reservations write
 durable exact-generation GC intents; a leased bounded worker rechecks liveness,
@@ -552,9 +584,11 @@ deletes idempotently, and backs off failures. Its direct local upload is bounded
 to 64 MiB. The `s3` feature now provides validated provider configuration,
 credential-chain loading, conditional presigned single-`PUT`, trusted `HEAD`,
 read-retention-bounded exact GET grants, bounded exact reads, and immutable-key
-delete. Presigned capability values redact their URL from `Debug`. Server
-metadata/GC wiring, live R2/MinIO conformance, and multipart transfer remain
-open.
+delete. Presigned capability values redact their URL from `Debug`. The server
+feature connects those capabilities to authenticated writer/reader routes,
+permits a nullable digest only for trusted hosted observations, persists read
+retention before signing GET, and runs provider deletion from the durable GC
+queue. Live R2/MinIO conformance and multipart transfer remain open.
 
 The backend-neutral `conformance::run` fixture checks exact idempotent receipt
 replay, command-ID conflicts, stale revision rejection, monotonic project
@@ -570,11 +604,12 @@ also stores two bearer profiles for one URL and completes both CLI and installed
 stdio MCP `codex-p1 -> codex-p2` flows through
 send/inbox/accept/return/outbox, then bootstraps the exact-read replica, reads a
 completed handoff after the server stops, and exercises guarded reset. No
-PostgreSQL, Durable Object, S3 artifact server wiring, search adapter, HTTP MCP
-gateway profile, retrieval projection, or offline outbox is wired yet. Artifact HTTP
-tests cover reader/writer authorization, exact reservation and publication
-replay, changed request reuse, revision-pinned download, replacement, abort,
-expiry, and durable garbage collection.
+PostgreSQL, Durable Object, search adapter, HTTP MCP gateway profile, retrieval
+projection, or offline outbox is wired yet. Artifact HTTP tests cover
+reader/writer authorization, exact reservation and publication replay, changed
+request reuse, revision-pinned local download, hosted upload/download grants,
+durable read retention, replacement, abort, expiry, and local/S3 garbage
+collection through a mock provider.
 All six
 foundation crates are `publish = false` until a server-facing public API and
 release order are approved, so they do not silently enter the existing v0.1.0
@@ -632,16 +667,17 @@ instead of being reconstructed from newer state. Combined domain and HTTP tests 
 source/session evidence, read-only mutation, non-participant reads, and mailbox
 actor-filter injection. Indexed inbox/outbox queries support completed/source
 filters and exclusive sequence pagination; schema v2 migration backfill is
-tested. Artifact reservations and publication are retry-safe, direct upload is
+tested. Artifact reservations and publication are retry-safe, local direct upload is
 authorized before its body is read, exact-revision download is reader-visible,
-and replacement/abort/expiry feed the leased durable GC worker. HTTP MCP gateway
+and the S3 feature adds authenticated direct grants plus durable retention and
+provider GC. Replacement/abort/expiry feed the same leased worker. HTTP MCP gateway
 wiring, retrieval indexing, and offline write outbox remain open, so the full
 Phase 1 exit gate is not yet closed.
 
 ### Phase 2 — portable production backend
 
-- Add PostgreSQL and wire the S3-compatible artifact adapter into metadata,
-  read-retention, and GC orchestration.
+- Add PostgreSQL and run live R2/AWS S3/on-premises conformance for the wired
+  S3-compatible artifact lifecycle.
 - Add transactional outbox indexers and sequence watermarks.
 - Add logical backup/restore and tenant export/delete drills.
 
@@ -690,6 +726,7 @@ and complete tenant export/import are reproducible from documented commands.
 - [Cloudflare R2 S3 compatibility](https://developers.cloudflare.com/r2/api/s3/api/)
 - [Cloudflare R2 consistency](https://developers.cloudflare.com/r2/reference/consistency/)
 - [Cloudflare R2 presigned URLs](https://developers.cloudflare.com/r2/api/s3/presigned-urls/)
+- [Cloudflare R2 limits](https://developers.cloudflare.com/r2/platform/limits/)
 - [Amazon S3 conditional writes](https://docs.aws.amazon.com/AmazonS3/latest/userguide/conditional-writes.html)
 - [Amazon S3 multipart checksums](https://docs.aws.amazon.com/AmazonS3/latest/userguide/checking-object-integrity-upload.html)
 - [Cloudflare Hyperdrive](https://developers.cloudflare.com/hyperdrive/)

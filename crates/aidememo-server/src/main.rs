@@ -1,3 +1,6 @@
+use aidememo_artifacts::LocalArtifactStore;
+#[cfg(feature = "s3")]
+use aidememo_artifacts::{S3BodyStore, S3BodyStoreConfig};
 use aidememo_domain::{
     ActorId, ActorKind, ActorRecord, MembershipRole, MembershipStatus, ProjectEpoch, ProjectId,
     ProjectMembership, ProjectRecord, ProjectScope, RecordStatus, Revision, TenantId, TenantRecord,
@@ -69,6 +72,24 @@ struct ServeArgs {
     /// Defaults to `<database>.artifacts`.
     #[arg(long)]
     artifact_root: Option<PathBuf>,
+    /// Immutable artifact body backend.
+    #[arg(long, value_enum, default_value_t = ArtifactBackendArg::Local)]
+    artifact_backend: ArtifactBackendArg,
+    /// S3-compatible bucket. Required when `--artifact-backend s3` is selected.
+    #[arg(long)]
+    artifact_s3_bucket: Option<String>,
+    /// Adapter-owned S3 key prefix.
+    #[arg(long, default_value = "aidememo/v1")]
+    artifact_s3_prefix: String,
+    /// S3 signing region (`auto` for Cloudflare R2).
+    #[arg(long, default_value = "auto")]
+    artifact_s3_region: String,
+    /// Optional S3-compatible endpoint, such as an R2 account endpoint.
+    #[arg(long)]
+    artifact_s3_endpoint: Option<String>,
+    /// Force path-style bucket addressing for providers such as local MinIO.
+    #[arg(long)]
+    artifact_s3_force_path_style: bool,
     /// HTTP bind address. Loopback is required unless explicitly overridden.
     #[arg(long, default_value = "127.0.0.1:3030")]
     bind: SocketAddr,
@@ -101,6 +122,12 @@ enum ActorKindArg {
     Human,
     Agent,
     Service,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum ArtifactBackendArg {
+    Local,
+    S3,
 }
 
 impl From<ActorKindArg> for ActorKind {
@@ -195,21 +222,49 @@ fn bootstrap(args: BootstrapArgs) -> Result<(), Box<dyn Error>> {
 }
 
 async fn serve(args: ServeArgs) -> Result<(), Box<dyn Error>> {
-    if !args.bind.ip().is_loopback() && !args.allow_insecure_http {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::PermissionDenied,
-            "non-loopback plaintext HTTP requires --allow-insecure-http; prefer a TLS ingress",
-        )
-        .into());
-    }
+    validate_serve_args(&args)?;
     let store = SqliteCommandStore::open(&args.database)?;
     let artifact_root = args
         .artifact_root
         .unwrap_or_else(|| default_artifact_root(&args.database));
     let artifacts = LocalArtifactStore::open(&artifact_root)?;
-    let state = ServerState::with_artifacts(store, artifacts);
+    let state = match args.artifact_backend {
+        ArtifactBackendArg::Local => ServerState::with_artifacts(store, artifacts)?,
+        ArtifactBackendArg::S3 => {
+            #[cfg(feature = "s3")]
+            {
+                let bucket = args.artifact_s3_bucket.ok_or_else(|| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        "--artifact-s3-bucket is required for --artifact-backend s3",
+                    )
+                })?;
+                let config = S3BodyStoreConfig::new(
+                    bucket,
+                    args.artifact_s3_prefix,
+                    args.artifact_s3_region,
+                    args.artifact_s3_endpoint,
+                    args.artifact_s3_force_path_style,
+                )?;
+                let bodies = S3BodyStore::from_environment(config).await;
+                ServerState::with_s3_artifacts(store, artifacts, bodies)?
+            }
+            #[cfg(not(feature = "s3"))]
+            {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Unsupported,
+                    "S3 artifact bodies require an aidememo-server build with --features s3",
+                )
+                .into());
+            }
+        }
+    };
     let listener = tokio::net::TcpListener::bind(args.bind).await?;
-    info!(address = %args.bind, artifact_root = %artifact_root.display(), "AideMemo single-node SSOT foundation listening");
+    let artifact_backend = match args.artifact_backend {
+        ArtifactBackendArg::Local => "local",
+        ArtifactBackendArg::S3 => "s3",
+    };
+    info!(address = %args.bind, artifact_root = %artifact_root.display(), artifact_backend, "AideMemo single-node SSOT foundation listening");
     let gc_state = state.clone();
     let gc_task = tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
@@ -227,7 +282,8 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn Error>> {
                 Ok(Some(report))
                     if report.claimed > 0
                         || report.expired_reservations > 0
-                        || report.pruned_receipts > 0 =>
+                        || report.pruned_receipts > 0
+                        || report.pruned_read_retentions > 0 =>
                 {
                     tracing::info!(
                         expired_reservations = report.expired_reservations,
@@ -235,6 +291,7 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn Error>> {
                         deleted = report.deleted,
                         failed = report.failed,
                         pruned_receipts = report.pruned_receipts,
+                        pruned_read_retentions = report.pruned_read_retentions,
                         "artifact garbage collection pass completed"
                     );
                 }
@@ -251,6 +308,43 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn Error>> {
     gc_task.abort();
     let _ = gc_task.await;
     result?;
+    Ok(())
+}
+
+fn validate_serve_args(args: &ServeArgs) -> Result<(), std::io::Error> {
+    if !args.bind.ip().is_loopback() && !args.allow_insecure_http {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "non-loopback plaintext HTTP requires --allow-insecure-http; prefer a TLS ingress",
+        ));
+    }
+    match args.artifact_backend {
+        ArtifactBackendArg::Local => {
+            if args.artifact_s3_bucket.is_some()
+                || args.artifact_s3_endpoint.is_some()
+                || args.artifact_s3_force_path_style
+            {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "S3 artifact options require --artifact-backend s3",
+                ));
+            }
+        }
+        ArtifactBackendArg::S3 => {
+            #[cfg(not(feature = "s3"))]
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "S3 artifact bodies require an aidememo-server build with --features s3",
+            ));
+            #[cfg(feature = "s3")]
+            if args.artifact_s3_bucket.is_none() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "--artifact-s3-bucket is required for --artifact-backend s3",
+                ));
+            }
+        }
+    }
     Ok(())
 }
 
@@ -306,4 +400,58 @@ fn unix_time_ms() -> Result<i64, Box<dyn Error>> {
     let duration = SystemTime::now().duration_since(UNIX_EPOCH)?;
     Ok(i64::try_from(duration.as_millis())?)
 }
-use aidememo_artifacts::LocalArtifactStore;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn serve_args(artifact_backend: ArtifactBackendArg) -> ServeArgs {
+        ServeArgs {
+            database: PathBuf::from("server.sqlite"),
+            artifact_root: None,
+            artifact_backend,
+            artifact_s3_bucket: None,
+            artifact_s3_prefix: "aidememo/v1".to_owned(),
+            artifact_s3_region: "auto".to_owned(),
+            artifact_s3_endpoint: None,
+            artifact_s3_force_path_style: false,
+            bind: SocketAddr::from(([127, 0, 0, 1], 3030)),
+            allow_insecure_http: false,
+        }
+    }
+
+    #[test]
+    fn local_backend_rejects_s3_only_options() -> Result<(), Box<dyn Error>> {
+        let mut args = serve_args(ArtifactBackendArg::Local);
+        args.artifact_s3_bucket = Some("artifacts".to_owned());
+        let Err(error) = validate_serve_args(&args) else {
+            return Err(std::io::Error::other("S3 option was accepted by local backend").into());
+        };
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+        Ok(())
+    }
+
+    #[cfg(not(feature = "s3"))]
+    #[test]
+    fn s3_backend_requires_feature_before_server_state_is_opened() -> Result<(), Box<dyn Error>> {
+        let args = serve_args(ArtifactBackendArg::S3);
+        let Err(error) = validate_serve_args(&args) else {
+            return Err(
+                std::io::Error::other("S3 backend was accepted without its feature").into(),
+            );
+        };
+        assert_eq!(error.kind(), std::io::ErrorKind::Unsupported);
+        Ok(())
+    }
+
+    #[cfg(feature = "s3")]
+    #[test]
+    fn s3_backend_requires_bucket_before_server_state_is_opened() -> Result<(), Box<dyn Error>> {
+        let args = serve_args(ArtifactBackendArg::S3);
+        let Err(error) = validate_serve_args(&args) else {
+            return Err(std::io::Error::other("S3 backend was accepted without a bucket").into());
+        };
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+        Ok(())
+    }
+}

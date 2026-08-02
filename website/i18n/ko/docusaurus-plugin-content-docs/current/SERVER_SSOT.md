@@ -242,12 +242,21 @@ control-plane 형태를 유지합니다.
 
 | Route | 의미론 |
 |---|---|
-| `POST /v1/projects/{project}/artifact-reservations` | Writer가 논리 path를 reserve하고 만료 시간과 제한된 proxy target, presigned single `PUT` 또는 multipart instruction 중 하나를 받습니다. |
+| `POST /v1/projects/{project}/artifact-reservations` | Writer가 논리 path를 reserve하고 opaque generation token과 만료 시간을 받습니다. |
 | `PUT /v1/projects/{project}/artifact-reservations/{reservation}/body` | 단일 노드/local 제한 업로드입니다. Hosted large body는 이 route를 통과하지 않습니다. |
-| `POST /v1/projects/{project}/artifact-reservations/{reservation}/publish` | Coordinator가 신뢰된 body-store observation을 얻고 path token과 verification lease를 다시 확인한 뒤 metadata를 원자적으로 publish합니다. |
+| `POST /v1/projects/{project}/artifact-reservations/{reservation}/upload-grants` | S3 feature의 writer가 reservation보다 오래 지속되지 않는 conditional, exact-length/type single-`PUT` capability를 받습니다. |
+| `POST /v1/projects/{project}/artifact-reservations/{reservation}/publish` | Coordinator가 신뢰된 local observation 또는 S3 `HEAD`를 얻고 path token과 reservation을 다시 확인한 뒤 metadata를 원자적으로 publish합니다. Hosted publication에는 예상 `size_bytes`가 포함됩니다. |
 | `DELETE /v1/projects/{project}/artifact-reservations/{reservation}` | 마지막 published path를 바꾸지 않고 abort하고 generation의 추후 삭제를 durable하게 예약합니다. |
 | `GET /v1/projects/{project}/artifacts/resolve?path=...` | Reader membership으로 현재 metadata를 resolve합니다. |
-| `POST /v1/projects/{project}/artifacts/{artifact}/downloads` | 정확한 revision의 제한된 local body를 반환합니다. 향후 signed hosted grant는 durable read retention도 연장합니다. |
+| `POST /v1/projects/{project}/artifacts/{artifact}/downloads` | 정확한 revision의 제한된 local body를 반환합니다. |
+| `POST /v1/projects/{project}/artifacts/{artifact}/download-grants` | S3 feature의 reader에게 ETag/version 고정 GET capability를 주기 전에 정확한 현재 generation을 durable하게 retain합니다. |
+
+Catalog는 immutable body adapter의 credential-free identity digest도 저장합니다. Local
+storage는 repository layout에 고정되고 S3-compatible storage는 정확한 bucket, prefix,
+endpoint, signing region, addressing mode에 고정됩니다. 서버는 traffic을 받기 전에
+불일치를 거부합니다. 따라서 이 값 중 하나를 바꾸려면 명시적인 artifact migration
+또는 비어 있는 별도 `--artifact-root`가 필요하며, in-place backend switch로 해석하지
+않습니다.
 
 모든 control-plane call에서 bearer binding이 tenant와 actor identity를 제공합니다.
 Reader는 resolve/download, writer는 reserve/upload/publish/abort할 수 있습니다. Upload
@@ -267,8 +276,9 @@ compare-and-swap이 모두 필요합니다. 조건부 single 및 multipart compl
 R2의 직접 Workers 및 S3 API는 object write, read, delete, list에 strong consistency를
 제공합니다. Cache가 활성화된 custom-domain response는 이 보장에 포함되지 않으며
 publish 검증에 사용하면 안 됩니다. Hosted upload 검증은 binding 또는 S3 API를 직접
-사용합니다. Portable hosted 첫 slice는 single `PUT`이며 설정된 threshold보다 크면
-multipart를 선택하고 신뢰된 completion만 observed generation을 생성할 수 있습니다.
+사용합니다. Portable hosted 첫 slice는 single `PUT`이며 공통 S3/R2 5 GB 경계로
+제한됩니다. Multipart는 별도 향후 경로이고 신뢰된 completion만 observed generation을
+생성할 수 있습니다.
 
 2026-08-02에 확인한 공식
 [R2 S3 compatibility table](https://developers.cloudflare.com/r2/api/s3/api/)은
@@ -319,11 +329,12 @@ authorization, CAS, retry, GC를 중복 구현하고 Workers, Node 또는 Kubern
 - 영구 실패 delete에서 bounded batching/backoff
 - Local filesystem, R2, AWS S3, 선택한 on-premises S3-compatible 구현에 같은 lifecycle suite 적용
 
-Local authenticated HTTP와 durable GC 구간, feature-gated conditional single-`PUT`
-S3/R2 adapter는 구현됐습니다. Adapter는 아직 library 경계이며 server metadata
-publication, durable read-retention/GC wiring, live R2/MinIO conformance는 열려
-있습니다. 그 wiring을 먼저 하고 multipart/resume, 마지막으로 선택형 project
-Durable Object coordinator를 추가합니다.
+Local authenticated HTTP와 durable GC 구간, feature-gated S3/R2 server wiring은
+구현됐습니다. Hosted 경로는 writer-only upload grant를 발급하고 신뢰된 `HEAD`만
+publish하며, reader GET을 signing하기 전에 read retention을 저장하고 같은 durable
+GC intent를 exact-generation provider delete로 처리합니다. Live R2/MinIO conformance가
+남아 있으며 이후 multipart/resume, 마지막으로 선택형 project Durable Object
+coordinator를 추가합니다.
 
 ## 검색 일관성
 
@@ -346,10 +357,11 @@ read-your-writes를 조용히 주장하면 안 됩니다.
 
 ### 단일 노드 서버
 
-첫 실행 가능한 server profile은 SQLite와 로컬 artifact를 유지하고 하나의
-durable data directory를 binding하며 애플리케이션 replica를 정확히 하나만
-지원합니다. 고가용성을 주장하지 않고 원격 identity, command, change feed,
-로컬 cache 계약을 검증합니다.
+첫 실행 가능한 server profile은 SQLite metadata를 유지하고 기본적으로 local
+artifact body를 사용합니다. Feature-gated process는 같은 catalog에 S3/R2/MinIO body를
+대신 연결할 수 있습니다. 애플리케이션 replica를 정확히 하나만 지원하며 고가용성을
+주장하지 않고 원격 identity, command, change feed, artifact lifecycle, local cache
+계약을 검증합니다.
 
 제한된 기반은 이제 workspace에서 실행할 수 있습니다. Password가 아닌 높은
 entropy의 bearer token을 생성하고 token file을 비공개로 유지한 뒤 활성 membership
@@ -371,7 +383,25 @@ cargo run -p aidememo-server -- serve \
   --artifact-root /data/aidememo-artifacts
 ```
 
-`--artifact-root`를 생략하면 서버는 `<database>.artifacts`를 사용합니다.
+`--artifact-root`를 생략하면 서버는 `<database>.artifacts`를 사용합니다. R2 body
+store에서도 이 경로는 별도 metadata/GC catalog로 유지하고 credential은 command-line
+argument가 아니라 표준 AWS provider chain으로 전달합니다.
+
+```bash
+AWS_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID" \
+AWS_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY" \
+cargo run -p aidememo-server --features s3 -- serve \
+  --database /data/aidememo-ssot.sqlite \
+  --artifact-root /data/aidememo-artifact-catalog \
+  --artifact-backend s3 \
+  --artifact-s3-bucket aidememo \
+  --artifact-s3-region auto \
+  --artifact-s3-endpoint https://ACCOUNT_ID.r2.cloudflarestorage.com
+```
+
+Local MinIO처럼 path-style addressing이 필요한 provider에서는
+`--artifact-s3-force-path-style`을 사용합니다. Capability URL은 bearer credential이므로
+log에 남기면 안 됩니다.
 
 Bootstrap은 SHA-256 token digest만 저장하고 재시도 시 기존 project epoch를
 재사용합니다. 처음 저장한 label과 timestamp를 유지하며 epoch, actor kind,
@@ -400,10 +430,12 @@ membership role, token 소유권 충돌은 fail closed로 처리합니다. 서�
 | `GET .../handoffs/{id}` | 송신자/수신자 전용 typed status |
 | `POST /v1/projects/{project}/artifact-reservations` | Writer 전용 idempotent logical-path reservation |
 | `PUT .../artifact-reservations/{reservation}/body` | Writer 전용 direct local upload, 최대 64 MiB |
-| `POST .../artifact-reservations/{reservation}/publish` | Byte를 다시 관찰하고 예약 generation을 원자적으로 publish |
+| `POST .../artifact-reservations/{reservation}/upload-grants` | S3 feature의 writer 전용 conditional single-`PUT` capability |
+| `POST .../artifact-reservations/{reservation}/publish` | Local byte 또는 신뢰된 S3 `HEAD`를 다시 관찰하고 예약 generation을 원자적으로 publish |
 | `DELETE .../artifact-reservations/{reservation}` | 현재 path를 교체하지 않고 abort한 뒤 eventual deletion queue 기록 |
 | `GET /v1/projects/{project}/artifacts/resolve?path=...` | Reader가 볼 수 있는 현재 artifact metadata |
 | `POST .../artifacts/{artifact}/downloads` | Reader가 볼 수 있는 exact-revision local body download |
+| `POST .../artifacts/{artifact}/download-grants` | S3 feature의 reader 전용 retained exact-generation GET capability |
 
 생성 요청은 `{"command_id":"...","payload":{...}}`를 사용합니다. 상태 전이는
 클라이언트가 관찰한 revision도 전달합니다.
@@ -516,7 +548,7 @@ batch를 원자적으로 적용합니다. Scope 또는 epoch가 바뀌면 명시
 요구하며 embedded search store를 열거나 재해석하지 않습니다.
 `aidememo-artifacts`는 별도 SQLite logical-path catalog와 immutable generation
 file을 유지합니다. Replacement에는 현재 published mutation token이 필요하고, live
-경쟁 reservation을 거부하며, publication 전에 byte를 다시 hash하고, abort 시 이전
+경쟁 reservation을 거부하며, local publication 전에 byte를 다시 hash하고, abort 시 이전
 version을 보존하며, logical artifact path를 OS path로 해석하지 않습니다.
 Replacement, abort, expired reservation은 durable exact-generation GC intent를 쓰고,
 leased bounded worker는 liveness를 다시 검사한 뒤 idempotent delete와 failure
@@ -524,7 +556,10 @@ backoff를 수행합니다. 직접 local upload는 64 MiB로 제한됩니다. `s
 credential-chain loading, conditional presigned single-`PUT`, trusted `HEAD`, read
 retention 범위의 exact GET grant, bounded exact read, immutable-key delete를
 제공합니다. Presigned capability의 `Debug` 출력에서는 URL을 redact합니다. Server
-metadata/GC wiring, live R2/MinIO conformance, multipart transfer는 아직 열려 있습니다.
+feature는 이 capability를 인증된 writer/reader route에 연결하고, trusted hosted
+observation에서만 nullable digest를 허용하며, GET signing 전에 read retention을
+저장하고 durable GC queue에서 provider delete를 실행합니다. Live R2/MinIO
+conformance와 multipart transfer는 아직 열려 있습니다.
 
 Backend 중립 `conformance::run` fixture는 정확한 idempotent receipt replay, command ID
 충돌, stale revision 거부, 단조 증가 project sequence, 삭제 tombstone, fail-closed
@@ -537,11 +572,12 @@ Hermes` typed handoff chain도 검사합니다. Binary 수준 test도 URL 하나
 profile 두 개를 저장하고 CLI와 설치된 stdio MCP 모두에서
 send/inbox/accept/return/outbox `codex-p1 -> codex-p2` 흐름을 완료한 뒤
 exact-read replica를 bootstrap하고 서버 종료 후 완료 handoff를 읽으며 guarded
-reset도 검사합니다. PostgreSQL, Durable Object, S3 artifact server wiring, search adapter,
-HTTP MCP gateway profile, retrieval projection, offline outbox는 아직 연결되지
-않았습니다. Artifact HTTP test는 reader/writer authorization, exact reservation과
-publication replay, 변경된 request reuse, revision-pinned download, replacement,
-abort, expiry, durable garbage collection을 검사합니다. 여섯 기반 crate는
+reset도 검사합니다. PostgreSQL, Durable Object, search adapter, HTTP MCP gateway
+profile, retrieval projection, offline outbox는 아직 연결되지 않았습니다. Artifact
+HTTP test는 reader/writer authorization, exact reservation과 publication replay,
+변경된 request reuse, revision-pinned local download, hosted upload/download grant,
+durable read retention, replacement, abort, expiry, mock provider를 통한 local/S3 garbage
+collection을 검사합니다. 여섯 기반 crate는
 server-facing 공개 API와 release
 순서를 승인할 때까지 모두 `publish = false`이며 기존 v0.1.0 crate 배포 흐름에
 조용히 포함되지 않습니다.
@@ -596,16 +632,17 @@ snapshot을 요구합니다. 도메인과 HTTP test를 합쳐 잘못된 actor, c
 read-only mutation, 비참여자 read, mailbox actor filter 주입을 거부합니다.
 Indexed inbox/outbox query는 completed/source filter와 exclusive sequence
 pagination을 지원하며 schema v2 migration backfill도 검사합니다. Artifact
-reservation과 publication은 retry-safe이고, direct upload는 body를 읽기 전에
-authorization을 거치며, exact-revision download는 reader에게 열리고,
-replacement/abort/expiry는 leased durable GC worker로 전달됩니다. HTTP MCP gateway
+reservation과 publication은 retry-safe이고, local direct upload는 body를 읽기 전에
+authorization을 거치며, exact-revision download는 reader에게 열립니다. S3 feature는
+인증된 direct grant, durable retention, provider GC를 추가하며 replacement/abort/expiry는
+같은 leased worker로 전달됩니다. HTTP MCP gateway
 연결, retrieval indexing, offline write outbox는 아직 열려 있으므로
 Phase 1 종료 gate 전체는 닫히지 않았습니다.
 
 ### Phase 2 — 이식 가능한 프로덕션 backend
 
-- PostgreSQL을 추가하고 S3 호환 artifact adapter를 metadata, read-retention, GC
-  orchestration에 연결합니다.
+- PostgreSQL을 추가하고 연결된 S3 호환 artifact lifecycle을 실제 R2/AWS S3/on-premises
+  구현에서 conformance 검증합니다.
 - Transactional outbox indexer와 sequence watermark를 추가합니다.
 - Logical backup/restore 및 tenant export/delete 훈련을 추가합니다.
 
@@ -653,6 +690,7 @@ tenant export/import를 문서 명령으로 재현할 수 있습니다.
 - [Cloudflare R2 S3 호환성](https://developers.cloudflare.com/r2/api/s3/api/)
 - [Cloudflare R2 일관성](https://developers.cloudflare.com/r2/reference/consistency/)
 - [Cloudflare R2 presigned URL](https://developers.cloudflare.com/r2/api/s3/presigned-urls/)
+- [Cloudflare R2 제한](https://developers.cloudflare.com/r2/platform/limits/)
 - [Amazon S3 conditional write](https://docs.aws.amazon.com/AmazonS3/latest/userguide/conditional-writes.html)
 - [Amazon S3 multipart checksum](https://docs.aws.amazon.com/AmazonS3/latest/userguide/checking-object-integrity-upload.html)
 - [Cloudflare Hyperdrive](https://developers.cloudflare.com/hyperdrive/)
