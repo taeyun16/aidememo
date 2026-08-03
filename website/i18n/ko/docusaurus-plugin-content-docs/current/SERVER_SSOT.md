@@ -175,7 +175,7 @@ replica가 revision-pinned resource와 batch 전체를 함께 commit한 뒤에�
 
 Handoff에는 project sequence 위에 actor projection이 적용됩니다. 인증된 sender와
 receiver만 exact read, snapshot, metadata change, materialized change에서 해당
-handoff를 볼 수 있습니다. 따라서 projection된 batch는 보이는 entry가 없어도 숨겨진
+handoff와 immutable `handoff_context` packet을 볼 수 있습니다. 따라서 projection된 batch는 보이는 entry가 없어도 숨겨진
 project sequence를 지나 cursor를 전진시킬 수 있습니다. Replica가 다른 actor의
 handoff에서 반복하지 않도록 scan된 `next_cursor`를 그대로 신뢰합니다.
 
@@ -427,12 +427,13 @@ membership role, token 소유권 충돌은 fail closed로 처리합니다. 서�
 | `GET /health` | Process mode와 SQLite schema version |
 | `GET /v1/projects/{project}/identity` | Bearer에 binding된 tenant, project, actor와 활성 membership role 확인 |
 | `POST /v1/commands` | 인증된 `custom.*` `resource.put` / `resource.delete`, idempotent receipt, revision CAS |
-| `GET /v1/projects/{project}/resources/{kind}/{id}` | 정확한 정본 body 또는 tombstone. Handoff는 sender/receiver에게만 노출 |
+| `GET /v1/projects/{project}/resources/{kind}/{id}` | 정확한 정본 body 또는 tombstone. Handoff와 context는 sender/receiver에게만 노출 |
 | `GET /v1/projects/{project}/changes` | Epoch/sequence cursor 이후 순서가 있는 metadata-only change entry |
 | `GET /v1/projects/{project}/changes/materialized` | 각 revision의 정확한 canonical body 또는 tombstone을 포함한 순서형 change |
 | `GET /v1/projects/{project}/snapshot` | 현재 상태 전체와 이를 대표하는 project head의 원자적 bounded bootstrap |
 | `POST /v1/projects/{project}/sessions` | Typed session 하나를 생성하고 `source_id`를 고정 |
 | `POST /v1/projects/{project}/facts` | 기존 session에 fact를 생성하며 source와 actor는 서버에서 상속 |
+| `POST /v1/projects/{project}/handoff-contexts` | 정확한 handoff route에 고정된 immutable bounded sender packet 생성 |
 | `POST /v1/projects/{project}/handoffs` | Session pointer를 다른 활성 writer에게 전달 |
 | `GET /v1/projects/{project}/handoffs?box=inbox\|outbox` | 인증 actor의 indexed mailbox, 선택형 `source_id`, `include_completed`, `before_seq`, 제한된 `limit` |
 | `POST .../handoffs/{id}/accept` | `expected_revision`과 exclusive `claim_id`로 claim |
@@ -474,7 +475,7 @@ handoff resource와 최신 change sequence에서 index를 backfill합니다.
 
 보호된 모든 요청은 bearer 값을 hash하고 저장된 tenant와 actor를 찾은 뒤 활성
 project membership을 다시 읽습니다. Exact resource, snapshot, change feed 응답은
-typed status route와 동일한 sender/receiver handoff visibility를 적용합니다. Command
+typed status route와 동일한 sender/receiver visibility를 handoff와 context packet에 적용합니다. Command
 JSON은 `deny_unknown_fields`를
 사용하므로 body의 tenant 또는 actor identity를 무시하지 않고 거부합니다. 정본
 resource body, receipt, resource revision, project sequence, change entry, audit
@@ -634,7 +635,8 @@ identity/membership, exact read, incremental change 조회, typed
 session/fact/handoff command를 지원합니다. HTTP integration test는 `codex-p1 -> codex-p2 ->
 Hermes` chain을 완료합니다. Named CLI profile은 같은 URL/project에 서로 다른
 bearer token을 보관할 수 있고, connected CLI 경로는 actor override를 거부하며
-로컬 결과 provenance를 인증된 서버 identity와 대조한 뒤
+participant-scoped context를 별도 receiver store에 materialize하고 로컬 결과
+provenance를 인증된 서버 identity와 대조한 뒤
 `send -> inbox -> accept -> return -> outbox`를 완료합니다.
 `mcp-install --remote-profile`은 이 identity를 확인하고 파생 actor와 profile
 이름을 agent config 하나에 고정합니다. Binary integration test는 설치된 argument와

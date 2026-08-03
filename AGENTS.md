@@ -506,11 +506,12 @@ crates/aidememo-cli/src/
   kinds, exact resource reads, an atomic bounded snapshot, revision-pinned
   materialized changes, the ordered metadata feed, and bounded typed
   product routes. Generic exact reads, snapshots, and change feeds expose
-  handoffs only to their authenticated sender or receiver. Reserved product
-  kinds such as `fact`, `session`, and `handoff` are writable only through typed
-  APIs; the raw endpoint must not bypass their invariants. The first typed slice supports session create,
-  session-attached fact create, and handoff send/indexed inbox/outbox/accept/
-  return/status plus bearer-bound identity inspection. Mailbox actor identity is
+  handoffs and immutable `handoff_context` packets only to their authenticated
+  sender or receiver. Reserved product kinds such as `fact`, `session`,
+  `handoff_context`, and `handoff` are writable only through typed APIs; the raw
+  endpoint must not bypass their invariants. The first typed slice supports session create,
+  session-attached fact create, participant-scoped context creation, and handoff
+  send/indexed inbox/outbox/accept/return/status plus bearer-bound identity inspection. Mailbox actor identity is
   always derived from authentication. Named CLI and installed stdio MCP profiles
   support the connected handoff round trip; the server does not yet provide
   heartbeat, search, HTTP MCP gateway profiles, retrieval indexing, multipart
@@ -546,6 +547,10 @@ crates/aidememo-cli/src/
 - Typed handoff return must match the canonical session, inherited `source_id`,
   authenticated receiving actor, active `claim_id`, and result fact. The
   receiver must be an active writable project member.
+- Remote handoff context is an immutable typed `handoff_context` resource, not
+  a project-wide fact. It must match the exact handoff/session/source/sender/
+  receiver route, stay sender/receiver-visible in every generic read surface,
+  and materialize into the receiver's selected embedded store before accept.
 - Every new canonical adapter must pass `aidememo_domain::conformance::run`.
 - The six foundation crates remain `publish = false` until a server-facing
   public API and dependency release order are approved.

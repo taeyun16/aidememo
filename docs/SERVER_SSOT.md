@@ -179,8 +179,9 @@ transaction. The next cursor is acknowledged only after the local replica
 commits the full batch and its revision-pinned resources together.
 
 Handoffs add an actor projection on top of the project sequence: only the
-authenticated sender and receiver may observe the handoff through exact reads,
-snapshots, metadata changes, or materialized changes. A projected batch can
+authenticated sender and receiver may observe the handoff or its immutable
+`handoff_context` packet through exact reads, snapshots, metadata changes, or
+materialized changes. A projected batch can
 therefore return no visible entries while still advancing across hidden project
 sequences. The scanned `next_cursor` remains authoritative so a replica never
 loops on another actor's handoff.
@@ -452,12 +453,13 @@ The current HTTP surface is intentionally small:
 | `GET /health` | Process mode and SQLite schema version |
 | `GET /v1/projects/{project}/identity` | Resolve the bearer-bound tenant, project, actor, and active membership role |
 | `POST /v1/commands` | Authenticated `custom.*` `resource.put` / `resource.delete`, idempotent receipt, revision CAS |
-| `GET /v1/projects/{project}/resources/{kind}/{id}` | Exact canonical body or tombstone; handoffs are sender/receiver-only |
+| `GET /v1/projects/{project}/resources/{kind}/{id}` | Exact canonical body or tombstone; handoffs and handoff contexts are sender/receiver-only |
 | `GET /v1/projects/{project}/changes` | Ordered metadata-only change entries after an epoch/sequence cursor |
 | `GET /v1/projects/{project}/changes/materialized` | Ordered changes with the exact canonical body or tombstone at each revision |
 | `GET /v1/projects/{project}/snapshot` | Atomic bounded current-state bootstrap plus represented project head |
 | `POST /v1/projects/{project}/sessions` | Create one typed session; `source_id` is fixed here |
 | `POST /v1/projects/{project}/facts` | Create one fact attached to an existing session; source and actor are inherited server-side |
+| `POST /v1/projects/{project}/handoff-contexts` | Create one immutable bounded sender packet scoped to the exact handoff route |
 | `POST /v1/projects/{project}/handoffs` | Send the session pointer to another active writer |
 | `GET /v1/projects/{project}/handoffs?box=inbox\|outbox` | Authenticated actor's indexed mailbox; optional `source_id`, `include_completed`, `before_seq`, and bounded `limit` |
 | `POST .../handoffs/{id}/accept` | Claim with `expected_revision` and an exclusive `claim_id` |
@@ -500,8 +502,8 @@ the index from canonical handoff resources and their latest change sequence.
 
 Every protected request hashes the bearer value, resolves the persisted tenant
 and actor, and reloads active project membership. Exact resource, snapshot, and
-change-feed responses apply the same sender/receiver handoff visibility as the
-typed status route. Command JSON uses
+change-feed responses apply the same sender/receiver visibility to handoffs and
+their context packets as the typed status route. Command JSON uses
 `deny_unknown_fields`; tenant or actor identity in the body is rejected rather
 than ignored. Canonical resource bodies, receipt, resource revision, project
 sequence, change entry, and audit row commit in one SQLite transaction.
@@ -671,8 +673,9 @@ change retrieval, and typed session/fact/handoff commands. An HTTP integration
 test completes a `codex-p1 -> codex-p2 -> Hermes` chain. Named CLI profiles can
 hold distinct bearer tokens for one URL/project; the connected CLI path now
 completes `send -> inbox -> accept -> return -> outbox` while rejecting actor
-overrides and validating local result provenance against the authenticated
-server identity. `mcp-install --remote-profile` verifies that identity, pins the
+overrides, materializing the participant-scoped context into a separate
+receiver store, and validating local result provenance against the
+authenticated server identity. `mcp-install --remote-profile` verifies that identity, pins the
 derived actor plus profile name to one agent config, and the binary integration
 test runs the installed arguments and environment through the same round trip.
 `replica pull --remote-profile` bootstraps from one actor-projected atomic

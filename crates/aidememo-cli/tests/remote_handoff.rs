@@ -188,10 +188,14 @@ async fn two_named_codex_profiles_complete_a_remote_handoff_round_trip()
     let url = format!("http://{address}");
 
     let home = tempfile::tempdir()?;
-    let store = home.path().join("embedded.sqlite");
-    let store = store
+    let p1_store = home.path().join("embedded-p1.sqlite");
+    let p1_store = p1_store
         .to_str()
-        .ok_or_else(|| std::io::Error::other("non-UTF-8 test store path"))?;
+        .ok_or_else(|| std::io::Error::other("non-UTF-8 p1 test store path"))?;
+    let p2_store = home.path().join("embedded-p2.sqlite");
+    let p2_store = p2_store
+        .to_str()
+        .ok_or_else(|| std::io::Error::other("non-UTF-8 p2 test store path"))?;
 
     for (profile, token) in [("codex-p1", P1_TOKEN), ("codex-p2", P2_TOKEN)] {
         let login = run(
@@ -223,7 +227,7 @@ async fn two_named_codex_profiles_complete_a_remote_handoff_round_trip()
         home.path(),
         &[
             "--store",
-            store,
+            p1_store,
             "--json",
             "session",
             "new",
@@ -242,7 +246,7 @@ async fn two_named_codex_profiles_complete_a_remote_handoff_round_trip()
         home.path(),
         &[
             "--store",
-            store,
+            p1_store,
             "--json",
             "handoff",
             "--remote-profile",
@@ -267,7 +271,7 @@ async fn two_named_codex_profiles_complete_a_remote_handoff_round_trip()
         home.path(),
         &[
             "--store",
-            store,
+            p2_store,
             "--json",
             "handoff",
             "--remote-profile",
@@ -286,7 +290,7 @@ async fn two_named_codex_profiles_complete_a_remote_handoff_round_trip()
         home.path(),
         &[
             "--store",
-            store,
+            p1_store,
             "handoff",
             "--remote-profile",
             "codex-p2",
@@ -302,7 +306,7 @@ async fn two_named_codex_profiles_complete_a_remote_handoff_round_trip()
         home.path(),
         &[
             "--store",
-            store,
+            p1_store,
             "handoff",
             "--remote-profile",
             "codex-p1",
@@ -311,13 +315,13 @@ async fn two_named_codex_profiles_complete_a_remote_handoff_round_trip()
         ],
     );
     assert!(!wrong_receiver.status.success());
-    assert!(String::from_utf8_lossy(&wrong_receiver.stderr).contains("not allowed"));
+    assert!(String::from_utf8_lossy(&wrong_receiver.stderr).contains("not addressed"));
 
     let accepted = run(
         home.path(),
         &[
             "--store",
-            store,
+            p2_store,
             "--json",
             "handoff",
             "--remote-profile",
@@ -327,6 +331,27 @@ async fn two_named_codex_profiles_complete_a_remote_handoff_round_trip()
         ],
     );
     assert_success(&accepted);
+    let accepted: serde_json::Value = serde_json::from_slice(&accepted.stdout)?;
+    assert_eq!(accepted["session_id"], session_id);
+    assert_eq!(accepted["actor_id"], "codex-p2");
+    assert!(accepted["context_id"].as_str().is_some());
+
+    let resumed = run(
+        home.path(),
+        &[
+            "--store",
+            p2_store,
+            "--json",
+            "session",
+            "resume",
+            "--source-id",
+            "project:aidememo",
+            session_id,
+        ],
+    );
+    assert_success(&resumed);
+    let resumed: serde_json::Value = serde_json::from_slice(&resumed.stdout)?;
+    assert_eq!(resumed["session_id"], session_id);
 
     let result = Command::new(aidememo_bin())
         .env("HOME", home.path())
@@ -335,7 +360,7 @@ async fn two_named_codex_profiles_complete_a_remote_handoff_round_trip()
         .env("AIDEMEMO_ACTOR_ID", "codex-p2")
         .args([
             "--store",
-            store,
+            p2_store,
             "--json",
             "fact",
             "add",
@@ -360,7 +385,7 @@ async fn two_named_codex_profiles_complete_a_remote_handoff_round_trip()
         home.path(),
         &[
             "--store",
-            store,
+            p2_store,
             "--json",
             "handoff",
             "--remote-profile",
@@ -379,7 +404,7 @@ async fn two_named_codex_profiles_complete_a_remote_handoff_round_trip()
         home.path(),
         &[
             "--store",
-            store,
+            p1_store,
             "--json",
             "handoff",
             "--remote-profile",
@@ -401,7 +426,7 @@ async fn two_named_codex_profiles_complete_a_remote_handoff_round_trip()
         home.path(),
         &[
             "--store",
-            store,
+            p1_store,
             "mcp-install",
             "--target",
             "codex",
@@ -420,12 +445,15 @@ async fn two_named_codex_profiles_complete_a_remote_handoff_round_trip()
         String::from_utf8_lossy(&overridden_install.stderr)
             .contains("cannot be combined with --actor-id")
     );
-    for (profile, codex_home) in [("codex-p1", &p1_home), ("codex-p2", &p2_home)] {
+    for (profile, codex_home, profile_store) in [
+        ("codex-p1", &p1_home, p1_store),
+        ("codex-p2", &p2_home, p2_store),
+    ] {
         let installed = run(
             home.path(),
             &[
                 "--store",
-                store,
+                profile_store,
                 "mcp-install",
                 "--target",
                 "codex",
@@ -458,7 +486,7 @@ async fn two_named_codex_profiles_complete_a_remote_handoff_round_trip()
         home.path(),
         &[
             "--store",
-            store,
+            p1_store,
             "--json",
             "session",
             "new",
@@ -555,7 +583,7 @@ async fn two_named_codex_profiles_complete_a_remote_handoff_round_trip()
         home.path(),
         &[
             "--store",
-            store,
+            p1_store,
             "--json",
             "replica",
             "pull",
@@ -582,7 +610,7 @@ async fn two_named_codex_profiles_complete_a_remote_handoff_round_trip()
 
     let replica_status = run(
         home.path(),
-        &["--store", store, "--json", "replica", "status"],
+        &["--store", p1_store, "--json", "replica", "status"],
     );
     assert_success(&replica_status);
     let replica_status: serde_json::Value = serde_json::from_slice(&replica_status.stdout)?;
@@ -597,7 +625,7 @@ async fn two_named_codex_profiles_complete_a_remote_handoff_round_trip()
         home.path(),
         &[
             "--store",
-            store,
+            p1_store,
             "replica",
             "pull",
             "--remote-profile",
@@ -614,7 +642,7 @@ async fn two_named_codex_profiles_complete_a_remote_handoff_round_trip()
         home.path(),
         &[
             "--store",
-            store,
+            p1_store,
             "--json",
             "replica",
             "get",
@@ -627,13 +655,13 @@ async fn two_named_codex_profiles_complete_a_remote_handoff_round_trip()
     assert_eq!(offline_handoff["state"]["state"], "present");
     assert_eq!(offline_handoff["state"]["body"]["status"], "completed");
 
-    let reset_without_force = run(home.path(), &["--store", store, "replica", "reset"]);
+    let reset_without_force = run(home.path(), &["--store", p1_store, "replica", "reset"]);
     assert!(!reset_without_force.status.success());
     assert!(String::from_utf8_lossy(&reset_without_force.stderr).contains("pass --force"));
 
     let reset = run(
         home.path(),
-        &["--store", store, "--json", "replica", "reset", "--force"],
+        &["--store", p1_store, "--json", "replica", "reset", "--force"],
     );
     assert_success(&reset);
     let reset: serde_json::Value = serde_json::from_slice(&reset.stdout)?;

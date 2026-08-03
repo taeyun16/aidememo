@@ -191,7 +191,8 @@ bounded current-state snapshot, then advances the authenticated project cursor
 only after a complete revision-pinned batch commits locally. Scope or
 project-epoch changes, or reusing the file with a different authenticated actor,
 fail closed until an explicit `reset --force`. Handoffs in the snapshot and
-change feed are projected to that actor as sender or receiver. `status` and
+their immutable `handoff_context` records in the change feed are projected to
+that actor as sender or receiver. `status` and
 `get` never contact the server, so cached canonical resources remain readable
 during an outage.
 The bootstrap is currently limited to 10,000 resources. This is not yet the

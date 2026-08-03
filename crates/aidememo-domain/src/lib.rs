@@ -29,8 +29,8 @@ pub use command::{
 };
 pub use error::{DomainError, ErrorCode};
 pub use handoff::{
-    FactRecord, HandoffListEntry, HandoffMailbox, HandoffOutcome, HandoffPage, HandoffQuery,
-    HandoffRecord, HandoffStatus, SessionRecord,
+    FactRecord, HandoffContextRecord, HandoffListEntry, HandoffMailbox, HandoffOutcome,
+    HandoffPage, HandoffQuery, HandoffRecord, HandoffStatus, SessionRecord,
 };
 pub use identity::{
     ActorId, ArtifactId, AuthenticatedActor, ClaimId, CommandId, FactId, HandoffId, MembershipRole,

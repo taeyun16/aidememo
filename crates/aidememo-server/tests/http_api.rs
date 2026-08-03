@@ -828,6 +828,25 @@ async fn codex_profiles_and_hermes_complete_typed_remote_handoffs()
         "command_conflict"
     );
 
+    let context = app
+        .clone()
+        .oneshot(post_request(
+            "/v1/projects/project_http/handoff-contexts",
+            Some(WRITER_TOKEN),
+            json!({
+                "command_id": "command_context_p2",
+                "payload": {
+                    "context_id": "context_p2",
+                    "handoff_id": "handoff_p2",
+                    "session_id": "session_remote",
+                    "to_actor": "codex-p2",
+                    "content": "# Bounded remote context\n\nReview the typed boundary."
+                }
+            }),
+        )?)
+        .await?;
+    assert_eq!(context.status(), 200);
+
     let send_to_p2 = json!({
         "command_id": "command_send_p2",
         "payload": {
@@ -835,7 +854,8 @@ async fn codex_profiles_and_hermes_complete_typed_remote_handoffs()
             "session_id": "session_remote",
             "to_actor": "codex-p2",
             "focus": "Review the typed server boundary",
-            "done_when": "Return a session-scoped fact"
+            "done_when": "Return a session-scoped fact",
+            "context_id": "context_p2"
         }
     });
     let sent = app
@@ -1167,6 +1187,27 @@ async fn codex_profiles_and_hermes_complete_typed_remote_handoffs()
         .await?;
     assert_eq!(hidden_generic.status(), 404);
 
+    let hidden_context = app
+        .clone()
+        .oneshot(get_request(
+            "/v1/projects/project_http/resources/handoff_context/context_p2",
+            Some(READER_TOKEN),
+        )?)
+        .await?;
+    assert_eq!(hidden_context.status(), 404);
+    let receiver_context = app
+        .clone()
+        .oneshot(get_request(
+            "/v1/projects/project_http/resources/handoff_context/context_p2",
+            Some(RECEIVER_TOKEN),
+        )?)
+        .await?;
+    assert_eq!(receiver_context.status(), 200);
+    assert_eq!(
+        response_json(receiver_context).await?["state"]["body"]["handoff_id"],
+        "handoff_p2"
+    );
+
     let reader_snapshot = app
         .clone()
         .oneshot(get_request(
@@ -1182,9 +1223,12 @@ async fn codex_profiles_and_hermes_complete_typed_remote_handoffs()
     assert!(
         reader_snapshot["resources"]
             .as_array()
-            .is_some_and(|resources| resources
-                .iter()
-                .all(|resource| { resource["resource"]["kind"].as_str() != Some("handoff") }))
+            .is_some_and(|resources| resources.iter().all(|resource| {
+                !matches!(
+                    resource["resource"]["kind"].as_str(),
+                    Some("handoff" | "handoff_context")
+                )
+            }))
     );
 
     for path in ["changes", "changes/materialized"] {
@@ -1220,7 +1264,10 @@ async fn codex_profiles_and_hermes_complete_typed_remote_handoffs()
         assert!(response["entries"].as_array().is_some_and(|entries| {
             entries.iter().all(|entry| {
                 let change = entry.get("change").unwrap_or(entry);
-                change["resource"]["kind"].as_str() != Some("handoff")
+                !matches!(
+                    change["resource"]["kind"].as_str(),
+                    Some("handoff" | "handoff_context")
+                )
             })
         }));
     }

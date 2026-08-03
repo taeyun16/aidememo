@@ -8,9 +8,9 @@
 use aidememo_domain::{
     ActorId, AuthenticatedActor, AuthorizedCommand, CanonicalResource, ChangeBatch, ChangeCursor,
     ChangeOperation, CommandEnvelope, CommandFingerprint, CommandReceipt, CommandStore,
-    DomainError, HandoffPage, HandoffQuery, HandoffRecord, HandoffStore, MaterializedChangeBatch,
-    MutationCommand, ProjectAccess, ProjectId, ProjectMembership, ProjectSnapshot, ResourceRef,
-    ResourceState,
+    DomainError, HandoffContextRecord, HandoffPage, HandoffQuery, HandoffRecord, HandoffStore,
+    MaterializedChangeBatch, MutationCommand, ProjectAccess, ProjectId, ProjectMembership,
+    ProjectSnapshot, ResourceRef, ResourceState,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -216,7 +216,7 @@ impl<S: CommandStore> CommandService<S> {
         let batch = self.store.changes(&scope, cursor, limit)?;
         let mut entries = Vec::with_capacity(batch.entries.len());
         for entry in batch.entries {
-            if entry.resource.kind.as_str() != "handoff" {
+            if !is_participant_scoped_kind(entry.resource.kind.as_str()) {
                 entries.push(entry);
                 continue;
             }
@@ -363,21 +363,39 @@ fn resource_visible_to(
     resource: &CanonicalResource,
     actor_id: &ActorId,
 ) -> Result<bool, DomainError> {
-    if resource.resource.kind.as_str() != "handoff" {
+    let kind = resource.resource.kind.as_str();
+    if !is_participant_scoped_kind(kind) {
         return Ok(true);
     }
     let ResourceState::Present { body } = &resource.state else {
-        // No typed handoff delete route exists today. A future delete contract
-        // must retain participant visibility in its tombstone metadata before
-        // actor-scoped replicas can consume it safely.
+        // No typed handoff or context delete route exists today. A future
+        // delete contract must retain participant visibility in its tombstone
+        // metadata before actor-scoped replicas can consume it safely.
         return Ok(false);
     };
-    let record: HandoffRecord =
-        serde_json::from_slice(body).map_err(|error| DomainError::StorageFailure {
-            operation: "handoff_visibility_decode",
-            detail: error.to_string(),
-        })?;
-    Ok(record.is_visible_to(actor_id))
+    match kind {
+        "handoff" => {
+            let record: HandoffRecord =
+                serde_json::from_slice(body).map_err(|error| DomainError::StorageFailure {
+                    operation: "handoff_visibility_decode",
+                    detail: error.to_string(),
+                })?;
+            Ok(record.is_visible_to(actor_id))
+        }
+        "handoff_context" => {
+            let record: HandoffContextRecord =
+                serde_json::from_slice(body).map_err(|error| DomainError::StorageFailure {
+                    operation: "handoff_context_visibility_decode",
+                    detail: error.to_string(),
+                })?;
+            Ok(record.is_visible_to(actor_id))
+        }
+        _ => Ok(true),
+    }
+}
+
+fn is_participant_scoped_kind(kind: &str) -> bool {
+    matches!(kind, "handoff" | "handoff_context")
 }
 
 impl<S: HandoffStore> CommandService<S> {
