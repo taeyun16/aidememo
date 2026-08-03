@@ -459,11 +459,18 @@ membership role, token 소유권 충돌은 fail closed로 처리합니다. 서�
 }
 ```
 
-클라이언트는 전송 재시도가 결정적이도록 안정적인 command/resource ID를
-생성합니다. 서버는 변경 가능한 handoff 상태를 다시 읽기 전에 기존 receipt를
-검증하고 replay합니다. 따라서 handoff가 나중에 완료됐더라도 지연된 accept
-재시도는 원래 receipt를 반환합니다. 다른 actor는 최초 actor의 command ID를
-replay할 수 없습니다.
+생성 요청은 정확히 같은 body를 전송 재시도할 수 있도록 resource ID에서 안정적인
+command ID를 만듭니다. 수신자 전이는 인증 actor와 시도 횟수에서 claim을 만들고,
+claim과 정확한 결과 근거에서 return command를 만듭니다. CLI는 전송 오류 뒤 동일한
+POST body를 한 번 재시도합니다. 서버는 변경 가능한 handoff 상태를 다시 읽기 전에
+기존 receipt를 검증하고 replay하며, 이후 CLI/MCP 실행도 이미 적용된 정확한 accept
+또는 return을 인식해 `recovered: true`를 반환합니다. 다른 actor는 최초 actor의
+command ID를 replay할 수 없습니다.
+
+이 보장은 resource 단위입니다. 새로운 `send` 실행은 현재 새 handoff/context 쌍을
+만들기 때문에 새 assignment를 의미하며, 응답이 불확실했던 이전 실행을 중복
+제거하지 않습니다. Client operation key 또는 offline outbox가 생기기 전에는
+`send`를 무작정 다시 실행하지 말고 sender outbox에서 handoff ID를 찾아 이어갑니다.
 
 Mailbox actor identity는 항상 bearer binding에서 가져오며 `actor_id` query parameter는
 거부합니다. 결과는 최신순이고 각 handoff의 현재 resource `revision`과 최신

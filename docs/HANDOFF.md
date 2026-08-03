@@ -123,6 +123,20 @@ token and fixed project. `AIDEMEMO_REMOTE_PROFILE=codex-p2` may replace the
 repeated flag. Remote operations reject `--actor-id` and `--from`: the server's
 persisted token binding is the only actor authority.
 
+Remote `accept` derives its claim from project, authenticated actor, handoff,
+and attempt number; `return` derives its command from that claim and the exact
+result evidence. The client retries the identical HTTP body once after a
+transport failure. If a later CLI/MCP invocation finds that exact accept or
+return already present in canonical state, it returns `recovered: true` without
+creating another transition. A failed outcome deliberately advances to a new
+claim on the next accept.
+
+This does not yet make a brand-new `send` invocation idempotent. Each invocation
+mints a new handoff and context resource, so after an uncertain send response,
+look up the sender outbox and continue with the existing handoff ID. A future
+client operation key or offline outbox is required before rerunning `send` can
+be deduplicated across processes.
+
 This is currently a connected-write bridge. `send` stores a typed session,
 participant-scoped immutable context packet, and handoff pointer in the
 canonical ledger. `accept` verifies that route before materializing the session

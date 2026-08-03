@@ -122,6 +122,18 @@ token과 고정 project를 유지합니다. 반복되는 flag 대신
 `--actor-id`와 `--from`을 거부하며 서버의 저장된 token binding만 actor authority로
 사용합니다.
 
+원격 `accept`는 project, 인증 actor, handoff, 시도 횟수에서 claim을 결정적으로
+만들고 `return`은 그 claim과 정확한 결과 근거에서 command를 만듭니다. Client는
+전송 실패 후 동일한 HTTP body를 한 번 재시도합니다. 이후 CLI/MCP 실행이 정본
+상태에서 정확히 같은 accept 또는 return을 발견하면 새 전이를 만들지 않고
+`recovered: true`를 반환합니다. 실패 outcome 뒤의 다음 accept는 의도적으로 새
+claim으로 전진합니다.
+
+아직 새로운 `send` 실행까지 멱등인 것은 아닙니다. 실행할 때마다 새 handoff와
+context resource를 만들기 때문에 send 응답이 불확실하면 sender outbox에서 기존
+handoff ID를 찾아 이어가야 합니다. 프로세스 간 `send` 재실행을 중복 제거하려면
+향후 client operation key 또는 offline outbox가 필요합니다.
+
 현재 구현은 connected-write bridge입니다. `send`는 typed session,
 participant-scoped immutable context packet, handoff pointer를 canonical ledger에
 저장합니다. `accept`는 route를 검증한 뒤 session과 packet을 receiver가 선택한

@@ -551,6 +551,10 @@ crates/aidememo-cli/src/
   a project-wide fact. It must match the exact handoff/session/source/sender/
   receiver route, stay sender/receiver-visible in every generic read surface,
   and materialize into the receiver's selected embedded store before accept.
+- Connected remote accept/return derives deterministic claim/command IDs and
+  recovers only an exact already-applied transition. A fresh `send` invocation
+  still creates a new assignment; inspect outbox after an uncertain response
+  until a client operation key or offline outbox exists.
 - Every new canonical adapter must pass `aidememo_domain::conformance::run`.
 - The six foundation crates remain `publish = false` until a server-facing
   public API and dependency release order are approved.

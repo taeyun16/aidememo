@@ -335,6 +335,29 @@ async fn two_named_codex_profiles_complete_a_remote_handoff_round_trip()
     assert_eq!(accepted["session_id"], session_id);
     assert_eq!(accepted["actor_id"], "codex-p2");
     assert!(accepted["context_id"].as_str().is_some());
+    assert_eq!(accepted["recovered"], false);
+    let accepted_retry = run(
+        home.path(),
+        &[
+            "--store",
+            p2_store,
+            "--json",
+            "handoff",
+            "--remote-profile",
+            "codex-p2",
+            "accept",
+            handoff_id,
+        ],
+    );
+    assert_success(&accepted_retry);
+    let accepted_retry: serde_json::Value = serde_json::from_slice(&accepted_retry.stdout)?;
+    assert_eq!(accepted_retry["recovered"], true);
+    assert_eq!(accepted_retry["claim_id"], accepted["claim_id"]);
+    assert_eq!(accepted_retry["command_id"], accepted["command_id"]);
+    assert_eq!(
+        accepted_retry["local_context_fact_id"],
+        accepted["local_context_fact_id"]
+    );
 
     let resumed = run(
         home.path(),
@@ -381,6 +404,72 @@ async fn two_named_codex_profiles_complete_a_remote_handoff_round_trip()
         .as_str()
         .ok_or_else(|| std::io::Error::other("result fact id missing"))?;
 
+    let failed_return = run(
+        home.path(),
+        &[
+            "--store",
+            p2_store,
+            "--json",
+            "handoff",
+            "--remote-profile",
+            "codex-p2",
+            "return",
+            "--outcome",
+            "failed",
+            "--result-fact-id",
+            result_fact_id,
+            handoff_id,
+        ],
+    );
+    assert_success(&failed_return);
+    let failed_return: serde_json::Value = serde_json::from_slice(&failed_return.stdout)?;
+    assert_eq!(failed_return["recovered"], false);
+
+    let failed_return_retry = run(
+        home.path(),
+        &[
+            "--store",
+            p2_store,
+            "--json",
+            "handoff",
+            "--remote-profile",
+            "codex-p2",
+            "return",
+            "--outcome",
+            "failed",
+            "--result-fact-id",
+            result_fact_id,
+            handoff_id,
+        ],
+    );
+    assert_success(&failed_return_retry);
+    let failed_return_retry: serde_json::Value =
+        serde_json::from_slice(&failed_return_retry.stdout)?;
+    assert_eq!(failed_return_retry["recovered"], true);
+    assert_eq!(
+        failed_return_retry["command_id"],
+        failed_return["command_id"]
+    );
+
+    let retried_accept = run(
+        home.path(),
+        &[
+            "--store",
+            p2_store,
+            "--json",
+            "handoff",
+            "--remote-profile",
+            "codex-p2",
+            "accept",
+            handoff_id,
+        ],
+    );
+    assert_success(&retried_accept);
+    let retried_accept: serde_json::Value = serde_json::from_slice(&retried_accept.stdout)?;
+    assert_eq!(retried_accept["recovered"], false);
+    assert_ne!(retried_accept["claim_id"], accepted["claim_id"]);
+    assert_ne!(retried_accept["command_id"], accepted["command_id"]);
+
     let returned = run(
         home.path(),
         &[
@@ -399,6 +488,30 @@ async fn two_named_codex_profiles_complete_a_remote_handoff_round_trip()
         ],
     );
     assert_success(&returned);
+    let returned: serde_json::Value = serde_json::from_slice(&returned.stdout)?;
+    assert_eq!(returned["recovered"], false);
+
+    let returned_retry = run(
+        home.path(),
+        &[
+            "--store",
+            p2_store,
+            "--json",
+            "handoff",
+            "--remote-profile",
+            "codex-p2",
+            "return",
+            "--outcome",
+            "succeeded",
+            "--result-fact-id",
+            result_fact_id,
+            handoff_id,
+        ],
+    );
+    assert_success(&returned_retry);
+    let returned_retry: serde_json::Value = serde_json::from_slice(&returned_retry.stdout)?;
+    assert_eq!(returned_retry["recovered"], true);
+    assert_eq!(returned_retry["command_id"], returned["command_id"]);
 
     let outbox = run(
         home.path(),

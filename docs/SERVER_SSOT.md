@@ -485,11 +485,20 @@ carry the revision observed by the client:
 }
 ```
 
-Clients generate stable command and resource IDs so transport retries are
-deterministic. Before re-reading mutable handoff state, the server verifies and
-replays an existing receipt. This means a delayed accept retry still returns
-its original receipt even if the handoff has since completed. A different actor
-cannot replay the first actor's command ID.
+Create requests derive a stable command ID from the resource ID for exact-body
+transport retry. Receiver transitions additionally derive the claim from the
+authenticated actor and attempt number, and derive return commands from the
+claim plus exact result evidence. The CLI retries the identical POST body once
+after a transport error. Before re-reading mutable handoff state, the server
+verifies and replays an existing receipt; a later CLI/MCP invocation also
+recognizes an already-applied exact accept or return and reports
+`recovered: true`. A different actor cannot replay the first actor's command ID.
+
+This guarantee is resource-bound. A brand-new `send` invocation currently
+mints a new handoff/context pair and therefore represents a new assignment; it
+does not deduplicate an uncertain prior invocation. Until a client operation
+key or offline outbox exists, callers inspect the sender outbox and continue by
+handoff ID instead of blindly rerunning `send`.
 
 Mailbox actor identity is always taken from the bearer binding; an `actor_id`
 query parameter is rejected. Results are newest-first and include each
