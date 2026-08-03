@@ -343,8 +343,10 @@ aidememo --store ./wiki.sqlite replica status
 거부됩니다. `mcp-install`에 `--remote-profile codex-p1`을 추가하면 같은 route를
 stdio MCP 계정 하나에 고정합니다. `replica pull`은 snapshot으로 bootstrap하고
 revision-pinned change를 적용하는 별도 `<store>.replica.sqlite` exact-read cache를
-유지하며 서버 중단 중에도 `replica get KIND ID`로 읽을 수 있습니다. 이 cache는
-embedded search store를 대체하지 않습니다. 별도 미출시 local artifact
+유지하며 서버 중단 중에도 `replica get KIND ID`로 읽을 수 있습니다. Handoff는 exact
+read, snapshot, change 전부에서 인증된 sender/receiver에게만 projection되고 replica
+파일도 tenant, project, epoch와 함께 해당 actor에 고정됩니다. 이 cache는 embedded
+search store를 대체하지 않습니다. 별도 미출시 local artifact
 repository는 workspace 전용 server를 통해 bearer 기반 reader/writer authorization,
 idempotent reserve/upload/publish, exact-revision download, durable garbage collection을
 지원합니다. Public CLI에는 노출되지 않으며 multipart streaming, retrieval indexing,

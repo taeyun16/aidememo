@@ -201,8 +201,10 @@ aidememo --store ./wiki.sqlite replica reset --force
 
 기본 파일은 `<store>.replica.sqlite`입니다. `pull`은 원자적이며 bounded인 현재 상태
 snapshot에서 bootstrap한 뒤 complete revision-pinned batch가 로컬에 commit된
-경우에만 인증 project cursor를 전진시킵니다. Scope 또는 project epoch가 달라지면 명시적인
-`reset --force` 전까지 fail-closed합니다. `status`와 `get`은 서버에 연결하지
+경우에만 인증 project cursor를 전진시킵니다. Scope, project epoch가 다르거나 다른
+인증 actor로 같은 파일을 재사용하면 명시적인 `reset --force` 전까지 fail-closed합니다.
+Snapshot과 change feed의 handoff는 해당 actor가 sender 또는 receiver인 경우에만
+projection됩니다. `status`와 `get`은 서버에 연결하지
 않으므로 장애 중에도 cached canonical resource를 읽을 수 있습니다. Bootstrap은
 현재 resource 10,000개로 제한됩니다. 아직 BM25/HNSW retrieval replica는 아니며
 embedded store를 열거나 다시 쓰지 않습니다.

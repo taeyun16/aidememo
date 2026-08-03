@@ -591,6 +591,21 @@ async fn two_named_codex_profiles_complete_a_remote_handoff_round_trip()
         replica_status["status"]["scope"]["project_id"],
         "project_cli_remote"
     );
+    assert_eq!(replica_status["status"]["actor_id"], "codex-p1");
+
+    let actor_reuse = run(
+        home.path(),
+        &[
+            "--store",
+            store,
+            "replica",
+            "pull",
+            "--remote-profile",
+            "codex-p2",
+        ],
+    );
+    assert!(!actor_reuse.status.success());
+    assert!(String::from_utf8_lossy(&actor_reuse.stderr).contains("replica actor mismatch"));
 
     server.abort();
     let _ = server.await;

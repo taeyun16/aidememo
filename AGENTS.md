@@ -505,9 +505,10 @@ crates/aidememo-cli/src/
   and exposes `resource.put` / `resource.delete` only for `custom.*` extension
   kinds, exact resource reads, an atomic bounded snapshot, revision-pinned
   materialized changes, the ordered metadata feed, and bounded typed
-  product routes. Reserved product kinds such as `fact`, `session`, and
-  `handoff` are writable only through typed APIs; the raw endpoint must not
-  bypass their invariants. The first typed slice supports session create,
+  product routes. Generic exact reads, snapshots, and change feeds expose
+  handoffs only to their authenticated sender or receiver. Reserved product
+  kinds such as `fact`, `session`, and `handoff` are writable only through typed
+  APIs; the raw endpoint must not bypass their invariants. The first typed slice supports session create,
   session-attached fact create, and handoff send/indexed inbox/outbox/accept/
   return/status plus bearer-bound identity inspection. Mailbox actor identity is
   always derived from authentication. Named CLI and installed stdio MCP profiles
@@ -518,10 +519,12 @@ crates/aidememo-cli/src/
   observation, CAS publication, durable read retention, and exact-generation GC.
 - `aidememo-client` uses `<store>.replica.sqlite` as a separate exact-read
   cache. It bootstraps from one atomic current-state snapshot, validates
-  scope/epoch, applies revision-pinned change batches and cursor advancement in
+  scope/epoch/actor, applies revision-pinned change batches and cursor advancement in
   one transaction, keeps tombstones, and requires explicit reset after history
-  replacement. The first snapshot is bounded to 10,000 resources. It must not
-  open, migrate, or reinterpret the embedded `aidememo-core` store.
+  replacement or actor changes. Actor-projected batches may contain no visible
+  entries while still advancing their scanned cursor. The first snapshot is
+  bounded to 10,000 resources. It must not open, migrate, or reinterpret the
+  embedded `aidememo-core` store.
 - `aidememo-artifacts` keeps its SQLite path catalog and immutable `objects/`
   bodies under a separate root. Publication requires the current path token,
   a live reservation, and a trusted body observation; local publication also

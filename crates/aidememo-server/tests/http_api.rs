@@ -783,7 +783,7 @@ async fn authenticated_s3_grants_publication_retention_and_gc_are_connected()
 #[tokio::test]
 async fn codex_profiles_and_hermes_complete_typed_remote_handoffs()
 -> Result<(), Box<dyn std::error::Error>> {
-    let (app, _) = test_app()?;
+    let (app, epoch) = test_app()?;
     let session_request = json!({
         "command_id": "command_session_remote",
         "payload": {
@@ -1158,6 +1158,73 @@ async fn codex_profiles_and_hermes_complete_typed_remote_handoffs()
         .await?;
     assert_eq!(hidden_from_reader.status(), 403);
 
+    let hidden_generic = app
+        .clone()
+        .oneshot(get_request(
+            "/v1/projects/project_http/resources/handoff/handoff_p2",
+            Some(READER_TOKEN),
+        )?)
+        .await?;
+    assert_eq!(hidden_generic.status(), 404);
+
+    let reader_snapshot = app
+        .clone()
+        .oneshot(get_request(
+            "/v1/projects/project_http/snapshot",
+            Some(READER_TOKEN),
+        )?)
+        .await?;
+    assert_eq!(reader_snapshot.status(), 200);
+    let reader_snapshot = response_json(reader_snapshot).await?;
+    let canonical_head = reader_snapshot["at_seq"]
+        .as_u64()
+        .ok_or_else(|| std::io::Error::other("reader snapshot omitted head"))?;
+    assert!(
+        reader_snapshot["resources"]
+            .as_array()
+            .is_some_and(|resources| resources
+                .iter()
+                .all(|resource| { resource["resource"]["kind"].as_str() != Some("handoff") }))
+    );
+
+    for path in ["changes", "changes/materialized"] {
+        let hidden_only = app
+            .clone()
+            .oneshot(get_request(
+                &format!(
+                    "/v1/projects/project_http/{path}?project_epoch={epoch}&after_seq=1&limit=1"
+                ),
+                Some(READER_TOKEN),
+            )?)
+            .await?;
+        assert_eq!(hidden_only.status(), 200);
+        let hidden_only = response_json(hidden_only).await?;
+        assert!(hidden_only["entries"].as_array().is_some_and(Vec::is_empty));
+        assert_eq!(hidden_only["next_cursor"]["after_seq"], 2);
+        assert_eq!(hidden_only["has_more"], true);
+    }
+
+    for path in ["changes", "changes/materialized"] {
+        let response = app
+            .clone()
+            .oneshot(get_request(
+                &format!(
+                    "/v1/projects/project_http/{path}?project_epoch={epoch}&after_seq=0&limit=100"
+                ),
+                Some(READER_TOKEN),
+            )?)
+            .await?;
+        assert_eq!(response.status(), 200);
+        let response = response_json(response).await?;
+        assert_eq!(response["next_cursor"]["after_seq"], canonical_head);
+        assert!(response["entries"].as_array().is_some_and(|entries| {
+            entries.iter().all(|entry| {
+                let change = entry.get("change").unwrap_or(entry);
+                change["resource"]["kind"].as_str() != Some("handoff")
+            })
+        }));
+    }
+
     let sent_to_hermes = app
         .clone()
         .oneshot(post_request(
@@ -1385,6 +1452,20 @@ async fn authenticated_replica_bootstraps_pulls_incrementally_and_reads_offline(
             .resource(&coordinate)?
             .map(|resource| resource.state),
         Some(ResourceState::Deleted)
+    ));
+    assert_eq!(
+        replica.status()?.actor_id,
+        Some(ActorId::try_from("reader_actor")?)
+    );
+
+    let other_actor = HttpReplicaClient::new(RemoteProfile::new(
+        format!("http://{address}"),
+        ProjectId::try_from("project_http")?,
+        WRITER_TOKEN,
+    )?);
+    assert!(matches!(
+        pull_to_current(&other_actor, &mut replica, 1),
+        Err(aidememo_client::ClientError::ActorMismatch { .. })
     ));
 
     server.abort();

@@ -148,12 +148,15 @@ pub fn run_replica(
                 }))
                 .map_err(serialize_error);
             }
-            if let (Some(scope), Some(epoch)) = (&status.scope, &status.project_epoch) {
+            if let (Some(scope), Some(epoch), Some(actor_id)) =
+                (&status.scope, &status.project_epoch, &status.actor_id)
+            {
                 Ok(format!(
-                    "replica status: {} tenant={} project={} epoch={} seq={} resources={} tombstones={} updated_at_ms={}",
+                    "replica status: {} tenant={} project={} actor={} epoch={} seq={} resources={} tombstones={} updated_at_ms={}",
                     path.display(),
                     scope.tenant_id,
                     scope.project_id,
+                    actor_id,
                     epoch,
                     status.after_seq,
                     status.resource_count,
@@ -255,6 +258,7 @@ fn client_error(error: aidememo_client::ClientError) -> AideMemoError {
         | aidememo_client::ClientError::Protocol(_)
         | aidememo_client::ClientError::ScopeMismatch { .. }
         | aidememo_client::ClientError::EpochMismatch { .. }
+        | aidememo_client::ClientError::ActorMismatch { .. }
         | aidememo_client::ClientError::CursorMismatch { .. } => {
             AideMemoError::InvalidInput(message)
         }

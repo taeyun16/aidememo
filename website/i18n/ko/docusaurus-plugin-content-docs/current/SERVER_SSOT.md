@@ -173,13 +173,22 @@ provenance, commit 시각과 정확히 해당 revision의 canonical body 또는 
 replica가 revision-pinned resource와 batch 전체를 함께 commit한 뒤에만 다음 cursor를
 확인합니다.
 
+Handoff에는 project sequence 위에 actor projection이 적용됩니다. 인증된 sender와
+receiver만 exact read, snapshot, metadata change, materialized change에서 해당
+handoff를 볼 수 있습니다. 따라서 projection된 batch는 보이는 entry가 없어도 숨겨진
+project sequence를 지나 cursor를 전진시킬 수 있습니다. Replica가 다른 actor의
+handoff에서 반복하지 않도록 scan된 `next_cursor`를 그대로 신뢰합니다.
+
 빈 exact-read replica는 `GET .../snapshot`으로 bootstrap합니다. 이 endpoint는 현재
 resource 전체와 그 상태를 대표하는 project head를 하나의 SQLite read transaction에서
 읽습니다. 이후 hydrated change만 적용하므로 cached resource가 durable cursor보다
 앞설 수 없습니다. 첫 snapshot endpoint는 의도적으로 resource 10,000개로 제한하며,
 stable snapshot handle을 사용하는 pagination은 이후 scale-out 항목입니다. 과거 body가
 없는 schema v3 change row는 현재 상태를 추정하지 않고 `snapshot_required`를 반환합니다.
-이는 sequence-consistent exact-read cache이며 아직 BM25/HNSW retrieval index는 아닙니다.
+Replica 파일은 tenant, project, epoch, 인증 actor에 고정되며 actor profile을 바꾸려면
+`replica reset --force`가 필요합니다. 기존 project-only replica는 actor가 미지정된
+상태로 migration되므로 마찬가지로 명시적 reset이 필요합니다. 이는
+sequence-consistent exact-read cache이며 아직 BM25/HNSW retrieval index는 아닙니다.
 
 관리자가 기존 cursor를 무효화하는 방식으로 정본 history를 restore하거나
 교체하면 `project_epoch`가 바뀝니다. Epoch가 다르면 pull은 fail-closed하고,
@@ -418,7 +427,7 @@ membership role, token 소유권 충돌은 fail closed로 처리합니다. 서�
 | `GET /health` | Process mode와 SQLite schema version |
 | `GET /v1/projects/{project}/identity` | Bearer에 binding된 tenant, project, actor와 활성 membership role 확인 |
 | `POST /v1/commands` | 인증된 `custom.*` `resource.put` / `resource.delete`, idempotent receipt, revision CAS |
-| `GET /v1/projects/{project}/resources/{kind}/{id}` | 정확한 정본 body 또는 tombstone |
+| `GET /v1/projects/{project}/resources/{kind}/{id}` | 정확한 정본 body 또는 tombstone. Handoff는 sender/receiver에게만 노출 |
 | `GET /v1/projects/{project}/changes` | Epoch/sequence cursor 이후 순서가 있는 metadata-only change entry |
 | `GET /v1/projects/{project}/changes/materialized` | 각 revision의 정확한 canonical body 또는 tombstone을 포함한 순서형 change |
 | `GET /v1/projects/{project}/snapshot` | 현재 상태 전체와 이를 대표하는 project head의 원자적 bounded bootstrap |
@@ -464,7 +473,9 @@ receipt, change, audit row와 같은 transaction에서 갱신됩니다. V2 ledge
 handoff resource와 최신 change sequence에서 index를 backfill합니다.
 
 보호된 모든 요청은 bearer 값을 hash하고 저장된 tenant와 actor를 찾은 뒤 활성
-project membership을 다시 읽습니다. Command JSON은 `deny_unknown_fields`를
+project membership을 다시 읽습니다. Exact resource, snapshot, change feed 응답은
+typed status route와 동일한 sender/receiver handoff visibility를 적용합니다. Command
+JSON은 `deny_unknown_fields`를
 사용하므로 body의 tenant 또는 actor identity를 무시하지 않고 거부합니다. 정본
 resource body, receipt, resource revision, project sequence, change entry, audit
 row는 한 SQLite transaction으로 commit됩니다.
@@ -604,8 +615,8 @@ replica에 도착합니다.
 
 현재 상태: 기존 embedded API나 파일 format을 변경하지 않고 별도 SQLite adapter와
 인증 HTTP test가 Phase 0 code 종료 gate를 통과합니다. 제한된
-`aidememo-server` 실행 파일은 workspace의 미배포 resource API로만 접근할 수 있고
-기존 CLI나 MCP 제품 surface에는 연결되지 않았습니다.
+`aidememo-server` 실행 파일은 workspace 전용이며 미배포 상태지만, named CLI와
+stdio MCP profile은 typed handoff surface를 실제로 사용합니다.
 
 ### Phase 1 — 단일 노드 원격 SSOT
 
@@ -628,10 +639,10 @@ bearer token을 보관할 수 있고, connected CLI 경로는 actor override를 
 `mcp-install --remote-profile`은 이 identity를 확인하고 파생 actor와 profile
 이름을 agent config 하나에 고정합니다. Binary integration test는 설치된 argument와
 환경을 그대로 사용해 같은 왕복을 실행합니다.
-`replica pull --remote-profile`은 원자적인 현재 상태 snapshot에서 bootstrap하고,
+`replica pull --remote-profile`은 actor-projected 원자적 현재 상태 snapshot에서 bootstrap하고,
 revision-pinned resource가 batch 전체와 commit된 경우에만
 `<store>.replica.sqlite` cursor를 증분 전진시킵니다. Scope와 epoch mismatch는
-`replica reset --force` 전까지
+물론 인증 actor 변경도 `replica reset --force` 전까지
 fail-closed하며 `replica status/get`은 network-free이고 서버 종료 뒤에도
 검증됩니다. Legacy unhydrated change 범위는 더 최신 상태로 재구성하지 않고 새
 snapshot을 요구합니다. 도메인과 HTTP test를 합쳐 잘못된 actor, claim, source/session 증거,

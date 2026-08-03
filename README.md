@@ -360,7 +360,10 @@ are rejected. Add `--remote-profile codex-p1` to `mcp-install` to pin the same
 route into one stdio MCP account. `replica pull` maintains a separate,
 snapshot-bootstrapped and revision-pinned `<store>.replica.sqlite` exact-read
 cache; `replica get KIND ID` remains usable
-when the server is down. This cache does not replace the embedded search store.
+when the server is down. Handoffs are projected to their authenticated sender
+or receiver across exact reads, snapshots, and changes, and the replica file is
+pinned to that actor as well as tenant, project, and epoch. This cache does not
+replace the embedded search store.
 A separate unreleased local artifact repository is exposed through the
 workspace-only server with bearer-derived reader/writer authorization,
 idempotent reserve/upload/publish, exact-revision download, and durable garbage

@@ -136,6 +136,12 @@ from one atomic snapshot and advances it with revision-pinned changes, while
 are canonical handoff evidence but are not yet
 indexed by the embedded search engine.
 
+Remote replicas are actor-bound. Generic exact reads, snapshots, and change
+feeds expose a handoff only to its authenticated sender or receiver, and the
+replica records that actor alongside tenant, project, and epoch. Run
+`replica reset --force` before reusing the same replica path with another remote
+profile.
+
 ## What stays the same
 
 | Stays with the workflow | Changes with the worker |

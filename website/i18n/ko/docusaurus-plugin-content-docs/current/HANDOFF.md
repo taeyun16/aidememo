@@ -134,6 +134,11 @@ heartbeat, board, HTTP MCP gateway routing, offline outbox, retrieval indexing�
 있습니다. Typed server fact는 canonical handoff 근거이지만 아직 embedded search
 engine에는 index되지 않습니다.
 
+원격 replica는 actor에 고정됩니다. Generic exact read, snapshot, change feed는
+handoff를 인증된 sender 또는 receiver에게만 노출하며, replica는 tenant, project,
+epoch와 함께 actor를 기록합니다. 다른 원격 profile로 같은 replica path를 재사용하기
+전에는 `replica reset --force`를 실행해야 합니다.
+
 ## 유지되는 것
 
 | 워크플로에 유지 | 작업자와 함께 변경 |
