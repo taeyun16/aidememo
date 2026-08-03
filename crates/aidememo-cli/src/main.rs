@@ -105,6 +105,7 @@ fn main() {
         cmd::Command::Stats(sub) => handle_stats(&store_path, config, sub, json),
         cmd::Command::Ingest(sub) => handle_ingest(&store_path, config, sub),
         cmd::Command::Sync(sub) => handle_sync(&store_path, config, sub, json),
+        cmd::Command::Replica(sub) => cmd::replica::run_replica(&store_path, sub, json),
         cmd::Command::Config(sub) => handle_config(config, sub),
         cmd::Command::Model(sub) => handle_model(config, sub),
         cmd::Command::Feedback(sub) => cmd::feedback::run_feedback(&store_path, config, sub),
@@ -132,7 +133,7 @@ fn main() {
             // Honour the global --store / --project resolution if the
             // user didn't pass an explicit positional WIKI_ROOT.
             let path = sub.wiki_root.unwrap_or_else(|| store_path.clone());
-            cmd::mcp_stdio::run_mcp(path, config)
+            cmd::mcp_stdio::run_mcp(path, config, sub.remote_profile)
         }
         cmd::Command::McpInstall(sub) => {
             cmd::mcp_install::run_mcp_install(sub, json, &config.store.backend, &store_path)
@@ -1801,9 +1802,25 @@ fn handle_session(
 fn handle_handoff(
     store_path: &Path,
     config: Config,
-    sub: cmd::HandoffSub,
+    command: cmd::HandoffCommand,
     json: bool,
 ) -> Result<String, AideMemoError> {
+    let remote_profile = command.remote_profile.or_else(|| {
+        std::env::var("AIDEMEMO_REMOTE_PROFILE")
+            .ok()
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty())
+    });
+    if let Some(remote_profile) = remote_profile {
+        return cmd::remote_handoff::run_remote_handoff(
+            store_path,
+            config,
+            &remote_profile,
+            command.sub,
+            json,
+        );
+    }
+    let sub = command.sub;
     let sub = match sub {
         cmd::HandoffSub::Send {
             from_actor,

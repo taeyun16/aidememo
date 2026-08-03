@@ -1,0 +1,576 @@
+//! Backend-neutral command and change-feed conformance fixture.
+//!
+//! Adapter crates implement [`CommandStore`] and
+//! invoke [`run`]. The fixture is synchronous because it describes outcomes,
+//! not I/O: async adapters can execute their runtime inside the wrapper.
+
+use crate::{
+    ActorId, AuthenticatedActor, AuthorizedCommand, ChangeCursor, ChangeOperation, CommandEnvelope,
+    CommandFingerprint, CommandId, CommandStore, DomainError, ErrorCode, MembershipRole,
+    MembershipStatus, MutationCommand, OperationName, ProjectAuthorization, ProjectEpoch,
+    ProjectId, ProjectMembership, ProjectScope, ProjectSequence, ResourceId, ResourceKind,
+    ResourceRef, ResourceState, Revision, TenantId,
+};
+
+/// Successful fixture report suitable for test output or CI artifacts.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ConformanceReport {
+    /// Stable checks completed by the adapter.
+    pub checks: Vec<&'static str>,
+    /// Sequence after create, update, and delete.
+    pub final_sequence: ProjectSequence,
+    /// Revision of the durable deletion tombstone.
+    pub tombstone_revision: Revision,
+}
+
+/// Run the Phase 0 idempotency, CAS, epoch, and tombstone contract.
+///
+/// The adapter must be empty for `tenant_fixture/project_fixture` and use the
+/// supplied epoch as its current canonical project epoch.
+///
+/// # Errors
+///
+/// Returns the adapter's stable domain error, or
+/// [`DomainError::ConformanceViolation`] when an observed result breaks a
+/// Phase 0 invariant.
+pub fn run<A: CommandStore>(
+    adapter: &mut A,
+    project_epoch: ProjectEpoch,
+) -> Result<ConformanceReport, DomainError> {
+    let authorization = fixture_authorization()?;
+    let resource = ResourceRef {
+        kind: ResourceKind::try_from("fact")?,
+        id: ResourceId::try_from("fact_fixture")?,
+    };
+    let create = fixture_command(
+        authorization.clone(),
+        "command_create",
+        None,
+        "fact.add",
+        'a',
+        resource.clone(),
+        ChangeOperation::Upsert,
+    )?;
+
+    let created = adapter.execute(&create)?;
+    check(
+        created.project_seq == ProjectSequence::new(1) && created.revision.get() == 1,
+        "initial_commit",
+        "first mutation must commit sequence 1 and revision 1",
+    )?;
+    let created_resource = adapter.resource(&authorization_scope(&created), &created.resource)?;
+    check(
+        matches!(
+            created_resource.as_ref().map(|record| &record.state),
+            Some(ResourceState::Present { body }) if body == br#"{"fixture":"a"}"#
+        ),
+        "canonical_resource_upsert",
+        "upsert must materialize the canonical resource body",
+    )?;
+
+    let replayed = adapter.execute(&create)?;
+    check(
+        replayed == created,
+        "idempotent_replay",
+        "identical command retry must return the exact stored receipt",
+    )?;
+    let looked_up = adapter.receipt(&authorization_scope(&created), &created.command_id)?;
+    check(
+        looked_up.as_ref() == Some(&created),
+        "receipt_lookup",
+        "receipt lookup must return the exact committed result",
+    )?;
+
+    let actor_conflict = fixture_command(
+        fixture_authorization_for("actor_other")?,
+        "command_create",
+        None,
+        "fact.add",
+        'a',
+        create.resource.clone(),
+        ChangeOperation::Upsert,
+    )?;
+    check_error_code(
+        adapter.execute(&actor_conflict),
+        ErrorCode::CommandConflict,
+        "command_actor_conflict",
+    )?;
+
+    let mut conflicting = create.clone();
+    conflicting.fingerprint = fingerprint('b')?;
+    check_error_code(
+        adapter.execute(&conflicting),
+        ErrorCode::CommandConflict,
+        "command_id_conflict",
+    )?;
+
+    let stale = fixture_command(
+        authorization.clone(),
+        "command_stale",
+        Some(Revision::new(2)?),
+        "fact.edit",
+        'c',
+        resource.clone(),
+        ChangeOperation::Upsert,
+    )?;
+    check_error_code(
+        adapter.execute(&stale),
+        ErrorCode::StaleRevision,
+        "stale_revision",
+    )?;
+
+    let update = fixture_command(
+        authorization.clone(),
+        "command_update",
+        Some(created.revision),
+        "fact.edit",
+        'd',
+        resource.clone(),
+        ChangeOperation::Upsert,
+    )?;
+    let updated = adapter.execute(&update)?;
+    check(
+        updated.project_seq == ProjectSequence::new(2) && updated.revision.get() == 2,
+        "compare_and_swap",
+        "matching revision must advance project sequence and resource revision once",
+    )?;
+
+    let delete = fixture_command(
+        authorization,
+        "command_delete",
+        Some(updated.revision),
+        "fact.delete",
+        'e',
+        resource,
+        ChangeOperation::Delete,
+    )?;
+    let deleted = adapter.execute(&delete)?;
+
+    let cursor = ChangeCursor {
+        project_epoch: project_epoch.clone(),
+        after_seq: ProjectSequence::ZERO,
+    };
+    let scope = ProjectScope::new(
+        TenantId::try_from("tenant_fixture")?,
+        ProjectId::try_from("project_fixture")?,
+    );
+    let changes = adapter.changes(&scope, &cursor, 100)?;
+    check(
+        changes.entries.len() == 3,
+        "single_mutation_per_command",
+        "create retry, command conflict, and stale CAS must not append changes",
+    )?;
+    let last = changes.entries.last().ok_or_else(|| {
+        violation(
+            "delete_tombstone",
+            "change feed did not contain the deletion entry",
+        )
+    })?;
+    check(
+        last.operation == ChangeOperation::Delete
+            && last.seq == deleted.project_seq
+            && last.revision == deleted.revision,
+        "delete_tombstone",
+        "last change must be a deletion tombstone with the committed receipt coordinates",
+    )?;
+    let deleted_resource = adapter.resource(&scope, &deleted.resource)?;
+    check(
+        matches!(
+            deleted_resource.as_ref().map(|record| &record.state),
+            Some(ResourceState::Deleted)
+        ),
+        "canonical_resource_tombstone",
+        "delete must retain a body-free canonical tombstone",
+    )?;
+    let materialized = adapter.materialized_changes(&scope, &cursor, 100)?;
+    check(
+        materialized.entries.len() == 3
+            && materialized.entries[0].resource.revision.get() == 1
+            && matches!(
+                &materialized.entries[0].resource.state,
+                ResourceState::Present { body } if body == br#"{"fixture":"a"}"#
+            )
+            && materialized.entries[1].resource.revision.get() == 2
+            && matches!(
+                &materialized.entries[1].resource.state,
+                ResourceState::Present { body } if body == br#"{"fixture":"d"}"#
+            )
+            && matches!(
+                materialized.entries[2].resource.state,
+                ResourceState::Deleted
+            ),
+        "revision_pinned_change_materialization",
+        "every change must carry the exact body or tombstone committed at its revision",
+    )?;
+    let snapshot = adapter.snapshot(&scope)?;
+    check(
+        snapshot.project_epoch == cursor.project_epoch
+            && snapshot.at_seq == deleted.project_seq
+            && snapshot.resources.len() == 1
+            && matches!(snapshot.resources[0].state, ResourceState::Deleted),
+        "atomic_project_snapshot",
+        "snapshot must pair complete current state with the represented project head",
+    )?;
+
+    let wrong_epoch_cursor = ChangeCursor {
+        project_epoch: ProjectEpoch::try_from("epoch_replaced")?,
+        after_seq: ProjectSequence::ZERO,
+    };
+    check_error_code(
+        adapter.changes(&scope, &wrong_epoch_cursor, 100),
+        ErrorCode::CursorEpochMismatch,
+        "cursor_epoch_fail_closed",
+    )?;
+    let future_cursor = ChangeCursor {
+        project_epoch,
+        after_seq: ProjectSequence::new(deleted.project_seq.get() + 1),
+    };
+    check_error_code(
+        adapter.changes(&scope, &future_cursor, 100),
+        ErrorCode::CursorOutOfRange,
+        "cursor_sequence_fail_closed",
+    )?;
+
+    Ok(ConformanceReport {
+        checks: vec![
+            "initial_commit",
+            "canonical_resource_upsert",
+            "idempotent_replay",
+            "receipt_lookup",
+            "command_actor_conflict",
+            "command_id_conflict",
+            "stale_revision",
+            "compare_and_swap",
+            "single_mutation_per_command",
+            "delete_tombstone",
+            "canonical_resource_tombstone",
+            "revision_pinned_change_materialization",
+            "atomic_project_snapshot",
+            "cursor_epoch_fail_closed",
+            "cursor_sequence_fail_closed",
+        ],
+        final_sequence: deleted.project_seq,
+        tombstone_revision: deleted.revision,
+    })
+}
+
+fn fixture_authorization() -> Result<ProjectAuthorization, DomainError> {
+    fixture_authorization_for("actor_fixture")
+}
+
+fn fixture_authorization_for(actor_id: &str) -> Result<ProjectAuthorization, DomainError> {
+    let authenticated = AuthenticatedActor::new(
+        TenantId::try_from("tenant_fixture")?,
+        ActorId::try_from(actor_id)?,
+    );
+    ProjectAuthorization::authorize(
+        &authenticated,
+        &ProjectMembership {
+            tenant_id: TenantId::try_from("tenant_fixture")?,
+            project_id: ProjectId::try_from("project_fixture")?,
+            actor_id: ActorId::try_from(actor_id)?,
+            role: MembershipRole::Writer,
+            status: MembershipStatus::Active,
+        },
+    )
+}
+
+fn authorization_scope(receipt: &crate::CommandReceipt) -> ProjectScope {
+    ProjectScope::new(receipt.tenant_id.clone(), receipt.project_id.clone())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn fixture_command(
+    authorization: ProjectAuthorization,
+    command_id: &str,
+    expected_revision: Option<Revision>,
+    operation: &str,
+    fingerprint_byte: char,
+    resource: ResourceRef,
+    change: ChangeOperation,
+) -> Result<MutationCommand, DomainError> {
+    let envelope = CommandEnvelope {
+        command_id: CommandId::try_from(command_id)?,
+        project_id: authorization.project_id().clone(),
+        expected_revision,
+        operation: OperationName::try_from(operation)?,
+        payload: (),
+    };
+    Ok(MutationCommand {
+        command: AuthorizedCommand::authorize(authorization, envelope)?,
+        fingerprint: fingerprint(fingerprint_byte)?,
+        resource,
+        change,
+        resource_body: match change {
+            ChangeOperation::Upsert => {
+                Some(format!(r#"{{"fixture":"{fingerprint_byte}"}}"#).into_bytes())
+            }
+            ChangeOperation::Delete => None,
+        },
+    })
+}
+
+fn fingerprint(byte: char) -> Result<CommandFingerprint, DomainError> {
+    CommandFingerprint::try_from(byte.to_string().repeat(64))
+}
+
+fn check(condition: bool, name: &'static str, detail: &str) -> Result<(), DomainError> {
+    if condition {
+        Ok(())
+    } else {
+        Err(violation(name, detail))
+    }
+}
+
+fn check_error_code<T>(
+    result: Result<T, DomainError>,
+    expected: ErrorCode,
+    name: &'static str,
+) -> Result<(), DomainError> {
+    match result {
+        Err(error) if error.code() == expected => Ok(()),
+        Err(error) => Err(violation(
+            name,
+            &format!("expected {expected:?}, observed {:?}", error.code()),
+        )),
+        Ok(_) => Err(violation(
+            name,
+            &format!("expected {expected:?}, observed success"),
+        )),
+    }
+}
+
+fn violation(check: &'static str, detail: &str) -> DomainError {
+    DomainError::ConformanceViolation {
+        check,
+        detail: detail.to_owned(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        CanonicalResource, ChangeBatch, ChangeEntry, CommandReceipt, MaterializedChange,
+        MaterializedChangeBatch, ProjectSnapshot, ResourceState,
+    };
+    use std::collections::HashMap;
+
+    struct ReferenceAdapter {
+        epoch: ProjectEpoch,
+        sequence: ProjectSequence,
+        revisions: HashMap<ResourceRef, Revision>,
+        receipts: HashMap<CommandId, CommandReceipt>,
+        changes: Vec<ChangeEntry>,
+        materialized_changes: Vec<MaterializedChange>,
+        resources: HashMap<(ProjectScope, ResourceRef), CanonicalResource>,
+    }
+
+    impl ReferenceAdapter {
+        fn new(epoch: ProjectEpoch) -> Self {
+            Self {
+                epoch,
+                sequence: ProjectSequence::ZERO,
+                revisions: HashMap::new(),
+                receipts: HashMap::new(),
+                changes: Vec::new(),
+                materialized_changes: Vec::new(),
+                resources: HashMap::new(),
+            }
+        }
+    }
+
+    impl CommandStore for ReferenceAdapter {
+        fn execute(&mut self, command: &MutationCommand) -> Result<CommandReceipt, DomainError> {
+            let envelope = command.command.envelope();
+            if let Some(receipt) = self.receipts.get(&envelope.command_id) {
+                if receipt.actor_id != *command.command.authorization().actor_id()
+                    || receipt.fingerprint != command.fingerprint
+                {
+                    return Err(DomainError::CommandConflict);
+                }
+                return Ok(receipt.clone());
+            }
+
+            let current = self.revisions.get(&command.resource).copied();
+            if let Some(expected) = envelope.expected_revision {
+                match current {
+                    Some(revision) if revision == expected => {}
+                    Some(revision) => {
+                        return Err(DomainError::StaleRevision {
+                            expected,
+                            current: revision,
+                        });
+                    }
+                    None => return Err(DomainError::ResourceNotFound),
+                }
+            }
+            let revision = current.map_or_else(|| Revision::new(1), Revision::next)?;
+            let sequence = ProjectSequence::new(self.sequence.get() + 1);
+            let authorization = command.command.authorization();
+            let receipt = CommandReceipt {
+                command_id: envelope.command_id.clone(),
+                fingerprint: command.fingerprint.clone(),
+                tenant_id: authorization.tenant_id().clone(),
+                project_id: authorization.project_id().clone(),
+                actor_id: authorization.actor_id().clone(),
+                project_seq: sequence,
+                resource: command.resource.clone(),
+                revision,
+                committed_at_ms: 1_700_000_000_000 + sequence.get() as i64,
+            };
+            self.revisions.insert(command.resource.clone(), revision);
+            let state = match command.change {
+                ChangeOperation::Upsert => ResourceState::Present {
+                    body: command.resource_body.clone().ok_or_else(|| {
+                        DomainError::InvalidCommand("upsert body missing".to_owned())
+                    })?,
+                },
+                ChangeOperation::Delete => ResourceState::Deleted,
+            };
+            let canonical = CanonicalResource {
+                scope: authorization.scope(),
+                resource: command.resource.clone(),
+                revision,
+                state,
+            };
+            self.resources.insert(
+                (authorization.scope(), command.resource.clone()),
+                canonical.clone(),
+            );
+            self.receipts
+                .insert(envelope.command_id.clone(), receipt.clone());
+            let change = ChangeEntry {
+                tenant_id: authorization.tenant_id().clone(),
+                project_id: authorization.project_id().clone(),
+                project_epoch: self.epoch.clone(),
+                seq: sequence,
+                resource: command.resource.clone(),
+                operation: command.change,
+                revision,
+                actor_id: authorization.actor_id().clone(),
+                committed_at_ms: receipt.committed_at_ms,
+            };
+            self.changes.push(change.clone());
+            self.materialized_changes.push(MaterializedChange {
+                change,
+                resource: canonical,
+            });
+            self.sequence = sequence;
+            Ok(receipt)
+        }
+
+        fn receipt(
+            &self,
+            scope: &ProjectScope,
+            command_id: &CommandId,
+        ) -> Result<Option<CommandReceipt>, DomainError> {
+            Ok(self
+                .receipts
+                .get(command_id)
+                .filter(|receipt| &authorization_scope(receipt) == scope)
+                .cloned())
+        }
+
+        fn changes(
+            &self,
+            scope: &ProjectScope,
+            cursor: &ChangeCursor,
+            limit: usize,
+        ) -> Result<ChangeBatch, DomainError> {
+            if cursor.project_epoch != self.epoch {
+                return Err(DomainError::CursorEpochMismatch {
+                    cursor: cursor.project_epoch.clone(),
+                    current: self.epoch.clone(),
+                });
+            }
+            if cursor.after_seq > self.sequence {
+                return Err(DomainError::CursorOutOfRange {
+                    after_seq: cursor.after_seq,
+                    current: self.sequence,
+                });
+            }
+            let entries: Vec<_> = self
+                .changes
+                .iter()
+                .filter(|entry| entry.seq > cursor.after_seq)
+                .take(limit)
+                .cloned()
+                .collect();
+            let has_more = self
+                .changes
+                .iter()
+                .filter(|entry| entry.seq > cursor.after_seq)
+                .count()
+                > entries.len();
+            ChangeBatch::new(scope.clone(), cursor.clone(), entries, has_more)
+        }
+
+        fn resource(
+            &self,
+            scope: &ProjectScope,
+            resource: &ResourceRef,
+        ) -> Result<Option<CanonicalResource>, DomainError> {
+            Ok(self
+                .resources
+                .get(&(scope.clone(), resource.clone()))
+                .cloned())
+        }
+
+        fn materialized_changes(
+            &self,
+            scope: &ProjectScope,
+            cursor: &ChangeCursor,
+            limit: usize,
+        ) -> Result<MaterializedChangeBatch, DomainError> {
+            if cursor.project_epoch != self.epoch {
+                return Err(DomainError::CursorEpochMismatch {
+                    cursor: cursor.project_epoch.clone(),
+                    current: self.epoch.clone(),
+                });
+            }
+            if cursor.after_seq > self.sequence {
+                return Err(DomainError::CursorOutOfRange {
+                    after_seq: cursor.after_seq,
+                    current: self.sequence,
+                });
+            }
+            let entries: Vec<_> = self
+                .materialized_changes
+                .iter()
+                .filter(|entry| entry.change.seq > cursor.after_seq)
+                .take(limit)
+                .cloned()
+                .collect();
+            let has_more = self
+                .materialized_changes
+                .iter()
+                .filter(|entry| entry.change.seq > cursor.after_seq)
+                .count()
+                > entries.len();
+            MaterializedChangeBatch::new(scope.clone(), cursor.clone(), entries, has_more)
+        }
+
+        fn snapshot(&self, scope: &ProjectScope) -> Result<ProjectSnapshot, DomainError> {
+            let resources = self
+                .resources
+                .iter()
+                .filter(|((resource_scope, _), _)| resource_scope == scope)
+                .map(|(_, resource)| resource.clone())
+                .collect();
+            ProjectSnapshot::new(scope.clone(), self.epoch.clone(), self.sequence, resources)
+        }
+    }
+
+    #[test]
+    fn reference_adapter_passes_portable_phase_zero_contract()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let epoch = ProjectEpoch::try_from("epoch_fixture")?;
+        let mut adapter = ReferenceAdapter::new(epoch.clone());
+        let report = run(&mut adapter, epoch)?;
+        assert_eq!(report.final_sequence, ProjectSequence::new(3));
+        assert_eq!(report.tombstone_revision.get(), 3);
+        assert_eq!(report.checks.len(), 15);
+        Ok(())
+    }
+}

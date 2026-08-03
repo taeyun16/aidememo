@@ -171,6 +171,42 @@ handoff board --stale-after 1h는 별도 상태 머신을 만들지 않고 외�
 설치 기본값을 지정하거나 `AIDEMEMO_ACTOR_ID`를 설정할 수 있습니다. actor
 별칭은 인증 정보가 아닙니다.
 
+인증된 원격 handoff에서는 두 계정이 같은 서버 URL을 사용하더라도 계정별 named
+credential을 저장합니다.
+
+```bash
+aidememo auth login https://memory.example.com \
+  --profile codex-p1 --project-id aidememo --token-file /secure/p1.token
+aidememo auth login https://memory.example.com \
+  --profile codex-p2 --project-id aidememo --token-file /secure/p2.token
+aidememo handoff --remote-profile codex-p1 send codex-p2 "$AIDEMEMO_SESSION_ID"
+aidememo handoff --remote-profile codex-p2 inbox
+```
+
+Bearer binding이 actor identity를 제공하므로 원격 명령은 actor override flag를
+거부합니다. 연결 상태에서 지원하는 흐름은 `send`, `inbox`, `outbox`,
+`show/status`, `accept`, `return`입니다. `mcp-install --remote-profile NAME`으로
+같은 route를 stdio MCP profile 하나에 설치할 수 있습니다. 로컬 실행 adapter와
+HTTP MCP gateway는 별도 surface입니다. [`추적 작업 핸드오프`](HANDOFF.md)를
+참고하세요.
+
+연결된 SSOT profile의 canonical exact-read cache는 별도로 유지합니다.
+
+```bash
+aidememo --store ./wiki.sqlite replica pull --remote-profile codex-p1
+aidememo --store ./wiki.sqlite replica status
+aidememo --store ./wiki.sqlite --json replica get handoff handoff_...
+aidememo --store ./wiki.sqlite replica reset --force
+```
+
+기본 파일은 `<store>.replica.sqlite`입니다. `pull`은 원자적이며 bounded인 현재 상태
+snapshot에서 bootstrap한 뒤 complete revision-pinned batch가 로컬에 commit된
+경우에만 인증 project cursor를 전진시킵니다. Scope 또는 project epoch가 달라지면 명시적인
+`reset --force` 전까지 fail-closed합니다. `status`와 `get`은 서버에 연결하지
+않으므로 장애 중에도 cached canonical resource를 읽을 수 있습니다. Bootstrap은
+현재 resource 10,000개로 제한됩니다. 아직 BM25/HNSW retrieval replica는 아니며
+embedded store를 열거나 다시 쓰지 않습니다.
+
 이 인터페이스에는 topic, offset, consumer group, lease, retry, payload 복제,
 exactly-once delivery가 없습니다. 모든 할당은 기존 추적 세션을 가리킵니다.
 

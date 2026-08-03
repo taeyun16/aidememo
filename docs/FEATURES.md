@@ -42,6 +42,7 @@ python3 scripts/docs-site-e2e.py
 | `aidememo stats` | Show store statistics. |
 | `aidememo ingest` | Ingest markdown files into the store. |
 | `aidememo sync` | Incrementally ingest local markdown or pull remote deltas from an MCP server. |
+| `aidememo replica` | Bootstrap, inspect, read, or explicitly reset a separate authenticated SSOT exact-read cache. |
 | `aidememo config` | Read and update local configuration. |
 | `aidememo model` | Inspect and manage local embedding model cache state. |
 | `aidememo feedback` | Record search-result feedback for ranking adaptation. |
@@ -76,6 +77,7 @@ python3 scripts/docs-site-e2e.py
 | Backup / restore | `aidememo backup create`, `aidememo backup restore` |
 | Branch logs | `aidememo branch push`, `aidememo branch merge` |
 | Sync | `aidememo sync ingest`, `aidememo sync pull`, `aidememo sync status` |
+| SSOT replica | `aidememo replica pull`, `aidememo replica status`, `aidememo replica get`, `aidememo replica reset` |
 | Config | `aidememo config list`, `aidememo config get`, `aidememo config set` |
 | Model cache | `aidememo model list`, `aidememo model status`, `aidememo model download` |
 | Ranking adapter | `aidememo adapt train`, `aidememo adapt status`, `aidememo adapt eval` |

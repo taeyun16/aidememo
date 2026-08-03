@@ -340,6 +340,43 @@ aidememo handoff board --stale-after 1h --include-completed
 
 [Follow the five-step handoff guide](docs/HANDOFF.md) for the shortest path.
 
+For authenticated accounts sharing one remote SSOT, store separate bearer
+profiles even when they use the same URL, then select the sender or receiver at
+the handoff boundary:
+
+```bash
+aidememo auth login https://memory.example.com --profile codex-p1 \
+  --project-id aidememo --token-file /secure/p1.token
+aidememo auth login https://memory.example.com --profile codex-p2 \
+  --project-id aidememo --token-file /secure/p2.token
+aidememo handoff --remote-profile codex-p1 send codex-p2 "$AIDEMEMO_SESSION_ID"
+aidememo handoff --remote-profile codex-p2 inbox
+aidememo --store ./wiki.sqlite replica pull --remote-profile codex-p1
+aidememo --store ./wiki.sqlite replica status
+```
+
+The server derives actor identity from each token; remote actor override flags
+are rejected. Add `--remote-profile codex-p1` to `mcp-install` to pin the same
+route into one stdio MCP account. `replica pull` maintains a separate,
+snapshot-bootstrapped and revision-pinned `<store>.replica.sqlite` exact-read
+cache; `replica get KIND ID` remains usable
+when the server is down. This cache does not replace the embedded search store.
+A separate unreleased local artifact repository is exposed through the
+workspace-only server with bearer-derived reader/writer authorization,
+idempotent reserve/upload/publish, exact-revision download, and durable garbage
+collection. It is not exposed through the public CLI; multipart streaming,
+retrieval indexing, HTTP MCP gateway routing, and offline writes remain on the
+SSOT roadmap. The workspace-only `aidememo-server/s3`
+feature connects the AWS S3/R2/MinIO-compatible presigned single-`PUT`, trusted
+`HEAD`, retained exact GET, and immutable-generation GC adapter to the
+authenticated artifact control plane. Its metadata catalog is pinned to a
+credential-free digest of the exact body-store configuration so an accidental
+bucket, prefix, endpoint, or local/S3 switch fails at startup. Provider
+conformance now includes a disposable local MinIO harness; managed R2/AWS runs
+and multipart transfer remain open. Run
+`./scripts/artifact-s3-minio-conformance.sh` when `minio` and `mc` are installed. See
+[Server and SSOT architecture](docs/SERVER_SSOT.md) for that boundary.
+
 <details>
 <summary>Protocol, receiver lifecycle, and measured boundaries</summary>
 
@@ -574,6 +611,9 @@ separate stores.
 
 See the [shared-memory deployment guide](docs/SHARED_MEMORY.md) for choosing
 between one trusted store, token-bound source partitions, and separate stores.
+The accepted multi-tenant SaaS and Kubernetes direction is documented
+separately in the [server and SSOT architecture](docs/SERVER_SSOT.md); it is a
+staged target, not a capability of the current `mcp-serve` binary.
 
 ### Compose memory in Python when the agent can run code
 

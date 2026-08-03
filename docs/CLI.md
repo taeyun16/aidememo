@@ -158,6 +158,43 @@ assert that tests passed. Configure a stable default per MCP installation with
 `AIDEMEMO_ACTOR_ID`. The alias is non-secret routing metadata, not an
 authenticated vendor account id.
 
+For authenticated remote handoff, store one named credential per account even
+when both accounts use the same server URL:
+
+```bash
+aidememo auth login https://memory.example.com \
+  --profile codex-p1 --project-id aidememo --token-file /secure/p1.token
+aidememo auth login https://memory.example.com \
+  --profile codex-p2 --project-id aidememo --token-file /secure/p2.token
+aidememo handoff --remote-profile codex-p1 send codex-p2 "$AIDEMEMO_SESSION_ID"
+aidememo handoff --remote-profile codex-p2 inbox
+```
+
+The bearer binding supplies actor identity, so remote commands reject actor
+override flags. The supported connected flow is `send`, `inbox`, `outbox`,
+`show/status`, `accept`, and `return`. Install the same route into one stdio MCP
+profile with `mcp-install --remote-profile NAME`; local execution adapters and
+the HTTP MCP gateway remain separate surfaces. See
+[`Hand off a tracked task`](HANDOFF.md).
+
+Maintain a separate canonical exact-read cache for connected SSOT profiles:
+
+```bash
+aidememo --store ./wiki.sqlite replica pull --remote-profile codex-p1
+aidememo --store ./wiki.sqlite replica status
+aidememo --store ./wiki.sqlite --json replica get handoff handoff_...
+aidememo --store ./wiki.sqlite replica reset --force
+```
+
+The default file is `<store>.replica.sqlite`. `pull` bootstraps from one atomic,
+bounded current-state snapshot, then advances the authenticated project cursor
+only after a complete revision-pinned batch commits locally. Scope or
+project-epoch changes
+fail closed until an explicit `reset --force`. `status` and `get` never contact
+the server, so cached canonical resources remain readable during an outage.
+The bootstrap is currently limited to 10,000 resources. This is not yet the
+BM25/HNSW retrieval replica and it never opens or rewrites the embedded store.
+
 For repeated local accounts, use the shorter agent-oriented surface:
 `agent add --type ... --home ...`, `handoff send ALIAS`, then
 `handoff run ALIAS`.

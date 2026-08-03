@@ -41,6 +41,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "aidememo-artifacts"
+version = "0.1.0"
+dependencies = [
+ "aidememo-domain",
+ "aws-config",
+ "aws-credential-types",
+ "aws-sdk-s3",
+ "axum",
+ "reqwest",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "ulid",
+]
+
+[[package]]
 name = "aidememo-benchmarks"
 version = "0.1.0"
 dependencies = [
@@ -62,7 +82,11 @@ dependencies = [
 name = "aidememo-cli"
 version = "0.1.0"
 dependencies = [
+ "aidememo-client",
  "aidememo-core",
+ "aidememo-domain",
+ "aidememo-server",
+ "aidememo-store-local",
  "axum",
  "bpaf",
  "chrono",
@@ -89,6 +113,20 @@ dependencies = [
  "ulid",
  "ureq 2.12.1",
  "walkdir",
+]
+
+[[package]]
+name = "aidememo-client"
+version = "0.1.0"
+dependencies = [
+ "aidememo-domain",
+ "percent-encoding",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "ureq 2.12.1",
 ]
 
 [[package]]
@@ -139,6 +177,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "aidememo-domain"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "aidememo-ffi"
 version = "0.1.0"
 dependencies = [
@@ -179,6 +226,52 @@ dependencies = [
  "pythonize",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "aidememo-server"
+version = "0.1.0"
+dependencies = [
+ "aidememo-artifacts",
+ "aidememo-client",
+ "aidememo-domain",
+ "aidememo-service",
+ "aidememo-store-local",
+ "aws-credential-types",
+ "aws-sdk-s3",
+ "axum",
+ "clap",
+ "http-body-util",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "tempfile",
+ "tokio",
+ "tower",
+ "tracing",
+ "tracing-subscriber",
+ "ulid",
+]
+
+[[package]]
+name = "aidememo-service"
+version = "0.1.0"
+dependencies = [
+ "aidememo-domain",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+]
+
+[[package]]
+name = "aidememo-store-local"
+version = "0.1.0"
+dependencies = [
+ "aidememo-domain",
+ "aidememo-service",
+ "rusqlite",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]

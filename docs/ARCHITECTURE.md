@@ -96,6 +96,12 @@ partition rather than hostile tenant isolation. See
 [`Shared Memory Layer`](SHARED_MEMORY.md) for the deployment patterns and trust
 boundary.
 
+The accepted server target uses independent tenant/project identities, an
+ordered change log with deletion tombstones, and local stores as explicit read
+caches or offline branches. That target is not implemented by the current
+`mcp-serve` process. See [`Server and SSOT Architecture`](SERVER_SSOT.md) for
+the staged portability contract across hosted and on-premises deployments.
+
 ## Retrieval flow
 
 ```mermaid
@@ -235,6 +241,7 @@ semantic conflicts between competing decisions remain application policy.
 | CLI commands and parsers | `crates/aidememo-cli/src/cmd/mod.rs`, `crates/aidememo-cli/src/main.rs` | [`CLI Usage`](CLI.md), [`Feature Inventory`](FEATURES.md) |
 | MCP tools and schemas | `crates/aidememo-cli/src/cmd/mcp_tools.rs` | [`MCP Setup`](MCP.md), [`Agent Workflows`](AGENT_WORKFLOWS.md) |
 | Shared-memory identity boundary | `crates/aidememo-cli/src/cmd/mcp_serve.rs`, `crates/aidememo-core/src/backend.rs` | [`Shared Memory Layer`](SHARED_MEMORY.md), [`MCP Setup`](MCP.md) |
+| Server / SSOT foundation | `crates/aidememo-domain`, `aidememo-service`, `aidememo-store-local`, `aidememo-server`, `aidememo-client`, and `aidememo-artifacts`; bounded typed session/fact/handoff/artifact HTTP, transactional actor mailbox indexes, raw `custom.*` resources, an isolated exact-read replica, durable local artifact GC, feature-gated S3/R2 direct transfer, and disposable local MinIO conformance exist, while PostgreSQL, managed R2/AWS conformance, multipart transfer, retrieval projection, HTTP MCP gateway routing, and offline writes remain proposed | [`Server and SSOT Architecture`](SERVER_SSOT.md) |
 | Core API and retrieval | `crates/aidememo-core/src/lib.rs`, `search.rs`, `graph.rs` | [`Architecture`](ARCHITECTURE.md), [`Operations`](OPERATIONS.md) |
 | Storage dispatch | `crates/aidememo-core/src/backend.rs`, `sqlite_store.rs`, `store.rs` | [`Operations`](OPERATIONS.md), [`Feature Inventory`](FEATURES.md) |
 | Python agent SDK | `packages/aidememo-agent-sdk/src/aidememo_agent/sdk.py` | [`Python SDK`](SDK.md), [`Agent Workflows`](AGENT_WORKFLOWS.md) |

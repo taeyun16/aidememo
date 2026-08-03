@@ -1,0 +1,35 @@
+[package]
+name = "aidememo-artifacts"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "Immutable local artifact bodies and reservation lifecycle for AideMemo SSOT mode"
+license.workspace = true
+repository.workspace = true
+version.workspace = true
+publish = false
+
+[features]
+default = []
+s3 = ["dep:aws-config", "dep:aws-sdk-s3"]
+
+[dependencies]
+aidememo-domain = { version = "0.1.0", path = "../aidememo-domain" }
+aws-config = { version = "1.8.18", optional = true }
+aws-sdk-s3 = { version = "1.136.0", optional = true, default-features = false, features = ["http-1x", "default-https-client", "rt-tokio"] }
+rusqlite = { version = "0.40.1", default-features = false, features = ["bundled"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.11"
+tempfile = "3.10"
+thiserror = "2.0"
+ulid = "1.1"
+
+[dev-dependencies]
+aws-credential-types = "1.2.14"
+axum = "0.8"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+tokio = { version = "1.35", features = ["macros", "net", "rt-multi-thread", "sync"] }
+
+[lints]
+workspace = true

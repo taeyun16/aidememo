@@ -13,7 +13,9 @@ caller must not be allowed to choose either value.
 
 This guide is the deployment-level view. For individual MCP tool schemas, see
 [`MCP Setup`](MCP.md). For locking, backup, and sync details, see
-[`Operations`](OPERATIONS.md).
+[`Operations`](OPERATIONS.md). For the accepted but not-yet-shipped multi-tenant
+server, SaaS, and Kubernetes target, see
+[`Server and SSOT Architecture`](SERVER_SSOT.md).
 
 ## Choose the deployment model
 
@@ -24,6 +26,12 @@ This guide is the deployment-level view. For individual MCP tool schemas, see
 | Several trusted projects on one server | One SQLite store, one `mcp-serve`, and a fixed token binding per source/actor |
 | Mutually untrusted tenants | Separate stores and preferably separate AideMemo processes |
 | Cloud or speculative agent runs | Restore a baseline backup, write locally, then merge only the selected branch log |
+
+These rows describe the implemented shared-store product. They are not a claim
+that the current `source_id` model is a SaaS tenant boundary. The server target
+introduces tenant/project membership, command idempotency, revision guards, and
+an ordered tombstone-bearing change feed instead of widening this local scope
+model.
 
 SQLite / `libsqlite` is the default shared-store backend. Prefer one daemon or
 HTTP server as the writer coordinator. The optional redb backend is useful for

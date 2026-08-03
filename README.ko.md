@@ -325,6 +325,40 @@ aidememo handoff board --stale-after 1h --include-completed
 
 [5단계 핸드오프 가이드](docs/HANDOFF.md)에서 가장 짧은 경로부터 시작하세요.
 
+하나의 원격 SSOT를 공유하는 인증 계정에는 같은 URL을 쓰더라도 별도 bearer
+profile을 저장하고 handoff 경계에서 발신자 또는 수신자를 선택합니다.
+
+```bash
+aidememo auth login https://memory.example.com --profile codex-p1 \
+  --project-id aidememo --token-file /secure/p1.token
+aidememo auth login https://memory.example.com --profile codex-p2 \
+  --project-id aidememo --token-file /secure/p2.token
+aidememo handoff --remote-profile codex-p1 send codex-p2 "$AIDEMEMO_SESSION_ID"
+aidememo handoff --remote-profile codex-p2 inbox
+aidememo --store ./wiki.sqlite replica pull --remote-profile codex-p1
+aidememo --store ./wiki.sqlite replica status
+```
+
+서버가 각 token에서 actor identity를 결정하므로 원격 actor override flag는
+거부됩니다. `mcp-install`에 `--remote-profile codex-p1`을 추가하면 같은 route를
+stdio MCP 계정 하나에 고정합니다. `replica pull`은 snapshot으로 bootstrap하고
+revision-pinned change를 적용하는 별도 `<store>.replica.sqlite` exact-read cache를
+유지하며 서버 중단 중에도 `replica get KIND ID`로 읽을 수 있습니다. 이 cache는
+embedded search store를 대체하지 않습니다. 별도 미출시 local artifact
+repository는 workspace 전용 server를 통해 bearer 기반 reader/writer authorization,
+idempotent reserve/upload/publish, exact-revision download, durable garbage collection을
+지원합니다. Public CLI에는 노출되지 않으며 multipart streaming, retrieval indexing,
+HTTP MCP gateway routing, offline write는 SSOT roadmap에 남아 있습니다. Workspace
+전용 `aidememo-server/s3` feature는 AWS S3/R2/MinIO 호환 presigned single-`PUT`,
+신뢰된 `HEAD`, retention이 적용된 exact GET, immutable-generation GC adapter를 인증된
+artifact control plane에 연결합니다. Metadata catalog는 정확한 body-store 설정의
+credential-free digest에 고정되므로 bucket, prefix, endpoint 또는 local/S3 전환 실수는
+서버 시작 시 실패합니다. Disposable local MinIO conformance harness는 구현·통과했으며
+managed R2/AWS 실행과 multipart transfer는 아직 열려 있습니다. `minio`와 `mc`가
+설치된 환경에서는 `./scripts/artifact-s3-minio-conformance.sh`로 재현할 수 있습니다. 경계는
+[서버 및 SSOT 아키텍처](website/i18n/ko/docusaurus-plugin-content-docs/current/SERVER_SSOT.md)를
+참고하세요.
+
 <details>
 <summary>프로토콜, 수신 lifecycle, 측정 경계</summary>
 
@@ -525,6 +559,10 @@ entity name/type ontology를 공유하므로 상호 신뢰하지 않는 tenant�
 적합한 배치 방식을 고르려면
 [공유 메모리 배치 가이드](website/i18n/ko/docusaurus-plugin-content-docs/current/SHARED_MEMORY.md)를
 참고하세요.
+채택된 멀티테넌트 SaaS 및 Kubernetes 방향은
+[서버 및 SSOT 아키텍처](website/i18n/ko/docusaurus-plugin-content-docs/current/SERVER_SSOT.md)에
+별도로 문서화되어 있습니다. 이는 현재 `mcp-serve` 바이너리의 기능이 아니라
+단계별 목표입니다.
 
 ### 에이전트가 코드를 실행할 수 있을 때 Python으로 메모리 조합
 

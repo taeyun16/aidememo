@@ -13,7 +13,8 @@ AideMemo는 프로젝트 컨텍스트와 작성자 provenance를 명시적으로
 
 이 문서는 배포 관점의 가이드입니다. 개별 MCP 도구 schema는
 [`MCP 설정`](MCP.md), lock·backup·sync 세부사항은 [`운영`](OPERATIONS.md)을
-참고하세요.
+참고하세요. 채택됐지만 아직 출시되지 않은 멀티테넌트 server, SaaS,
+Kubernetes 목표는 [`서버 및 SSOT 아키텍처`](SERVER_SSOT.md)를 참고하세요.
 
 ## 배포 모델 선택
 
@@ -24,6 +25,11 @@ AideMemo는 프로젝트 컨텍스트와 작성자 provenance를 명시적으로
 | 신뢰된 여러 프로젝트가 한 서버 공유 | SQLite 저장소 하나, `mcp-serve` 하나, source/actor별 고정 token binding |
 | 서로 신뢰하지 않는 tenant | 별도 저장소와 가능하면 별도 AideMemo process |
 | 클라우드 또는 추측성 에이전트 실행 | baseline backup 복원 후 로컬 쓰기, 선택한 branch log만 merge |
+
+이 표는 구현된 공유 저장소 제품을 설명합니다. 현재 `source_id` 모델이 SaaS
+tenant 경계라는 주장이 아닙니다. Server 목표는 이 로컬 scope 모델을 확장하는
+대신 tenant/project membership, command idempotency, revision guard, tombstone이
+있는 순서형 change feed를 도입합니다.
 
 SQLite / `libsqlite`가 기본 공용 저장소 backend입니다. 하나의 daemon 또는 HTTP
 server를 writer coordinator로 사용하세요. 선택형 redb backend는 embedded

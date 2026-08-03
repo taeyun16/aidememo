@@ -24,10 +24,12 @@ SDK_DOC = ROOT / "docs" / "SDK.md"
 INSTALLATION_DOC = ROOT / "docs" / "INSTALLATION.md"
 QUICKSTART_DOC = ROOT / "docs" / "QUICKSTART.md"
 HANDOFF_DOC = ROOT / "docs" / "HANDOFF.md"
+MCP_DOC = ROOT / "docs" / "MCP.md"
 EVIDENCE_DOC = ROOT / "docs" / "EVIDENCE.md"
 MEASUREMENTS_DOC = ROOT / "docs" / "MEASUREMENTS.md"
 LFM_EXPERIMENTS_DOC = ROOT / "docs" / "LFM_EXPERIMENTS.md"
 RELEASE_DOC = ROOT / "docs" / "RELEASE.md"
+SERVER_SSOT_DOC = ROOT / "docs" / "SERVER_SSOT.md"
 SCRIPTS_README = ROOT / "scripts" / "README.md"
 INSTALL_SCRIPT = ROOT / "scripts" / "install.sh"
 CONTRIBUTING = ROOT / "CONTRIBUTING.md"
@@ -37,6 +39,21 @@ BUG_TEMPLATE = ROOT / ".github" / "ISSUE_TEMPLATE" / "bug_report.yml"
 FEATURE_TEMPLATE = ROOT / ".github" / "ISSUE_TEMPLATE" / "feature_request.yml"
 ISSUE_TEMPLATE_CONFIG = ROOT / ".github" / "ISSUE_TEMPLATE" / "config.yml"
 MCP_TOOLS_RS = ROOT / "crates" / "aidememo-cli" / "src" / "cmd" / "mcp_tools.rs"
+MCP_STDIO_RS = ROOT / "crates" / "aidememo-cli" / "src" / "cmd" / "mcp_stdio.rs"
+MCP_INSTALL_RS = ROOT / "crates" / "aidememo-cli" / "src" / "cmd" / "mcp_install.rs"
+CLI_AUTH_RS = ROOT / "crates" / "aidememo-cli" / "src" / "cmd" / "auth.rs"
+CLI_REMOTE_HANDOFF_RS = ROOT / "crates" / "aidememo-cli" / "src" / "cmd" / "remote_handoff.rs"
+CLI_REPLICA_RS = ROOT / "crates" / "aidememo-cli" / "src" / "cmd" / "replica.rs"
+CLIENT_LIB_RS = ROOT / "crates" / "aidememo-client" / "src" / "lib.rs"
+ARTIFACTS_LIB_RS = ROOT / "crates" / "aidememo-artifacts" / "src" / "lib.rs"
+DOMAIN_LIB_RS = ROOT / "crates" / "aidememo-domain" / "src" / "lib.rs"
+DOMAIN_CONFORMANCE_RS = ROOT / "crates" / "aidememo-domain" / "src" / "conformance.rs"
+DOMAIN_HANDOFF_RS = ROOT / "crates" / "aidememo-domain" / "src" / "handoff.rs"
+SERVICE_LIB_RS = ROOT / "crates" / "aidememo-service" / "src" / "lib.rs"
+LOCAL_STORE_LIB_RS = ROOT / "crates" / "aidememo-store-local" / "src" / "lib.rs"
+SERVER_LIB_RS = ROOT / "crates" / "aidememo-server" / "src" / "lib.rs"
+SERVER_MAIN_RS = ROOT / "crates" / "aidememo-server" / "src" / "main.rs"
+SERVER_PRODUCT_RS = ROOT / "crates" / "aidememo-server" / "src" / "product.rs"
 SIDEBAR_JS = ROOT / "website" / "sidebars.js"
 DOCUSAURUS_CONFIG = ROOT / "website" / "docusaurus.config.js"
 WEBSITE_PACKAGE = ROOT / "website" / "package.json"
@@ -69,6 +86,7 @@ REQUIRED_SIDEBAR_DOCS = [
     "CLI",
     "MCP",
     "SHARED_MEMORY",
+    "SERVER_SSOT",
     "CODING_AGENTS",
     "CODEX_MULTI_PROFILE",
     "AGENT_WORKFLOWS",
@@ -97,6 +115,231 @@ REQUIRED_HOMEPAGE_DOCS = [
 
 DOC_CONTENT_REQUIREMENTS = [
     (
+        DOMAIN_LIB_RS,
+        [
+            "Portable domain contracts",
+            "ArtifactReference",
+            "CommandReceipt",
+            "ProjectAuthorization",
+            "ProjectRecord",
+        ],
+    ),
+    (
+        DOMAIN_CONFORMANCE_RS,
+        [
+            "idempotent_replay",
+            "command_id_conflict",
+            "stale_revision",
+            "delete_tombstone",
+            "cursor_epoch_fail_closed",
+            "cursor_sequence_fail_closed",
+            "receipt_lookup",
+            "command_actor_conflict",
+        ],
+    ),
+    (
+        DOMAIN_HANDOFF_RS,
+        [
+            "SessionRecord",
+            "FactRecord",
+            "HandoffRecord",
+            "HandoffMailbox",
+            "HandoffQuery",
+            "HandoffPage",
+            "active handoff claim",
+            "result fact belongs to a different session",
+            "result fact belongs to a different source",
+            "result fact was not written by the receiving actor",
+        ],
+    ),
+    (
+        SERVICE_LIB_RS,
+        [
+            "CommandService",
+            "ProjectAccess::authorize",
+            "command_fingerprint",
+            "canonicalize_json",
+            "resource: &'a ResourceRef",
+            "change: ChangeOperation",
+            "execute_with_body",
+            "pub fn replay",
+            "pub fn handoffs",
+        ],
+    ),
+    (
+        LOCAL_STORE_LIB_RS,
+        [
+            "SqliteCommandStore",
+            "TransactionBehavior::Immediate",
+            "ssot_receipts",
+            "ssot_changes",
+            "ssot_audit",
+            "ssot_handoff_index",
+            "ssot_handoff_inbox_idx",
+            "ssot_handoff_outbox_idx",
+            "migrate_v2_to_v3",
+            "impl HandoffStore",
+            "project_membership",
+        ],
+    ),
+    (
+        SERVER_LIB_RS,
+        [
+            "/v1/commands",
+            "bearer_token_digest",
+            "deny_unknown_fields",
+            "authenticate_token",
+            "EXTENSION_RESOURCE_PREFIX",
+            "resource.put",
+            "ResourceResponseState",
+        ],
+    ),
+    (
+        SERVER_MAIN_RS,
+        [
+            "BootstrapArgs",
+            "project_epoch",
+            "token_file",
+            "allow_insecure_http",
+            "bootstrap_project",
+        ],
+    ),
+    (
+        SERVER_PRODUCT_RS,
+        [
+            "/identity",
+            "/sessions",
+            "/facts",
+            "/handoffs",
+            "handoff.accept",
+            "handoff.return",
+            "HandoffListQuery",
+            "before_seq",
+            "project_membership",
+            "project_epoch",
+            "return_result",
+        ],
+    ),
+    (
+        CLI_AUTH_RS,
+        [
+            "RemoteAuthProfile",
+            "load_remote_profile",
+            "named auth profiles require --project-id",
+        ],
+    ),
+    (
+        CLI_REMOTE_HANDOFF_RS,
+        [
+            "AIDEMEMO_REMOTE_PROFILE",
+            "remote handoff send",
+            "authenticated remote actor",
+            "ensure_session",
+            "ensure_fact",
+        ],
+    ),
+    (
+        CLIENT_LIB_RS,
+        [
+            "HttpReplicaClient",
+            "ReplicaStore",
+            "pull_to_current",
+            "EpochMismatch",
+            "validate_materialized_batch",
+            "apply_snapshot",
+            "PRAGMA busy_timeout = 5000",
+        ],
+    ),
+    (
+        ARTIFACTS_LIB_RS,
+        [
+            "LocalArtifactStore",
+            "ReserveRequest",
+            "persist_noclobber",
+            "ensure_live_reservation",
+            "BodyMismatch",
+            "64 * 1024 * 1024",
+        ],
+    ),
+    (
+        CLI_REPLICA_RS,
+        [
+            "--remote-profile",
+            "<store>.replica.sqlite",
+            "pull_to_current",
+            "replica reset removes cached scope",
+        ],
+    ),
+    (
+        MCP_STDIO_RS,
+        [
+            "--remote-profile",
+            "actor_id_for_profile",
+            "does not match remote profile actor",
+            "dispatch_with_remote_profile",
+        ],
+    ),
+    (
+        MCP_INSTALL_RS,
+        [
+            "--remote-profile",
+            "actor identity comes from the bearer binding",
+            "actor_id_for_profile",
+            "install one --remote-profile per Codex home",
+        ],
+    ),
+    (
+        MCP_TOOLS_RS,
+        [
+            "execute_remote_handoff",
+            "remote_handoff_sub",
+            "remote dispatch requires to_actor",
+        ],
+    ),
+    (
+        SERVER_SSOT_DOC,
+        [
+            "bounded single-node typed",
+            "tenant_id",
+            "project_id",
+            "command_id",
+            "expected_revision",
+            "project_epoch",
+            "after_seq",
+            "Durable Objects",
+            "PostgreSQL",
+            "S3-compatible",
+            "tombstones",
+            "Transactional outbox",
+            "aidememo-domain",
+            "aidememo-service",
+            "aidememo-store-local",
+            "aidememo-server",
+            "aidememo-client",
+            "aidememo-artifacts",
+            "conformance::run",
+            "Phase 0 code exit gate passes",
+            "resource.put",
+            "custom.*",
+            "/v1/commands",
+            "/sessions",
+            "/facts",
+            "/handoffs",
+            "next_before_seq",
+            "schema v3",
+            "replica pull --remote-profile",
+            "replica reset --force",
+            "sequence-consistent exact-read cache",
+            "changes/materialized",
+            "codex-p1",
+            "codex-p2",
+            "Hermes",
+            "aidememo-store-postgres",
+            "Phase 4",
+            "distributed POSIX filesystem",
+        ],
+    ),
+    (
         HANDOFF_DOC,
         [
             "Shared memory is always on.",
@@ -105,8 +348,20 @@ DOC_CONTENT_REQUIREMENTS = [
             "aidememo handoff send codex-two",
             "aidememo handoff run codex-two",
             "aidememo handoff show handoff-...",
+            "--remote-profile codex-p1",
+            "AIDEMEMO_REMOTE_PROFILE=codex-p2",
             "same tracked session",
             "not a message broker",
+        ],
+    ),
+    (
+        MCP_DOC,
+        [
+            "Authenticated remote handoff profiles",
+            "--remote-profile codex-p1",
+            "mcp --remote-profile NAME",
+            "one remote credential profile into several Codex homes",
+            "HTTP `mcp-serve`",
         ],
     ),
     (

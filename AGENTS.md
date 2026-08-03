@@ -16,6 +16,12 @@ vectors) and exposes it to LLM agents via CLI, MCP server, and native bindings
 
 | Crate | Purpose |
 |---|---|
+| `aidememo-domain` | Portable server/SSOT identities, commands, receipts, revisions, change feed, artifacts, typed handoff state machine, and conformance fixture |
+| `aidememo-service` | Authenticated command orchestration and canonical request fingerprinting |
+| `aidememo-store-local` | Separate single-node SQLite command ledger for the future server mode; does not replace the embedded core store |
+| `aidememo-server` | Authenticated single-node HTTP resource command, exact-read, change-feed, bootstrap, and health boundary |
+| `aidememo-client` | Authenticated SSOT HTTP transport plus a separate SQLite exact-read replica and durable project cursor |
+| `aidememo-artifacts` | Separate immutable-body layer with local SQLite/path storage plus an optional S3/R2/MinIO direct-transfer adapter; CAS publication and durable exact-generation garbage collection |
 | `aidememo-core` | SQLite default store, optional redb store, ingest, search, traverse, lint, validity windows |
 | `aidememo-cli` | `aidememo` binary (CLI + stdio/HTTP MCP) |
 | `aidememo-napi`, `aidememo-python`, `aidememo-nif`, `aidememo-ffi` | language bindings (full API; SQLite default, optional `redb` Cargo feature) |
@@ -36,6 +42,10 @@ cargo check -p aidememo-core --no-default-features --features redb
 cargo check -p aidememo-cli --features s3
 cargo test -p aidememo-core --features semantic
 cargo test -p aidememo-cli --bin aidememo
+cargo test -p aidememo-domain -p aidememo-service -p aidememo-store-local -p aidememo-server -p aidememo-client -p aidememo-artifacts
+cargo test -p aidememo-artifacts --features s3
+cargo test -p aidememo-server --features s3
+./scripts/artifact-s3-minio-conformance.sh  # opt-in real presigned lifecycle against disposable local MinIO
 ./scripts/ci-local.sh lint
 ./scripts/ci-local.sh demo               # first-run workflow memory smoke
 ./scripts/ci-local.sh test
@@ -85,6 +95,9 @@ aidememo init --agent claude --agent-force <wiki-root>   overwrite existing agen
 aidememo --store <PATH> mcp-install --target codex       pin the resolved store in Codex MCP config
          [--source-id ID] [--codex-home PATH --actor-id ID]...
                                                           install isolated Codex profiles with source scope + writer provenance
+aidememo --store <PATH> mcp-install --target codex --codex-home PATH
+         --source-id ID --remote-profile PROFILE          verify bearer identity and pin one connected
+                                                          remote handoff route to one Codex account
 ```
 
 ### Read / search
@@ -223,6 +236,13 @@ aidememo installation add|list|show|remove         credential-free Codex/Claude 
 aidememo handoff send AGENT [SESSION]              infer destination metadata and dispatch the session.
 aidememo handoff inbox|accept|return|outbox|show|status
                                             receiver/sender round trip with result fact link;
+aidememo handoff --remote-profile PROFILE ...
+                                            authenticated connected round trip through one
+                                            remote SSOT project; actor comes from bearer binding.
+aidememo replica pull --remote-profile PROFILE [--replica-path PATH]
+                                            bootstrap/catch up the separate exact-read cache.
+aidememo replica status|get                  network-free cached canonical reads/status.
+aidememo replica reset --force               explicit scope/epoch cache reset.
 aidememo handoff run AGENT [HANDOFF_ID]             execute oldest pending external-worker assignment;
                                             not a message queue, auto-retry, or task-success proof.
 aidememo workflow start <TITLE> [--body-file issue.md] [--source github:org/repo#123]
@@ -371,6 +391,33 @@ daemon path.
 ## Code map
 
 ```
+crates/aidememo-domain/src/
+  identity.rs   tenant/project/actor scope, membership, revisions
+  command.rs    envelope, authorization guard, receipt, audit
+  change.rs     ordered project change feed + tombstones
+  storage.rs    portable CommandStore + indexed HandoffStore adapter contracts
+  handoff.rs    typed session/fact records, claim/return invariants, mailbox pages
+  conformance.rs backend-neutral idempotency/CAS/epoch fixture
+
+crates/aidememo-service/src/lib.rs
+  authenticated orchestration + canonical command fingerprint
+
+crates/aidememo-store-local/src/lib.rs
+  separate SQLite receipt/revision/change/audit ledger + transactional handoff index
+
+crates/aidememo-server/src/
+  lib.rs        authenticated resource command, exact-read, change-feed, and health routes
+  main.rs       retry-safe identity bootstrap and loopback-first server process
+  product.rs    typed session/fact/handoff send, mailbox, accept, return, and status routes
+
+crates/aidememo-client/src/lib.rs
+  authenticated HTTP identity/change/resource transport + isolated SQLite exact-read replica
+
+crates/aidememo-artifacts/src/lib.rs
+  local reserve/upload/publish/abort lifecycle + immutable generation bodies
+crates/aidememo-artifacts/src/s3.rs
+  feature-gated conditional PUT grants + trusted HEAD/exact GET/delete adapter
+
 crates/aidememo-core/src/
   lib.rs        AideMemo public API (re-exports)
   sqlite_store.rs SQLite CRUD (default backend)
@@ -388,6 +435,8 @@ crates/aidememo-core/src/
 
 crates/aidememo-cli/src/
   main.rs            command dispatch
+  cmd/remote_handoff.rs named authenticated CLI profiles + typed server round trip
+  cmd/replica.rs     remote bootstrap/pull and network-free exact cache status/get/reset
   output.rs          Format::{Table, Json} renderers + format_query_result
   cmd/mod.rs         bpaf top-level + per-command parsers (--project / --json)
   cmd/{init,watch,model,feedback,adapt,doctor,recent,edit,graph,project}.rs
@@ -439,6 +488,65 @@ crates/aidememo-cli/src/
 - Time helpers: `parse_iso_to_epoch_ms` (YYYY-MM-DD or RFC3339),
   `parse_duration_to_ms` (`30d`, `12h`, `4w`, `1y`).
 
+### Server / SSOT foundations
+
+- `aidememo-domain` must remain free of database, filesystem, network, model,
+  and async-runtime dependencies.
+- Every canonical lookup uses `ProjectScope { tenant_id, project_id }`;
+  `source_id` and actor aliases are not tenant credentials.
+- `aidememo-service` computes the command fingerprint from canonical project,
+  revision precondition, operation, payload, resource coordinate, and change
+  kind. `command_id` is the receipt lookup key and is excluded from its own
+  fingerprint.
+- `aidememo-store-local` uses a separate SQLite database and must not migrate or
+  reinterpret the current embedded `aidememo-core` file format.
+- `aidememo-server` derives tenant and actor identity only from a persisted
+  SHA-256 bearer-token binding, reloads active membership for every request,
+  and exposes `resource.put` / `resource.delete` only for `custom.*` extension
+  kinds, exact resource reads, an atomic bounded snapshot, revision-pinned
+  materialized changes, the ordered metadata feed, and bounded typed
+  product routes. Reserved product kinds such as `fact`, `session`, and
+  `handoff` are writable only through typed APIs; the raw endpoint must not
+  bypass their invariants. The first typed slice supports session create,
+  session-attached fact create, and handoff send/indexed inbox/outbox/accept/
+  return/status plus bearer-bound identity inspection. Mailbox actor identity is
+  always derived from authentication. Named CLI and installed stdio MCP profiles
+  support the connected handoff round trip; the server does not yet provide
+  heartbeat, search, HTTP MCP gateway profiles, retrieval indexing, multipart
+  artifact transfer, or live-provider conformance. Its local and feature-gated
+  S3 artifact routes are authenticated and enforce bounded grants, trusted
+  observation, CAS publication, durable read retention, and exact-generation GC.
+- `aidememo-client` uses `<store>.replica.sqlite` as a separate exact-read
+  cache. It bootstraps from one atomic current-state snapshot, validates
+  scope/epoch, applies revision-pinned change batches and cursor advancement in
+  one transaction, keeps tombstones, and requires explicit reset after history
+  replacement. The first snapshot is bounded to 10,000 resources. It must not
+  open, migrate, or reinterpret the embedded `aidememo-core` store.
+- `aidememo-artifacts` keeps its SQLite path catalog and immutable `objects/`
+  bodies under a separate root. Publication requires the current path token,
+  a live reservation, and a trusted body observation; local publication also
+  requires server-observed SHA-256. Logical paths never
+  become filesystem paths. Replacement, abort, and expired reservations enqueue
+  unreachable generations for a leased, retrying, idempotent GC pass. The 64 MiB
+  direct-upload limit is a bounded local profile; the feature-gated hosted path
+  currently uses a portable 5 GB single-`PUT` bound. With the `s3` feature it can
+  sign conditional single-`PUT` and exact
+  retained GET capabilities and perform trusted HEAD/read/delete operations for
+  AWS S3, R2, or MinIO. The `aidememo-server/s3` feature connects it to authenticated
+  upload/download grants, trusted publication, durable read retention, and exact-generation
+  GC. A reproducible opt-in harness passes the same presigned lifecycle against
+  a disposable local MinIO process; managed R2/AWS conformance and multipart
+  transfer remain open. Each catalog
+  is durably pinned to the exact local layout or credential-free digest of its
+  S3 bucket/prefix/endpoint/region/addressing configuration, and startup rejects
+  accidental backend reuse.
+- Typed handoff return must match the canonical session, inherited `source_id`,
+  authenticated receiving actor, active `claim_id`, and result fact. The
+  receiver must be an active writable project member.
+- Every new canonical adapter must pass `aidememo_domain::conformance::run`.
+- The six foundation crates remain `publish = false` until a server-facing
+  public API and dependency release order are approved.
+
 ## MCP integration
 
 `aidememo` ships two MCP transports backed by the same tool dispatch
@@ -448,6 +556,11 @@ crates/aidememo-cli/src/
 |---|---|---|
 | `aidememo mcp` | stdio (newline-delimited JSON-RPC) | local agents (Claude Code, Codex CLI) |
 | `aidememo mcp-serve --port 3000` | HTTP POST `/mcp` + SSE `/sse` | browser/remote clients |
+
+`aidememo mcp --remote-profile NAME` keeps normal memory tools on the pinned
+embedded store while routing handoff dispatch/inbox/accept/return through the
+authenticated remote SSOT. Prefer `mcp-install --remote-profile NAME`, which
+verifies and installs the bearer-bound actor instead of trusting an alias.
 
 **Tool surface — 7 core, then standard, then advanced.** Agent prompts
 should lead with the core 7; the rest are there when needed.

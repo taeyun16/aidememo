@@ -1,0 +1,20 @@
+[package]
+name = "aidememo-domain"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "Portable server and SSOT domain contracts for AideMemo"
+license.workspace = true
+repository.workspace = true
+version.workspace = true
+publish = false
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+thiserror = "1.0"
+
+[dev-dependencies]
+serde_json = "1.0"
+
+[lints]
+workspace = true

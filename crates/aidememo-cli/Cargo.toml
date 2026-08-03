@@ -13,7 +13,9 @@ name = "aidememo"
 path = "src/main.rs"
 
 [dependencies]
+aidememo-client = { version = "0.1.0", path = "../aidememo-client" }
 aidememo-core = { version = "0.1.0", path = "../aidememo-core", default-features = false, features = ["semantic", "semantic-adapt"] }
+aidememo-domain = { version = "0.1.0", path = "../aidememo-domain" }
 
 # Profile-mode measurement for `aidememo bench`.
 # - memory-stats: cross-platform RSS (includes virtual mappings — useful as a
@@ -91,3 +93,7 @@ fastembed = ["aidememo-core/fastembed"]
 # which https://nnethercote.github.io/dh_view/dh_view.html renders
 # into a treemap of "live bytes by allocation site".
 dhat-heap = ["dep:dhat"]
+
+[dev-dependencies]
+aidememo-server = { path = "../aidememo-server" }
+aidememo-store-local = { path = "../aidememo-store-local" }

@@ -1,6 +1,12 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/aidememo-domain",
+    "crates/aidememo-service",
+    "crates/aidememo-store-local",
+    "crates/aidememo-server",
+    "crates/aidememo-client",
+    "crates/aidememo-artifacts",
     "crates/aidememo-core",
     "crates/aidememo-cli",
     "benchmarks",

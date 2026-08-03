@@ -2627,7 +2627,16 @@ fn tool_session_canvas(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, 
     })
 }
 
+#[cfg(test)]
 fn tool_agent_handoff(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, String> {
+    tool_agent_handoff_with_remote(args, wiki, None)
+}
+
+fn tool_agent_handoff_with_remote(
+    args: &Value,
+    wiki: &AideMemo,
+    remote_profile: Option<&str>,
+) -> Result<ToolCallResult, String> {
     let session = args
         .get("session")
         .or_else(|| args.get("session_id"))
@@ -2672,6 +2681,29 @@ fn tool_agent_handoff(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, S
     let upstream_board_id = string_arg("kanban_board")
         .map(str::to_string)
         .or_else(|| clean_env("HERMES_KANBAN_BOARD"));
+
+    if dispatch && let Some(remote_profile) = remote_profile {
+        let to_actor = to_actor.ok_or("remote dispatch requires to_actor")?;
+        let payload = crate::cmd::remote_handoff::execute_remote_handoff(
+            Some(wiki),
+            remote_profile,
+            crate::cmd::HandoffSub::Send {
+                from_actor: string_arg("from_actor").map(str::to_string),
+                source_id,
+                focus: string_arg("focus").map(str::to_string),
+                done_when: string_arg("done_when").map(str::to_string),
+                kanban_task: upstream_task_id,
+                kanban_board: upstream_board_id,
+                installation: to_actor,
+                session: session.map(str::to_string),
+            },
+        )
+        .map_err(|error| error.to_string())?;
+        return Ok(ToolCallResult {
+            content: vec![ContentBlock::text(payload.to_string())],
+            is_error: None,
+        });
+    }
 
     let artifact = artifacts::agent_handoff(
         wiki,
@@ -2758,7 +2790,28 @@ fn tool_agent_handoff(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, S
     })
 }
 
+#[cfg(test)]
 fn tool_handoff_inbox(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, String> {
+    tool_handoff_inbox_with_remote(args, wiki, None)
+}
+
+fn tool_handoff_inbox_with_remote(
+    args: &Value,
+    wiki: &AideMemo,
+    remote_profile: Option<&str>,
+) -> Result<ToolCallResult, String> {
+    if let Some(remote_profile) = remote_profile {
+        let payload = crate::cmd::remote_handoff::execute_remote_handoff(
+            Some(wiki),
+            remote_profile,
+            remote_handoff_sub(args)?,
+        )
+        .map_err(|error| error.to_string())?;
+        return Ok(ToolCallResult {
+            content: vec![ContentBlock::text(payload.to_string())],
+            is_error: None,
+        });
+    }
     let explicit_actor = args.get("actor_id").and_then(|value| value.as_str());
     let actor_id = crate::cmd::handoff::actor_id(explicit_actor);
     let require_actor = || {
@@ -2942,6 +2995,82 @@ fn tool_handoff_inbox(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, S
         content: vec![ContentBlock::text(payload.to_string())],
         is_error: None,
     })
+}
+
+fn remote_handoff_sub(args: &Value) -> Result<crate::cmd::HandoffSub, String> {
+    let string_arg = |name: &str| {
+        args.get(name)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+    };
+    let actor_id = string_arg("actor_id");
+    let action = args.get("action").and_then(Value::as_str).unwrap_or("list");
+    if action == "show" && actor_id.is_some() {
+        return Err("actor_id cannot override actor identity for a remote profile".to_string());
+    }
+    let handoff_id = || {
+        string_arg("handoff_id").ok_or_else(|| format!("handoff_id required for action={action}"))
+    };
+    let limit = args
+        .get("limit")
+        .and_then(Value::as_u64)
+        .map(usize::try_from)
+        .transpose()
+        .map_err(|_| "limit is too large".to_string())?;
+    match action {
+        "list" => Ok(crate::cmd::HandoffSub::Inbox {
+            actor_id,
+            source_id: mcp_source_id(args),
+            include_completed: args
+                .get("include_completed")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            limit,
+        }),
+        "outbox" => Ok(crate::cmd::HandoffSub::Outbox {
+            actor_id,
+            source_id: mcp_source_id(args),
+            include_completed: args
+                .get("include_completed")
+                .and_then(Value::as_bool)
+                .unwrap_or(true),
+            pending_only: false,
+            limit,
+        }),
+        "show" => Ok(crate::cmd::HandoffSub::Show {
+            handoff_id: handoff_id()?,
+        }),
+        "status" => Ok(crate::cmd::HandoffSub::Status {
+            actor_id,
+            handoff_id: handoff_id()?,
+        }),
+        "accept" => {
+            if string_arg("claim_id").is_some() {
+                return Err(
+                    "claim_id cannot override the generated claim for a remote profile".to_string(),
+                );
+            }
+            Ok(crate::cmd::HandoffSub::Accept {
+                actor_id,
+                handoff_id: handoff_id()?,
+            })
+        }
+        "return" => Ok(crate::cmd::HandoffSub::Return {
+            actor_id,
+            outcome: string_arg("outcome").ok_or("outcome required for action=return")?,
+            result_fact_id: string_arg("result_fact_id")
+                .ok_or("result_fact_id required for action=return")?,
+            handoff_id: handoff_id()?,
+        }),
+        "heartbeat" | "board" | "complete" => Err(format!(
+            "remote profiles do not support handoff inbox action {action:?}"
+        )),
+        other => Err(format!(
+            "unknown handoff inbox action {other:?}; expected list, outbox, show, status, accept, or return"
+        )),
+    }
 }
 
 fn clean_env(name: &str) -> Option<String> {
@@ -4127,7 +4256,7 @@ pub fn list_tools() -> Vec<Tool> {
         },
         Tool {
             name: "aidememo_handoff".into(),
-            description: "Create a bounded handoff packet for another coding agent or account alias. It preserves the workflow session id, routes by actor/agent/profile metadata, carries focus and an observable done_when condition, groups decisions/questions/risks, and keeps fact ids for verification. Default is a read-only preview. Set dispatch=true with from_actor/to_actor to persist a small pull-based assignment pointer; this is not a message queue."
+            description: "Create a bounded handoff packet for another coding agent or account alias. It preserves the workflow session id, routes by actor/agent/profile metadata, carries focus and an observable done_when condition, groups decisions/questions/risks, and keeps fact ids for verification. Default is a read-only preview. Set dispatch=true with to_actor to persist a small pull-based assignment pointer. Local mode also needs from_actor; an installed remote profile derives the sender from its bearer token and rejects overrides. This is not a message queue."
                 .into(),
             input_schema: json!({
                 "type": "object",
@@ -4155,15 +4284,15 @@ pub fn list_tools() -> Vec<Tool> {
         },
         Tool {
             name: "aidememo_handoff_inbox".into(),
-            description: "Pull assignments addressed to this account/installation alias, record external-worker liveness, derive a small work view, or acknowledge and return a linked result fact. Records only point to tracked sessions; there are no topics, offsets, consumer groups, retries, or copied message payloads. Hermes Kanban remains the canonical lifecycle when linked. actor_id falls back to AIDEMEMO_ACTOR_ID."
+            description: "Pull assignments addressed to this account/installation alias, record external-worker liveness, derive a small work view, or acknowledge and return a linked result fact. Records only point to tracked sessions; there are no topics, offsets, consumer groups, retries, or copied message payloads. Hermes Kanban remains the canonical lifecycle when linked. Local mode uses actor_id or AIDEMEMO_ACTOR_ID. An installed remote profile derives actor identity from its bearer token, rejects actor_id overrides, and supports list/outbox/show/status/accept/return (not heartbeat, board, or complete)."
                 .into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "action": {"type": "string", "enum": ["list", "outbox", "show", "heartbeat", "board", "status", "accept", "return", "complete"], "default": "list"},
-                    "actor_id": {"type": "string", "description": "Current account/installation alias, e.g. codex-two. Falls back to AIDEMEMO_ACTOR_ID."},
+                    "actor_id": {"type": "string", "description": "Local mode account/installation alias, e.g. codex-two; falls back to AIDEMEMO_ACTOR_ID. Omit for an installed remote profile because bearer identity is authoritative."},
                     "handoff_id": {"type": "string", "description": "Required for show, heartbeat, status, accept, return, or complete. show and board do not require actor_id."},
-                    "claim_id": {"type": "string", "description": "Optional unique automatic-worker claim token for accept. Only the same token may retry an accepted claim."},
+                    "claim_id": {"type": "string", "description": "Local mode optional unique automatic-worker claim token for accept. Remote profiles generate their claim and reject this override."},
                     "result_fact_id": {"type": "string", "description": "For return, a receiver-written fact attached to this handoff's session and source."},
                     "outcome": {"type": "string", "enum": ["succeeded", "failed"], "description": "For return. succeeded completes the acknowledgement; failed preserves accepted state for orchestrator policy."},
                     "source_id": {"type": "string", "description": "For list, restrict assignments to one shared memory namespace. Falls back to AIDEMEMO_SOURCE_ID."},
@@ -4442,7 +4571,12 @@ fn format_tool_error(tool: &str, msg: &str) -> String {
     .unwrap_or_else(|_| msg.to_string())
 }
 
-fn call_tool(name: &str, args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, String> {
+fn call_tool(
+    name: &str,
+    args: &Value,
+    wiki: &AideMemo,
+    remote_profile: Option<&str>,
+) -> Result<ToolCallResult, String> {
     match name {
         "aidememo_search" => tool_search(args, wiki),
         "aidememo_feedback" => tool_feedback(args, wiki),
@@ -4463,8 +4597,8 @@ fn call_tool(name: &str, args: &Value, wiki: &AideMemo) -> Result<ToolCallResult
         "aidememo_context" => tool_context(args, wiki),
         "aidememo_workflow_start" => tool_workflow_start(args, wiki),
         "aidememo_session_canvas" => tool_session_canvas(args, wiki),
-        "aidememo_handoff" => tool_agent_handoff(args, wiki),
-        "aidememo_handoff_inbox" => tool_handoff_inbox(args, wiki),
+        "aidememo_handoff" => tool_agent_handoff_with_remote(args, wiki, remote_profile),
+        "aidememo_handoff_inbox" => tool_handoff_inbox_with_remote(args, wiki, remote_profile),
         "aidememo_profile_export" => tool_profile_export(args, wiki),
         "aidememo_entity_describe" => tool_entity_describe(args, wiki),
         "aidememo_fact_add" => tool_fact_add(args, wiki),
@@ -4481,6 +4615,14 @@ fn call_tool(name: &str, args: &Value, wiki: &AideMemo) -> Result<ToolCallResult
 ///
 /// Returns `None` for notifications (which have no response).
 pub fn dispatch(req: JsonRpcRequest, wiki: &AideMemo) -> Option<JsonRpcResponse> {
+    dispatch_with_remote_profile(req, wiki, None)
+}
+
+pub fn dispatch_with_remote_profile(
+    req: JsonRpcRequest,
+    wiki: &AideMemo,
+    remote_profile: Option<&str>,
+) -> Option<JsonRpcResponse> {
     // Notifications have no response.
     if req.id.is_null() && req.method.starts_with("notifications/") {
         return None;
@@ -4517,7 +4659,7 @@ pub fn dispatch(req: JsonRpcRequest, wiki: &AideMemo) -> Option<JsonRpcResponse>
                 }
             };
             let arg_value = args.arguments.unwrap_or(Value::Null);
-            match call_tool(&args.name, &arg_value, wiki) {
+            match call_tool(&args.name, &arg_value, wiki, remote_profile) {
                 Ok(r) => Some(JsonRpcResponse::success(
                     id,
                     serde_json::to_value(r).unwrap_or_else(|_| json!({"content": []})),

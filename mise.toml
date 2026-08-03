@@ -24,6 +24,10 @@ run = "./scripts/ci-local.sh lint"
 description = "Run the local equivalent of the CI Rust test job"
 run = "./scripts/ci-local.sh test"
 
+[tasks.artifact-s3-minio-conformance]
+description = "Run the real presigned artifact lifecycle against disposable local MinIO"
+run = "./scripts/artifact-s3-minio-conformance.sh"
+
 [tasks.bindings-smoke]
 description = "Run cross-binding smoke checks"
 run = "./scripts/bindings-release-smoke.sh"
