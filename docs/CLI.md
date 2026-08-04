@@ -189,9 +189,12 @@ aidememo --store ./wiki.sqlite replica reset --force
 The default file is `<store>.replica.sqlite`. `pull` bootstraps from one atomic,
 bounded current-state snapshot, then advances the authenticated project cursor
 only after a complete revision-pinned batch commits locally. Scope or
-project-epoch changes
-fail closed until an explicit `reset --force`. `status` and `get` never contact
-the server, so cached canonical resources remain readable during an outage.
+project-epoch changes, or reusing the file with a different authenticated actor,
+fail closed until an explicit `reset --force`. Handoffs in the snapshot and
+their immutable `handoff_context` records in the change feed are projected to
+that actor as sender or receiver. `status` and
+`get` never contact the server, so cached canonical resources remain readable
+during an outage.
 The bootstrap is currently limited to 10,000 resources. This is not yet the
 BM25/HNSW retrieval replica and it never opens or rewrites the embedded store.
 

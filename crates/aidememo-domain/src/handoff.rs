@@ -1,13 +1,14 @@
 //! Typed session, fact, and handoff records for the remote SSOT boundary.
 
 use crate::{
-    ActorId, ClaimId, DomainError, FactId, HandoffId, ProjectSequence, Revision, SessionId,
-    SourceId,
+    ActorId, ClaimId, DomainError, FactId, HandoffId, ProjectSequence, ResourceId, Revision,
+    SessionId, SourceId,
 };
 use serde::{Deserialize, Serialize};
 
 const MAX_TOPIC_BYTES: usize = 512;
 const MAX_FACT_BYTES: usize = 65_536;
+const MAX_HANDOFF_CONTEXT_BYTES: usize = 65_536;
 const MAX_HANDOFF_TEXT_BYTES: usize = 4_096;
 const MAX_MAILBOX_LIMIT: usize = 100;
 
@@ -187,6 +188,64 @@ impl FactRecord {
     }
 }
 
+/// Immutable bounded context packet shared only with handoff participants.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct HandoffContextRecord {
+    /// Stable context resource identity.
+    pub context_id: ResourceId,
+    /// Handoff that owns this packet.
+    pub handoff_id: HandoffId,
+    /// Session whose evidence was summarized into the packet.
+    pub session_id: SessionId,
+    /// Application namespace inherited from the session.
+    pub source_id: Option<SourceId>,
+    /// Authenticated sender provenance.
+    pub from_actor: ActorId,
+    /// Intended receiving actor.
+    pub to_actor: ActorId,
+    /// Bounded Markdown context packet.
+    pub content: String,
+}
+
+impl HandoffContextRecord {
+    /// Build one participant-scoped context packet.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DomainError::InvalidCommand`] for self-routing or invalid
+    /// context content.
+    pub fn new(
+        context_id: ResourceId,
+        handoff_id: HandoffId,
+        session: &SessionRecord,
+        from_actor: ActorId,
+        to_actor: ActorId,
+        content: String,
+    ) -> Result<Self, DomainError> {
+        if from_actor == to_actor {
+            return Err(DomainError::InvalidCommand(
+                "handoff context sender and receiver must differ".to_owned(),
+            ));
+        }
+        validate_text("handoff context", &content, MAX_HANDOFF_CONTEXT_BYTES)?;
+        Ok(Self {
+            context_id,
+            handoff_id,
+            session_id: session.session_id.clone(),
+            source_id: session.source_id.clone(),
+            from_actor,
+            to_actor,
+            content,
+        })
+    }
+
+    /// Whether an actor participates in this context's handoff route.
+    #[must_use]
+    pub fn is_visible_to(&self, actor: &ActorId) -> bool {
+        &self.from_actor == actor || &self.to_actor == actor
+    }
+}
+
 /// Canonical handoff lifecycle state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -226,6 +285,9 @@ pub struct HandoffRecord {
     pub focus: Option<String>,
     /// Optional bounded completion condition.
     pub done_when: Option<String>,
+    /// Optional immutable participant-scoped context packet.
+    #[serde(default)]
+    pub context_id: Option<ResourceId>,
     /// Current lifecycle state.
     pub status: HandoffStatus,
     /// Active exclusive worker claim.
@@ -272,12 +334,44 @@ impl HandoffRecord {
             to_actor,
             focus,
             done_when,
+            context_id: None,
             status: HandoffStatus::Pending,
             claim_id: None,
             attempt_count: 0,
             result_fact_id: None,
             outcome: None,
         })
+    }
+
+    /// Attach one canonical participant-scoped context packet to this handoff.
+    ///
+    /// # Errors
+    ///
+    /// Returns a handoff conflict when the context does not match the handoff's
+    /// identity, session, source, or actor route.
+    pub fn attach_context(&mut self, context: &HandoffContextRecord) -> Result<(), DomainError> {
+        if context.handoff_id != self.handoff_id {
+            return Err(DomainError::HandoffConflict(
+                "context belongs to a different handoff".to_owned(),
+            ));
+        }
+        if context.session_id != self.session_id {
+            return Err(DomainError::HandoffConflict(
+                "context belongs to a different session".to_owned(),
+            ));
+        }
+        if context.source_id != self.source_id {
+            return Err(DomainError::HandoffConflict(
+                "context belongs to a different source".to_owned(),
+            ));
+        }
+        if context.from_actor != self.from_actor || context.to_actor != self.to_actor {
+            return Err(DomainError::HandoffConflict(
+                "context actor route does not match the handoff".to_owned(),
+            ));
+        }
+        self.context_id = Some(context.context_id.clone());
+        Ok(())
     }
 
     /// Accept or retry an assignment with an exclusive claim.
@@ -494,6 +588,28 @@ mod tests {
         wrong_source.source_id = Some(SourceId::try_from("project:other")?);
         assert!(matches!(
             handoff.return_result(&receiver, &claim, &wrong_source, HandoffOutcome::Succeeded),
+            Err(DomainError::HandoffConflict(_))
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn context_must_match_handoff_session_source_and_route() -> Result<(), DomainError> {
+        let mut handoff = handoff()?;
+        let mut context = HandoffContextRecord::new(
+            ResourceId::try_from("context_test")?,
+            HandoffId::try_from("handoff_test")?,
+            &session()?,
+            ActorId::try_from("codex-p1")?,
+            ActorId::try_from("codex-p2")?,
+            "Bounded handoff packet".to_owned(),
+        )?;
+        handoff.attach_context(&context)?;
+        assert_eq!(handoff.context_id, Some(context.context_id.clone()));
+
+        context.to_actor = ActorId::try_from("hermes")?;
+        assert!(matches!(
+            handoff.attach_context(&context),
             Err(DomainError::HandoffConflict(_))
         ));
         Ok(())

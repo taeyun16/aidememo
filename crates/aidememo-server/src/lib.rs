@@ -523,7 +523,7 @@ async fn resource(
             project_id: project_id.clone(),
         })?;
     let canonical = service
-        .resource(&authenticated, &membership, &project_id, &resource)?
+        .visible_resource(&authenticated, &membership, &project_id, &resource)?
         .ok_or(DomainError::ResourceNotFound)?;
     Ok((StatusCode::OK, Json(ResourceResponse::try_from(canonical)?)))
 }

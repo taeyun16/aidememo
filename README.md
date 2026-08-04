@@ -360,7 +360,17 @@ are rejected. Add `--remote-profile codex-p1` to `mcp-install` to pin the same
 route into one stdio MCP account. `replica pull` maintains a separate,
 snapshot-bootstrapped and revision-pinned `<store>.replica.sqlite` exact-read
 cache; `replica get KIND ID` remains usable
-when the server is down. This cache does not replace the embedded search store.
+when the server is down. Handoffs and their immutable context packets are
+projected to the authenticated sender or receiver across exact reads,
+snapshots, and changes, and the replica file is pinned to that actor as well as
+tenant, project, and epoch. Remote `accept` materializes the canonical session
+and bounded packet into the receiver's selected embedded store, so separate
+Codex accounts do not need to share one SQLite file. This cache does not replace
+the embedded search store. Connected `accept` and `return` derive stable
+attempt/command IDs, retry the exact HTTP body once after a transport failure,
+and report `recovered: true` when a later invocation finds the exact transition
+already applied. A new `send` invocation still creates a new assignment; use
+the returned handoff ID instead of rerunning an uncertain send.
 A separate unreleased local artifact repository is exposed through the
 workspace-only server with bearer-derived reader/writer authorization,
 idempotent reserve/upload/publish, exact-revision download, and durable garbage

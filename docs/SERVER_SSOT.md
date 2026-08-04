@@ -178,6 +178,14 @@ exactly that revision. The server persists metadata and body in the same command
 transaction. The next cursor is acknowledged only after the local replica
 commits the full batch and its revision-pinned resources together.
 
+Handoffs add an actor projection on top of the project sequence: only the
+authenticated sender and receiver may observe the handoff or its immutable
+`handoff_context` packet through exact reads, snapshots, metadata changes, or
+materialized changes. A projected batch can
+therefore return no visible entries while still advancing across hidden project
+sequences. The scanned `next_cursor` remains authoritative so a replica never
+loops on another actor's handoff.
+
 An empty exact-read replica bootstraps from `GET .../snapshot`, which reads the
 complete current resource set and represented project head in one SQLite read
 transaction. It then consumes only hydrated changes, so no cached resource can
@@ -185,6 +193,9 @@ run ahead of the durable cursor. This first snapshot endpoint is deliberately
 bounded to 10,000 resources; pagination with a stable snapshot handle remains a
 later scale-out item. Legacy schema-v3 change rows do not have historical
 bodies and return `snapshot_required` rather than guessing from current state.
+The replica file is pinned to tenant, project, epoch, and authenticated actor;
+switching actor profiles requires `replica reset --force`. Legacy project-only
+replicas migrate with an unbound actor and likewise require an explicit reset.
 This is a sequence-consistent exact-read cache, not yet a BM25/HNSW retrieval
 index.
 
@@ -442,12 +453,13 @@ The current HTTP surface is intentionally small:
 | `GET /health` | Process mode and SQLite schema version |
 | `GET /v1/projects/{project}/identity` | Resolve the bearer-bound tenant, project, actor, and active membership role |
 | `POST /v1/commands` | Authenticated `custom.*` `resource.put` / `resource.delete`, idempotent receipt, revision CAS |
-| `GET /v1/projects/{project}/resources/{kind}/{id}` | Exact canonical body or tombstone |
+| `GET /v1/projects/{project}/resources/{kind}/{id}` | Exact canonical body or tombstone; handoffs and handoff contexts are sender/receiver-only |
 | `GET /v1/projects/{project}/changes` | Ordered metadata-only change entries after an epoch/sequence cursor |
 | `GET /v1/projects/{project}/changes/materialized` | Ordered changes with the exact canonical body or tombstone at each revision |
 | `GET /v1/projects/{project}/snapshot` | Atomic bounded current-state bootstrap plus represented project head |
 | `POST /v1/projects/{project}/sessions` | Create one typed session; `source_id` is fixed here |
 | `POST /v1/projects/{project}/facts` | Create one fact attached to an existing session; source and actor are inherited server-side |
+| `POST /v1/projects/{project}/handoff-contexts` | Create one immutable bounded sender packet scoped to the exact handoff route |
 | `POST /v1/projects/{project}/handoffs` | Send the session pointer to another active writer |
 | `GET /v1/projects/{project}/handoffs?box=inbox\|outbox` | Authenticated actor's indexed mailbox; optional `source_id`, `include_completed`, `before_seq`, and bounded `limit` |
 | `POST .../handoffs/{id}/accept` | Claim with `expected_revision` and an exclusive `claim_id` |
@@ -473,11 +485,20 @@ carry the revision observed by the client:
 }
 ```
 
-Clients generate stable command and resource IDs so transport retries are
-deterministic. Before re-reading mutable handoff state, the server verifies and
-replays an existing receipt. This means a delayed accept retry still returns
-its original receipt even if the handoff has since completed. A different actor
-cannot replay the first actor's command ID.
+Create requests derive a stable command ID from the resource ID for exact-body
+transport retry. Receiver transitions additionally derive the claim from the
+authenticated actor and attempt number, and derive return commands from the
+claim plus exact result evidence. The CLI retries the identical POST body once
+after a transport error. Before re-reading mutable handoff state, the server
+verifies and replays an existing receipt; a later CLI/MCP invocation also
+recognizes an already-applied exact accept or return and reports
+`recovered: true`. A different actor cannot replay the first actor's command ID.
+
+This guarantee is resource-bound. A brand-new `send` invocation currently
+mints a new handoff/context pair and therefore represents a new assignment; it
+does not deduplicate an uncertain prior invocation. Until a client operation
+key or offline outbox exists, callers inspect the sender outbox and continue by
+handoff ID instead of blindly rerunning `send`.
 
 Mailbox actor identity is always taken from the bearer binding; an `actor_id`
 query parameter is rejected. Results are newest-first and include each
@@ -489,7 +510,9 @@ handoff state, receipt, change, and audit rows. Opening a v2 ledger backfills
 the index from canonical handoff resources and their latest change sequence.
 
 Every protected request hashes the bearer value, resolves the persisted tenant
-and actor, and reloads active project membership. Command JSON uses
+and actor, and reloads active project membership. Exact resource, snapshot, and
+change-feed responses apply the same sender/receiver visibility to handoffs and
+their context packets as the typed status route. Command JSON uses
 `deny_unknown_fields`; tenant or actor identity in the body is rejected rather
 than ignored. Canonical resource bodies, receipt, resource revision, project
 sequence, change entry, and audit row commit in one SQLite transaction.
@@ -573,8 +596,8 @@ transaction in a database separate from the existing embedded store.
 derives identity outside the request body, and exposes bootstrap, exact
 resource reads, extension resource commands, typed session/fact/handoff and
 mailbox routes, a change feed, and health over a loopback-first Axum process.
-`aidememo-client` authenticates that route, keeps a separate SQLite scope/epoch
-cursor and exact canonical resource cache, applies each fully materialized
+`aidememo-client` authenticates that route, keeps a separate SQLite
+scope/epoch/actor cursor and exact canonical resource cache, applies each fully materialized
 change batch atomically, and requires explicit reset on scope or epoch changes.
 It does not open or reinterpret the embedded search store.
 `aidememo-artifacts` keeps a separate SQLite logical-path catalog and immutable
@@ -637,9 +660,9 @@ replica through a tombstone.
 
 Current status: the Phase 0 code exit gate passes against the separate SQLite
 adapter and authenticated HTTP tests without changing the existing embedded API
-or file formats. The bounded `aidememo-server` executable is reachable only as a
-workspace, unpublished resource API; it is not wired to the existing CLI or MCP
-product surfaces.
+or file formats. The bounded `aidememo-server` executable remains workspace-only
+and unpublished; named CLI and stdio MCP profiles now exercise its typed
+handoff surface.
 
 ### Phase 1 — single-node remote SSOT
 
@@ -659,14 +682,15 @@ change retrieval, and typed session/fact/handoff commands. An HTTP integration
 test completes a `codex-p1 -> codex-p2 -> Hermes` chain. Named CLI profiles can
 hold distinct bearer tokens for one URL/project; the connected CLI path now
 completes `send -> inbox -> accept -> return -> outbox` while rejecting actor
-overrides and validating local result provenance against the authenticated
-server identity. `mcp-install --remote-profile` verifies that identity, pins the
+overrides, materializing the participant-scoped context into a separate
+receiver store, and validating local result provenance against the
+authenticated server identity. `mcp-install --remote-profile` verifies that identity, pins the
 derived actor plus profile name to one agent config, and the binary integration
 test runs the installed arguments and environment through the same round trip.
-`replica pull --remote-profile` bootstraps from one atomic current-state
-snapshot, then incrementally advances `<store>.replica.sqlite` only after
+`replica pull --remote-profile` bootstraps from one actor-projected atomic
+current-state snapshot, then incrementally advances `<store>.replica.sqlite` only after
 revision-pinned resources commit with the whole batch. Scope and epoch
-mismatches fail closed until
+mismatches and authenticated actor changes fail closed until
 `replica reset --force`; `replica status/get` are network-free and tested after
 server shutdown. Legacy unhydrated change ranges require a fresh snapshot
 instead of being reconstructed from newer state. Combined domain and HTTP tests reject wrong actor, claim,

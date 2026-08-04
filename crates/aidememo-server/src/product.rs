@@ -3,10 +3,10 @@
 use super::{ApiError, ServerState, bearer_digest_from_headers};
 use aidememo_domain::{
     ActorId, AuthenticatedActor, CanonicalResource, ChangeOperation, ClaimId, CommandEnvelope,
-    CommandId, DomainError, FactId, FactRecord, HandoffId, HandoffMailbox, HandoffOutcome,
-    HandoffQuery, HandoffRecord, OperationName, ProjectId, ProjectMembership, ProjectScope,
-    ProjectSequence, ResourceId, ResourceKind, ResourceRef, ResourceState, Revision, SessionId,
-    SessionRecord, SourceId,
+    CommandId, DomainError, FactId, FactRecord, HandoffContextRecord, HandoffId, HandoffMailbox,
+    HandoffOutcome, HandoffQuery, HandoffRecord, OperationName, ProjectId, ProjectMembership,
+    ProjectScope, ProjectSequence, ResourceId, ResourceKind, ResourceRef, ResourceState, Revision,
+    SessionId, SessionRecord, SourceId,
 };
 use aidememo_service::CommandService;
 use aidememo_store_local::SqliteCommandStore;
@@ -21,12 +21,17 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 const SESSION_KIND: &str = "session";
 const FACT_KIND: &str = "fact";
 const HANDOFF_KIND: &str = "handoff";
+const HANDOFF_CONTEXT_KIND: &str = "handoff_context";
 
 pub(super) fn routes() -> Router<ServerState> {
     Router::new()
         .route("/v1/projects/{project_id}/identity", get(get_identity))
         .route("/v1/projects/{project_id}/sessions", post(create_session))
         .route("/v1/projects/{project_id}/facts", post(create_fact))
+        .route(
+            "/v1/projects/{project_id}/handoff-contexts",
+            post(create_handoff_context),
+        )
         .route(
             "/v1/projects/{project_id}/handoffs",
             post(send_handoff).get(list_handoffs),
@@ -84,6 +89,17 @@ struct HandoffSendPayload {
     to_actor: ActorId,
     focus: Option<String>,
     done_when: Option<String>,
+    context_id: Option<ResourceId>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct HandoffContextCreatePayload {
+    context_id: ResourceId,
+    handoff_id: HandoffId,
+    session_id: SessionId,
+    to_actor: ActorId,
+    content: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -321,21 +337,12 @@ async fn send_handoff(
         &project_id,
         &resource_ref(SESSION_KIND, request.payload.session_id.as_str())?,
     )?;
-    let scope = ProjectScope::new(authenticated.tenant_id().clone(), project_id.clone());
-    let receiver = service
-        .store()
-        .project_membership(&scope, &request.payload.to_actor)?
-        .ok_or_else(|| {
-            DomainError::InvalidCommand(
-                "handoff receiver is not an active project member".to_owned(),
-            )
-        })?;
-    if !receiver.role.can_mutate() {
-        return Err(DomainError::InvalidCommand(
-            "handoff receiver must have a writable project membership".to_owned(),
-        )
-        .into());
-    }
+    require_writable_receiver(
+        &service,
+        &authenticated,
+        &project_id,
+        &request.payload.to_actor,
+    )?;
     ensure_absent(
         &service,
         &authenticated,
@@ -343,13 +350,88 @@ async fn send_handoff(
         &project_id,
         &resource,
     )?;
-    let record = HandoffRecord::new(
+    let mut record = HandoffRecord::new(
         request.payload.handoff_id,
         &session,
         authenticated.actor_id().clone(),
         request.payload.to_actor,
         request.payload.focus,
         request.payload.done_when,
+    )?;
+    if let Some(context_id) = request.payload.context_id {
+        let (_, context): (_, HandoffContextRecord) = load_record(
+            &service,
+            &authenticated,
+            &membership,
+            &project_id,
+            &resource_ref(HANDOFF_CONTEXT_KIND, context_id.as_str())?,
+        )?;
+        record.attach_context(&context)?;
+    }
+    let receipt = service.execute_with_body(
+        &authenticated,
+        &membership,
+        envelope,
+        resource,
+        ChangeOperation::Upsert,
+        &record,
+    )?;
+    Ok(Json(receipt))
+}
+
+async fn create_handoff_context(
+    State(state): State<ServerState>,
+    headers: HeaderMap,
+    Path(project_id): Path<String>,
+    payload: Result<Json<CreateRequest<HandoffContextCreatePayload>>, JsonRejection>,
+) -> Result<impl axum::response::IntoResponse, ApiError> {
+    let project_id = ProjectId::try_from(project_id)?;
+    let Json(request) = decode_json(payload)?;
+    let resource = resource_ref(HANDOFF_CONTEXT_KIND, request.payload.context_id.as_str())?;
+    let envelope = create_envelope(
+        request.command_id,
+        project_id.clone(),
+        "handoff_context.create",
+        request.payload.clone(),
+    )?;
+    let mut service = state.service.lock().await;
+    let (authenticated, membership) = request_context(&service, &headers, &project_id)?;
+    if let Some(receipt) = service.replay(
+        &authenticated,
+        &membership,
+        &envelope,
+        &resource,
+        ChangeOperation::Upsert,
+    )? {
+        return Ok(Json(receipt));
+    }
+    let (_, session): (_, SessionRecord) = load_record(
+        &service,
+        &authenticated,
+        &membership,
+        &project_id,
+        &resource_ref(SESSION_KIND, request.payload.session_id.as_str())?,
+    )?;
+    require_writable_receiver(
+        &service,
+        &authenticated,
+        &project_id,
+        &request.payload.to_actor,
+    )?;
+    ensure_absent(
+        &service,
+        &authenticated,
+        &membership,
+        &project_id,
+        &resource,
+    )?;
+    let record = HandoffContextRecord::new(
+        request.payload.context_id,
+        request.payload.handoff_id,
+        &session,
+        authenticated.actor_id().clone(),
+        request.payload.to_actor,
+        request.payload.content,
     )?;
     let receipt = service.execute_with_body(
         &authenticated,
@@ -539,6 +621,29 @@ fn load_record<T: DeserializeOwned>(
         .resource(authenticated, membership, project_id, resource)?
         .ok_or(DomainError::ResourceNotFound)?;
     decode_record(canonical)
+}
+
+fn require_writable_receiver(
+    service: &CommandService<SqliteCommandStore>,
+    authenticated: &AuthenticatedActor,
+    project_id: &ProjectId,
+    receiver_id: &ActorId,
+) -> Result<(), DomainError> {
+    let scope = ProjectScope::new(authenticated.tenant_id().clone(), project_id.clone());
+    let receiver = service
+        .store()
+        .project_membership(&scope, receiver_id)?
+        .ok_or_else(|| {
+            DomainError::InvalidCommand(
+                "handoff receiver is not an active project member".to_owned(),
+            )
+        })?;
+    if !receiver.role.can_mutate() {
+        return Err(DomainError::InvalidCommand(
+            "handoff receiver must have a writable project membership".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 fn decode_record<T: DeserializeOwned>(

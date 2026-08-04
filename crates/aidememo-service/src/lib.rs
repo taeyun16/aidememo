@@ -6,10 +6,11 @@
 //! contains no transport, database, filesystem, or model assumptions.
 
 use aidememo_domain::{
-    AuthenticatedActor, AuthorizedCommand, CanonicalResource, ChangeBatch, ChangeCursor,
+    ActorId, AuthenticatedActor, AuthorizedCommand, CanonicalResource, ChangeBatch, ChangeCursor,
     ChangeOperation, CommandEnvelope, CommandFingerprint, CommandReceipt, CommandStore,
-    DomainError, HandoffPage, HandoffQuery, HandoffStore, MaterializedChangeBatch, MutationCommand,
-    ProjectAccess, ProjectId, ProjectMembership, ProjectSnapshot, ResourceRef,
+    DomainError, HandoffContextRecord, HandoffPage, HandoffQuery, HandoffRecord, HandoffStore,
+    MaterializedChangeBatch, MutationCommand, ProjectAccess, ProjectId, ProjectMembership,
+    ProjectSnapshot, ResourceRef, ResourceState,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -211,7 +212,29 @@ impl<S: CommandStore> CommandService<S> {
         limit: usize,
     ) -> Result<ChangeBatch, DomainError> {
         let access = ProjectAccess::authorize(authenticated, membership)?;
-        self.store.changes(&access.scope(), cursor, limit)
+        let scope = access.scope();
+        let batch = self.store.changes(&scope, cursor, limit)?;
+        let mut entries = Vec::with_capacity(batch.entries.len());
+        for entry in batch.entries {
+            if !is_participant_scoped_kind(entry.resource.kind.as_str()) {
+                entries.push(entry);
+                continue;
+            }
+            let visible = match self.store.resource(&scope, &entry.resource)? {
+                Some(resource) => resource_visible_to(&resource, authenticated.actor_id())?,
+                None => false,
+            };
+            if visible {
+                entries.push(entry);
+            }
+        }
+        ChangeBatch::projected(
+            scope,
+            batch.cursor,
+            entries,
+            batch.next_cursor,
+            batch.has_more,
+        )
     }
 
     /// Pull revision-pinned changes through active project membership.
@@ -228,8 +251,26 @@ impl<S: CommandStore> CommandService<S> {
         limit: usize,
     ) -> Result<MaterializedChangeBatch, DomainError> {
         let access = ProjectAccess::authorize(authenticated, membership)?;
-        self.store
-            .materialized_changes(&access.scope(), cursor, limit)
+        let scope = access.scope();
+        let batch = self.store.materialized_changes(&scope, cursor, limit)?;
+        let entries = batch
+            .entries
+            .into_iter()
+            .filter_map(|entry| {
+                match resource_visible_to(&entry.resource, authenticated.actor_id()) {
+                    Ok(true) => Some(Ok(entry)),
+                    Ok(false) => None,
+                    Err(error) => Some(Err(error)),
+                }
+            })
+            .collect::<Result<Vec<_>, DomainError>>()?;
+        MaterializedChangeBatch::projected(
+            scope,
+            batch.cursor,
+            entries,
+            batch.next_cursor,
+            batch.has_more,
+        )
     }
 
     /// Read one complete current-state snapshot and represented head through
@@ -251,7 +292,20 @@ impl<S: CommandStore> CommandService<S> {
             });
         }
         let access = ProjectAccess::authorize(authenticated, membership)?;
-        self.store.snapshot(&access.scope())
+        let scope = access.scope();
+        let snapshot = self.store.snapshot(&scope)?;
+        let resources = snapshot
+            .resources
+            .into_iter()
+            .filter_map(
+                |resource| match resource_visible_to(&resource, authenticated.actor_id()) {
+                    Ok(true) => Some(Ok(resource)),
+                    Ok(false) => None,
+                    Err(error) => Some(Err(error)),
+                },
+            )
+            .collect::<Result<Vec<_>, DomainError>>()?;
+        ProjectSnapshot::new(scope, snapshot.project_epoch, snapshot.at_seq, resources)
     }
 
     /// Fetch canonical resource state through active project membership.
@@ -276,6 +330,72 @@ impl<S: CommandStore> CommandService<S> {
         let access = ProjectAccess::authorize(authenticated, membership)?;
         self.store.resource(&access.scope(), resource)
     }
+
+    /// Fetch canonical resource state projected through product visibility.
+    ///
+    /// Project resources are shared by default. Handoff records are visible
+    /// only to their authenticated sender or receiver, matching the typed
+    /// status and mailbox surfaces.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stable [`DomainError`] for authorization, project scope,
+    /// malformed canonical state, or storage failure.
+    pub fn visible_resource(
+        &self,
+        authenticated: &AuthenticatedActor,
+        membership: &ProjectMembership,
+        project_id: &ProjectId,
+        resource: &ResourceRef,
+    ) -> Result<Option<CanonicalResource>, DomainError> {
+        let resource = self.resource(authenticated, membership, project_id, resource)?;
+        resource
+            .map(|resource| {
+                resource_visible_to(&resource, authenticated.actor_id())
+                    .map(|visible| visible.then_some(resource))
+            })
+            .transpose()
+            .map(Option::flatten)
+    }
+}
+
+fn resource_visible_to(
+    resource: &CanonicalResource,
+    actor_id: &ActorId,
+) -> Result<bool, DomainError> {
+    let kind = resource.resource.kind.as_str();
+    if !is_participant_scoped_kind(kind) {
+        return Ok(true);
+    }
+    let ResourceState::Present { body } = &resource.state else {
+        // No typed handoff or context delete route exists today. A future
+        // delete contract must retain participant visibility in its tombstone
+        // metadata before actor-scoped replicas can consume it safely.
+        return Ok(false);
+    };
+    match kind {
+        "handoff" => {
+            let record: HandoffRecord =
+                serde_json::from_slice(body).map_err(|error| DomainError::StorageFailure {
+                    operation: "handoff_visibility_decode",
+                    detail: error.to_string(),
+                })?;
+            Ok(record.is_visible_to(actor_id))
+        }
+        "handoff_context" => {
+            let record: HandoffContextRecord =
+                serde_json::from_slice(body).map_err(|error| DomainError::StorageFailure {
+                    operation: "handoff_context_visibility_decode",
+                    detail: error.to_string(),
+                })?;
+            Ok(record.is_visible_to(actor_id))
+        }
+        _ => Ok(true),
+    }
+}
+
+fn is_participant_scoped_kind(kind: &str) -> bool {
+    matches!(kind, "handoff" | "handoff_context")
 }
 
 impl<S: HandoffStore> CommandService<S> {

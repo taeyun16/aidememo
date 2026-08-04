@@ -103,13 +103,14 @@ aidememo handoff --remote-profile codex-p1 send codex-p2 \
 # 수신자 identity는 codex-p2 bearer token에서 결정됩니다.
 aidememo handoff --remote-profile codex-p2 inbox \
   --source-id project:aidememo
-aidememo handoff --remote-profile codex-p2 accept handoff_...
+eval "$(aidememo --store ./codex-p2.sqlite handoff \
+  --remote-profile codex-p2 accept handoff_...)"
 
-# Inbox에 표시된 session을 resume한 뒤 수신자 소유 근거를 작성합니다.
-eval "$(aidememo session resume --source-id project:aidememo session-...)"
-aidememo fact add "원격 리뷰 통과" --type note --entities Release \
+# Accept가 canonical session과 bounded context packet을 codex-p2의 선택된
+# embedded store에 materialize했습니다. 그 store에 수신자 소유 근거를 작성합니다.
+aidememo --store ./codex-p2.sqlite fact add "원격 리뷰 통과" --type note --entities Release \
   --source-id project:aidememo --actor-id codex-p2
-aidememo handoff --remote-profile codex-p2 return \
+aidememo --store ./codex-p2.sqlite handoff --remote-profile codex-p2 return \
   --outcome succeeded --result-fact-id 01... handoff_...
 
 aidememo handoff --remote-profile codex-p1 outbox
@@ -121,9 +122,24 @@ token과 고정 project를 유지합니다. 반복되는 flag 대신
 `--actor-id`와 `--from`을 거부하며 서버의 저장된 token binding만 actor authority로
 사용합니다.
 
-현재 구현은 connected-write bridge입니다. CLI는 typed session pointer와 수신자의
-result fact를 canonical server ledger에 올리지만, packet 생성, session resume,
-retrieval은 계속 embedded local store가 담당합니다. 원격 `send`, `inbox`,
+원격 `accept`는 project, 인증 actor, handoff, 시도 횟수에서 claim을 결정적으로
+만들고 `return`은 그 claim과 정확한 결과 근거에서 command를 만듭니다. Client는
+전송 실패 후 동일한 HTTP body를 한 번 재시도합니다. 이후 CLI/MCP 실행이 정본
+상태에서 정확히 같은 accept 또는 return을 발견하면 새 전이를 만들지 않고
+`recovered: true`를 반환합니다. 실패 outcome 뒤의 다음 accept는 의도적으로 새
+claim으로 전진합니다.
+
+아직 새로운 `send` 실행까지 멱등인 것은 아닙니다. 실행할 때마다 새 handoff와
+context resource를 만들기 때문에 send 응답이 불확실하면 sender outbox에서 기존
+handoff ID를 찾아 이어가야 합니다. 프로세스 간 `send` 재실행을 중복 제거하려면
+향후 client operation key 또는 offline outbox가 필요합니다.
+
+현재 구현은 connected-write bridge입니다. `send`는 typed session,
+participant-scoped immutable context packet, handoff pointer를 canonical ledger에
+저장합니다. `accept`는 route를 검증한 뒤 session과 packet을 receiver가 선택한
+embedded store의 source-scoped local context fact로 materialize합니다. 두 계정은
+SQLite 파일 하나를 공유할 필요가 없고 이후 retrieval과 결과 작성은 계속 로컬에서
+이뤄집니다. 원격 `send`, `inbox`,
 `outbox`, `show/status`, `accept`, `return`은 구현됐습니다.
 `mcp-install --remote-profile NAME`을 사용하면 stdio MCP도 같은 경로를 사용하며,
 installer가 bearer actor를 확인해 agent profile 하나에 고정합니다. 원격 `run`,
@@ -133,6 +149,11 @@ heartbeat, board, HTTP MCP gateway routing, offline outbox, retrieval indexing�
 `replica status/get`은 서버 없이도 사용할 수
 있습니다. Typed server fact는 canonical handoff 근거이지만 아직 embedded search
 engine에는 index되지 않습니다.
+
+원격 replica는 actor에 고정됩니다. Generic exact read, snapshot, change feed는
+handoff와 그 `handoff_context`를 인증된 sender 또는 receiver에게만 노출하며,
+replica는 tenant, project, epoch와 함께 actor를 기록합니다. 다른 원격 profile로 같은 replica path를 재사용하기
+전에는 `replica reset --force`를 실행해야 합니다.
 
 ## 유지되는 것
 

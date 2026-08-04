@@ -132,6 +132,50 @@ impl ChangeBatch {
             has_more,
         })
     }
+
+    /// Build a visibility-projected batch while preserving the scanned
+    /// canonical cursor.
+    ///
+    /// Actor-scoped feeds may omit entries that the authenticated actor cannot
+    /// observe. `next_cursor` therefore may advance beyond the last returned
+    /// entry, or advance with no returned entries at all.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DomainError::InvalidChangeBatch`] when the projected entries
+    /// are invalid, the cursor epoch changes, the scan cursor moves backwards,
+    /// or a non-terminal batch makes no progress.
+    pub fn projected(
+        scope: ProjectScope,
+        cursor: ChangeCursor,
+        entries: Vec<ChangeEntry>,
+        next_cursor: ChangeCursor,
+        has_more: bool,
+    ) -> Result<Self, DomainError> {
+        let validated = Self::new(scope.clone(), cursor.clone(), entries, false)?;
+        if next_cursor.project_epoch != cursor.project_epoch {
+            return Err(DomainError::InvalidChangeBatch(
+                "projected change cursor changed history epoch".to_owned(),
+            ));
+        }
+        if next_cursor.after_seq < validated.next_cursor.after_seq {
+            return Err(DomainError::InvalidChangeBatch(
+                "projected change cursor precedes a returned entry".to_owned(),
+            ));
+        }
+        if has_more && next_cursor.after_seq <= cursor.after_seq {
+            return Err(DomainError::InvalidChangeBatch(
+                "a projected batch with more entries must advance its cursor".to_owned(),
+            ));
+        }
+        Ok(Self {
+            scope,
+            cursor,
+            entries: validated.entries,
+            next_cursor,
+            has_more,
+        })
+    }
 }
 
 /// One ordered change together with the canonical state at exactly its revision.
@@ -218,6 +262,39 @@ impl MaterializedChangeBatch {
             scope.clone(),
             cursor.clone(),
             entries.iter().map(|entry| entry.change.clone()).collect(),
+            has_more,
+        )?;
+        Ok(Self {
+            scope,
+            cursor,
+            entries,
+            next_cursor: metadata.next_cursor,
+            has_more,
+        })
+    }
+
+    /// Build an actor-visible materialized batch while preserving the scanned
+    /// canonical cursor across hidden entries.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DomainError::InvalidChangeBatch`] when any visible entry or
+    /// projected cursor is invalid.
+    pub fn projected(
+        scope: ProjectScope,
+        cursor: ChangeCursor,
+        entries: Vec<MaterializedChange>,
+        next_cursor: ChangeCursor,
+        has_more: bool,
+    ) -> Result<Self, DomainError> {
+        for entry in &entries {
+            entry.validate(&scope)?;
+        }
+        let metadata = ChangeBatch::projected(
+            scope.clone(),
+            cursor.clone(),
+            entries.iter().map(|entry| entry.change.clone()).collect(),
+            next_cursor.clone(),
             has_more,
         )?;
         Ok(Self {
@@ -344,6 +421,27 @@ mod tests {
             )
             .is_err()
         );
+        Ok(())
+    }
+
+    #[test]
+    fn projected_batch_advances_across_hidden_entries() -> Result<(), Box<dyn std::error::Error>> {
+        let scope = ProjectScope::new(
+            TenantId::try_from("tenant_a")?,
+            crate::ProjectId::try_from("project_a")?,
+        );
+        let cursor = ChangeCursor {
+            project_epoch: ProjectEpoch::try_from("epoch_a")?,
+            after_seq: ProjectSequence::new(4),
+        };
+        let next_cursor = ChangeCursor {
+            project_epoch: cursor.project_epoch.clone(),
+            after_seq: ProjectSequence::new(8),
+        };
+        let batch = ChangeBatch::projected(scope, cursor, Vec::new(), next_cursor.clone(), true)?;
+        assert!(batch.entries.is_empty());
+        assert_eq!(batch.next_cursor, next_cursor);
+        assert!(batch.has_more);
         Ok(())
     }
 }

@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 
-const REPLICA_SCHEMA_VERSION: i64 = 1;
+const REPLICA_SCHEMA_VERSION: i64 = 2;
 const MAX_CHANGE_LIMIT: usize = 1_000;
 const MAX_PULL_BATCHES: usize = 10_000;
 const PATH_SEGMENT: &AsciiSet = &CONTROLS.add(b' ').add(b'/').add(b'?').add(b'#').add(b'%');
@@ -80,6 +80,16 @@ pub enum ClientError {
         cached: ProjectEpoch,
         /// Authenticated remote epoch.
         remote: ProjectEpoch,
+    },
+    /// The replica projection belongs to another authenticated actor.
+    #[error(
+        "replica actor mismatch: cached {cached:?}, remote {remote}; reset explicitly before pulling with another actor"
+    )]
+    ActorMismatch {
+        /// Existing local actor, or `None` for a pre-projection replica.
+        cached: Option<ActorId>,
+        /// Authenticated remote actor.
+        remote: ActorId,
     },
     /// A batch did not start at the durable local cursor.
     #[error("replica cursor mismatch: cached {cached}, batch starts at {batch}")]
@@ -323,14 +333,13 @@ impl TryFrom<MaterializedChangeResponseBatch> for MaterializedChangeBatch {
                 })
             })
             .collect::<Result<Vec<_>, ClientError>>()?;
-        let validated =
-            MaterializedChangeBatch::new(batch.scope, batch.cursor, entries, batch.has_more)?;
-        if validated.next_cursor != batch.next_cursor {
-            return Err(ClientError::Protocol(
-                "server next_cursor does not match the ordered entries".to_owned(),
-            ));
-        }
-        Ok(validated)
+        Ok(MaterializedChangeBatch::projected(
+            batch.scope,
+            batch.cursor,
+            entries,
+            batch.next_cursor,
+            batch.has_more,
+        )?)
     }
 }
 
@@ -395,6 +404,8 @@ pub struct ReplicaStatus {
     pub scope: Option<ProjectScope>,
     /// Cached history generation.
     pub project_epoch: Option<ProjectEpoch>,
+    /// Authenticated actor whose visibility projection is cached.
+    pub actor_id: Option<ActorId>,
     /// Last fully committed change sequence.
     pub after_seq: ProjectSequence,
     /// Present canonical resources.
@@ -474,6 +485,12 @@ impl ReplicaStore {
                     remote: identity.project_epoch.clone(),
                 });
             }
+            if meta.actor_id.as_ref() != Some(&identity.actor_id) {
+                return Err(ClientError::ActorMismatch {
+                    cached: meta.actor_id,
+                    remote: identity.actor_id.clone(),
+                });
+            }
             return Ok(false);
         }
         Ok(true)
@@ -497,8 +514,24 @@ impl ReplicaStore {
     ///
     /// Fails without mutation when the snapshot is invalid or the replica is
     /// already initialized.
-    pub fn apply_snapshot(&mut self, snapshot: &ProjectSnapshot) -> Result<(), ClientError> {
+    pub fn apply_snapshot(
+        &mut self,
+        snapshot: &ProjectSnapshot,
+        identity: &ProjectIdentity,
+    ) -> Result<(), ClientError> {
         validate_snapshot(snapshot)?;
+        if snapshot.scope != identity.scope() {
+            return Err(ClientError::ScopeMismatch {
+                cached: identity.scope(),
+                remote: snapshot.scope.clone(),
+            });
+        }
+        if snapshot.project_epoch != identity.project_epoch {
+            return Err(ClientError::EpochMismatch {
+                cached: identity.project_epoch.clone(),
+                remote: snapshot.project_epoch.clone(),
+            });
+        }
         let transaction = self
             .connection
             .transaction()
@@ -513,12 +546,13 @@ impl ReplicaStore {
         transaction
             .execute(
                 "INSERT INTO replica_meta
-                    (singleton, tenant_id, project_id, project_epoch, after_seq, updated_at_ms)
-                 VALUES (1, ?1, ?2, ?3, ?4, ?5)",
+                    (singleton, tenant_id, project_id, project_epoch, actor_id, after_seq, updated_at_ms)
+                 VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6)",
                 params![
                     snapshot.scope.tenant_id.as_str(),
                     snapshot.scope.project_id.as_str(),
                     snapshot.project_epoch.as_str(),
+                    identity.actor_id.as_str(),
                     to_i64(snapshot.at_seq.get(), "snapshot_cursor")?,
                     updated_at_ms,
                 ],
@@ -636,6 +670,7 @@ impl ReplicaStore {
             initialized: meta.is_some(),
             scope: meta.as_ref().map(|meta| meta.scope.clone()),
             project_epoch: meta.as_ref().map(|meta| meta.project_epoch.clone()),
+            actor_id: meta.as_ref().and_then(|meta| meta.actor_id.clone()),
             after_seq: meta
                 .as_ref()
                 .map_or(ProjectSequence::ZERO, |meta| meta.after_seq),
@@ -704,7 +739,7 @@ pub fn pull_to_current(
                 remote: snapshot.project_epoch,
             });
         }
-        store.apply_snapshot(&snapshot)?;
+        store.apply_snapshot(&snapshot, &identity)?;
     }
     let mut batches = 0_usize;
     let mut changes = 0_usize;
@@ -747,6 +782,7 @@ pub fn pull_to_current(
 struct ReplicaMeta {
     scope: ProjectScope,
     project_epoch: ProjectEpoch,
+    actor_id: Option<ActorId>,
     after_seq: ProjectSequence,
     updated_at_ms: i64,
 }
@@ -764,6 +800,7 @@ fn migrate(connection: &Connection) -> Result<(), ClientError> {
                     tenant_id TEXT NOT NULL,
                     project_id TEXT NOT NULL,
                     project_epoch TEXT NOT NULL,
+                    actor_id TEXT,
                     after_seq INTEGER NOT NULL CHECK (after_seq >= 0),
                     updated_at_ms INTEGER NOT NULL
                  ) STRICT;
@@ -778,10 +815,18 @@ fn migrate(connection: &Connection) -> Result<(), ClientError> {
                         OR (deleted = 1 AND body_json IS NULL)),
                     PRIMARY KEY (resource_kind, resource_id)
                  ) STRICT;
-                 PRAGMA user_version = 1;
+                 PRAGMA user_version = 2;
                  COMMIT;",
             )
             .map_err(|error| storage("schema_create", error)),
+        1 => connection
+            .execute_batch(
+                "BEGIN IMMEDIATE;
+                 ALTER TABLE replica_meta ADD COLUMN actor_id TEXT;
+                 PRAGMA user_version = 2;
+                 COMMIT;",
+            )
+            .map_err(|error| storage("schema_migrate_v1_v2", error)),
         REPLICA_SCHEMA_VERSION => Ok(()),
         other => Err(ClientError::Storage {
             operation: "schema_version",
@@ -793,9 +838,9 @@ fn migrate(connection: &Connection) -> Result<(), ClientError> {
 }
 
 fn load_meta(connection: &Connection) -> Result<Option<ReplicaMeta>, ClientError> {
-    let row: Option<(String, String, String, i64, i64)> = connection
+    let row: Option<(String, String, String, Option<String>, i64, i64)> = connection
         .query_row(
-            "SELECT tenant_id, project_id, project_epoch, after_seq, updated_at_ms
+            "SELECT tenant_id, project_id, project_epoch, actor_id, after_seq, updated_at_ms
              FROM replica_meta WHERE singleton = 1",
             [],
             |row| {
@@ -805,6 +850,7 @@ fn load_meta(connection: &Connection) -> Result<Option<ReplicaMeta>, ClientError
                     row.get(2)?,
                     row.get(3)?,
                     row.get(4)?,
+                    row.get(5)?,
                 ))
             },
         )
@@ -814,9 +860,9 @@ fn load_meta(connection: &Connection) -> Result<Option<ReplicaMeta>, ClientError
 }
 
 fn load_meta_tx(transaction: &Transaction<'_>) -> Result<Option<ReplicaMeta>, ClientError> {
-    let row: Option<(String, String, String, i64, i64)> = transaction
+    let row: Option<(String, String, String, Option<String>, i64, i64)> = transaction
         .query_row(
-            "SELECT tenant_id, project_id, project_epoch, after_seq, updated_at_ms
+            "SELECT tenant_id, project_id, project_epoch, actor_id, after_seq, updated_at_ms
              FROM replica_meta WHERE singleton = 1",
             [],
             |row| {
@@ -826,6 +872,7 @@ fn load_meta_tx(transaction: &Transaction<'_>) -> Result<Option<ReplicaMeta>, Cl
                     row.get(2)?,
                     row.get(3)?,
                     row.get(4)?,
+                    row.get(5)?,
                 ))
             },
         )
@@ -834,25 +881,29 @@ fn load_meta_tx(transaction: &Transaction<'_>) -> Result<Option<ReplicaMeta>, Cl
     row.map(decode_meta).transpose()
 }
 
-fn decode_meta(row: (String, String, String, i64, i64)) -> Result<ReplicaMeta, ClientError> {
+fn decode_meta(
+    row: (String, String, String, Option<String>, i64, i64),
+) -> Result<ReplicaMeta, ClientError> {
     Ok(ReplicaMeta {
         scope: ProjectScope::new(TenantId::try_from(row.0)?, ProjectId::try_from(row.1)?),
         project_epoch: ProjectEpoch::try_from(row.2)?,
-        after_seq: ProjectSequence::new(from_i64(row.3, "cursor")?),
-        updated_at_ms: row.4,
+        actor_id: row.3.map(ActorId::try_from).transpose()?,
+        after_seq: ProjectSequence::new(from_i64(row.4, "cursor")?),
+        updated_at_ms: row.5,
     })
 }
 
 fn validate_materialized_batch(batch: &MaterializedChangeBatch) -> Result<(), ClientError> {
-    let validated = MaterializedChangeBatch::new(
+    let validated = MaterializedChangeBatch::projected(
         batch.scope.clone(),
         batch.cursor.clone(),
         batch.entries.clone(),
+        batch.next_cursor.clone(),
         batch.has_more,
     )?;
-    if validated.next_cursor != batch.next_cursor {
+    if validated != *batch {
         return Err(ClientError::Protocol(
-            "server next_cursor does not match the ordered entries".to_owned(),
+            "server materialized batch does not match its validated projection".to_owned(),
         ));
     }
     Ok(())
@@ -1070,12 +1121,15 @@ mod tests {
                 body: br#"{"content":"cached"}"#.to_vec(),
             },
         };
-        store.apply_snapshot(&ProjectSnapshot::new(
-            identity.scope(),
-            identity.project_epoch.clone(),
-            ProjectSequence::new(1),
-            vec![current.clone()],
-        )?)?;
+        store.apply_snapshot(
+            &ProjectSnapshot::new(
+                identity.scope(),
+                identity.project_epoch.clone(),
+                ProjectSequence::new(1),
+                vec![current.clone()],
+            )?,
+            &identity,
+        )?;
 
         drop(store);
         let mut reopened = ReplicaStore::open(&path)?;
@@ -1102,14 +1156,17 @@ mod tests {
         let mut store = ReplicaStore::open(dir.path().join("replica.sqlite"))?;
         let identity = identity("epoch-a")?;
         let fact = resource_ref("fact-1")?;
-        store.apply_snapshot(&ProjectSnapshot::new(
-            identity.scope(),
-            identity.project_epoch.clone(),
-            ProjectSequence::ZERO,
-            vec![],
-        )?)?;
+        store.apply_snapshot(
+            &ProjectSnapshot::new(
+                identity.scope(),
+                identity.project_epoch.clone(),
+                ProjectSequence::ZERO,
+                vec![],
+            )?,
+            &identity,
+        )?;
         let mut batch = batch(&identity, 0, 1, fact, ChangeOperation::Upsert, 2)?;
-        batch.next_cursor.after_seq = ProjectSequence::new(2);
+        batch.next_cursor.after_seq = ProjectSequence::ZERO;
         assert!(store.apply_materialized_batch(&batch).is_err());
         assert_eq!(
             store.cursor()?.map(|cursor| cursor.after_seq),
@@ -1123,12 +1180,15 @@ mod tests {
         let dir = tempfile::tempdir()?;
         let mut store = ReplicaStore::open(dir.path().join("replica.sqlite"))?;
         let first = identity("epoch-a")?;
-        store.apply_snapshot(&ProjectSnapshot::new(
-            first.scope(),
-            first.project_epoch.clone(),
-            ProjectSequence::ZERO,
-            vec![],
-        )?)?;
+        store.apply_snapshot(
+            &ProjectSnapshot::new(
+                first.scope(),
+                first.project_epoch.clone(),
+                ProjectSequence::ZERO,
+                vec![],
+            )?,
+            &first,
+        )?;
         assert!(matches!(
             store.verify_identity(&identity("epoch-b")?),
             Err(ClientError::EpochMismatch { .. })
@@ -1141,14 +1201,67 @@ mod tests {
             Err(ClientError::ScopeMismatch { .. })
         ));
 
+        let mut other_actor = first.clone();
+        other_actor.actor_id = ActorId::try_from("codex-p2")?;
+        assert!(matches!(
+            store.verify_identity(&other_actor),
+            Err(ClientError::ActorMismatch { .. })
+        ));
+
         store.reset()?;
-        store.apply_snapshot(&ProjectSnapshot::new(
-            other.scope(),
-            other.project_epoch.clone(),
-            ProjectSequence::ZERO,
-            vec![],
-        )?)?;
+        store.apply_snapshot(
+            &ProjectSnapshot::new(
+                other.scope(),
+                other.project_epoch.clone(),
+                ProjectSequence::ZERO,
+                vec![],
+            )?,
+            &other,
+        )?;
         assert_eq!(store.status()?.scope, Some(other.scope()));
+        assert_eq!(store.status()?.actor_id, Some(other.actor_id));
+        Ok(())
+    }
+
+    #[test]
+    fn legacy_project_replica_requires_reset_before_actor_projection()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("replica.sqlite");
+        let connection = Connection::open(&path)?;
+        connection.execute_batch(
+            "CREATE TABLE replica_meta (
+                singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+                tenant_id TEXT NOT NULL,
+                project_id TEXT NOT NULL,
+                project_epoch TEXT NOT NULL,
+                after_seq INTEGER NOT NULL CHECK (after_seq >= 0),
+                updated_at_ms INTEGER NOT NULL
+             ) STRICT;
+             CREATE TABLE replica_resources (
+                resource_kind TEXT NOT NULL,
+                resource_id TEXT NOT NULL,
+                revision INTEGER NOT NULL CHECK (revision > 0),
+                deleted INTEGER NOT NULL CHECK (deleted IN (0, 1)),
+                body_json BLOB,
+                observed_after_seq INTEGER NOT NULL CHECK (observed_after_seq >= 0),
+                PRIMARY KEY (resource_kind, resource_id)
+             ) STRICT;
+             INSERT INTO replica_meta
+                (singleton, tenant_id, project_id, project_epoch, after_seq, updated_at_ms)
+             VALUES (1, 'tenant-a', 'project-a', 'epoch-a', 4, 1700000000000);
+             PRAGMA user_version = 1;",
+        )?;
+        drop(connection);
+
+        let mut store = ReplicaStore::open(&path)?;
+        assert_eq!(store.status()?.actor_id, None);
+        assert!(matches!(
+            store.verify_identity(&identity("epoch-a")?),
+            Err(ClientError::ActorMismatch { cached: None, .. })
+        ));
+        store.reset()?;
+        assert!(store.verify_identity(&identity("epoch-a")?)?);
         Ok(())
     }
 }

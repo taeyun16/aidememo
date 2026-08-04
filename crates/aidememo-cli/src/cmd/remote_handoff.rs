@@ -7,6 +7,7 @@
 use crate::cmd::{HandoffSub, artifacts, auth};
 use aidememo_core::{AideMemo, AideMemoError, Config};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::path::Path;
 
 pub fn run_remote_handoff(
@@ -16,7 +17,10 @@ pub fn run_remote_handoff(
     sub: HandoffSub,
     json_output: bool,
 ) -> Result<String, AideMemoError> {
-    let wiki = if matches!(&sub, HandoffSub::Send { .. } | HandoffSub::Return { .. }) {
+    let wiki = if matches!(
+        &sub,
+        HandoffSub::Send { .. } | HandoffSub::Accept { .. } | HandoffSub::Return { .. }
+    ) {
         Some(AideMemo::open(store_path, config)?)
     } else {
         None
@@ -70,17 +74,37 @@ pub(crate) fn execute_remote_handoff(
                 .clone()
                 .unwrap_or_else(|| artifact.session_id.clone());
             client.ensure_session(&artifact.session_id, source_id.as_deref(), &topic)?;
+            if artifact.body.len() > 65_536 {
+                return Err(AideMemoError::InvalidInput(format!(
+                    "remote handoff packet is {} bytes; canonical handoff contexts are limited to 65536 bytes",
+                    artifact.body.len()
+                )));
+            }
             let handoff_id = generated_id("handoff");
+            let context_id = generated_id("context");
+            client.ensure_handoff_context(
+                &context_id,
+                &handoff_id,
+                &artifact.session_id,
+                source_id.as_deref(),
+                required_str(&identity, "actor_id")?,
+                &installation,
+                &artifact.body,
+            )?;
             let receipt = client.post(
                 "/handoffs",
                 json!({
-                    "command_id": generated_id("command_send"),
+                    "command_id": stable_operation_id(
+                        "command_send",
+                        &[&client.profile.project_id, &handoff_id],
+                    ),
                     "payload": {
                         "handoff_id": handoff_id.clone(),
                         "session_id": artifact.session_id.clone(),
                         "to_actor": installation.clone(),
                         "focus": focus.clone(),
                         "done_when": done_when.clone(),
+                        "context_id": context_id.clone(),
                     }
                 }),
             )?;
@@ -98,6 +122,7 @@ pub(crate) fn execute_remote_handoff(
                 "to_actor": installation,
                 "focus": focus,
                 "done_when": done_when,
+                "context_id": context_id,
                 "fact_count": artifact.fact_count,
                 "bytes": artifact.body.len(),
                 "resume": {
@@ -157,20 +182,139 @@ pub(crate) fn execute_remote_handoff(
         } => {
             reject_actor_override(actor_id.as_deref())?;
             let status = client.handoff(&handoff_id)?;
+            let record = status.get("record").ok_or_else(|| {
+                AideMemoError::Internal("remote handoff response omitted record".to_owned())
+            })?;
+            let authenticated_actor = required_str(&identity, "actor_id")?;
+            if required_str(record, "to_actor")? != authenticated_actor {
+                return Err(AideMemoError::InvalidInput(format!(
+                    "remote handoff is not addressed to authenticated actor {authenticated_actor}"
+                )));
+            }
             let revision = required_u64(&status, "revision")?;
-            let claim_id = generated_id("claim");
-            let receipt = client.post(
-                &format!("/handoffs/{handoff_id}/accept"),
-                json!({
-                    "command_id": generated_id("command_accept"),
-                    "expected_revision": revision,
-                    "payload": {"claim_id": claim_id},
-                }),
+            let status_name = required_str(record, "status")?;
+            let attempt_count = required_u64(record, "attempt_count")?;
+            let previous_outcome = optional_str(record, "outcome")?;
+            let next_attempt = match (status_name, previous_outcome) {
+                ("pending", None) | ("accepted", Some("failed")) => {
+                    attempt_count.checked_add(1).ok_or_else(|| {
+                        AideMemoError::InvalidInput(
+                            "remote handoff attempt counter overflow".to_owned(),
+                        )
+                    })?
+                }
+                ("accepted", None) | ("completed", Some("succeeded")) => attempt_count,
+                _ => {
+                    return Err(AideMemoError::InvalidInput(format!(
+                        "remote handoff has inconsistent retry state: status={status_name}, outcome={}",
+                        previous_outcome.unwrap_or("none")
+                    )));
+                }
+            };
+            let claim_id = stable_claim_id(
+                &client.profile.project_id,
+                authenticated_actor,
+                &handoff_id,
+                next_attempt,
+            );
+            let recovered = matches!(
+                (status_name, previous_outcome),
+                ("accepted", None) | ("completed", Some("succeeded"))
+            );
+            if recovered && optional_str(record, "claim_id")? != Some(claim_id.as_str()) {
+                return Err(AideMemoError::InvalidInput(
+                    "remote handoff was accepted with a legacy or different claim; automatic retry recovery is unsafe"
+                        .to_owned(),
+                ));
+            }
+            let command_id = stable_operation_id(
+                "command_accept",
+                &[
+                    &client.profile.project_id,
+                    authenticated_actor,
+                    &handoff_id,
+                    &claim_id,
+                ],
+            );
+            let session_id = required_str(record, "session_id")?;
+            let source_id = optional_str(record, "source_id")?;
+            let session = client.resource("session", session_id)?.ok_or_else(|| {
+                AideMemoError::Internal(format!(
+                    "remote handoff session {session_id} is missing from canonical storage"
+                ))
+            })?;
+            ensure_fields_match(
+                &session,
+                &json!({"session_id": session_id, "source_id": source_id}),
+                &["session_id", "source_id"],
             )?;
+            let context = optional_str(record, "context_id")?
+                .map(|context_id| {
+                    let context =
+                        client
+                            .resource("handoff_context", context_id)?
+                            .ok_or_else(|| {
+                                AideMemoError::Internal(format!(
+                                    "remote handoff context {context_id} is missing"
+                                ))
+                            })?;
+                    ensure_fields_match(
+                        &context,
+                        &json!({
+                            "context_id": context_id,
+                            "handoff_id": handoff_id,
+                            "session_id": session_id,
+                            "source_id": source_id,
+                            "from_actor": required_str(record, "from_actor")?,
+                            "to_actor": authenticated_actor,
+                        }),
+                        &[
+                            "context_id",
+                            "handoff_id",
+                            "session_id",
+                            "source_id",
+                            "from_actor",
+                            "to_actor",
+                        ],
+                    )?;
+                    Ok(context)
+                })
+                .transpose()?;
+            let wiki = required_wiki(wiki, "remote handoff accept")?;
+            let local_context_fact_id =
+                materialize_remote_context(wiki, record, &session, context.as_ref())?;
+            let receipt = if recovered {
+                Value::Null
+            } else {
+                client.post(
+                    &format!("/handoffs/{handoff_id}/accept"),
+                    json!({
+                        "command_id": command_id,
+                        "expected_revision": revision,
+                        "payload": {"claim_id": claim_id},
+                    }),
+                )?
+            };
             json!({
+                "artifact": "remote_handoff_accept",
                 "remote_profile": client.profile.name,
+                "actor_id": identity["actor_id"],
                 "handoff_id": handoff_id,
+                "command_id": command_id,
                 "claim_id": claim_id,
+                "recovered": recovered,
+                "session_id": session_id,
+                "source_id": source_id,
+                "context_id": optional_str(record, "context_id")?,
+                "local_context_fact_id": local_context_fact_id.to_string(),
+                "resume": {
+                    "command": artifacts::session_resume_command(session_id, source_id),
+                    "env": {
+                        "AIDEMEMO_SESSION_ID": session_id,
+                        "AIDEMEMO_SOURCE_ID": source_id,
+                        "AIDEMEMO_ACTOR_ID": identity["actor_id"],
+                    }
+                },
                 "receipt": receipt,
             })
         }
@@ -196,6 +340,27 @@ pub(crate) fn execute_remote_handoff(
             let claim_id = required_str(record, "claim_id")?;
             let source_id = optional_str(record, "source_id")?;
             let actor_id = required_str(&identity, "actor_id")?;
+            let existing_result_fact_id = optional_str(record, "result_fact_id")?;
+            let existing_outcome = optional_str(record, "outcome")?;
+            let recovered = existing_result_fact_id == Some(&result_fact_id)
+                && existing_outcome == Some(&outcome);
+            if !recovered && (existing_result_fact_id.is_some() || existing_outcome.is_some()) {
+                return Err(AideMemoError::InvalidInput(
+                    "remote handoff already contains different result evidence; automatic retry recovery is unsafe"
+                        .to_owned(),
+                ));
+            }
+            let command_id = stable_operation_id(
+                "command_return",
+                &[
+                    &client.profile.project_id,
+                    actor_id,
+                    &handoff_id,
+                    claim_id,
+                    &result_fact_id,
+                    &outcome,
+                ],
+            );
 
             let wiki = required_wiki(wiki, "remote handoff return")?;
             let fact_id = result_fact_id
@@ -226,23 +391,29 @@ pub(crate) fn execute_remote_handoff(
                 actor_id,
                 &fact.content,
             )?;
-            let receipt = client.post(
-                &format!("/handoffs/{handoff_id}/return"),
-                json!({
-                    "command_id": generated_id("command_return"),
-                    "expected_revision": revision,
-                    "payload": {
-                        "claim_id": claim_id,
-                        "result_fact_id": result_fact_id,
-                        "outcome": outcome,
-                    }
-                }),
-            )?;
+            let receipt = if recovered {
+                Value::Null
+            } else {
+                client.post(
+                    &format!("/handoffs/{handoff_id}/return"),
+                    json!({
+                        "command_id": command_id,
+                        "expected_revision": revision,
+                        "payload": {
+                            "claim_id": claim_id,
+                            "result_fact_id": result_fact_id,
+                            "outcome": outcome,
+                        }
+                    }),
+                )?
+            };
             json!({
                 "remote_profile": client.profile.name,
                 "handoff_id": handoff_id,
+                "command_id": command_id,
                 "result_fact_id": result_fact_id,
                 "outcome": outcome,
+                "recovered": recovered,
                 "receipt": receipt,
             })
         }
@@ -275,6 +446,80 @@ fn required_wiki<'a>(
     wiki.ok_or_else(|| {
         AideMemoError::Internal(format!("{operation} requires the embedded session store"))
     })
+}
+
+fn materialize_remote_context(
+    wiki: &AideMemo,
+    handoff: &Value,
+    session: &Value,
+    context: Option<&Value>,
+) -> Result<aidememo_core::FactId, AideMemoError> {
+    let handoff_id = required_str(handoff, "handoff_id")?;
+    let session_id = required_str(session, "session_id")?;
+    let topic = required_str(session, "topic")?;
+    let source_id = optional_str(session, "source_id")?;
+    let from_actor = required_str(handoff, "from_actor")?;
+
+    let session_entity = match wiki.entity_get(session_id) {
+        Ok(entity) => {
+            if entity.entity_type.to_string() != "session" {
+                return Err(AideMemoError::InvalidInput(format!(
+                    "local entity {session_id} is not a session"
+                )));
+            }
+            if entity
+                .source_page
+                .as_deref()
+                .is_some_and(|local| local != topic)
+            {
+                return Err(AideMemoError::InvalidInput(format!(
+                    "local session {session_id} has a different topic than canonical SSOT"
+                )));
+            }
+            entity
+        }
+        Err(AideMemoError::EntityNotFound { .. }) => {
+            let id = wiki.entity_add(aidememo_core::EntityInput {
+                name: session_id.to_owned(),
+                entity_type: Some(aidememo_core::EntityType::parse("session")),
+                source_page: Some(topic.to_owned()),
+                ..Default::default()
+            })?;
+            wiki.entity_get_by_id(id)?
+        }
+        Err(error) => return Err(error),
+    };
+
+    let content = if let Some(context) = context {
+        required_str(context, "content")?.to_owned()
+    } else {
+        let mut content = format!("Remote handoff {handoff_id} from {from_actor}: {topic}");
+        if let Some(focus) = optional_str(handoff, "focus")? {
+            content.push_str("\n\nFocus: ");
+            content.push_str(focus);
+        }
+        if let Some(done_when) = optional_str(handoff, "done_when")? {
+            content.push_str("\n\nDone when: ");
+            content.push_str(done_when);
+        }
+        content
+    };
+    let fact_id = wiki.fact_add(aidememo_core::FactInput {
+        content,
+        fact_type: Some(aidememo_core::FactType::Note),
+        entity_ids: Some(vec![session_entity.id]),
+        tags: Some(vec![
+            "remote-handoff-context".to_owned(),
+            format!("handoff:{handoff_id}"),
+        ]),
+        source: Some(format!("remote-handoff:{handoff_id}")),
+        source_id: source_id.map(str::to_owned),
+        actor_id: Some(from_actor.to_owned()),
+        source_confidence: Some(1.0),
+        observed_at: None,
+    })?;
+    wiki.entity_get_scoped(session_id, source_id)?;
+    Ok(fact_id)
 }
 
 struct RemoteHandoffClient {
@@ -349,7 +594,10 @@ impl RemoteHandoffClient {
         self.post(
             "/sessions",
             json!({
-                "command_id": generated_id("command_session"),
+                "command_id": stable_operation_id(
+                    "command_session",
+                    &[&self.profile.project_id, session_id],
+                ),
                 "payload": {
                     "session_id": session_id,
                     "source_id": source_id,
@@ -387,10 +635,69 @@ impl RemoteHandoffClient {
         self.post(
             "/facts",
             json!({
-                "command_id": generated_id("command_fact"),
+                "command_id": stable_operation_id(
+                    "command_fact",
+                    &[&self.profile.project_id, fact_id],
+                ),
                 "payload": {
                     "fact_id": fact_id,
                     "session_id": session_id,
+                    "content": content,
+                }
+            }),
+        )?;
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn ensure_handoff_context(
+        &self,
+        context_id: &str,
+        handoff_id: &str,
+        session_id: &str,
+        source_id: Option<&str>,
+        from_actor: &str,
+        to_actor: &str,
+        content: &str,
+    ) -> Result<(), AideMemoError> {
+        validate_id("context_id", context_id)?;
+        if let Some(existing) = self.resource("handoff_context", context_id)? {
+            let expected = json!({
+                "context_id": context_id,
+                "handoff_id": handoff_id,
+                "session_id": session_id,
+                "source_id": source_id,
+                "from_actor": from_actor,
+                "to_actor": to_actor,
+                "content": content,
+            });
+            ensure_fields_match(
+                &existing,
+                &expected,
+                &[
+                    "context_id",
+                    "handoff_id",
+                    "session_id",
+                    "source_id",
+                    "from_actor",
+                    "to_actor",
+                    "content",
+                ],
+            )?;
+            return Ok(());
+        }
+        self.post(
+            "/handoff-contexts",
+            json!({
+                "command_id": stable_operation_id(
+                    "command_context",
+                    &[&self.profile.project_id, context_id],
+                ),
+                "payload": {
+                    "context_id": context_id,
+                    "handoff_id": handoff_id,
+                    "session_id": session_id,
+                    "to_actor": to_actor,
                     "content": content,
                 }
             }),
@@ -431,11 +738,22 @@ impl RemoteHandoffClient {
     }
 
     fn post(&self, path: &str, body: Value) -> Result<Value, AideMemoError> {
+        let endpoint = self.endpoint(path);
         let request = self
             .agent
-            .post(&self.endpoint(path))
+            .post(&endpoint)
             .set("Authorization", &format!("Bearer {}", self.profile.token));
-        decode(request.send_json(body))
+        match request.send_json(body.clone()) {
+            Ok(response) => decode(Ok(response)),
+            Err(ureq::Error::Transport(_)) => {
+                let retry = self
+                    .agent
+                    .post(&endpoint)
+                    .set("Authorization", &format!("Bearer {}", self.profile.token));
+                decode(retry.send_json(body))
+            }
+            Err(error) => Err(remote_error(error)),
+        }
     }
 
     fn endpoint(&self, path: &str) -> String {
@@ -531,14 +849,40 @@ fn ensure_fields_match(
         Ok(())
     } else {
         Err(AideMemoError::InvalidInput(
-            "remote canonical resource already exists with different session/fact evidence"
-                .to_owned(),
+            "remote canonical resource already exists with different evidence".to_owned(),
         ))
     }
 }
 
 fn generated_id(prefix: &str) -> String {
     format!("{prefix}_{}", ulid::Ulid::new())
+}
+
+fn stable_claim_id(project_id: &str, actor_id: &str, handoff_id: &str, attempt: u64) -> String {
+    stable_operation_id(
+        "claim",
+        &[project_id, actor_id, handoff_id, &attempt.to_string()],
+    )
+}
+
+fn stable_operation_id(prefix: &str, parts: &[&str]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update((prefix.len() as u64).to_be_bytes());
+    hasher.update(prefix.as_bytes());
+    for part in parts {
+        hasher.update((part.len() as u64).to_be_bytes());
+        hasher.update(part.as_bytes());
+    }
+    let digest = hasher.finalize();
+    let mut id = String::with_capacity(prefix.len() + 1 + digest.len() * 2);
+    id.push_str(prefix);
+    id.push('_');
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    for byte in digest {
+        id.push(char::from(HEX[usize::from(byte >> 4)]));
+        id.push(char::from(HEX[usize::from(byte & 0x0f)]));
+    }
+    id
 }
 
 fn default_source_id() -> Option<String> {
@@ -554,6 +898,17 @@ fn render(value: Value, json_output: bool) -> Result<String, AideMemoError> {
             context: "remote handoff JSON".to_owned(),
             source,
         });
+    }
+    if value.get("artifact").and_then(Value::as_str) == Some("remote_handoff_accept") {
+        let session_id = required_str(&value, "session_id")?;
+        let source_id = optional_str(&value, "source_id")?;
+        let actor_id = required_str(&value, "actor_id")?;
+        let handoff_id = required_str(&value, "handoff_id")?;
+        let local_context_fact_id = required_str(&value, "local_context_fact_id")?;
+        return Ok(format!(
+            "# aidememo remote handoff accepted: {handoff_id}\n# local context fact: {local_context_fact_id}\n{}\nexport AIDEMEMO_ACTOR_ID={actor_id}",
+            artifacts::session_resume_exports(session_id, source_id),
+        ));
     }
     if let Some(assignments) = value.get("assignments").and_then(Value::as_array) {
         if assignments.is_empty() {
@@ -589,4 +944,46 @@ fn render(value: Value, json_output: bool) -> Result<String, AideMemoError> {
         context: "remote handoff output".to_owned(),
         source,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn accepted_handoff_renders_shell_evaluable_session_exports() -> Result<(), AideMemoError> {
+        let output = render(
+            json!({
+                "artifact": "remote_handoff_accept",
+                "handoff_id": "handoff_test",
+                "session_id": "session_test",
+                "source_id": "project:aidememo",
+                "actor_id": "codex-p2",
+                "local_context_fact_id": "01TEST",
+            }),
+            false,
+        )?;
+        assert!(output.starts_with("# aidememo remote handoff accepted: handoff_test"));
+        assert!(output.contains("export AIDEMEMO_SESSION_ID='session_test'"));
+        assert!(output.contains("export AIDEMEMO_SOURCE_ID='project:aidememo'"));
+        assert!(output.ends_with("export AIDEMEMO_ACTOR_ID=codex-p2"));
+        Ok(())
+    }
+
+    #[test]
+    fn stable_operation_ids_are_repeatable_and_domain_separated() {
+        let accept = stable_operation_id("command_accept", &["project", "actor", "handoff"]);
+        assert_eq!(
+            accept,
+            stable_operation_id("command_accept", &["project", "actor", "handoff"])
+        );
+        assert_ne!(
+            accept,
+            stable_operation_id("command_return", &["project", "actor", "handoff"])
+        );
+        assert_ne!(
+            stable_operation_id("command_accept", &["ab", "c"]),
+            stable_operation_id("command_accept", &["a", "bc"])
+        );
+    }
 }

@@ -105,13 +105,14 @@ aidememo handoff --remote-profile codex-p1 send codex-p2 \
 # The receiver identity comes from the codex-p2 bearer token.
 aidememo handoff --remote-profile codex-p2 inbox \
   --source-id project:aidememo
-aidememo handoff --remote-profile codex-p2 accept handoff_...
+eval "$(aidememo --store ./codex-p2.sqlite handoff \
+  --remote-profile codex-p2 accept handoff_...)"
 
-# Resume the session shown in the inbox, then write receiver-owned evidence.
-eval "$(aidememo session resume --source-id project:aidememo session-...)"
-aidememo fact add "Remote review passed" --type note --entities Release \
+# Accept materialized the canonical session and bounded context packet into
+# codex-p2's selected embedded store. Write receiver-owned evidence there.
+aidememo --store ./codex-p2.sqlite fact add "Remote review passed" --type note --entities Release \
   --source-id project:aidememo --actor-id codex-p2
-aidememo handoff --remote-profile codex-p2 return \
+aidememo --store ./codex-p2.sqlite handoff --remote-profile codex-p2 return \
   --outcome succeeded --result-fact-id 01... handoff_...
 
 aidememo handoff --remote-profile codex-p1 outbox
@@ -122,11 +123,27 @@ token and fixed project. `AIDEMEMO_REMOTE_PROFILE=codex-p2` may replace the
 repeated flag. Remote operations reject `--actor-id` and `--from`: the server's
 persisted token binding is the only actor authority.
 
-This is currently a connected-write bridge. The CLI uploads the typed session
-pointer and the receiver's result fact to the canonical server ledger, while
-the embedded local store still provides packet construction, session resume,
-and retrieval. Remote `send`, `inbox`, `outbox`, `show/status`, `accept`, and
-`return` are implemented. Stdio MCP can use the same path after
+Remote `accept` derives its claim from project, authenticated actor, handoff,
+and attempt number; `return` derives its command from that claim and the exact
+result evidence. The client retries the identical HTTP body once after a
+transport failure. If a later CLI/MCP invocation finds that exact accept or
+return already present in canonical state, it returns `recovered: true` without
+creating another transition. A failed outcome deliberately advances to a new
+claim on the next accept.
+
+This does not yet make a brand-new `send` invocation idempotent. Each invocation
+mints a new handoff and context resource, so after an uncertain send response,
+look up the sender outbox and continue with the existing handoff ID. A future
+client operation key or offline outbox is required before rerunning `send` can
+be deduplicated across processes.
+
+This is currently a connected-write bridge. `send` stores a typed session,
+participant-scoped immutable context packet, and handoff pointer in the
+canonical ledger. `accept` verifies that route before materializing the session
+and packet as a source-scoped local context fact in the receiver's selected
+embedded store. The two accounts no longer need to share one SQLite file;
+subsequent retrieval and result authoring remain local. Remote `send`, `inbox`,
+`outbox`, `show/status`, `accept`, and `return` are implemented. Stdio MCP can use the same path after
 `mcp-install --remote-profile NAME`; the installer verifies the bearer actor and
 pins it to one agent profile. Remote `run`, heartbeat, board, HTTP MCP gateway
 routing, offline outbox, and retrieval indexing remain future work.
@@ -135,6 +152,13 @@ from one atomic snapshot and advances it with revision-pinned changes, while
 `replica status/get` remains available without the server. Typed server facts
 are canonical handoff evidence but are not yet
 indexed by the embedded search engine.
+
+Remote replicas are actor-bound. Generic exact reads, snapshots, and change
+feeds expose a handoff and its `handoff_context` only to the authenticated
+sender or receiver, and the replica records that actor alongside tenant,
+project, and epoch. Run
+`replica reset --force` before reusing the same replica path with another remote
+profile.
 
 ## What stays the same
 
