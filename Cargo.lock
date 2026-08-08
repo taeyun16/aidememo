@@ -4039,9 +4039,9 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
 name = "oneio"
-version = "0.23.0"
+version = "0.24.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b29ec2e492d1f3350fa4b5701dbac89544a521c755b99d1667dd98c3cdd5984a"
+checksum = "34fd427fd9962a9bf2d99da1b6cbc71ae72aec49c90723a4944128462d021ac2"
 dependencies = [
  "bzip2",
  "dotenvy",
