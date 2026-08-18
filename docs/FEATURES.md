@@ -77,7 +77,7 @@ python3 scripts/docs-site-e2e.py
 | Backup / restore | `aidememo backup create`, `aidememo backup restore` |
 | Branch logs | `aidememo branch push`, `aidememo branch merge` |
 | Sync | `aidememo sync ingest`, `aidememo sync pull`, `aidememo sync status` |
-| SSOT replica | `aidememo replica pull`, `aidememo replica status`, `aidememo replica get`, `aidememo replica reset` |
+| SSOT replica | `aidememo replica pull`, `aidememo replica status`, `aidememo replica get`, `aidememo replica outbox`, `aidememo replica publish`, `aidememo replica reset` |
 | Config | `aidememo config list`, `aidememo config get`, `aidememo config set` |
 | Model cache | `aidememo model list`, `aidememo model status`, `aidememo model download` |
 | Ranking adapter | `aidememo adapt train`, `aidememo adapt status`, `aidememo adapt eval` |

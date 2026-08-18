@@ -6,7 +6,10 @@
 
 mod send_operation;
 
-use self::send_operation::{RemoteSendOperationStore, SendOperationMeta};
+use self::send_operation::{
+    QueuedSendOperation, RemoteSendOperationStore, ReservedSendOperation, SendOperationMeta,
+    SendOperationState, SendReplayPlan,
+};
 use crate::cmd::{HandoffSub, artifacts, auth};
 use aidememo_core::{AideMemo, AideMemoError, Config};
 use serde_json::{Value, json};
@@ -38,147 +41,12 @@ pub(crate) fn execute_remote_handoff(
     sub: HandoffSub,
 ) -> Result<Value, AideMemoError> {
     let client = RemoteHandoffClient::new(auth::load_remote_profile(profile_name)?)?;
+    if matches!(&sub, HandoffSub::Send { .. }) {
+        return execute_remote_send(wiki, &client, sub);
+    }
     let identity = client.identity()?;
     let value = match sub {
-        HandoffSub::Send {
-            from_actor,
-            source_id,
-            focus,
-            done_when,
-            kanban_task,
-            kanban_board,
-            installation,
-            session,
-        } => {
-            reject_actor_override(from_actor.as_deref())?;
-            if kanban_task.is_some() || kanban_board.is_some() {
-                return Err(AideMemoError::InvalidInput(
-                    "remote handoff send does not yet persist Hermes Kanban metadata".to_owned(),
-                ));
-            }
-            validate_id("receiver actor", &installation)?;
-            let source_id = source_id.or_else(default_source_id);
-            let wiki = required_wiki(wiki, "remote handoff send")?;
-            let artifact = artifacts::agent_handoff(
-                wiki,
-                session.as_deref(),
-                80,
-                false,
-                artifacts::AgentHandoffRoute {
-                    to_actor: Some(&installation),
-                    focus: focus.as_deref(),
-                    done_when: done_when.as_deref(),
-                    source_id: source_id.as_deref(),
-                    ..Default::default()
-                },
-            )?;
-            let topic = artifact
-                .topic
-                .clone()
-                .unwrap_or_else(|| artifact.session_id.clone());
-            if artifact.body.len() > 65_536 {
-                return Err(AideMemoError::InvalidInput(format!(
-                    "remote handoff packet is {} bytes; canonical handoff contexts are limited to 65536 bytes",
-                    artifact.body.len()
-                )));
-            }
-            let actor_id = required_str(&identity, "actor_id")?;
-            let intent_key = stable_operation_id(
-                "send_intent",
-                &[
-                    &client.profile.project_id,
-                    actor_id,
-                    &installation,
-                    &artifact.session_id,
-                    source_id.as_deref().unwrap_or(""),
-                ],
-            );
-            let payload_hash = stable_operation_id(
-                "send_payload",
-                &[
-                    &client.profile.project_id,
-                    actor_id,
-                    &installation,
-                    &artifact.session_id,
-                    source_id.as_deref().unwrap_or(""),
-                    focus.as_deref().unwrap_or(""),
-                    done_when.as_deref().unwrap_or(""),
-                    &artifact.body,
-                ],
-            );
-            let mut operation_store = RemoteSendOperationStore::open_default()?;
-            let reservation = operation_store.reserve_send(
-                &intent_key,
-                &payload_hash,
-                SendOperationMeta {
-                    profile_name: &client.profile.name,
-                    project_id: &client.profile.project_id,
-                    actor_id,
-                },
-            )?;
-            let handoff_id = reservation.handoff_id.clone();
-            let context_id = reservation.context_id.clone();
-            client.ensure_session(&artifact.session_id, source_id.as_deref(), &topic)?;
-            client.ensure_handoff_context(
-                &context_id,
-                &handoff_id,
-                &artifact.session_id,
-                source_id.as_deref(),
-                actor_id,
-                &installation,
-                &artifact.body,
-            )?;
-            let receipt = client.post(
-                "/handoffs",
-                json!({
-                    "command_id": stable_operation_id(
-                        "command_send",
-                        &[&client.profile.project_id, &handoff_id],
-                    ),
-                    "payload": {
-                        "handoff_id": handoff_id.clone(),
-                        "session_id": artifact.session_id.clone(),
-                        "to_actor": installation.clone(),
-                        "focus": focus.clone(),
-                        "done_when": done_when.clone(),
-                        "context_id": context_id.clone(),
-                    }
-                }),
-            )?;
-            operation_store.mark_committed(&intent_key, &reservation.operation_id)?;
-            let session_id = artifact.session_id.clone();
-            json!({
-                "artifact": "agent_handoff",
-                "remote_profile": client.profile.name,
-                "actor_id": identity["actor_id"],
-                "operation_id": reservation.operation_id,
-                "recovered": reservation.reused_pending,
-                "handoff_id": handoff_id,
-                "status": "pending",
-                "dispatched": true,
-                "session_id": session_id.clone(),
-                "topic": artifact.topic,
-                "source_id": source_id.clone(),
-                "to_actor": installation,
-                "focus": focus,
-                "done_when": done_when,
-                "context_id": context_id,
-                "fact_count": artifact.fact_count,
-                "bytes": artifact.body.len(),
-                "resume": {
-                    "command": artifacts::session_resume_command(
-                        &session_id,
-                        source_id.as_deref(),
-                    ),
-                    "env": {
-                        "AIDEMEMO_SESSION_ID": session_id,
-                        "AIDEMEMO_SOURCE_ID": source_id,
-                    }
-                },
-                "content": artifact.body,
-                "receipt": receipt,
-            })
-        }
+        HandoffSub::Send { .. } => unreachable!("send is handled before remote identity lookup"),
         HandoffSub::Inbox {
             actor_id,
             source_id,
@@ -470,6 +338,304 @@ pub(crate) fn execute_remote_handoff(
     Ok(value)
 }
 
+fn execute_remote_send(
+    wiki: Option<&AideMemo>,
+    client: &RemoteHandoffClient,
+    sub: HandoffSub,
+) -> Result<Value, AideMemoError> {
+    let HandoffSub::Send {
+        from_actor,
+        source_id,
+        focus,
+        done_when,
+        kanban_task,
+        kanban_board,
+        installation,
+        session,
+    } = sub
+    else {
+        return Err(AideMemoError::Internal(
+            "remote send helper received a non-send command".to_owned(),
+        ));
+    };
+    reject_actor_override(from_actor.as_deref())?;
+    if kanban_task.is_some() || kanban_board.is_some() {
+        return Err(AideMemoError::InvalidInput(
+            "remote handoff send does not yet persist Hermes Kanban metadata".to_owned(),
+        ));
+    }
+    validate_id("receiver actor", &installation)?;
+    let source_id = source_id.or_else(default_source_id);
+    let wiki = required_wiki(wiki, "remote handoff send")?;
+    let artifact = artifacts::agent_handoff(
+        wiki,
+        session.as_deref(),
+        80,
+        false,
+        artifacts::AgentHandoffRoute {
+            to_actor: Some(&installation),
+            focus: focus.as_deref(),
+            done_when: done_when.as_deref(),
+            source_id: source_id.as_deref(),
+            ..Default::default()
+        },
+    )?;
+    let topic = artifact
+        .topic
+        .clone()
+        .unwrap_or_else(|| artifact.session_id.clone());
+    if artifact.body.len() > 65_536 {
+        return Err(AideMemoError::InvalidInput(format!(
+            "remote handoff packet is {} bytes; canonical handoff contexts are limited to 65536 bytes",
+            artifact.body.len()
+        )));
+    }
+
+    let profile_generation = client.profile.added_at.to_string();
+    let intent_key = stable_operation_id(
+        "send_intent_v2",
+        &[
+            &client.profile.name,
+            &client.profile.url,
+            &client.profile.project_id,
+            &profile_generation,
+            &installation,
+            &artifact.session_id,
+            source_id.as_deref().unwrap_or(""),
+        ],
+    );
+    let payload_hash = stable_operation_id(
+        "send_payload_v2",
+        &[
+            &client.profile.name,
+            &client.profile.url,
+            &client.profile.project_id,
+            &profile_generation,
+            &installation,
+            &artifact.session_id,
+            source_id.as_deref().unwrap_or(""),
+            focus.as_deref().unwrap_or(""),
+            done_when.as_deref().unwrap_or(""),
+            &artifact.body,
+        ],
+    );
+    let mut operation_store = RemoteSendOperationStore::open_default()?;
+    let reservation =
+        operation_store.reserve_send(&intent_key, &payload_hash, send_operation_meta(client))?;
+    let plan = SendReplayPlan {
+        session_id: artifact.session_id.clone(),
+        source_id: source_id.clone(),
+        topic,
+        to_actor: installation.clone(),
+        focus: focus.clone(),
+        done_when: done_when.clone(),
+        content: artifact.body.clone(),
+    };
+    operation_store.store_replay_plan(&intent_key, &reservation.operation_id, &plan)?;
+
+    let response = |actor_id: Option<&str>,
+                    state: SendOperationState,
+                    dispatched: bool,
+                    queued: bool,
+                    receipt: Value,
+                    last_error: Option<&str>| {
+        json!({
+            "artifact": "agent_handoff",
+            "remote_profile": &client.profile.name,
+            "actor_id": actor_id,
+            "operation_id": &reservation.operation_id,
+            "recovered": reservation.reused_pending,
+            "handoff_id": &reservation.handoff_id,
+            "status": state.as_str(),
+            "dispatched": dispatched,
+            "queued": queued,
+            "last_error": last_error,
+            "session_id": &artifact.session_id,
+            "topic": &artifact.topic,
+            "source_id": &source_id,
+            "to_actor": &installation,
+            "focus": &focus,
+            "done_when": &done_when,
+            "context_id": &reservation.context_id,
+            "fact_count": artifact.fact_count,
+            "bytes": artifact.body.len(),
+            "resume": {
+                "command": artifacts::session_resume_command(
+                    &artifact.session_id,
+                    source_id.as_deref(),
+                ),
+                "env": {
+                    "AIDEMEMO_SESSION_ID": &artifact.session_id,
+                    "AIDEMEMO_SOURCE_ID": &source_id,
+                }
+            },
+            "content": &artifact.body,
+            "receipt": receipt,
+        })
+    };
+
+    if reservation.already_committed {
+        return Ok(response(
+            reservation.actor_id.as_deref(),
+            SendOperationState::Committed,
+            true,
+            false,
+            Value::Null,
+            None,
+        ));
+    }
+
+    match publish_reserved_send(
+        client,
+        &mut operation_store,
+        &intent_key,
+        &reservation,
+        &plan,
+    ) {
+        Ok((actor_id, receipt)) => Ok(response(
+            Some(&actor_id),
+            SendOperationState::Committed,
+            true,
+            false,
+            receipt,
+            None,
+        )),
+        Err(error) => {
+            let state = send_failure_state(&error);
+            let message = error.to_string();
+            operation_store.record_failure(
+                &intent_key,
+                &reservation.operation_id,
+                state,
+                &message,
+            )?;
+            let actor_id = operation_store
+                .pending(Some(&client.profile.name))?
+                .into_iter()
+                .find(|entry| entry.operation_id == reservation.operation_id)
+                .and_then(|entry| entry.actor_id);
+            Ok(response(
+                actor_id.as_deref(),
+                state,
+                false,
+                true,
+                Value::Null,
+                Some(&message),
+            ))
+        }
+    }
+}
+
+fn send_operation_meta(client: &RemoteHandoffClient) -> SendOperationMeta<'_> {
+    SendOperationMeta {
+        profile_name: &client.profile.name,
+        profile_url: &client.profile.url,
+        profile_added_at: client.profile.added_at,
+        project_id: &client.profile.project_id,
+    }
+}
+
+fn publish_reserved_send(
+    client: &RemoteHandoffClient,
+    store: &mut RemoteSendOperationStore,
+    intent_key: &str,
+    reservation: &ReservedSendOperation,
+    plan: &SendReplayPlan,
+) -> Result<(String, Value), AideMemoError> {
+    let identity = client.identity()?;
+    let actor_id = required_str(&identity, "actor_id")?.to_owned();
+    store.bind_actor(
+        intent_key,
+        &reservation.operation_id,
+        send_operation_meta(client),
+        &actor_id,
+    )?;
+    store.mark_queued(intent_key, &reservation.operation_id)?;
+    let receipt = submit_remote_send(
+        client,
+        &actor_id,
+        &reservation.handoff_id,
+        &reservation.context_id,
+        plan,
+    )?;
+    store.mark_committed(intent_key, &reservation.operation_id)?;
+    Ok((actor_id, receipt))
+}
+
+fn publish_queued_send(
+    client: &RemoteHandoffClient,
+    store: &mut RemoteSendOperationStore,
+    entry: &QueuedSendOperation,
+    actor_id: &str,
+) -> Result<Value, AideMemoError> {
+    store.bind_actor(
+        &entry.intent_key,
+        &entry.operation_id,
+        send_operation_meta(client),
+        actor_id,
+    )?;
+    store.mark_queued(&entry.intent_key, &entry.operation_id)?;
+    let receipt = submit_remote_send(
+        client,
+        actor_id,
+        &entry.handoff_id,
+        &entry.context_id,
+        &entry.plan,
+    )?;
+    store.mark_committed(&entry.intent_key, &entry.operation_id)?;
+    Ok(receipt)
+}
+
+fn submit_remote_send(
+    client: &RemoteHandoffClient,
+    actor_id: &str,
+    handoff_id: &str,
+    context_id: &str,
+    plan: &SendReplayPlan,
+) -> Result<Value, AideMemoError> {
+    client.ensure_session(&plan.session_id, plan.source_id.as_deref(), &plan.topic)?;
+    client.ensure_handoff_context(
+        context_id,
+        handoff_id,
+        &plan.session_id,
+        plan.source_id.as_deref(),
+        actor_id,
+        &plan.to_actor,
+        &plan.content,
+    )?;
+    client.post(
+        "/handoffs",
+        json!({
+            "command_id": stable_operation_id(
+                "command_send",
+                &[&client.profile.project_id, handoff_id],
+            ),
+            "payload": {
+                "handoff_id": handoff_id,
+                "session_id": &plan.session_id,
+                "to_actor": &plan.to_actor,
+                "focus": &plan.focus,
+                "done_when": &plan.done_when,
+                "context_id": context_id,
+            }
+        }),
+    )
+}
+
+fn send_failure_state(error: &AideMemoError) -> SendOperationState {
+    let message = error.to_string();
+    if message.contains("remote server returned HTTP 409")
+        || message.contains("different evidence")
+        || message.contains("profile identity changed")
+        || message.contains("different authenticated actor")
+        || message.contains("already bound to a different")
+    {
+        SendOperationState::Conflict
+    } else {
+        SendOperationState::Failed
+    }
+}
+
 pub(crate) fn identity_for_profile(profile_name: &str) -> Result<Value, AideMemoError> {
     RemoteHandoffClient::new(auth::load_remote_profile(profile_name)?)?.identity()
 }
@@ -477,6 +643,157 @@ pub(crate) fn identity_for_profile(profile_name: &str) -> Result<Value, AideMemo
 pub(crate) fn actor_id_for_profile(profile_name: &str) -> Result<String, AideMemoError> {
     let identity = identity_for_profile(profile_name)?;
     required_str(&identity, "actor_id").map(str::to_owned)
+}
+pub(crate) fn remote_outbox_entries(profile_name: Option<&str>) -> Result<Value, AideMemoError> {
+    let store = RemoteSendOperationStore::open_default()?;
+    let queued = store.pending(profile_name)?;
+    let entries = queued
+        .iter()
+        .map(|entry| {
+            queued_entry_json(entry, entry.state, entry.last_error.as_deref(), Value::Null)
+        })
+        .collect::<Vec<_>>();
+    Ok(json!({"count": entries.len(), "entries": entries}))
+}
+
+pub(crate) fn publish_remote_outbox(profile_name: &str) -> Result<Value, AideMemoError> {
+    let client = RemoteHandoffClient::new(auth::load_remote_profile(profile_name)?)?;
+    let mut store = RemoteSendOperationStore::open_default()?;
+    let queued = store.pending(Some(profile_name))?;
+    if queued.is_empty() {
+        return Ok(json!({
+            "remote_profile": profile_name,
+            "attempted": 0,
+            "published": 0,
+            "failed": 0,
+            "conflicts": 0,
+            "entries": [],
+        }));
+    }
+
+    let identity = client.identity();
+    let mut attempted = 0_usize;
+    let mut published = 0_usize;
+    let mut failed = 0_usize;
+    let mut conflicts = 0_usize;
+    let mut results = Vec::with_capacity(queued.len());
+
+    match identity {
+        Ok(identity) => {
+            let actor_id = required_str(&identity, "actor_id")?.to_owned();
+            for entry in queued {
+                if entry.state == SendOperationState::Conflict {
+                    conflicts += 1;
+                    results.push(queued_entry_json(
+                        &entry,
+                        SendOperationState::Conflict,
+                        entry.last_error.as_deref(),
+                        Value::Null,
+                    ));
+                    continue;
+                }
+                attempted += 1;
+                match publish_queued_send(&client, &mut store, &entry, &actor_id) {
+                    Ok(receipt) => {
+                        published += 1;
+                        results.push(queued_entry_json(
+                            &entry,
+                            SendOperationState::Committed,
+                            None,
+                            receipt,
+                        ));
+                    }
+                    Err(error) => {
+                        let state = send_failure_state(&error);
+                        let message = error.to_string();
+                        store.record_failure(
+                            &entry.intent_key,
+                            &entry.operation_id,
+                            state,
+                            &message,
+                        )?;
+                        if state == SendOperationState::Conflict {
+                            conflicts += 1;
+                        } else {
+                            failed += 1;
+                        }
+                        results.push(queued_entry_json(
+                            &entry,
+                            state,
+                            Some(&message),
+                            Value::Null,
+                        ));
+                    }
+                }
+            }
+        }
+        Err(error) => {
+            let state = send_failure_state(&error);
+            let message = error.to_string();
+            for entry in queued {
+                if entry.state == SendOperationState::Conflict {
+                    conflicts += 1;
+                    results.push(queued_entry_json(
+                        &entry,
+                        SendOperationState::Conflict,
+                        entry.last_error.as_deref(),
+                        Value::Null,
+                    ));
+                    continue;
+                }
+                attempted += 1;
+                store.record_failure(&entry.intent_key, &entry.operation_id, state, &message)?;
+                if state == SendOperationState::Conflict {
+                    conflicts += 1;
+                } else {
+                    failed += 1;
+                }
+                results.push(queued_entry_json(
+                    &entry,
+                    state,
+                    Some(&message),
+                    Value::Null,
+                ));
+            }
+        }
+    }
+
+    Ok(json!({
+        "remote_profile": profile_name,
+        "attempted": attempted,
+        "published": published,
+        "failed": failed,
+        "conflicts": conflicts,
+        "entries": results,
+    }))
+}
+
+fn queued_entry_json(
+    entry: &QueuedSendOperation,
+    state: SendOperationState,
+    last_error: Option<&str>,
+    receipt: Value,
+) -> Value {
+    json!({
+        "profile_name": &entry.profile_name,
+        "profile_url": &entry.profile_url,
+        "profile_added_at": entry.profile_added_at,
+        "project_id": &entry.project_id,
+        "actor_id": &entry.actor_id,
+        "operation_id": &entry.operation_id,
+        "handoff_id": &entry.handoff_id,
+        "context_id": &entry.context_id,
+        "session_id": &entry.plan.session_id,
+        "source_id": &entry.plan.source_id,
+        "to_actor": &entry.plan.to_actor,
+        "focus": &entry.plan.focus,
+        "done_when": &entry.plan.done_when,
+        "bytes": entry.plan.content.len(),
+        "created_at_ms": entry.created_at_ms,
+        "state": state.as_str(),
+        "last_error": last_error,
+        "receipt": receipt,
+    })
 }
 
 fn required_wiki<'a>(
@@ -1004,6 +1321,17 @@ mod tests {
         assert!(output.contains("export AIDEMEMO_SOURCE_ID='project:aidememo'"));
         assert!(output.ends_with("export AIDEMEMO_ACTOR_ID=codex-p2"));
         Ok(())
+    }
+
+    #[test]
+    fn outbox_failure_classification_separates_conflicts() {
+        let conflict = AideMemoError::InvalidInput(
+            "remote server returned HTTP 409: command conflict".to_owned(),
+        );
+        assert_eq!(send_failure_state(&conflict), SendOperationState::Conflict);
+        let offline =
+            AideMemoError::Internal("remote server request failed: connection refused".to_owned());
+        assert_eq!(send_failure_state(&offline), SendOperationState::Failed);
     }
 
     #[test]
