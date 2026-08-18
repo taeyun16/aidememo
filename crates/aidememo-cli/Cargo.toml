@@ -47,6 +47,7 @@ walkdir = "2.4"
 notify = "6.1"
 dirs = "6.0"
 toml = "0.8"
+rusqlite = { version = "0.40.1", default-features = false, features = ["bundled"] }
 
 # `aidememo pending review` TUI. Pinned to the same versions our other
 # CLI tools track so we don't fragment terminal handling.
@@ -98,3 +99,6 @@ dhat-heap = ["dep:dhat"]
 [dev-dependencies]
 aidememo-server = { path = "../aidememo-server" }
 aidememo-store-local = { path = "../aidememo-store-local" }
+
+[lints]
+workspace = true
