@@ -5,21 +5,21 @@ text = patch.read_text()
 
 replacements = [
     (
-        "'use std::{collections::HashMap, sync::Arc};\\n\\n#[cfg(feature = \"semantic\")]\\npub use semantic::{EmbeddingProvider, HttpEmbeddingProvider, SharedEmbeddingProvider};'",
-        "'use std::sync::Arc;\\n#[cfg(feature = \"semantic\")]\\nuse std::collections::HashMap;\\n\\n#[cfg(feature = \"semantic\")]\\npub use semantic::{EmbeddingProvider, HttpEmbeddingProvider, SharedEmbeddingProvider};'",
+        'use std::{collections::HashMap, sync::Arc};\\n\\n#[cfg(feature = "semantic")]\\npub use semantic::{EmbeddingProvider, HttpEmbeddingProvider, SharedEmbeddingProvider};',
+        'use std::sync::Arc;\\n#[cfg(feature = "semantic")]\\nuse std::collections::HashMap;\\n\\n#[cfg(feature = "semantic")]\\npub use semantic::{EmbeddingProvider, HttpEmbeddingProvider, SharedEmbeddingProvider};',
     ),
     (
-        "'''            artifacts: Some(Arc::new(ArtifactState {\\n                catalog: Mutex::new(catalog),\\n                bodies: ArtifactBodies::S3(bodies),\\n            })),\\n            semantic_provider: None,\\n            semantic_projection: Arc::new(Mutex::new(None)),\\n        })'''",
-        "'''            artifacts: Some(Arc::new(ArtifactState {\\n                catalog: Mutex::new(catalog),\\n                bodies: ArtifactBodies::S3(bodies),\\n            })),\\n            #[cfg(feature = \"semantic\")]\\n            semantic_provider: None,\\n            #[cfg(feature = \"semantic\")]\\n            semantic_projection: Arc::new(Mutex::new(None)),\\n        })'''",
+        '            artifacts: Some(Arc::new(ArtifactState {\\n                catalog: Mutex::new(catalog),\\n                bodies: ArtifactBodies::S3(bodies),\\n            })),\\n            semantic_provider: None,\\n            semantic_projection: Arc::new(Mutex::new(None)),\\n        })',
+        '            artifacts: Some(Arc::new(ArtifactState {\\n                catalog: Mutex::new(catalog),\\n                bodies: ArtifactBodies::S3(bodies),\\n            })),\\n            #[cfg(feature = "semantic")]\\n            semantic_provider: None,\\n            #[cfg(feature = "semantic")]\\n            semantic_projection: Arc::new(Mutex::new(None)),\\n        })',
     ),
     (
-        "'''    let lexical_strong = lexical_hits.len() >= limit.min(3)\\n        && lexical_hits.first().is_some_and(|hit| hit.score >= 1.25);\\n\\n    #[cfg(feature = \"semantic\")]'''",
-        "'''    #[cfg(feature = \"semantic\")]\\n    let lexical_strong = lexical_hits.len() >= limit.min(3)\\n        && lexical_hits.first().is_some_and(|hit| hit.score >= 1.25);\\n\\n    #[cfg(feature = \"semantic\")]'''",
+        '    let lexical_strong = lexical_hits.len() >= limit.min(3)\\n        && lexical_hits.first().is_some_and(|hit| hit.score >= 1.25);\\n\\n    #[cfg(feature = "semantic")]',
+        '    #[cfg(feature = "semantic")]\\n    let lexical_strong = lexical_hits.len() >= limit.min(3)\\n        && lexical_hits.first().is_some_and(|hit| hit.score >= 1.25);\\n\\n    #[cfg(feature = "semantic")]',
     ),
 ]
 for old, new in replacements:
     if old not in text:
-        raise SystemExit(f'missing hybrid patch snippet: {old[:80]}')
+        raise SystemExit(f'missing hybrid patch snippet: {old[:90]}')
     text = text.replace(old, new, 1)
 patch.write_text(text)
 
