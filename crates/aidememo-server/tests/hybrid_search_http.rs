@@ -86,12 +86,7 @@ fn store() -> Result<SqliteCommandStore, Box<dyn std::error::Error>> {
     };
     let mut store = SqliteCommandStore::open_in_memory()?;
     store.bootstrap_project(&tenant, &project)?;
-    store.provision_actor(
-        &actor,
-        &membership,
-        &bearer_token_digest(TOKEN)?,
-        timestamp,
-    )?;
+    store.provision_actor(&actor, &membership, &bearer_token_digest(TOKEN)?, timestamp)?;
     Ok(store)
 }
 

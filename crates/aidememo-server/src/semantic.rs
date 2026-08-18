@@ -116,12 +116,12 @@ impl HttpEmbeddingProvider {
         if let Some(api_key) = &self.api_key {
             request = request.set("Authorization", &format!("Bearer {api_key}"));
         }
-        let response = request.send_json(body).map_err(|error| {
-            DomainError::StorageFailure {
+        let response = request
+            .send_json(body)
+            .map_err(|error| DomainError::StorageFailure {
                 operation: "embedding_request",
                 detail: error.to_string(),
-            }
-        })?;
+            })?;
         let response = response.into_json::<EmbeddingResponse>().map_err(|error| {
             DomainError::StorageFailure {
                 operation: "embedding_decode",
@@ -279,16 +279,6 @@ impl SemanticProjection {
             documents,
             index,
         })
-    }
-
-    #[must_use]
-    pub(crate) const fn project_epoch(&self) -> &ProjectEpoch {
-        &self.project_epoch
-    }
-
-    #[must_use]
-    pub(crate) const fn index_seq(&self) -> ProjectSequence {
-        self.index_seq
     }
 
     #[must_use]
@@ -539,7 +529,7 @@ mod tests {
         let hits = projection.search(&provider, "database saturation", None, 1)?;
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].fact_id.as_str(), "fact-db");
-        assert_eq!(projection.index_seq(), ProjectSequence::new(2));
+        assert!(projection.matches(&snapshot, &provider));
         Ok(())
     }
 

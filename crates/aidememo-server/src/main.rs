@@ -5,6 +5,8 @@ use aidememo_domain::{
     ActorId, ActorKind, ActorRecord, MembershipRole, MembershipStatus, ProjectEpoch, ProjectId,
     ProjectMembership, ProjectRecord, ProjectScope, RecordStatus, Revision, TenantId, TenantRecord,
 };
+#[cfg(feature = "semantic")]
+use aidememo_server::HttpEmbeddingProvider;
 use aidememo_server::{ServerState, bearer_token_digest, router};
 use aidememo_store_local::SqliteCommandStore;
 use clap::{Parser, Subcommand, ValueEnum};
@@ -90,6 +92,18 @@ struct ServeArgs {
     /// Force path-style bucket addressing for providers such as local MinIO.
     #[arg(long)]
     artifact_s3_force_path_style: bool,
+    /// OpenAI-compatible embedding endpoint used by semantic/hybrid retrieval.
+    #[arg(long)]
+    embedding_endpoint: Option<String>,
+    /// Embedding model sent to the configured endpoint.
+    #[arg(long, default_value = "text-embedding-3-small")]
+    embedding_model: String,
+    /// Exact embedding dimension expected from the configured model.
+    #[arg(long, default_value_t = 0)]
+    embedding_dimension: usize,
+    /// Optional environment variable containing the embedding API key.
+    #[arg(long)]
+    embedding_api_key_env: Option<String>,
     /// HTTP bind address. Loopback is required unless explicitly overridden.
     #[arg(long, default_value = "127.0.0.1:3030")]
     bind: SocketAddr,
@@ -259,6 +273,40 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn Error>> {
             }
         }
     };
+    #[cfg(feature = "semantic")]
+    let state = if let Some(endpoint) = args.embedding_endpoint.as_deref() {
+        if args.embedding_dimension == 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "--embedding-dimension must be greater than zero when --embedding-endpoint is set",
+            )
+            .into());
+        }
+        let api_key = args
+            .embedding_api_key_env
+            .as_deref()
+            .and_then(|name| std::env::var(name).ok());
+        let provider = HttpEmbeddingProvider::new(
+            endpoint,
+            &args.embedding_model,
+            args.embedding_dimension,
+            api_key,
+        )?;
+        state.with_semantic_provider(std::sync::Arc::new(provider))
+    } else {
+        state
+    };
+    #[cfg(not(feature = "semantic"))]
+    let state = {
+        if args.embedding_endpoint.is_some() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "embedding endpoint requires an aidememo-server build with --features semantic",
+            )
+            .into());
+        }
+        state
+    };
     let listener = tokio::net::TcpListener::bind(args.bind).await?;
     let artifact_backend = match args.artifact_backend {
         ArtifactBackendArg::Local => "local",
@@ -312,6 +360,14 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn Error>> {
 }
 
 fn validate_serve_args(args: &ServeArgs) -> Result<(), std::io::Error> {
+    if args.embedding_endpoint.is_none()
+        && (args.embedding_dimension != 0 || args.embedding_api_key_env.is_some())
+    {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "embedding dimension/API-key options require --embedding-endpoint",
+        ));
+    }
     if !args.bind.ip().is_loopback() && !args.allow_insecure_http {
         return Err(std::io::Error::new(
             std::io::ErrorKind::PermissionDenied,
@@ -415,6 +471,10 @@ mod tests {
             artifact_s3_region: "auto".to_owned(),
             artifact_s3_endpoint: None,
             artifact_s3_force_path_style: false,
+            embedding_endpoint: None,
+            embedding_model: "text-embedding-3-small".to_owned(),
+            embedding_dimension: 0,
+            embedding_api_key_env: None,
             bind: SocketAddr::from(([127, 0, 0, 1], 3030)),
             allow_insecure_http: false,
         }
