@@ -98,6 +98,3 @@ dhat-heap = ["dep:dhat"]
 [dev-dependencies]
 aidememo-server = { path = "../aidememo-server" }
 aidememo-store-local = { path = "../aidememo-store-local" }
-
-[lints]
-workspace = true
