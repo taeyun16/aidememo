@@ -165,7 +165,7 @@ impl LexicalProjection {
 }
 
 fn term_counts(content: &str) -> HashMap<String, usize> {
-    let mut counts = HashMap::new();
+    let mut counts = HashMap::<String, usize>::new();
     for term in tokenize(content) {
         let count = counts.entry(term).or_default();
         *count = count.saturating_add(1);
