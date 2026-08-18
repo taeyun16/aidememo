@@ -8,6 +8,8 @@
 mod artifact;
 mod lexical;
 mod product;
+#[cfg(feature = "semantic")]
+mod semantic;
 
 use aidememo_artifacts::{
     ArtifactStoreError, GarbageCollectionReport, LOCAL_BODY_STORE_IDENTITY, LocalArtifactStore,
@@ -34,7 +36,12 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
+#[cfg(feature = "semantic")]
+use std::collections::HashMap;
 use std::sync::Arc;
+
+#[cfg(feature = "semantic")]
+pub use semantic::{EmbeddingProvider, HttpEmbeddingProvider, SharedEmbeddingProvider};
 use tokio::sync::Mutex;
 
 const DEFAULT_CHANGE_LIMIT: usize = 100;
@@ -47,6 +54,10 @@ const EXTENSION_RESOURCE_PREFIX: &str = "custom.";
 pub struct ServerState {
     service: Arc<Mutex<CommandService<SqliteCommandStore>>>,
     artifacts: Option<Arc<ArtifactState>>,
+    #[cfg(feature = "semantic")]
+    semantic_provider: Option<SharedEmbeddingProvider>,
+    #[cfg(feature = "semantic")]
+    semantic_projection: Arc<Mutex<Option<Arc<semantic::SemanticProjection>>>>,
 }
 
 pub(crate) struct ArtifactState {
@@ -67,6 +78,10 @@ impl ServerState {
         Self {
             service: Arc::new(Mutex::new(CommandService::new(store))),
             artifacts: None,
+            #[cfg(feature = "semantic")]
+            semantic_provider: None,
+            #[cfg(feature = "semantic")]
+            semantic_projection: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -86,6 +101,10 @@ impl ServerState {
                 catalog: Mutex::new(artifacts),
                 bodies: ArtifactBodies::Local,
             })),
+            #[cfg(feature = "semantic")]
+            semantic_provider: None,
+            #[cfg(feature = "semantic")]
+            semantic_projection: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -108,7 +127,22 @@ impl ServerState {
                 catalog: Mutex::new(catalog),
                 bodies: ArtifactBodies::S3(bodies),
             })),
+            #[cfg(feature = "semantic")]
+            semantic_provider: None,
+            #[cfg(feature = "semantic")]
+            semantic_projection: Arc::new(Mutex::new(None)),
         })
+    }
+
+    /// Attach a semantic embedding provider to this server state.
+    ///
+    /// The provider owns no canonical data; cached HNSW state is rebuilt from
+    /// canonical project snapshots whenever sequence or model identity changes.
+    #[cfg(feature = "semantic")]
+    #[must_use]
+    pub fn with_semantic_provider(mut self, provider: SharedEmbeddingProvider) -> Self {
+        self.semantic_provider = Some(provider);
+        self
     }
 
     /// Run one bounded artifact garbage-collection pass when artifacts are configured.
@@ -410,13 +444,30 @@ struct SearchQuery {
     source_id: Option<aidememo_domain::SourceId>,
     limit: Option<usize>,
     at_least_seq: Option<u64>,
+    mode: Option<String>,
+}
+
+#[derive(Clone, Serialize)]
+struct SearchHit {
+    fact_id: aidememo_domain::FactId,
+    session_id: aidememo_domain::SessionId,
+    source_id: Option<aidememo_domain::SourceId>,
+    actor_id: aidememo_domain::ActorId,
+    content: String,
+    score: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    lexical_score: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    semantic_score: Option<f64>,
 }
 
 #[derive(Serialize)]
 struct SearchResponse {
     project_epoch: ProjectEpoch,
     index_seq: ProjectSequence,
-    results: Vec<lexical::LexicalHit>,
+    mode: &'static str,
+    semantic_model: Option<String>,
+    results: Vec<SearchHit>,
 }
 
 async fn search(
@@ -464,20 +515,207 @@ async fn search(
             }));
         }
     }
+    let requested_mode = query
+        .mode
+        .as_deref()
+        .unwrap_or("auto")
+        .trim()
+        .to_ascii_lowercase();
+    if !matches!(
+        requested_mode.as_str(),
+        "auto" | "lexical" | "semantic" | "hybrid"
+    ) {
+        return Err(ApiError(DomainError::InvalidCommand(
+            "search mode must be auto, lexical, semantic, or hybrid".to_owned(),
+        )));
+    }
     let projection = lexical::LexicalProjection::rebuild(&snapshot)?;
-    let results = projection.search(
+    let candidate_limit = limit.saturating_mul(8).max(limit).min(512);
+    let lexical_hits = projection.search(
         query_text,
         query.source_id.as_ref().map(|source_id| source_id.as_str()),
-        limit,
+        candidate_limit,
     );
+    #[cfg(feature = "semantic")]
+    let lexical_strong = lexical_hits.len() >= limit.min(3)
+        && lexical_hits.first().is_some_and(|hit| hit.score >= 1.25);
+
+    #[cfg(feature = "semantic")]
+    let (effective_mode, semantic_model, mut results) = {
+        let wants_semantic = match requested_mode.as_str() {
+            "lexical" => false,
+            "auto" => !lexical_strong,
+            "semantic" | "hybrid" => true,
+            _ => unreachable!(),
+        };
+        if !wants_semantic {
+            ("lexical", None, lexical_search_hits(&lexical_hits, limit))
+        } else if let Some(provider) = state.semantic_provider.clone() {
+            let semantic_projection = semantic_projection_for(&state, &snapshot, &provider).await?;
+            let semantic_hits = semantic_projection.search(
+                provider.as_ref(),
+                query_text,
+                query.source_id.as_ref().map(|source_id| source_id.as_str()),
+                candidate_limit,
+            )?;
+            let model = Some(semantic_projection.model().to_owned());
+            if requested_mode == "semantic" {
+                (
+                    "semantic",
+                    model,
+                    semantic_search_hits(&semantic_hits, limit),
+                )
+            } else {
+                (
+                    "hybrid",
+                    model,
+                    hybrid_search_hits(&lexical_hits, &semantic_hits, limit),
+                )
+            }
+        } else if requested_mode == "auto" {
+            ("lexical", None, lexical_search_hits(&lexical_hits, limit))
+        } else {
+            return Err(ApiError(DomainError::InvalidCommand(
+                "semantic retrieval is not configured on this server; use mode=lexical or configure an embedding endpoint".to_owned(),
+            )));
+        }
+    };
+
+    #[cfg(not(feature = "semantic"))]
+    let (effective_mode, semantic_model, mut results) = {
+        if matches!(requested_mode.as_str(), "semantic" | "hybrid") {
+            return Err(ApiError(DomainError::InvalidCommand(
+                "semantic retrieval requires an aidememo-server build with --features semantic"
+                    .to_owned(),
+            )));
+        }
+        ("lexical", None, lexical_search_hits(&lexical_hits, limit))
+    };
+
+    results.truncate(limit);
     Ok((
         StatusCode::OK,
         Json(SearchResponse {
             project_epoch: projection.project_epoch().clone(),
             index_seq: projection.index_seq(),
+            mode: effective_mode,
+            semantic_model,
             results,
         }),
     ))
+}
+
+fn lexical_search_hits(hits: &[lexical::LexicalHit], limit: usize) -> Vec<SearchHit> {
+    hits.iter()
+        .take(limit)
+        .map(|hit| SearchHit {
+            fact_id: hit.fact_id.clone(),
+            session_id: hit.session_id.clone(),
+            source_id: hit.source_id.clone(),
+            actor_id: hit.actor_id.clone(),
+            content: hit.content.clone(),
+            score: hit.score,
+            lexical_score: Some(hit.score),
+            semantic_score: None,
+        })
+        .collect()
+}
+
+#[cfg(feature = "semantic")]
+fn semantic_search_hits(hits: &[semantic::SemanticHit], limit: usize) -> Vec<SearchHit> {
+    hits.iter()
+        .take(limit)
+        .map(|hit| SearchHit {
+            fact_id: hit.fact_id.clone(),
+            session_id: hit.session_id.clone(),
+            source_id: hit.source_id.clone(),
+            actor_id: hit.actor_id.clone(),
+            content: hit.content.clone(),
+            score: hit.score,
+            lexical_score: None,
+            semantic_score: Some(hit.score),
+        })
+        .collect()
+}
+
+#[cfg(feature = "semantic")]
+fn hybrid_search_hits(
+    lexical_hits: &[lexical::LexicalHit],
+    semantic_hits: &[semantic::SemanticHit],
+    limit: usize,
+) -> Vec<SearchHit> {
+    const RRF_K: f64 = 60.0;
+    let mut merged = HashMap::<String, SearchHit>::new();
+    for (rank, hit) in lexical_hits.iter().enumerate() {
+        let score = 1.0 / (RRF_K + rank as f64 + 1.0);
+        merged.insert(
+            hit.fact_id.as_str().to_owned(),
+            SearchHit {
+                fact_id: hit.fact_id.clone(),
+                session_id: hit.session_id.clone(),
+                source_id: hit.source_id.clone(),
+                actor_id: hit.actor_id.clone(),
+                content: hit.content.clone(),
+                score,
+                lexical_score: Some(hit.score),
+                semantic_score: None,
+            },
+        );
+    }
+    for (rank, hit) in semantic_hits.iter().enumerate() {
+        let rrf = 1.0 / (RRF_K + rank as f64 + 1.0);
+        let entry = merged
+            .entry(hit.fact_id.as_str().to_owned())
+            .or_insert_with(|| SearchHit {
+                fact_id: hit.fact_id.clone(),
+                session_id: hit.session_id.clone(),
+                source_id: hit.source_id.clone(),
+                actor_id: hit.actor_id.clone(),
+                content: hit.content.clone(),
+                score: 0.0,
+                lexical_score: None,
+                semantic_score: None,
+            });
+        entry.score += rrf;
+        entry.semantic_score = Some(hit.score);
+    }
+    let mut results = merged.into_values().collect::<Vec<_>>();
+    results.sort_by(|left, right| {
+        right
+            .score
+            .total_cmp(&left.score)
+            .then_with(|| left.fact_id.as_str().cmp(right.fact_id.as_str()))
+    });
+    results.truncate(limit);
+    results
+}
+
+#[cfg(feature = "semantic")]
+async fn semantic_projection_for(
+    state: &ServerState,
+    snapshot: &ProjectSnapshot,
+    provider: &SharedEmbeddingProvider,
+) -> Result<Arc<semantic::SemanticProjection>, ApiError> {
+    {
+        let cached = state.semantic_projection.lock().await;
+        if let Some(projection) = cached.as_ref()
+            && projection.matches(snapshot, provider.as_ref())
+        {
+            return Ok(projection.clone());
+        }
+    }
+    let projection = Arc::new(semantic::SemanticProjection::rebuild(
+        snapshot,
+        provider.as_ref(),
+    )?);
+    let mut cached = state.semantic_projection.lock().await;
+    if let Some(current) = cached.as_ref()
+        && current.matches(snapshot, provider.as_ref())
+    {
+        return Ok(current.clone());
+    }
+    *cached = Some(projection.clone());
+    Ok(projection)
 }
 
 #[derive(Serialize)]
