@@ -3,12 +3,12 @@ name: finalize HTTP MCP v2
 on:
   pull_request:
     branches:
-      - agent/server-hybrid-retrieval-v2
       - main
 
 permissions:
   contents: write
 
+# Temporary workflow; it removes itself after writing the validated product diff.
 jobs:
   finalize:
     if: github.head_ref == 'agent/http-mcp-gateway-v2'
