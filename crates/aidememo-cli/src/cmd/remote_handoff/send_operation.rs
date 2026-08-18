@@ -110,14 +110,12 @@ impl RemoteSendOperationStore {
                     });
                 }
 
-                let archive = self.directory.join(format!(
-                    "{intent_key}.done.{}",
-                    existing.operation_id
-                ));
+                let archive = self
+                    .directory
+                    .join(format!("{intent_key}.done.{}", existing.operation_id));
                 if archive.exists() {
-                    fs::remove_dir_all(&archive).map_err(|error| {
-                        io_error("remove prior remote send archive", error)
-                    })?;
+                    fs::remove_dir_all(&archive)
+                        .map_err(|error| io_error("remove prior remote send archive", error))?;
                 }
                 fs::rename(&intent_directory, &archive).map_err(|error| {
                     io_error("archive completed remote send reservation", error)
@@ -162,7 +160,11 @@ impl RemoteSendOperationStore {
             ));
         }
         let marker = intent_directory.join("committed");
-        match OpenOptions::new().write(true).create_new(true).open(&marker) {
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&marker)
+        {
             Ok(mut file) => {
                 file.write_all(operation_id.as_bytes())
                     .map_err(|error| io_error("write remote send commit marker", error))?;
@@ -195,9 +197,7 @@ impl RemoteSendOperationStore {
                     if lock_is_stale(&path) {
                         match fs::remove_dir(&path) {
                             Ok(()) => continue,
-                            Err(remove_error)
-                                if remove_error.kind() == ErrorKind::NotFound =>
-                            {
+                            Err(remove_error) if remove_error.kind() == ErrorKind::NotFound => {
                                 continue;
                             }
                             Err(_) => {}
@@ -316,19 +316,15 @@ mod tests {
 
     #[test]
     fn pending_send_is_reused_after_reopen() -> Result<(), AideMemoError> {
-        let directory = tempfile::tempdir().map_err(|error| {
-            AideMemoError::Internal(format!("create test directory: {error}"))
-        })?;
+        let directory = tempfile::tempdir()
+            .map_err(|error| AideMemoError::Internal(format!("create test directory: {error}")))?;
         let path = directory.path().join("send");
         let first = {
             let mut store = RemoteSendOperationStore::open(path.clone())?;
             store.reserve_send("intent", "payload", meta())?
         };
-        let second = RemoteSendOperationStore::open(path)?.reserve_send(
-            "intent",
-            "payload",
-            meta(),
-        )?;
+        let second =
+            RemoteSendOperationStore::open(path)?.reserve_send("intent", "payload", meta())?;
         assert!(second.reused_pending);
         assert_eq!(second.operation_id, first.operation_id);
         assert_eq!(second.handoff_id, first.handoff_id);
@@ -338,9 +334,8 @@ mod tests {
 
     #[test]
     fn changed_pending_payload_fails_closed() -> Result<(), AideMemoError> {
-        let directory = tempfile::tempdir().map_err(|error| {
-            AideMemoError::Internal(format!("create test directory: {error}"))
-        })?;
+        let directory = tempfile::tempdir()
+            .map_err(|error| AideMemoError::Internal(format!("create test directory: {error}")))?;
         let mut store = RemoteSendOperationStore::open(directory.path().join("send"))?;
         store.reserve_send("intent", "payload-a", meta())?;
         let error = store
@@ -352,9 +347,8 @@ mod tests {
 
     #[test]
     fn committed_intent_can_start_a_new_assignment() -> Result<(), AideMemoError> {
-        let directory = tempfile::tempdir().map_err(|error| {
-            AideMemoError::Internal(format!("create test directory: {error}"))
-        })?;
+        let directory = tempfile::tempdir()
+            .map_err(|error| AideMemoError::Internal(format!("create test directory: {error}")))?;
         let mut store = RemoteSendOperationStore::open(directory.path().join("send"))?;
         let first = store.reserve_send("intent", "payload", meta())?;
         store.mark_committed("intent", &first.operation_id)?;
@@ -368,9 +362,8 @@ mod tests {
 
     #[test]
     fn commit_marker_is_idempotent_for_same_operation() -> Result<(), AideMemoError> {
-        let directory = tempfile::tempdir().map_err(|error| {
-            AideMemoError::Internal(format!("create test directory: {error}"))
-        })?;
+        let directory = tempfile::tempdir()
+            .map_err(|error| AideMemoError::Internal(format!("create test directory: {error}")))?;
         let mut store = RemoteSendOperationStore::open(directory.path().join("send"))?;
         let operation = store.reserve_send("intent", "payload", meta())?;
         store.mark_committed("intent", &operation.operation_id)?;
