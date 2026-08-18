@@ -3,7 +3,7 @@ name: patch server hybrid retrieval
 on:
   pull_request:
     branches:
-      - agent/server-lexical-retrieval
+      - main
 
 permissions:
   contents: write
