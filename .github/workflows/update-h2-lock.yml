@@ -4,12 +4,16 @@ on:
   push:
     branches:
       - fix/h2-rustsec-2026-0258
+  pull_request:
+    branches:
+      - main
 
 permissions:
   contents: write
 
 jobs:
   update-lock:
+    if: github.head_ref == 'fix/h2-rustsec-2026-0258' || github.ref_name == 'fix/h2-rustsec-2026-0258'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
