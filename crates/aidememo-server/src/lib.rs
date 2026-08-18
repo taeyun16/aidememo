@@ -6,6 +6,7 @@
 //! mutation. This crate does not modify or expose the existing embedded store.
 
 mod artifact;
+mod lexical;
 mod product;
 
 use aidememo_artifacts::{
@@ -168,6 +169,7 @@ pub fn router(state: ServerState) -> Router {
             get(materialized_changes),
         )
         .route("/v1/projects/{project_id}/snapshot", get(snapshot))
+        .route("/v1/projects/{project_id}/search", get(search))
         .route(
             "/v1/projects/{project_id}/resources/{resource_kind}/{resource_id}",
             get(resource),
@@ -395,6 +397,87 @@ async fn snapshot(
         })?;
     let snapshot = service.snapshot(&authenticated, &membership, &project_id)?;
     Ok((StatusCode::OK, Json(SnapshotResponse::try_from(snapshot)?)))
+}
+
+const MAX_SEARCH_QUERY_BYTES: usize = 4096;
+const DEFAULT_SEARCH_LIMIT: usize = 20;
+const MAX_SEARCH_LIMIT: usize = 100;
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SearchQuery {
+    q: String,
+    source_id: Option<aidememo_domain::SourceId>,
+    limit: Option<usize>,
+    at_least_seq: Option<u64>,
+}
+
+#[derive(Serialize)]
+struct SearchResponse {
+    project_epoch: ProjectEpoch,
+    index_seq: ProjectSequence,
+    results: Vec<lexical::LexicalHit>,
+}
+
+async fn search(
+    State(state): State<ServerState>,
+    headers: HeaderMap,
+    Path(project_id): Path<String>,
+    query: Result<Query<SearchQuery>, axum::extract::rejection::QueryRejection>,
+) -> Result<impl IntoResponse, ApiError> {
+    let project_id = ProjectId::try_from(project_id)?;
+    let Query(query) =
+        query.map_err(|error| ApiError(DomainError::InvalidCommand(error.body_text())))?;
+    let query_text = query.q.trim();
+    if query_text.is_empty() || query_text.len() > MAX_SEARCH_QUERY_BYTES {
+        return Err(ApiError(DomainError::InvalidCommand(format!(
+            "search query must contain 1..={MAX_SEARCH_QUERY_BYTES} bytes"
+        ))));
+    }
+    let limit = query.limit.unwrap_or(DEFAULT_SEARCH_LIMIT);
+    if !(1..=MAX_SEARCH_LIMIT).contains(&limit) {
+        return Err(ApiError(DomainError::InvalidCommand(format!(
+            "search limit must be between 1 and {MAX_SEARCH_LIMIT}"
+        ))));
+    }
+    let digest = bearer_digest_from_headers(&headers)?;
+    let snapshot = {
+        let service = state.service.lock().await;
+        let authenticated = service
+            .store()
+            .authenticate_token(&digest)?
+            .ok_or(DomainError::AuthenticationFailed)?;
+        let membership = service
+            .store()
+            .membership(&authenticated, &project_id)?
+            .ok_or_else(|| DomainError::ProjectUnauthorized {
+                project_id: project_id.clone(),
+            })?;
+        service.snapshot(&authenticated, &membership, &project_id)?
+    };
+    if let Some(at_least_seq) = query.at_least_seq {
+        let requested = ProjectSequence::new(at_least_seq);
+        if requested > snapshot.at_seq {
+            return Err(ApiError(DomainError::CursorOutOfRange {
+                after_seq: requested,
+                current: snapshot.at_seq,
+            }));
+        }
+    }
+    let projection = lexical::LexicalProjection::rebuild(&snapshot)?;
+    let results = projection.search(
+        query_text,
+        query.source_id.as_ref().map(|source_id| source_id.as_str()),
+        limit,
+    );
+    Ok((
+        StatusCode::OK,
+        Json(SearchResponse {
+            project_epoch: projection.project_epoch().clone(),
+            index_seq: projection.index_seq(),
+            results,
+        }),
+    ))
 }
 
 #[derive(Serialize)]
