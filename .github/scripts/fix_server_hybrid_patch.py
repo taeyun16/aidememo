@@ -30,7 +30,7 @@ if old not in text:
     raise SystemExit('semantic accessor block changed')
 text = text.replace(old, '', 1)
 old = '''        assert_eq!(projection.index_seq(), ProjectSequence::new(2));\n        Ok(())'''
-new = '''        assert!(projection.matches(&snapshot(2)?, &provider));\n        Ok(())'''
+new = '''        assert!(projection.matches(&snapshot, &provider));\n        Ok(())'''
 if old not in text:
     raise SystemExit('semantic sequence assertion changed')
 semantic.write_text(text.replace(old, new, 1))
