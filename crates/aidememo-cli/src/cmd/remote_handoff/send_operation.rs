@@ -1,17 +1,27 @@
 //! Durable identity reservation for remote handoff sends.
 //!
 //! A transport can fail after the server committed a handoff but before the
-//! caller observed the receipt. Keep one pending operation per sender/receiver
-//! session route so an identical retry reuses the same handoff/context IDs.
-//! Completed operations are replaceable, which still permits intentionally
-//! sending the same assignment again later.
+//! caller observed the receipt. Keep one immutable pending operation per
+//! sender/receiver session route so an identical retry reuses the same
+//! handoff/context IDs. A tiny directory lock serializes competing CLI
+//! processes without adding another storage dependency to the public CLI.
+//!
+//! The operation record is immutable. Successful acknowledgement creates a
+//! separate marker. Starting the same assignment intentionally after a
+//! completed send archives the old record and creates a fresh operation.
 
 use aidememo_core::AideMemoError;
-use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
-use std::{path::PathBuf, time::Duration};
+use serde::{Deserialize, Serialize};
+use std::{
+    fs::{self, OpenOptions},
+    io::{ErrorKind, Write},
+    path::{Path, PathBuf},
+    thread,
+    time::{Duration, Instant, SystemTime},
+};
 
-const STATE_PENDING: &str = "pending";
-const STATE_COMMITTED: &str = "committed";
+const LOCK_TIMEOUT: Duration = Duration::from_secs(5);
+const STALE_LOCK_AFTER: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone)]
 pub(crate) struct SendOperationMeta<'a> {
@@ -28,56 +38,40 @@ pub(crate) struct ReservedSendOperation {
     pub(crate) reused_pending: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct StoredSendOperation {
+    profile_name: String,
+    project_id: String,
+    actor_id: String,
+    payload_hash: String,
+    operation_id: String,
+    handoff_id: String,
+    context_id: String,
+    created_at_ms: u64,
+}
+
 pub(crate) struct RemoteSendOperationStore {
-    connection: Connection,
+    directory: PathBuf,
 }
 
 impl RemoteSendOperationStore {
     pub(crate) fn open_default() -> Result<Self, AideMemoError> {
         let home = std::env::var("HOME").map_err(|_| {
             AideMemoError::InvalidInput(
-                "HOME env var not set — can't resolve the remote outbox database".to_owned(),
+                "HOME env var not set — can't resolve the remote outbox directory".to_owned(),
             )
         })?;
-        let directory = PathBuf::from(home).join(".aidememo");
-        std::fs::create_dir_all(&directory).map_err(|error| {
+        Self::open(PathBuf::from(home).join(".aidememo/remote-outbox/send"))
+    }
+
+    fn open(directory: PathBuf) -> Result<Self, AideMemoError> {
+        fs::create_dir_all(&directory).map_err(|error| {
             AideMemoError::Internal(format!(
                 "create remote outbox directory {}: {error}",
                 directory.display()
             ))
         })?;
-        Self::open(directory.join("remote-outbox.sqlite"))
-    }
-
-    fn open(path: PathBuf) -> Result<Self, AideMemoError> {
-        let connection = Connection::open(&path).map_err(|error| {
-            AideMemoError::Internal(format!(
-                "open remote outbox database {}: {error}",
-                path.display()
-            ))
-        })?;
-        connection
-            .busy_timeout(Duration::from_secs(5))
-            .map_err(sqlite_error("configure remote outbox busy timeout"))?;
-        connection
-            .execute_batch(
-                "PRAGMA journal_mode=WAL;\
-                 CREATE TABLE IF NOT EXISTS remote_send_operations (\
-                   intent_key TEXT PRIMARY KEY NOT NULL,\
-                   profile_name TEXT NOT NULL,\
-                   project_id TEXT NOT NULL,\
-                   actor_id TEXT NOT NULL,\
-                   payload_hash TEXT NOT NULL,\
-                   operation_id TEXT NOT NULL,\
-                   handoff_id TEXT NOT NULL,\
-                   context_id TEXT NOT NULL,\
-                   state TEXT NOT NULL CHECK (state IN ('pending', 'committed')),\
-                   created_at_ms INTEGER NOT NULL,\
-                   updated_at_ms INTEGER NOT NULL\
-                 );",
-            )
-            .map_err(sqlite_error("initialize remote outbox schema"))?;
-        Ok(Self { connection })
+        Ok(Self { directory })
     }
 
     pub(crate) fn reserve_send(
@@ -86,119 +80,69 @@ impl RemoteSendOperationStore {
         payload_hash: &str,
         meta: SendOperationMeta<'_>,
     ) -> Result<ReservedSendOperation, AideMemoError> {
-        let transaction = self
-            .connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(sqlite_error("begin remote send reservation"))?;
+        validate_key(intent_key)?;
+        let _lock = self.acquire_lock(intent_key)?;
+        let intent_directory = self.directory.join(intent_key);
 
-        let existing = transaction
-            .query_row(
-                "SELECT profile_name, project_id, actor_id, payload_hash, operation_id,\
-                        handoff_id, context_id, state\
-                   FROM remote_send_operations WHERE intent_key = ?1",
-                params![intent_key],
-                |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, String>(2)?,
-                        row.get::<_, String>(3)?,
-                        row.get::<_, String>(4)?,
-                        row.get::<_, String>(5)?,
-                        row.get::<_, String>(6)?,
-                        row.get::<_, String>(7)?,
-                    ))
-                },
-            )
-            .optional()
-            .map_err(sqlite_error("read remote send reservation"))?;
-
-        if let Some((
-            profile_name,
-            project_id,
-            actor_id,
-            existing_payload_hash,
-            operation_id,
-            handoff_id,
-            context_id,
-            state,
-        )) = existing
-        {
-            if profile_name != meta.profile_name
-                || project_id != meta.project_id
-                || actor_id != meta.actor_id
-            {
-                return Err(AideMemoError::InvalidInput(
-                    "remote send operation identity collision detected".to_owned(),
-                ));
-            }
-            if state == STATE_PENDING {
-                if existing_payload_hash != payload_hash {
-                    return Err(AideMemoError::InvalidInput(
-                        "a pending remote send for this session route has different evidence; retry the original request or inspect the sender outbox before sending a changed assignment"
-                            .to_owned(),
-                    ));
+        if intent_directory.exists() {
+            let operation_path = intent_directory.join("operation.json");
+            if !operation_path.exists() {
+                // Reservation never became durable, so no caller could have
+                // safely started the remote mutation using its IDs.
+                fs::remove_dir_all(&intent_directory).map_err(|error| {
+                    io_error("remove incomplete remote send reservation", error)
+                })?;
+            } else {
+                let existing = read_operation(&operation_path)?;
+                ensure_identity(&existing, &meta)?;
+                if !intent_directory.join("committed").exists() {
+                    if existing.payload_hash != payload_hash {
+                        return Err(AideMemoError::InvalidInput(
+                            "a pending remote send for this session route has different evidence; retry the original request or inspect the sender outbox before sending a changed assignment"
+                                .to_owned(),
+                        ));
+                    }
+                    return Ok(ReservedSendOperation {
+                        operation_id: existing.operation_id,
+                        handoff_id: existing.handoff_id,
+                        context_id: existing.context_id,
+                        reused_pending: true,
+                    });
                 }
-                transaction
-                    .commit()
-                    .map_err(sqlite_error("finish remote send recovery lookup"))?;
-                return Ok(ReservedSendOperation {
-                    operation_id,
-                    handoff_id,
-                    context_id,
-                    reused_pending: true,
-                });
-            }
-            if state != STATE_COMMITTED {
-                return Err(AideMemoError::Internal(format!(
-                    "remote send operation has unsupported state {state}"
-                )));
+
+                let archive = self.directory.join(format!(
+                    "{intent_key}.done.{}",
+                    existing.operation_id
+                ));
+                if archive.exists() {
+                    fs::remove_dir_all(&archive).map_err(|error| {
+                        io_error("remove prior remote send archive", error)
+                    })?;
+                }
+                fs::rename(&intent_directory, &archive).map_err(|error| {
+                    io_error("archive completed remote send reservation", error)
+                })?;
             }
         }
 
-        let now = now_ms()?;
-        let operation_id = generated_id("operation");
-        let handoff_id = generated_id("handoff");
-        let context_id = generated_id("context");
-        transaction
-            .execute(
-                "INSERT INTO remote_send_operations (\
-                     intent_key, profile_name, project_id, actor_id, payload_hash,\
-                     operation_id, handoff_id, context_id, state, created_at_ms, updated_at_ms\
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10)\
-                 ON CONFLICT(intent_key) DO UPDATE SET\
-                     profile_name = excluded.profile_name,\
-                     project_id = excluded.project_id,\
-                     actor_id = excluded.actor_id,\
-                     payload_hash = excluded.payload_hash,\
-                     operation_id = excluded.operation_id,\
-                     handoff_id = excluded.handoff_id,\
-                     context_id = excluded.context_id,\
-                     state = excluded.state,\
-                     created_at_ms = excluded.created_at_ms,\
-                     updated_at_ms = excluded.updated_at_ms",
-                params![
-                    intent_key,
-                    meta.profile_name,
-                    meta.project_id,
-                    meta.actor_id,
-                    payload_hash,
-                    operation_id,
-                    handoff_id,
-                    context_id,
-                    STATE_PENDING,
-                    now,
-                ],
-            )
-            .map_err(sqlite_error("persist remote send reservation"))?;
-        transaction
-            .commit()
-            .map_err(sqlite_error("commit remote send reservation"))?;
+        fs::create_dir(&intent_directory)
+            .map_err(|error| io_error("create remote send reservation", error))?;
+        let operation = StoredSendOperation {
+            profile_name: meta.profile_name.to_owned(),
+            project_id: meta.project_id.to_owned(),
+            actor_id: meta.actor_id.to_owned(),
+            payload_hash: payload_hash.to_owned(),
+            operation_id: generated_id("operation"),
+            handoff_id: generated_id("handoff"),
+            context_id: generated_id("context"),
+            created_at_ms: aidememo_core::time::current_epoch_ms(),
+        };
+        write_operation(&intent_directory.join("operation.json"), &operation)?;
 
         Ok(ReservedSendOperation {
-            operation_id,
-            handoff_id,
-            context_id,
+            operation_id: operation.operation_id,
+            handoff_id: operation.handoff_id,
+            context_id: operation.context_id,
             reused_pending: false,
         })
     }
@@ -208,45 +152,154 @@ impl RemoteSendOperationStore {
         intent_key: &str,
         operation_id: &str,
     ) -> Result<(), AideMemoError> {
-        let changed = self
-            .connection
-            .execute(
-                "UPDATE remote_send_operations\
-                    SET state = ?1, updated_at_ms = ?2\
-                  WHERE intent_key = ?3 AND operation_id = ?4 AND state = ?5",
-                params![
-                    STATE_COMMITTED,
-                    now_ms()?,
-                    intent_key,
-                    operation_id,
-                    STATE_PENDING
-                ],
-            )
-            .map_err(sqlite_error("mark remote send committed"))?;
-        if changed == 1 {
-            Ok(())
-        } else {
-            Err(AideMemoError::Internal(
+        validate_key(intent_key)?;
+        let _lock = self.acquire_lock(intent_key)?;
+        let intent_directory = self.directory.join(intent_key);
+        let operation = read_operation(&intent_directory.join("operation.json"))?;
+        if operation.operation_id != operation_id {
+            return Err(AideMemoError::Internal(
                 "remote send reservation changed before commit acknowledgement".to_owned(),
-            ))
+            ));
+        }
+        let marker = intent_directory.join("committed");
+        match OpenOptions::new().write(true).create_new(true).open(&marker) {
+            Ok(mut file) => {
+                file.write_all(operation_id.as_bytes())
+                    .map_err(|error| io_error("write remote send commit marker", error))?;
+                file.sync_all()
+                    .map_err(|error| io_error("sync remote send commit marker", error))?;
+                Ok(())
+            }
+            Err(error) if error.kind() == ErrorKind::AlreadyExists => {
+                let existing = fs::read_to_string(&marker)
+                    .map_err(|read_error| io_error("read remote send commit marker", read_error))?;
+                if existing == operation_id {
+                    Ok(())
+                } else {
+                    Err(AideMemoError::Internal(
+                        "remote send commit marker belongs to a different operation".to_owned(),
+                    ))
+                }
+            }
+            Err(error) => Err(io_error("create remote send commit marker", error)),
         }
     }
+
+    fn acquire_lock(&self, intent_key: &str) -> Result<IntentLock, AideMemoError> {
+        let path = self.directory.join(format!("{intent_key}.lock"));
+        let started = Instant::now();
+        loop {
+            match fs::create_dir(&path) {
+                Ok(()) => return Ok(IntentLock { path }),
+                Err(error) if error.kind() == ErrorKind::AlreadyExists => {
+                    if lock_is_stale(&path) {
+                        match fs::remove_dir(&path) {
+                            Ok(()) => continue,
+                            Err(remove_error)
+                                if remove_error.kind() == ErrorKind::NotFound =>
+                            {
+                                continue;
+                            }
+                            Err(_) => {}
+                        }
+                    }
+                    if started.elapsed() >= LOCK_TIMEOUT {
+                        return Err(AideMemoError::Internal(format!(
+                            "timed out waiting for remote send reservation lock {}",
+                            path.display()
+                        )));
+                    }
+                    thread::sleep(Duration::from_millis(25));
+                }
+                Err(error) => {
+                    return Err(io_error("create remote send reservation lock", error));
+                }
+            }
+        }
+    }
+}
+
+struct IntentLock {
+    path: PathBuf,
+}
+
+impl Drop for IntentLock {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir(&self.path);
+    }
+}
+
+fn read_operation(path: &Path) -> Result<StoredSendOperation, AideMemoError> {
+    let bytes = fs::read(path).map_err(|error| io_error("read remote send reservation", error))?;
+    serde_json::from_slice(&bytes).map_err(|error| {
+        AideMemoError::Internal(format!(
+            "decode remote send reservation {}: {error}",
+            path.display()
+        ))
+    })
+}
+
+fn write_operation(path: &Path, operation: &StoredSendOperation) -> Result<(), AideMemoError> {
+    let bytes = serde_json::to_vec_pretty(operation).map_err(|error| AideMemoError::Serialize {
+        context: "remote send reservation".to_owned(),
+        source: error,
+    })?;
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(|error| io_error("create remote send reservation record", error))?;
+    file.write_all(&bytes)
+        .map_err(|error| io_error("write remote send reservation record", error))?;
+    file.sync_all()
+        .map_err(|error| io_error("sync remote send reservation record", error))?;
+    Ok(())
+}
+
+fn ensure_identity(
+    operation: &StoredSendOperation,
+    meta: &SendOperationMeta<'_>,
+) -> Result<(), AideMemoError> {
+    if operation.profile_name == meta.profile_name
+        && operation.project_id == meta.project_id
+        && operation.actor_id == meta.actor_id
+    {
+        Ok(())
+    } else {
+        Err(AideMemoError::InvalidInput(
+            "remote send operation identity collision detected".to_owned(),
+        ))
+    }
+}
+
+fn validate_key(intent_key: &str) -> Result<(), AideMemoError> {
+    if intent_key.is_empty()
+        || intent_key.len() > 128
+        || !intent_key
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    {
+        return Err(AideMemoError::Internal(
+            "remote send intent key is not filesystem-safe".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn lock_is_stale(path: &Path) -> bool {
+    fs::metadata(path)
+        .and_then(|metadata| metadata.modified())
+        .ok()
+        .and_then(|modified| SystemTime::now().duration_since(modified).ok())
+        .is_some_and(|age| age >= STALE_LOCK_AFTER)
 }
 
 fn generated_id(prefix: &str) -> String {
     format!("{prefix}_{}", ulid::Ulid::new())
 }
 
-fn now_ms() -> Result<i64, AideMemoError> {
-    i64::try_from(aidememo_core::time::current_epoch_ms()).map_err(|_| {
-        AideMemoError::Internal("current time exceeds SQLite INTEGER range".to_owned())
-    })
-}
-
-fn sqlite_error(
-    operation: &'static str,
-) -> impl FnOnce(rusqlite::Error) -> AideMemoError {
-    move |error| AideMemoError::Internal(format!("{operation}: {error}"))
+fn io_error(operation: &str, error: std::io::Error) -> AideMemoError {
+    AideMemoError::Internal(format!("{operation}: {error}"))
 }
 
 #[cfg(test)]
@@ -266,7 +319,7 @@ mod tests {
         let directory = tempfile::tempdir().map_err(|error| {
             AideMemoError::Internal(format!("create test directory: {error}"))
         })?;
-        let path = directory.path().join("outbox.sqlite");
+        let path = directory.path().join("send");
         let first = {
             let mut store = RemoteSendOperationStore::open(path.clone())?;
             store.reserve_send("intent", "payload", meta())?
@@ -288,7 +341,7 @@ mod tests {
         let directory = tempfile::tempdir().map_err(|error| {
             AideMemoError::Internal(format!("create test directory: {error}"))
         })?;
-        let mut store = RemoteSendOperationStore::open(directory.path().join("outbox.sqlite"))?;
+        let mut store = RemoteSendOperationStore::open(directory.path().join("send"))?;
         store.reserve_send("intent", "payload-a", meta())?;
         let error = store
             .reserve_send("intent", "payload-b", meta())
@@ -302,7 +355,7 @@ mod tests {
         let directory = tempfile::tempdir().map_err(|error| {
             AideMemoError::Internal(format!("create test directory: {error}"))
         })?;
-        let mut store = RemoteSendOperationStore::open(directory.path().join("outbox.sqlite"))?;
+        let mut store = RemoteSendOperationStore::open(directory.path().join("send"))?;
         let first = store.reserve_send("intent", "payload", meta())?;
         store.mark_committed("intent", &first.operation_id)?;
         let second = store.reserve_send("intent", "payload", meta())?;
@@ -310,6 +363,18 @@ mod tests {
         assert_ne!(second.operation_id, first.operation_id);
         assert_ne!(second.handoff_id, first.handoff_id);
         assert_ne!(second.context_id, first.context_id);
+        Ok(())
+    }
+
+    #[test]
+    fn commit_marker_is_idempotent_for_same_operation() -> Result<(), AideMemoError> {
+        let directory = tempfile::tempdir().map_err(|error| {
+            AideMemoError::Internal(format!("create test directory: {error}"))
+        })?;
+        let mut store = RemoteSendOperationStore::open(directory.path().join("send"))?;
+        let operation = store.reserve_send("intent", "payload", meta())?;
+        store.mark_committed("intent", &operation.operation_id)?;
+        store.mark_committed("intent", &operation.operation_id)?;
         Ok(())
     }
 }
