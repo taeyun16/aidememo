@@ -1,0 +1,205 @@
+name: finalize hybrid auto fallback
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    if: github.head_ref == 'agent/server-hybrid-retrieval'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: agent/server-hybrid-retrieval
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Make auto semantic failure degrade safely
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('crates/aidememo-server/src/lib.rs')
+          text = path.read_text()
+          old = '''        } else if let Some(provider) = state.semantic_provider.clone() {
+            let semantic_projection = semantic_projection_for(&state, &snapshot, &provider).await?;
+            let semantic_hits = semantic_projection.search(
+                provider.as_ref(),
+                query_text,
+                query.source_id.as_ref().map(|source_id| source_id.as_str()),
+                candidate_limit,
+            )?;
+            let model = Some(semantic_projection.model().to_owned());
+            if requested_mode == "semantic" {
+                (
+                    "semantic",
+                    model,
+                    semantic_search_hits(&semantic_hits, limit),
+                )
+            } else {
+                (
+                    "hybrid",
+                    model,
+                    hybrid_search_hits(&lexical_hits, &semantic_hits, limit),
+                )
+            }
+        } else if requested_mode == "auto" {'''
+          new = '''        } else if let Some(provider) = state.semantic_provider.clone() {
+            let semantic_attempt = async {
+                let semantic_projection =
+                    semantic_projection_for(&state, &snapshot, &provider).await?;
+                let semantic_hits = semantic_projection.search(
+                    provider.as_ref(),
+                    query_text,
+                    query.source_id.as_ref().map(|source_id| source_id.as_str()),
+                    candidate_limit,
+                )?;
+                Ok::<_, ApiError>((semantic_projection, semantic_hits))
+            }
+            .await;
+            match semantic_attempt {
+                Ok((semantic_projection, semantic_hits)) => {
+                    let model = Some(semantic_projection.model().to_owned());
+                    if requested_mode == "semantic" {
+                        (
+                            "semantic",
+                            model,
+                            semantic_search_hits(&semantic_hits, limit),
+                        )
+                    } else {
+                        (
+                            "hybrid",
+                            model,
+                            hybrid_search_hits(&lexical_hits, &semantic_hits, limit),
+                        )
+                    }
+                }
+                Err(error) if requested_mode == "auto" => {
+                    tracing::warn!(
+                        error = %error.0,
+                        "semantic retrieval unavailable; degrading auto search to lexical"
+                    );
+                    ("lexical", None, lexical_search_hits(&lexical_hits, limit))
+                }
+                Err(error) => return Err(error),
+            }
+        } else if requested_mode == "auto" {'''
+          if text.count(old) != 1:
+              raise SystemExit('hybrid semantic block changed')
+          path.write_text(text.replace(old, new, 1))
+
+          test = Path('crates/aidememo-server/tests/hybrid_search_http.rs')
+          text = test.read_text()
+          marker = '''struct FakeProvider;
+
+impl EmbeddingProvider for FakeProvider {'''
+          addition = '''struct FakeProvider;
+
+struct FailingProvider;
+
+impl EmbeddingProvider for FailingProvider {
+    fn name(&self) -> String {
+        "failing-hybrid-v1".to_owned()
+    }
+
+    fn dimension(&self) -> usize {
+        3
+    }
+
+    fn embed_query(&self, _text: &str) -> Result<Vec<f32>, DomainError> {
+        Err(DomainError::StorageFailure {
+            operation: "test_embedding_query",
+            detail: "provider unavailable".to_owned(),
+        })
+    }
+
+    fn embed_document_batch(&self, _texts: &[String]) -> Result<Vec<Vec<f32>>, DomainError> {
+        Err(DomainError::StorageFailure {
+            operation: "test_embedding_documents",
+            detail: "provider unavailable".to_owned(),
+        })
+    }
+}
+
+impl EmbeddingProvider for FakeProvider {'''
+          if text.count(marker) != 1:
+              raise SystemExit('fake provider marker changed')
+          text = text.replace(marker, addition, 1)
+          marker = '''fn app(with_semantic: bool) -> Result<Router, Box<dyn std::error::Error>> {
+    let state = ServerState::new(store()?);
+    let state = if with_semantic {
+        state.with_semantic_provider(Arc::new(FakeProvider))
+    } else {
+        state
+    };
+    Ok(router(state))
+}'''
+          replacement = '''fn app(with_semantic: bool) -> Result<Router, Box<dyn std::error::Error>> {
+    let provider = with_semantic.then(|| Arc::new(FakeProvider) as Arc<dyn EmbeddingProvider>);
+    app_with_provider(provider)
+}
+
+fn app_with_provider(
+    provider: Option<Arc<dyn EmbeddingProvider>>,
+) -> Result<Router, Box<dyn std::error::Error>> {
+    let state = ServerState::new(store()?);
+    let state = provider.map_or(state.clone(), |provider| {
+        state.with_semantic_provider(provider)
+    });
+    Ok(router(state))
+}'''
+          if text.count(marker) != 1:
+              raise SystemExit('app helper changed')
+          text = text.replace(marker, replacement, 1)
+          append = '''
+
+#[tokio::test]
+async fn auto_degrades_to_lexical_when_configured_provider_is_unavailable()
+-> Result<(), Box<dyn std::error::Error>> {
+    let app = app_with_provider(Some(Arc::new(FailingProvider)))?;
+    create_session(&app).await?;
+    create_fact(
+        &app,
+        "hybrid-failing-provider-fact",
+        "fact-lexical-fallback",
+        "redis cache fallback",
+    )
+    .await?;
+
+    let automatic = app
+        .clone()
+        .oneshot(get_request(
+            "/v1/projects/project_hybrid/search?q=unseen&mode=auto",
+        )?)
+        .await?;
+    assert_eq!(automatic.status(), 200);
+    assert_eq!(response_json(automatic).await?["mode"], "lexical");
+
+    let explicit = app
+        .oneshot(get_request(
+            "/v1/projects/project_hybrid/search?q=unseen&mode=semantic",
+        )?)
+        .await?;
+    assert_eq!(explicit.status(), 500);
+    Ok(())
+}
+'''
+          if 'auto_degrades_to_lexical_when_configured_provider_is_unavailable' not in text:
+              text += append
+          test.write_text(text)
+          PY
+          cargo fmt --all
+          cargo test -p aidememo-server --features semantic --test hybrid_search_http
+          cargo clippy -p aidememo-server --all-targets --features semantic -- -D warnings
+          git diff --check
+      - name: Commit fallback behavior
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add crates/aidememo-server/src/lib.rs crates/aidememo-server/tests/hybrid_search_http.rs
+          git commit -m 'fix: degrade auto retrieval when semantic provider fails'
+          git push origin HEAD:agent/server-hybrid-retrieval
