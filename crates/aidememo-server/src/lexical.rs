@@ -91,13 +91,13 @@ impl LexicalProjection {
     }
 
     #[must_use]
-    pub(crate) const fn index_seq(&self) -> ProjectSequence {
-        self.index_seq
+    pub(crate) const fn project_epoch(&self) -> &ProjectEpoch {
+        &self.project_epoch
     }
 
     #[must_use]
-    pub(crate) fn matches_snapshot(&self, snapshot: &ProjectSnapshot) -> bool {
-        self.project_epoch == snapshot.project_epoch && self.index_seq == snapshot.at_seq
+    pub(crate) const fn index_seq(&self) -> ProjectSequence {
+        self.index_seq
     }
 
     pub(crate) fn search(
@@ -193,8 +193,7 @@ mod tests {
         let scope = ProjectScope::new(TenantId::try_from("tenant")?, ProjectId::try_from("project")?);
         let resources = facts
             .iter()
-            .enumerate()
-            .map(|(index, (id, content, source_id))| {
+            .map(|(id, content, source_id)| {
                 let record = FactRecord::new(
                     FactId::try_from(*id)?,
                     SessionId::try_from("session")?,
@@ -244,6 +243,7 @@ mod tests {
             ("fact-b", "redis decision", Some("beta")),
         ])?;
         let index = LexicalProjection::rebuild(&snapshot)?;
+        assert_eq!(index.project_epoch().as_str(), "epoch");
         assert_eq!(index.index_seq(), ProjectSequence::new(2));
         let hits = index.search("redis", Some("beta"), 10);
         assert_eq!(hits.len(), 1);
