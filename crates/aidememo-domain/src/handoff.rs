@@ -11,6 +11,7 @@ const MAX_FACT_BYTES: usize = 65_536;
 const MAX_HANDOFF_CONTEXT_BYTES: usize = 65_536;
 const MAX_HANDOFF_TEXT_BYTES: usize = 4_096;
 const MAX_MAILBOX_LIMIT: usize = 100;
+const MAX_HANDOFF_LEASE_MS: i64 = 24 * 60 * 60 * 1000;
 
 /// Actor-relative handoff mailbox.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -292,6 +293,12 @@ pub struct HandoffRecord {
     pub status: HandoffStatus,
     /// Active exclusive worker claim.
     pub claim_id: Option<ClaimId>,
+    /// Last successful heartbeat for the active claim. Legacy records may omit it.
+    #[serde(default)]
+    pub claim_heartbeat_at_ms: Option<i64>,
+    /// Lease deadline for the active claim. Legacy records remain non-expiring until heartbeated.
+    #[serde(default)]
+    pub claim_expires_at_ms: Option<i64>,
     /// Number of accepted claims, including retries after failure.
     pub attempt_count: u64,
     /// Validated result fact, if returned.
@@ -337,6 +344,8 @@ impl HandoffRecord {
             context_id: None,
             status: HandoffStatus::Pending,
             claim_id: None,
+            claim_heartbeat_at_ms: None,
+            claim_expires_at_ms: None,
             attempt_count: 0,
             result_fact_id: None,
             outcome: None,
@@ -400,6 +409,132 @@ impl HandoffRecord {
         }
     }
 
+    /// Accept or reclaim an assignment under a bounded worker lease.
+    ///
+    /// A live claim remains exclusive. Once its lease expires, the receiver may
+    /// create a different claim and increment `attempt_count`. An expired claim
+    /// cannot be revived by retrying the same claim ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns a handoff conflict for invalid lease parameters, actor mismatch,
+    /// a live competing claim, or a completed handoff.
+    pub fn accept_with_lease(
+        &mut self,
+        actor: &ActorId,
+        claim_id: ClaimId,
+        now_ms: i64,
+        lease_ms: i64,
+    ) -> Result<(), DomainError> {
+        self.require_receiver(actor)?;
+        let expires_at_ms = lease_expiry(now_ms, lease_ms)?;
+        let stale = self.claim_is_stale_at(now_ms);
+        match self.status {
+            HandoffStatus::Pending => self.begin_claim_with_lease(claim_id, now_ms, expires_at_ms),
+            HandoffStatus::Accepted if self.claim_id.as_ref() == Some(&claim_id) && !stale => {
+                Ok(())
+            }
+            HandoffStatus::Accepted if self.claim_id.as_ref() == Some(&claim_id) => {
+                Err(DomainError::HandoffConflict(
+                    "handoff claim lease expired; acquire a new claim".to_owned(),
+                ))
+            }
+            HandoffStatus::Accepted if self.outcome == Some(HandoffOutcome::Failed) || stale => {
+                self.begin_claim_with_lease(claim_id, now_ms, expires_at_ms)
+            }
+            HandoffStatus::Accepted => Err(DomainError::HandoffConflict(
+                "handoff is already claimed by another live worker".to_owned(),
+            )),
+            HandoffStatus::Completed => Err(DomainError::HandoffConflict(
+                "completed handoff cannot be accepted".to_owned(),
+            )),
+        }
+    }
+
+    /// Renew the active claim lease.
+    ///
+    /// Heartbeat never changes `claim_id` or `attempt_count`. Once the lease is
+    /// expired it is lost and only a new claim may resume the assignment.
+    ///
+    /// # Errors
+    ///
+    /// Returns a handoff conflict for a non-active, failed, mismatched, or
+    /// expired claim, or for invalid lease parameters.
+    pub fn heartbeat(
+        &mut self,
+        actor: &ActorId,
+        claim_id: &ClaimId,
+        now_ms: i64,
+        lease_ms: i64,
+    ) -> Result<(), DomainError> {
+        self.require_receiver(actor)?;
+        let expires_at_ms = lease_expiry(now_ms, lease_ms)?;
+        if self.status != HandoffStatus::Accepted {
+            return Err(DomainError::HandoffConflict(
+                "handoff must be accepted before heartbeat".to_owned(),
+            ));
+        }
+        if self.claim_id.as_ref() != Some(claim_id) {
+            return Err(DomainError::HandoffConflict(
+                "heartbeat claim does not match the active handoff claim".to_owned(),
+            ));
+        }
+        if self.outcome == Some(HandoffOutcome::Failed) {
+            return Err(DomainError::HandoffConflict(
+                "failed handoff claim cannot be heartbeated".to_owned(),
+            ));
+        }
+        if self.claim_is_stale_at(now_ms) {
+            return Err(DomainError::HandoffConflict(
+                "handoff claim lease expired".to_owned(),
+            ));
+        }
+        self.claim_heartbeat_at_ms = Some(now_ms);
+        self.claim_expires_at_ms = Some(expires_at_ms);
+        Ok(())
+    }
+
+    /// Whether the current live claim has reached its lease deadline.
+    #[must_use]
+    pub fn claim_is_stale_at(&self, now_ms: i64) -> bool {
+        self.status == HandoffStatus::Accepted
+            && self.outcome != Some(HandoffOutcome::Failed)
+            && self
+                .claim_expires_at_ms
+                .is_some_and(|expires_at_ms| now_ms >= expires_at_ms)
+    }
+
+    /// Return result evidence only while the active lease is still owned.
+    ///
+    /// This is the server-facing variant. The original [`Self::return_result`]
+    /// remains available for embedded/local flows that do not use leases.
+    ///
+    /// # Errors
+    ///
+    /// Returns an actor or handoff conflict when the caller is not the receiver,
+    /// the claim no longer matches, the lease expired, or result evidence is invalid.
+    pub fn return_result_at(
+        &mut self,
+        actor: &ActorId,
+        claim_id: &ClaimId,
+        fact: &FactRecord,
+        outcome: HandoffOutcome,
+        now_ms: i64,
+    ) -> Result<(), DomainError> {
+        self.require_receiver(actor)?;
+        if self.status == HandoffStatus::Accepted && self.claim_id.as_ref() != Some(claim_id) {
+            return Err(DomainError::HandoffConflict(
+                "result claim does not match the active handoff claim".to_owned(),
+            ));
+        }
+        if self.claim_is_stale_at(now_ms) {
+            return Err(DomainError::HandoffConflict(
+                "handoff claim lease expired before result return".to_owned(),
+            ));
+        }
+        self.return_result(actor, claim_id, fact, outcome)
+    }
+
     /// Return a result fact under the active receiving claim.
     ///
     /// The fact must match the exact session, source, and receiving actor.
@@ -443,6 +578,9 @@ impl HandoffRecord {
         self.outcome = Some(outcome);
         if outcome == HandoffOutcome::Succeeded {
             self.status = HandoffStatus::Completed;
+        } else {
+            self.claim_heartbeat_at_ms = None;
+            self.claim_expires_at_ms = None;
         }
         Ok(())
     }
@@ -467,8 +605,22 @@ impl HandoffRecord {
         })?;
         self.status = HandoffStatus::Accepted;
         self.claim_id = Some(claim_id);
+        self.claim_heartbeat_at_ms = None;
+        self.claim_expires_at_ms = None;
         self.result_fact_id = None;
         self.outcome = None;
+        Ok(())
+    }
+
+    fn begin_claim_with_lease(
+        &mut self,
+        claim_id: ClaimId,
+        now_ms: i64,
+        expires_at_ms: i64,
+    ) -> Result<(), DomainError> {
+        self.begin_claim(claim_id)?;
+        self.claim_heartbeat_at_ms = Some(now_ms);
+        self.claim_expires_at_ms = Some(expires_at_ms);
         Ok(())
     }
 
@@ -490,6 +642,22 @@ impl HandoffRecord {
         }
         Ok(())
     }
+}
+
+fn lease_expiry(now_ms: i64, lease_ms: i64) -> Result<i64, DomainError> {
+    if now_ms < 0 {
+        return Err(DomainError::HandoffConflict(
+            "handoff lease clock must be non-negative".to_owned(),
+        ));
+    }
+    if lease_ms <= 0 || lease_ms > MAX_HANDOFF_LEASE_MS {
+        return Err(DomainError::HandoffConflict(format!(
+            "handoff lease must be between 1 and {MAX_HANDOFF_LEASE_MS} milliseconds"
+        )));
+    }
+    now_ms
+        .checked_add(lease_ms)
+        .ok_or_else(|| DomainError::HandoffConflict("handoff lease deadline overflow".to_owned()))
 }
 
 fn validate_text(label: &str, value: &str, max_bytes: usize) -> Result<(), DomainError> {
@@ -564,6 +732,84 @@ mod tests {
         assert_eq!(handoff.attempt_count, 1);
         assert!(matches!(
             handoff.accept(&receiver, ClaimId::try_from("claim_two")?),
+            Err(DomainError::HandoffConflict(_))
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn lease_heartbeat_extends_deadline_and_expired_claim_cannot_revive() -> Result<(), DomainError>
+    {
+        let mut handoff = handoff()?;
+        let receiver = ActorId::try_from("codex-p2")?;
+        let claim = ClaimId::try_from("claim_one")?;
+        handoff.accept_with_lease(&receiver, claim.clone(), 1_000, 100)?;
+        assert_eq!(handoff.attempt_count, 1);
+        assert_eq!(handoff.claim_heartbeat_at_ms, Some(1_000));
+        assert_eq!(handoff.claim_expires_at_ms, Some(1_100));
+        handoff.heartbeat(&receiver, &claim, 1_050, 100)?;
+        assert_eq!(handoff.claim_heartbeat_at_ms, Some(1_050));
+        assert_eq!(handoff.claim_expires_at_ms, Some(1_150));
+        assert!(!handoff.claim_is_stale_at(1_149));
+        assert!(handoff.claim_is_stale_at(1_150));
+        assert!(matches!(
+            handoff.heartbeat(&receiver, &claim, 1_150, 100),
+            Err(DomainError::HandoffConflict(_))
+        ));
+        assert!(matches!(
+            handoff.accept_with_lease(&receiver, claim, 1_150, 100),
+            Err(DomainError::HandoffConflict(_))
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn stale_claim_can_be_replaced_and_old_worker_cannot_return() -> Result<(), DomainError> {
+        let mut handoff = handoff()?;
+        let receiver = ActorId::try_from("codex-p2")?;
+        let first_claim = ClaimId::try_from("claim_one")?;
+        let second_claim = ClaimId::try_from("claim_two")?;
+        let fact = result_fact("codex-p2")?;
+        handoff.accept_with_lease(&receiver, first_claim.clone(), 1_000, 100)?;
+        handoff.accept_with_lease(&receiver, second_claim.clone(), 1_100, 100)?;
+        assert_eq!(handoff.attempt_count, 2);
+        assert_eq!(handoff.claim_id.as_ref(), Some(&second_claim));
+        assert!(matches!(
+            handoff.return_result_at(
+                &receiver,
+                &first_claim,
+                &fact,
+                HandoffOutcome::Succeeded,
+                1_101,
+            ),
+            Err(DomainError::HandoffConflict(_))
+        ));
+        handoff.heartbeat(&receiver, &second_claim, 1_150, 100)?;
+        handoff.return_result_at(
+            &receiver,
+            &second_claim,
+            &fact,
+            HandoffOutcome::Succeeded,
+            1_151,
+        )?;
+        assert_eq!(handoff.status, HandoffStatus::Completed);
+        Ok(())
+    }
+
+    #[test]
+    fn expired_claim_cannot_return_before_reclaim() -> Result<(), DomainError> {
+        let mut handoff = handoff()?;
+        let receiver = ActorId::try_from("codex-p2")?;
+        let claim = ClaimId::try_from("claim_one")?;
+        handoff.accept_with_lease(&receiver, claim.clone(), 1_000, 100)?;
+        assert!(matches!(
+            handoff.return_result_at(
+                &receiver,
+                &claim,
+                &result_fact("codex-p2")?,
+                HandoffOutcome::Succeeded,
+                1_100,
+            ),
             Err(DomainError::HandoffConflict(_))
         ));
         Ok(())

@@ -17,11 +17,13 @@ use axum::{
     routing::{get, post},
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 const SESSION_KIND: &str = "session";
 const FACT_KIND: &str = "fact";
 const HANDOFF_KIND: &str = "handoff";
 const HANDOFF_CONTEXT_KIND: &str = "handoff_context";
+const HANDOFF_LEASE_MS: i64 = 120_000;
 
 pub(super) fn routes() -> Router<ServerState> {
     Router::new()
@@ -43,6 +45,10 @@ pub(super) fn routes() -> Router<ServerState> {
         .route(
             "/v1/projects/{project_id}/handoffs/{handoff_id}/accept",
             post(accept_handoff),
+        )
+        .route(
+            "/v1/projects/{project_id}/handoffs/{handoff_id}/heartbeat",
+            post(heartbeat_handoff),
         )
         .route(
             "/v1/projects/{project_id}/handoffs/{handoff_id}/return",
@@ -105,6 +111,12 @@ struct HandoffContextCreatePayload {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct HandoffAcceptPayload {
+    claim_id: ClaimId,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct HandoffHeartbeatPayload {
     claim_id: ClaimId,
 }
 
@@ -480,7 +492,65 @@ async fn accept_handoff(
         &resource,
     )?;
     require_revision(request.expected_revision, revision)?;
-    record.accept(authenticated.actor_id(), request.payload.claim_id)?;
+    record.accept_with_lease(
+        authenticated.actor_id(),
+        request.payload.claim_id,
+        current_epoch_ms()?,
+        HANDOFF_LEASE_MS,
+    )?;
+    let receipt = service.execute_with_body(
+        &authenticated,
+        &membership,
+        envelope,
+        resource,
+        ChangeOperation::Upsert,
+        &record,
+    )?;
+    Ok(Json(receipt))
+}
+
+async fn heartbeat_handoff(
+    State(state): State<ServerState>,
+    headers: HeaderMap,
+    Path((project_id, handoff_id)): Path<(String, String)>,
+    payload: Result<Json<TransitionRequest<HandoffHeartbeatPayload>>, JsonRejection>,
+) -> Result<impl axum::response::IntoResponse, ApiError> {
+    let project_id = ProjectId::try_from(project_id)?;
+    let handoff_id = HandoffId::try_from(handoff_id)?;
+    let Json(request) = decode_json(payload)?;
+    let resource = resource_ref(HANDOFF_KIND, handoff_id.as_str())?;
+    let envelope = transition_envelope(
+        request.command_id,
+        project_id.clone(),
+        request.expected_revision,
+        "handoff.heartbeat",
+        request.payload.clone(),
+    )?;
+    let mut service = state.service.lock().await;
+    let (authenticated, membership) = request_context(&service, &headers, &project_id)?;
+    if let Some(receipt) = service.replay(
+        &authenticated,
+        &membership,
+        &envelope,
+        &resource,
+        ChangeOperation::Upsert,
+    )? {
+        return Ok(Json(receipt));
+    }
+    let (revision, mut record): (_, HandoffRecord) = load_record(
+        &service,
+        &authenticated,
+        &membership,
+        &project_id,
+        &resource,
+    )?;
+    require_revision(request.expected_revision, revision)?;
+    record.heartbeat(
+        authenticated.actor_id(),
+        &request.payload.claim_id,
+        current_epoch_ms()?,
+        HANDOFF_LEASE_MS,
+    )?;
     let receipt = service.execute_with_body(
         &authenticated,
         &membership,
@@ -535,11 +605,12 @@ async fn return_handoff(
         &project_id,
         &resource_ref(FACT_KIND, request.payload.result_fact_id.as_str())?,
     )?;
-    record.return_result(
+    record.return_result_at(
         authenticated.actor_id(),
         &request.payload.claim_id,
         &fact,
         request.payload.outcome,
+        current_epoch_ms()?,
     )?;
     let receipt = service.execute_with_body(
         &authenticated,
@@ -591,6 +662,19 @@ pub(super) fn request_context(
             project_id: project_id.clone(),
         })?;
     Ok((authenticated, membership))
+}
+
+fn current_epoch_ms() -> Result<i64, DomainError> {
+    let duration = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| DomainError::StorageFailure {
+            operation: "system_time",
+            detail: error.to_string(),
+        })?;
+    i64::try_from(duration.as_millis()).map_err(|error| DomainError::StorageFailure {
+        operation: "system_time",
+        detail: error.to_string(),
+    })
 }
 
 fn ensure_absent(
