@@ -21,10 +21,13 @@ jobs:
           components: rustfmt, clippy
       - name: Apply hybrid integration
         run: |
+          python3 .github/scripts/fix_server_hybrid_patch.py
           python3 .github/scripts/patch_server_hybrid.py
           cargo fmt --all
           cargo check -p aidememo-server
+          cargo check -p aidememo-server --features s3
           cargo check -p aidememo-server --features semantic
+          cargo check -p aidememo-server --features s3,semantic
           cargo test -p aidememo-server --features semantic --test hybrid_search_http
           cargo test -p aidememo-server --features semantic semantic::tests --lib
           cargo clippy -p aidememo-server --all-targets --features semantic -- -D warnings
