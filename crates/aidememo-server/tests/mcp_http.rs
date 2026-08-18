@@ -267,9 +267,7 @@ async fn search_matches_rest_and_reader_writes_fail_inside_tool_result()
     let rest = app
         .clone()
         .oneshot(get_request(
-            &format!(
-                "/v1/projects/project_mcp/search?q=redis&source_id=alpha&at_least_seq={head}"
-            ),
+            &format!("/v1/projects/project_mcp/search?q=redis&source_id=alpha&at_least_seq={head}"),
             READER_TOKEN,
         )?)
         .await?;
@@ -375,6 +373,9 @@ async fn header_mismatch_and_identity_widening_fail_closed()
         ))?;
     let missing_method = app.oneshot(missing_method).await?;
     assert_eq!(missing_method.status(), 400);
-    assert_eq!(response_json(missing_method).await?["error"]["code"], -32020);
+    assert_eq!(
+        response_json(missing_method).await?["error"]["code"],
+        -32020
+    );
     Ok(())
 }

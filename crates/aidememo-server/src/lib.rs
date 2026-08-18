@@ -7,6 +7,7 @@
 
 mod artifact;
 mod lexical;
+mod mcp;
 mod product;
 
 use aidememo_artifacts::{
@@ -175,6 +176,7 @@ pub fn router(state: ServerState) -> Router {
             get(resource),
         )
         .merge(product::routes())
+        .merge(mcp::routes())
         .layer(DefaultBodyLimit::max(MAX_COMMAND_BODY_BYTES))
         .merge(artifact::routes().layer(DefaultBodyLimit::max(MAX_DIRECT_UPLOAD_BYTES)))
         .with_state(state)

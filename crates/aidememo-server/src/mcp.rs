@@ -52,7 +52,14 @@ async fn mcp_post(
 ) -> Response {
     let project_id = match ProjectId::try_from(project_id) {
         Ok(project_id) => project_id,
-        Err(error) => return protocol_error(StatusCode::BAD_REQUEST, Value::Null, -32602, error.to_string()),
+        Err(error) => {
+            return protocol_error(
+                StatusCode::BAD_REQUEST,
+                Value::Null,
+                -32602,
+                error.to_string(),
+            );
+        }
     };
     let raw = match payload {
         Ok(Json(raw)) => raw,
@@ -85,6 +92,10 @@ async fn mcp_post(
         }
     };
 
+    let header_version = header_text(&headers, MCP_PROTOCOL_HEADER);
+    if header_version != Some(MCP_PROTOCOL_VERSION) {
+        return unsupported_protocol_error(request.id, header_version.unwrap_or("missing"));
+    }
     if let Err(error) = validate_protocol_headers(&headers, &request) {
         return protocol_error(StatusCode::BAD_REQUEST, request.id, -32020, error);
     }
@@ -103,14 +114,11 @@ async fn mcp_post(
 
     let result = match request.method.as_str() {
         "server/discover" => Ok(discover_result()),
-        "tools/list" => list_tools(&request.params, identity.get("role").and_then(Value::as_str)),
-        "tools/call" => call_tool(
-            &state,
-            &project_id,
-            &authorization,
+        "tools/list" => list_tools(
             &request.params,
-        )
-        .await,
+            identity.get("role").and_then(Value::as_str),
+        ),
+        "tools/call" => call_tool(&state, &project_id, &authorization, &request.params).await,
         _ => Err(McpFailure::protocol(
             StatusCode::NOT_FOUND,
             -32601,
@@ -130,13 +138,6 @@ async fn mcp_post(
 }
 
 fn validate_protocol_headers(headers: &HeaderMap, request: &McpRequest) -> Result<(), String> {
-    let protocol = header_text(headers, MCP_PROTOCOL_HEADER)
-        .ok_or_else(|| "missing MCP-Protocol-Version header".to_owned())?;
-    if protocol != MCP_PROTOCOL_VERSION {
-        return Err(format!(
-            "unsupported MCP protocol version {protocol}; supported={MCP_PROTOCOL_VERSION}"
-        ));
-    }
     let method = header_text(headers, MCP_METHOD_HEADER)
         .ok_or_else(|| "missing Mcp-Method header".to_owned())?;
     if method != request.method {
@@ -237,7 +238,9 @@ fn discover_result() -> Value {
 }
 
 fn list_tools(params: &Value, role: Option<&str>) -> Result<Value, McpFailure> {
-    let params = params.as_object().ok_or_else(|| McpFailure::invalid_params("tools/list params must be an object"))?;
+    let params = params
+        .as_object()
+        .ok_or_else(|| McpFailure::invalid_params("tools/list params must be an object"))?;
     ensure_only(params, &["cursor", "_meta"])?;
     if params.get("cursor").is_some_and(|cursor| !cursor.is_null()) {
         return Err(McpFailure::invalid_params(
@@ -275,8 +278,19 @@ async fn call_tool(
     authorization: &HeaderValue,
     params: &Value,
 ) -> Result<Value, McpFailure> {
-    let params = params.as_object().ok_or_else(|| McpFailure::invalid_params("tools/call params must be an object"))?;
-    ensure_only(params, &["name", "arguments", "_meta", "inputResponses", "requestState"])?;
+    let params = params
+        .as_object()
+        .ok_or_else(|| McpFailure::invalid_params("tools/call params must be an object"))?;
+    ensure_only(
+        params,
+        &[
+            "name",
+            "arguments",
+            "_meta",
+            "inputResponses",
+            "requestState",
+        ],
+    )?;
     let name = required_string(params, "name")?;
     let arguments = params
         .get("arguments")
@@ -288,17 +302,31 @@ async fn call_tool(
 
     let response = match name {
         "search" => dispatch_search(state, project_id, authorization, arguments).await?,
-        "resource_get" => dispatch_resource_get(state, project_id, authorization, arguments).await?,
-        "session_create" => dispatch_session_create(state, project_id, authorization, arguments).await?,
+        "resource_get" => {
+            dispatch_resource_get(state, project_id, authorization, arguments).await?
+        }
+        "session_create" => {
+            dispatch_session_create(state, project_id, authorization, arguments).await?
+        }
         "fact_create" => dispatch_fact_create(state, project_id, authorization, arguments).await?,
         "handoff_context_create" => {
             dispatch_handoff_context_create(state, project_id, authorization, arguments).await?
         }
-        "handoff_send" => dispatch_handoff_send(state, project_id, authorization, arguments).await?,
-        "handoff_list" => dispatch_handoff_list(state, project_id, authorization, arguments).await?,
-        "handoff_status" => dispatch_handoff_status(state, project_id, authorization, arguments).await?,
-        "handoff_accept" => dispatch_handoff_accept(state, project_id, authorization, arguments).await?,
-        "handoff_return" => dispatch_handoff_return(state, project_id, authorization, arguments).await?,
+        "handoff_send" => {
+            dispatch_handoff_send(state, project_id, authorization, arguments).await?
+        }
+        "handoff_list" => {
+            dispatch_handoff_list(state, project_id, authorization, arguments).await?
+        }
+        "handoff_status" => {
+            dispatch_handoff_status(state, project_id, authorization, arguments).await?
+        }
+        "handoff_accept" => {
+            dispatch_handoff_accept(state, project_id, authorization, arguments).await?
+        }
+        "handoff_return" => {
+            dispatch_handoff_return(state, project_id, authorization, arguments).await?
+        }
         _ => {
             return Err(McpFailure::protocol(
                 StatusCode::NOT_FOUND,
@@ -348,10 +376,7 @@ async fn dispatch_resource_get(
     Ok(dispatch(
         state,
         Method::GET,
-        &format!(
-            "/v1/projects/{}/resources/{kind}/{id}",
-            project_id.as_str()
-        ),
+        &format!("/v1/projects/{}/resources/{kind}/{id}", project_id.as_str()),
         authorization,
         None,
     )
@@ -496,7 +521,13 @@ async fn dispatch_handoff_list(
 ) -> Result<Response, McpFailure> {
     ensure_only(
         args,
-        &["box", "source_id", "include_completed", "before_seq", "limit"],
+        &[
+            "box",
+            "source_id",
+            "include_completed",
+            "before_seq",
+            "limit",
+        ],
     )?;
     let mailbox = required_string(args, "box")?;
     if !matches!(mailbox, "inbox" | "outbox") {
@@ -532,10 +563,7 @@ async fn dispatch_handoff_status(
     Ok(dispatch(
         state,
         Method::GET,
-        &format!(
-            "/v1/projects/{}/handoffs/{handoff_id}",
-            project_id.as_str()
-        ),
+        &format!("/v1/projects/{}/handoffs/{handoff_id}", project_id.as_str()),
         authorization,
         None,
     )
@@ -550,7 +578,12 @@ async fn dispatch_handoff_accept(
 ) -> Result<Response, McpFailure> {
     ensure_only(
         args,
-        &["operation_id", "handoff_id", "expected_revision", "claim_id"],
+        &[
+            "operation_id",
+            "handoff_id",
+            "expected_revision",
+            "claim_id",
+        ],
     )?;
     let handoff_id = required_path_segment(args, "handoff_id")?;
     let body = json!({
@@ -661,11 +694,15 @@ async fn rest_response_to_tool_result(response: Response) -> Result<Value, McpFa
         .await
         .map_err(|error| McpFailure::internal(format!("read internal REST response: {error}")))?
         .to_bytes();
-    let structured = serde_json::from_slice::<Value>(&bytes)
-        .unwrap_or_else(|_| json!({"http_status": status.as_u16(), "body": String::from_utf8_lossy(&bytes)}));
+    let structured = serde_json::from_slice::<Value>(&bytes).unwrap_or_else(
+        |_| json!({"http_status": status.as_u16(), "body": String::from_utf8_lossy(&bytes)}),
+    );
     let is_error = !status.is_success();
     let text = if is_error {
-        format!("AideMemo tool request failed with HTTP {}: {structured}", status.as_u16())
+        format!(
+            "AideMemo tool request failed with HTTP {}: {structured}",
+            status.as_u16()
+        )
     } else {
         structured.to_string()
     };
@@ -691,6 +728,24 @@ fn stamp_server_info(mut result: Value) -> Value {
         );
     }
     result
+}
+
+fn unsupported_protocol_error(id: Value, received: &str) -> Response {
+    (
+        StatusCode::BAD_REQUEST,
+        Json(json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "error": {
+                "code": -32022,
+                "message": format!(
+                    "unsupported MCP protocol version {received}; supported={MCP_PROTOCOL_VERSION}"
+                ),
+                "data": {"supported": [MCP_PROTOCOL_VERSION]}
+            }
+        })),
+    )
+        .into_response()
 }
 
 fn protocol_error(
@@ -751,10 +806,7 @@ impl McpFailure {
 }
 
 fn ensure_only(args: &Map<String, Value>, allowed: &[&str]) -> Result<(), McpFailure> {
-    if let Some(unexpected) = args
-        .keys()
-        .find(|key| !allowed.iter().any(|allowed| *allowed == key.as_str()))
-    {
+    if let Some(unexpected) = args.keys().find(|key| !allowed.contains(&key.as_str())) {
         return Err(McpFailure::invalid_params(format!(
             "unexpected argument {unexpected}"
         )));
@@ -785,10 +837,7 @@ fn required_u64(args: &Map<String, Value>, key: &str) -> Result<u64, McpFailure>
         .ok_or_else(|| McpFailure::invalid_params(format!("{key} must be an unsigned integer")))
 }
 
-fn required_identifier<'a>(
-    args: &'a Map<String, Value>,
-    key: &str,
-) -> Result<&'a str, McpFailure> {
+fn required_identifier<'a>(args: &'a Map<String, Value>, key: &str) -> Result<&'a str, McpFailure> {
     let value = required_string(args, key)?;
     validate_path_segment(value)
         .map_err(|error| McpFailure::invalid_params(format!("invalid {key}: {error}")))?;
@@ -933,7 +982,14 @@ fn tool_handoff_context_create() -> Value {
             "to_actor": {"type": "string"},
             "content": {"type": "string", "minLength": 1}
         }),
-        &["operation_id", "context_id", "handoff_id", "session_id", "to_actor", "content"],
+        &[
+            "operation_id",
+            "context_id",
+            "handoff_id",
+            "session_id",
+            "to_actor",
+            "content",
+        ],
     )
 }
 
@@ -995,7 +1051,12 @@ fn tool_handoff_accept() -> Value {
             "expected_revision": {"type": "integer", "minimum": 1},
             "claim_id": {"type": "string"}
         }),
-        &["operation_id", "handoff_id", "expected_revision", "claim_id"],
+        &[
+            "operation_id",
+            "handoff_id",
+            "expected_revision",
+            "claim_id",
+        ],
     )
 }
 
@@ -1012,7 +1073,14 @@ fn tool_handoff_return() -> Value {
             "result_fact_id": {"type": "string"},
             "outcome": {"type": "string", "enum": ["succeeded", "failed"]}
         }),
-        &["operation_id", "handoff_id", "expected_revision", "claim_id", "result_fact_id", "outcome"],
+        &[
+            "operation_id",
+            "handoff_id",
+            "expected_revision",
+            "claim_id",
+            "result_fact_id",
+            "outcome",
+        ],
     )
 }
 
