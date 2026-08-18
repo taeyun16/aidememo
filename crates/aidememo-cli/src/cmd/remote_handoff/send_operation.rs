@@ -1,14 +1,15 @@
 //! Durable identity reservation for remote handoff sends.
 //!
 //! A transport can fail after the server committed a handoff but before the
-//! caller observed the receipt. Keep one immutable pending operation per
-//! sender/receiver session route so an identical retry reuses the same
-//! handoff/context IDs. A tiny directory lock serializes competing CLI
-//! processes without adding another storage dependency to the public CLI.
+//! caller observed the receipt. Keep one immutable operation per
+//! sender/receiver session route so an exact retry reuses the same
+//! handoff/context IDs even after the server acknowledgement was recorded. A
+//! tiny directory lock serializes competing CLI processes without adding
+//! another storage dependency to the public CLI.
 //!
 //! The operation record is immutable. Successful acknowledgement creates a
-//! separate marker. Starting the same assignment intentionally after a
-//! completed send archives the old record and creates a fresh operation.
+//! separate marker. A changed assignment may replace a completed operation,
+//! but an exact replay always recovers the original IDs.
 
 use aidememo_core::AideMemoError;
 use serde::{Deserialize, Serialize};
@@ -95,19 +96,20 @@ impl RemoteSendOperationStore {
             } else {
                 let existing = read_operation(&operation_path)?;
                 ensure_identity(&existing, &meta)?;
-                if !intent_directory.join("committed").exists() {
-                    if existing.payload_hash != payload_hash {
-                        return Err(AideMemoError::InvalidInput(
-                            "a pending remote send for this session route has different evidence; retry the original request or inspect the sender outbox before sending a changed assignment"
-                                .to_owned(),
-                        ));
-                    }
+                let committed = intent_directory.join("committed").exists();
+                if existing.payload_hash == payload_hash {
                     return Ok(ReservedSendOperation {
                         operation_id: existing.operation_id,
                         handoff_id: existing.handoff_id,
                         context_id: existing.context_id,
                         reused_pending: true,
                     });
+                }
+                if !committed {
+                    return Err(AideMemoError::InvalidInput(
+                        "a pending remote send for this session route has different evidence; retry the original request or inspect the sender outbox before sending a changed assignment"
+                            .to_owned(),
+                    ));
                 }
 
                 let archive = self
@@ -346,13 +348,28 @@ mod tests {
     }
 
     #[test]
-    fn committed_intent_can_start_a_new_assignment() -> Result<(), AideMemoError> {
+    fn committed_exact_send_is_recovered() -> Result<(), AideMemoError> {
         let directory = tempfile::tempdir()
             .map_err(|error| AideMemoError::Internal(format!("create test directory: {error}")))?;
         let mut store = RemoteSendOperationStore::open(directory.path().join("send"))?;
         let first = store.reserve_send("intent", "payload", meta())?;
         store.mark_committed("intent", &first.operation_id)?;
         let second = store.reserve_send("intent", "payload", meta())?;
+        assert!(second.reused_pending);
+        assert_eq!(second.operation_id, first.operation_id);
+        assert_eq!(second.handoff_id, first.handoff_id);
+        assert_eq!(second.context_id, first.context_id);
+        Ok(())
+    }
+
+    #[test]
+    fn changed_committed_send_starts_a_new_assignment() -> Result<(), AideMemoError> {
+        let directory = tempfile::tempdir()
+            .map_err(|error| AideMemoError::Internal(format!("create test directory: {error}")))?;
+        let mut store = RemoteSendOperationStore::open(directory.path().join("send"))?;
+        let first = store.reserve_send("intent", "payload-a", meta())?;
+        store.mark_committed("intent", &first.operation_id)?;
+        let second = store.reserve_send("intent", "payload-b", meta())?;
         assert!(!second.reused_pending);
         assert_ne!(second.operation_id, first.operation_id);
         assert_ne!(second.handoff_id, first.handoff_id);
