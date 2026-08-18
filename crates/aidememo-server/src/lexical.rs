@@ -132,13 +132,11 @@ impl LexicalProjection {
                     .copied()
                     .unwrap_or_default() as f64;
                 let idf = (1.0
-                    + (document_count - document_frequency + 0.5)
-                        / (document_frequency + 0.5))
+                    + (document_count - document_frequency + 0.5) / (document_frequency + 0.5))
                     .ln();
                 let tf = term_frequency as f64;
-                let length_norm = BM25_K1
-                    * (1.0 - BM25_B
-                        + BM25_B * (document.length as f64 / average_length));
+                let length_norm =
+                    BM25_K1 * (1.0 - BM25_B + BM25_B * (document.length as f64 / average_length));
                 score += idf * ((tf * (BM25_K1 + 1.0)) / (tf + length_norm));
             }
             if score > 0.0 {
@@ -190,7 +188,10 @@ mod tests {
     };
 
     fn snapshot(facts: &[(&str, &str, Option<&str>)]) -> Result<ProjectSnapshot, DomainError> {
-        let scope = ProjectScope::new(TenantId::try_from("tenant")?, ProjectId::try_from("project")?);
+        let scope = ProjectScope::new(
+            TenantId::try_from("tenant")?,
+            ProjectId::try_from("project")?,
+        );
         let resources = facts
             .iter()
             .map(|(id, content, source_id)| {
