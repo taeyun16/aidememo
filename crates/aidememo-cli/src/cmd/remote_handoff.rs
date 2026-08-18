@@ -4,6 +4,9 @@
 //! `AIDEMEMO_REMOTE_PROFILE`; actor identity always comes from that profile's
 //! server-side bearer binding.
 
+mod send_operation;
+
+use self::send_operation::{RemoteSendOperationStore, SendOperationMeta};
 use crate::cmd::{HandoffSub, artifacts, auth};
 use aidememo_core::{AideMemo, AideMemoError, Config};
 use serde_json::{Value, json};
@@ -73,21 +76,55 @@ pub(crate) fn execute_remote_handoff(
                 .topic
                 .clone()
                 .unwrap_or_else(|| artifact.session_id.clone());
-            client.ensure_session(&artifact.session_id, source_id.as_deref(), &topic)?;
             if artifact.body.len() > 65_536 {
                 return Err(AideMemoError::InvalidInput(format!(
                     "remote handoff packet is {} bytes; canonical handoff contexts are limited to 65536 bytes",
                     artifact.body.len()
                 )));
             }
-            let handoff_id = generated_id("handoff");
-            let context_id = generated_id("context");
+            let actor_id = required_str(&identity, "actor_id")?;
+            let intent_key = stable_operation_id(
+                "send_intent",
+                &[
+                    &client.profile.project_id,
+                    actor_id,
+                    &installation,
+                    &artifact.session_id,
+                    source_id.as_deref().unwrap_or(""),
+                ],
+            );
+            let payload_hash = stable_operation_id(
+                "send_payload",
+                &[
+                    &client.profile.project_id,
+                    actor_id,
+                    &installation,
+                    &artifact.session_id,
+                    source_id.as_deref().unwrap_or(""),
+                    focus.as_deref().unwrap_or(""),
+                    done_when.as_deref().unwrap_or(""),
+                    &artifact.body,
+                ],
+            );
+            let mut operation_store = RemoteSendOperationStore::open_default()?;
+            let reservation = operation_store.reserve_send(
+                &intent_key,
+                &payload_hash,
+                SendOperationMeta {
+                    profile_name: &client.profile.name,
+                    project_id: &client.profile.project_id,
+                    actor_id,
+                },
+            )?;
+            let handoff_id = reservation.handoff_id.clone();
+            let context_id = reservation.context_id.clone();
+            client.ensure_session(&artifact.session_id, source_id.as_deref(), &topic)?;
             client.ensure_handoff_context(
                 &context_id,
                 &handoff_id,
                 &artifact.session_id,
                 source_id.as_deref(),
-                required_str(&identity, "actor_id")?,
+                actor_id,
                 &installation,
                 &artifact.body,
             )?;
@@ -108,11 +145,14 @@ pub(crate) fn execute_remote_handoff(
                     }
                 }),
             )?;
+            operation_store.mark_committed(&intent_key, &reservation.operation_id)?;
             let session_id = artifact.session_id.clone();
             json!({
                 "artifact": "agent_handoff",
                 "remote_profile": client.profile.name,
                 "actor_id": identity["actor_id"],
+                "operation_id": reservation.operation_id,
+                "recovered": reservation.reused_pending,
                 "handoff_id": handoff_id,
                 "status": "pending",
                 "dispatched": true,
@@ -852,10 +892,6 @@ fn ensure_fields_match(
             "remote canonical resource already exists with different evidence".to_owned(),
         ))
     }
-}
-
-fn generated_id(prefix: &str) -> String {
-    format!("{prefix}_{}", ulid::Ulid::new())
 }
 
 fn stable_claim_id(project_id: &str, actor_id: &str, handoff_id: &str, attempt: u64) -> String {
