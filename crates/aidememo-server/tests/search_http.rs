@@ -86,11 +86,7 @@ fn provision(
     Ok(())
 }
 
-fn post_request(
-    uri: &str,
-    token: &str,
-    body: Value,
-) -> Result<Request<Body>, axum::http::Error> {
+fn post_request(uri: &str, token: &str, body: Value) -> Result<Request<Body>, axum::http::Error> {
     Request::builder()
         .method("POST")
         .uri(uri)
