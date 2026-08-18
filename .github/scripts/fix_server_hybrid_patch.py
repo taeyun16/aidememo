@@ -21,6 +21,12 @@ for old, new in replacements:
     if old not in text:
         raise SystemExit(f'missing hybrid patch snippet: {old[:90]}')
     text = text.replace(old, new, 1)
+
+write_anchor = "main.write_text(text)\n"
+if write_anchor not in text:
+    raise SystemExit('hybrid patch main write anchor changed')
+fixture_patch = '''text = replace_once(\n    text,\n    \"\"\"            artifact_s3_force_path_style: false,\\n            bind: SocketAddr::from(([127, 0, 0, 1], 3030)),\"\"\",\n    \"\"\"            artifact_s3_force_path_style: false,\\n            embedding_endpoint: None,\\n            embedding_model: \\\"text-embedding-3-small\\\".to_owned(),\\n            embedding_dimension: 0,\\n            embedding_api_key_env: None,\\n            bind: SocketAddr::from(([127, 0, 0, 1], 3030)),\"\"\",\n    'serve test embedding defaults',\n)\nmain.write_text(text)\n'''
+text = text.replace(write_anchor, fixture_patch, 1)
 patch.write_text(text)
 
 semantic = Path('crates/aidememo-server/src/semantic.rs')
