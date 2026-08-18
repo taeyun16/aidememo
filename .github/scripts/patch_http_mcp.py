@@ -30,4 +30,10 @@ text = replace_once(text, old, new, 'remove duplicate protocol check')
 anchor = '''fn protocol_error(\n    status: StatusCode,'''
 helper = '''fn unsupported_protocol_error(id: Value, received: &str) -> Response {\n    (\n        StatusCode::BAD_REQUEST,\n        Json(json!({\n            "jsonrpc": "2.0",\n            "id": id,\n            "error": {\n                "code": -32022,\n                "message": format!(\n                    "unsupported MCP protocol version {received}; supported={MCP_PROTOCOL_VERSION}"\n                ),\n                "data": {"supported": [MCP_PROTOCOL_VERSION]}\n            }\n        })),\n    )\n        .into_response()\n}\n\n'''
 text = replace_once(text, anchor, helper + anchor, 'unsupported protocol helper')
+text = replace_once(
+    text,
+    '''        .find(|key| !allowed.iter().any(|allowed| *allowed == key.as_str()))''',
+    '''        .find(|key| !allowed.contains(&key.as_str()))''',
+    'strict clippy contains',
+)
 mcp.write_text(text)
