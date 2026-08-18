@@ -1,0 +1,38 @@
+name: patch server hybrid retrieval
+
+on:
+  pull_request:
+    branches:
+      - agent/server-lexical-retrieval
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.head_ref == 'agent/server-hybrid-retrieval'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: agent/server-hybrid-retrieval
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Apply hybrid integration
+        run: |
+          python3 .github/scripts/patch_server_hybrid.py
+          cargo fmt --all
+          cargo check -p aidememo-server
+          cargo check -p aidememo-server --features semantic
+          cargo test -p aidememo-server --features semantic --test hybrid_search_http
+          cargo test -p aidememo-server --features semantic semantic::tests --lib
+          cargo clippy -p aidememo-server --all-targets --features semantic -- -D warnings
+          git diff --check
+      - name: Commit implementation
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add Cargo.lock crates/aidememo-server
+          git commit -m 'feat: add hybrid semantic retrieval projection'
+          git push origin HEAD:agent/server-hybrid-retrieval
