@@ -15,6 +15,7 @@ use tower::ServiceExt;
 const TOKEN: &str = "hybrid-reader-token-0123456789";
 
 struct FakeProvider;
+struct FailingProvider;
 
 impl EmbeddingProvider for FakeProvider {
     fn name(&self) -> String {
@@ -44,6 +45,30 @@ impl EmbeddingProvider for FakeProvider {
                 }
             })
             .collect())
+    }
+}
+
+impl EmbeddingProvider for FailingProvider {
+    fn name(&self) -> String {
+        "failing-hybrid-v1".to_owned()
+    }
+
+    fn dimension(&self) -> usize {
+        3
+    }
+
+    fn embed_query(&self, _text: &str) -> Result<Vec<f32>, DomainError> {
+        Err(DomainError::StorageFailure {
+            operation: "test_embedding_query",
+            detail: "provider unavailable".to_owned(),
+        })
+    }
+
+    fn embed_document_batch(&self, _texts: &[String]) -> Result<Vec<Vec<f32>>, DomainError> {
+        Err(DomainError::StorageFailure {
+            operation: "test_embedding_documents",
+            detail: "provider unavailable".to_owned(),
+        })
     }
 }
 
@@ -91,11 +116,17 @@ fn store() -> Result<SqliteCommandStore, Box<dyn std::error::Error>> {
 }
 
 fn app(with_semantic: bool) -> Result<Router, Box<dyn std::error::Error>> {
+    let provider = with_semantic.then(|| Arc::new(FakeProvider) as Arc<dyn EmbeddingProvider>);
+    app_with_provider(provider)
+}
+
+fn app_with_provider(
+    provider: Option<Arc<dyn EmbeddingProvider>>,
+) -> Result<Router, Box<dyn std::error::Error>> {
     let state = ServerState::new(store()?);
-    let state = if with_semantic {
-        state.with_semantic_provider(Arc::new(FakeProvider))
-    } else {
-        state
+    let state = match provider {
+        Some(provider) => state.with_semantic_provider(provider),
+        None => state,
     };
     Ok(router(state))
 }
@@ -254,5 +285,36 @@ async fn missing_semantic_provider_falls_back_only_for_auto()
         response_json(explicit).await?["error"]["code"],
         "invalid_command"
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn auto_degrades_to_lexical_when_configured_provider_is_unavailable()
+-> Result<(), Box<dyn std::error::Error>> {
+    let app = app_with_provider(Some(Arc::new(FailingProvider)))?;
+    create_session(&app).await?;
+    create_fact(
+        &app,
+        "hybrid-failing-provider-fact",
+        "fact-lexical-fallback",
+        "redis cache fallback",
+    )
+    .await?;
+
+    let automatic = app
+        .clone()
+        .oneshot(get_request(
+            "/v1/projects/project_hybrid/search?q=unseen&mode=auto",
+        )?)
+        .await?;
+    assert_eq!(automatic.status(), 200);
+    assert_eq!(response_json(automatic).await?["mode"], "lexical");
+
+    let explicit = app
+        .oneshot(get_request(
+            "/v1/projects/project_hybrid/search?q=unseen&mode=semantic",
+        )?)
+        .await?;
+    assert_eq!(explicit.status(), 500);
     Ok(())
 }
