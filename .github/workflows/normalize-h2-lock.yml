@@ -1,0 +1,40 @@
+name: normalize h2 lockfile
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  normalize-lock:
+    if: github.head_ref == 'fix/h2-rustsec-2026-0258'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/h2-rustsec-2026-0258
+          fetch-depth: 0
+      - name: Rebuild minimal lockfile change
+        run: |
+          git checkout origin/main -- Cargo.lock
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('Cargo.lock')
+          text = path.read_text()
+          old = '''name = "h2"\nversion = "0.4.13"\nsource = "registry+https://github.com/rust-lang/crates.io-index"\nchecksum = "2f44da3a8150a6703ed5d34e164b875fd14c2cdab9af1252a9a1020bde2bdc54"'''
+          new = '''name = "h2"\nversion = "0.4.16"\nsource = "registry+https://github.com/rust-lang/crates.io-index"\nchecksum = "a9f37a958b41b3b19ee2707c06439c0e9e547e847223eb791ecb0cb821c65e27"'''
+          if text.count(old) != 1:
+              raise SystemExit('expected exactly one h2 0.4.13 lock entry')
+          path.write_text(text.replace(old, new))
+          PY
+          git diff --check -- Cargo.lock
+      - name: Commit minimal generated diff
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add Cargo.lock
+          git commit -m 'fix(deps): keep h2 security update minimal'
+          git push origin HEAD:fix/h2-rustsec-2026-0258
