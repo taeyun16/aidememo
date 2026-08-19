@@ -231,10 +231,12 @@ fn concurrent_same_ids_are_isolated_by_tenant_scope() -> Result<(), Box<dyn std:
         br#"{"tenant":"second"}"#,
     )?;
     let barrier = Arc::new(Barrier::new(2));
-    let first = spawn_execute(url.clone(), barrier.clone(), first_command)
+    let first = spawn_execute(url.clone(), barrier.clone(), first_command);
+    let second = spawn_execute(url.clone(), barrier, second_command);
+    let first = first
         .join()
         .map_err(|_| "first tenant contender panicked")??;
-    let second = spawn_execute(url.clone(), barrier, second_command)
+    let second = second
         .join()
         .map_err(|_| "second tenant contender panicked")??;
     assert_eq!(first.project_seq.get(), 1);
