@@ -1,4 +1,5 @@
 use aidememo_domain::{DomainError, ServerCanonicalStore};
+use aidememo_service::CommandService;
 use aidememo_store_local::SqliteCommandStore;
 use std::{
     error::Error,
@@ -116,5 +117,26 @@ impl BlockingStoreExecutor {
             Ok(Err(error)) => Err(BlockingStoreError::Join(error.to_string())),
             Err(_) => Err(BlockingStoreError::TimedOut),
         }
+    }
+
+    /// Execute one existing [`CommandService`] orchestration against a leased store.
+    ///
+    /// The service borrows only for the lifetime of the blocking closure, so the
+    /// same handler implementation can operate on SQLite today and a pooled
+    /// PostgreSQL store later without owning or naming the concrete adapter.
+    pub(crate) async fn run_service<R, F>(&self, operation: F) -> Result<R, BlockingStoreError>
+    where
+        R: Send + 'static,
+        F: for<'store> FnOnce(
+                &mut CommandService<&'store mut dyn ServerCanonicalStore>,
+            ) -> Result<R, DomainError>
+            + Send
+            + 'static,
+    {
+        self.run(move |store| {
+            let mut service = CommandService::new(store);
+            operation(&mut service)
+        })
+        .await
     }
 }
