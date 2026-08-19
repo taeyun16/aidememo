@@ -8,53 +8,43 @@ on:
       - "crates/aidememo-domain/**"
       - "crates/aidememo-store-postgres/**"
       - ".github/workflows/postgres-conformance.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "crates/aidememo-domain/**"
+      - "crates/aidememo-store-postgres/**"
+      - ".github/workflows/postgres-conformance.yml"
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  patch-writer-isolation:
-    if: github.head_ref == 'agent/postgres-command-store'
+  postgres-17:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: aidememo_conformance
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d aidememo_conformance"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      AIDEMEMO_POSTGRES_URL: postgres://postgres:postgres@127.0.0.1:5432/aidememo_conformance
     steps:
       - uses: actions/checkout@v7
-        with:
-          ref: agent/postgres-command-store
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
         with:
-          components: rustfmt, clippy
-      - name: Apply project-row writer serialization
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          import re
-          path = Path('crates/aidememo-store-postgres/src/lib.rs')
-          text = path.read_text()
-          def replace_tx(block, label, comment):
-              pattern = re.compile(r'let mut tx = client\s*\.build_transaction\(\)\s*\.isolation_level\(IsolationLevel::Serializable\)\s*\.start\(\)\s*' + rf'\.map_err\(\|error\| storage\("{label}", error\)\)\?;')
-              replacement = comment + '\n        let mut tx = client\n            .transaction()\n            .map_err(|error| storage("' + label + '", error))?;'
-              block, count = pattern.subn(replacement, block, count=1)
-              if count != 1:
-                  raise SystemExit(label + ' transaction pattern changed')
-              return block
-          init_start = text.find('    pub fn initialize_project(')
-          init_end = text.find('    /// Return the adapter schema version', init_start)
-          init_comment = '// The project row is the synchronization primitive for initialization.\n        // READ COMMITTED lets concurrent idempotent initializers observe the winner\n        // after INSERT/row-lock waits instead of requiring serialization retries.'
-          text = text[:init_start] + replace_tx(text[init_start:init_end], 'initialize_begin', init_comment) + text[init_end:]
-          impl_start = text.find('impl CommandStore for PostgresCommandStore {')
-          receipt_start = text.find('    fn receipt(', impl_start)
-          command_comment = '// Every canonical mutation locks its tenant-project row before reading\n        // receipts or resource revisions. That explicit lock serializes writers per\n        // project, so READ COMMITTED preserves deterministic outcomes without exposing\n        // PostgreSQL serialization failures that would otherwise require whole-command retries.'
-          text = text[:impl_start] + replace_tx(text[impl_start:receipt_start], 'command_begin', command_comment) + text[receipt_start:]
-          path.write_text(text)
-          PY
-          cargo fmt --all
-          cargo test -p aidememo-store-postgres --no-run
-          cargo clippy -p aidememo-store-postgres --all-targets -- -D warnings
-          git diff --check
-      - name: Commit Rust-only writer-isolation fix
-        run: |
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add crates/aidememo-store-postgres/src/lib.rs
-          git commit -m 'fix: serialize PostgreSQL writers with project row locks'
-          git push origin HEAD:agent/postgres-command-store
+          shared-key: postgres-conformance
+      - name: Run portable PostgreSQL conformance
+        run: cargo test -p aidememo-store-postgres --test postgres_contract -- --ignored --nocapture
