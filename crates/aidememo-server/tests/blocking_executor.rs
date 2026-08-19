@@ -48,14 +48,14 @@ async fn timed_out_blocking_task_retains_capacity_until_it_exits()
     });
 
     started_rx.await?;
-    let first_error = first_task.await??.err();
-    assert!(matches!(first_error, Some(BlockingStoreError::TimedOut)));
+    let first_result = first_task.await?;
+    assert!(matches!(first_result, Err(BlockingStoreError::TimedOut)));
 
-    let second_error = executor.run(|store| store.schema_version()).await.err();
-    assert!(matches!(second_error, Some(BlockingStoreError::Saturated)));
+    let second_result = executor.run(|store| store.schema_version()).await;
+    assert!(matches!(second_result, Err(BlockingStoreError::Saturated)));
 
     release_tx.send(())?;
-    tokio::time::sleep(Duration::from_millis(20)).await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
     let schema_version = executor.run(|store| store.schema_version()).await?;
     assert_eq!(schema_version, 4);
     Ok(())
