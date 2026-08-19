@@ -6,7 +6,7 @@ use std::{
     error::Error,
     fmt,
     panic::{AssertUnwindSafe, catch_unwind},
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, mpsc as std_mpsc},
     time::Duration,
 };
 use tokio::sync::{Mutex as AsyncMutex, Semaphore, mpsc};
@@ -61,13 +61,81 @@ enum BlockingBackend {
     Postgres(Arc<PostgresPool>),
 }
 
+/// Dedicated ordinary thread that owns destruction of synchronous PostgreSQL clients.
+///
+/// The synchronous `postgres` crate drives its own Tokio runtime internally even
+/// during `Client::drop`. Destroying one on an Axum/Tokio runtime thread can
+/// therefore panic with a nested-runtime error. Every pooled store carries a
+/// reaper handle so even channel/pool teardown on an async thread transfers the
+/// actual client destruction to this ordinary thread.
+#[derive(Clone)]
+struct PostgresDropReaper {
+    sender: std_mpsc::Sender<PostgresCommandStore>,
+}
+
+impl PostgresDropReaper {
+    fn new() -> Result<Self, BlockingStoreError> {
+        let (sender, receiver) = std_mpsc::channel::<PostgresCommandStore>();
+        std::thread::Builder::new()
+            .name("aidememo-postgres-drop".to_owned())
+            .spawn(move || {
+                while let Ok(store) = receiver.recv() {
+                    let _ = catch_unwind(AssertUnwindSafe(|| drop(store)));
+                }
+            })
+            .map_err(|error| {
+                BlockingStoreError::Configuration(format!(
+                    "failed to start PostgreSQL drop reaper: {error}"
+                ))
+            })?;
+        Ok(Self { sender })
+    }
+
+    fn reap(&self, store: PostgresCommandStore) {
+        if let Err(error) = self.sender.send(store) {
+            // The reaper is designed to outlive every sender. If it somehow
+            // terminated unexpectedly, leaking the client is safer than
+            // synchronously dropping it on a Tokio worker and aborting the process.
+            std::mem::forget(error.0);
+        }
+    }
+}
+
+struct PooledPostgresStore {
+    store: Option<PostgresCommandStore>,
+    reaper: PostgresDropReaper,
+}
+
+impl PooledPostgresStore {
+    fn new(store: PostgresCommandStore, reaper: PostgresDropReaper) -> Self {
+        Self {
+            store: Some(store),
+            reaper,
+        }
+    }
+
+    fn store_mut(&mut self) -> Result<&mut PostgresCommandStore, BlockingStoreError> {
+        self.store
+            .as_mut()
+            .ok_or(BlockingStoreError::BackendUnavailable)
+    }
+}
+
+impl Drop for PooledPostgresStore {
+    fn drop(&mut self) {
+        if let Some(store) = self.store.take() {
+            self.reaper.reap(store);
+        }
+    }
+}
+
 struct PostgresPool {
-    sender: mpsc::Sender<PostgresCommandStore>,
-    receiver: AsyncMutex<mpsc::Receiver<PostgresCommandStore>>,
+    sender: mpsc::Sender<PooledPostgresStore>,
+    receiver: AsyncMutex<mpsc::Receiver<PooledPostgresStore>>,
 }
 
 impl PostgresPool {
-    async fn take(&self, timeout: Duration) -> Result<PostgresCommandStore, BlockingStoreError> {
+    async fn take(&self, timeout: Duration) -> Result<PooledPostgresStore, BlockingStoreError> {
         tokio::time::timeout(timeout, async {
             let mut receiver = self.receiver.lock().await;
             receiver.recv().await
@@ -77,9 +145,9 @@ impl PostgresPool {
         .ok_or(BlockingStoreError::BackendUnavailable)
     }
 
-    fn put(&self, store: PostgresCommandStore) -> Result<(), BlockingStoreError> {
+    fn put(&self, store: PooledPostgresStore) -> Result<(), BlockingStoreError> {
         self.sender
-            .blocking_send(store)
+            .try_send(store)
             .map_err(|_| BlockingStoreError::BackendUnavailable)
     }
 }
@@ -131,9 +199,14 @@ impl BlockingStoreExecutor {
                 "PostgreSQL pool size must be greater than zero".to_owned(),
             ));
         }
+        let reaper = PostgresDropReaper::new()?;
+        let build_reaper = reaper.clone();
         let stores = tokio::task::spawn_blocking(move || {
             (0..pool_size)
-                .map(|_| PostgresCommandStore::connect_no_tls(&url))
+                .map(|_| {
+                    PostgresCommandStore::connect_no_tls(&url)
+                        .map(|store| PooledPostgresStore::new(store, build_reaper.clone()))
+                })
                 .collect::<Result<Vec<_>, DomainError>>()
         })
         .await
@@ -145,6 +218,7 @@ impl BlockingStoreExecutor {
                 .try_send(store)
                 .map_err(|_| BlockingStoreError::BackendUnavailable)?;
         }
+        drop(reaper);
         Ok(Self {
             backend: BlockingBackend::Postgres(Arc::new(PostgresPool {
                 sender,
@@ -190,7 +264,7 @@ impl BlockingStoreExecutor {
                 let mut store = pool.take(self.acquire_timeout).await?;
                 tokio::task::spawn_blocking(move || {
                     let _permit = permit;
-                    let result = run_operation(&mut store, operation);
+                    let result = run_operation(store.store_mut()?, operation);
                     pool.put(store)?;
                     result
                 })
