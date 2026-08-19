@@ -1,13 +1,15 @@
 use aidememo_domain::{DomainError, ServerCanonicalStore};
 use aidememo_service::CommandService;
 use aidememo_store_local::SqliteCommandStore;
+use aidememo_store_postgres::PostgresCommandStore;
 use std::{
     error::Error,
     fmt,
+    panic::{AssertUnwindSafe, catch_unwind},
     sync::{Arc, Mutex},
     time::Duration,
 };
-use tokio::sync::Semaphore;
+use tokio::sync::{Mutex as AsyncMutex, Semaphore, mpsc};
 
 /// Failure at the async-to-blocking storage execution boundary.
 #[derive(Debug)]
@@ -18,9 +20,11 @@ pub(crate) enum BlockingStoreError {
     Saturated,
     /// The caller stopped waiting before the blocking operation completed.
     TimedOut,
-    /// The backend synchronization primitive became unusable.
+    /// The backend synchronization primitive or connection pool became unusable.
     BackendUnavailable,
-    /// The Tokio blocking task terminated unexpectedly.
+    /// The configured execution policy is invalid.
+    Configuration(String),
+    /// The Tokio blocking task terminated unexpectedly or handler code panicked.
     Join(String),
 }
 
@@ -32,6 +36,9 @@ impl fmt::Display for BlockingStoreError {
             Self::TimedOut => formatter.write_str("canonical store operation timed out"),
             Self::BackendUnavailable => {
                 formatter.write_str("canonical store backend is unavailable")
+            }
+            Self::Configuration(detail) => {
+                write!(formatter, "invalid canonical store executor configuration: {detail}")
             }
             Self::Join(detail) => {
                 write!(formatter, "canonical store blocking task failed: {detail}")
@@ -48,8 +55,33 @@ impl From<DomainError> for BlockingStoreError {
     }
 }
 
+#[derive(Clone)]
 enum BlockingBackend {
-    Sqlite(Mutex<SqliteCommandStore>),
+    Sqlite(Arc<Mutex<SqliteCommandStore>>),
+    Postgres(Arc<PostgresPool>),
+}
+
+struct PostgresPool {
+    sender: mpsc::Sender<PostgresCommandStore>,
+    receiver: AsyncMutex<mpsc::Receiver<PostgresCommandStore>>,
+}
+
+impl PostgresPool {
+    async fn take(&self, timeout: Duration) -> Result<PostgresCommandStore, BlockingStoreError> {
+        tokio::time::timeout(timeout, async {
+            let mut receiver = self.receiver.lock().await;
+            receiver.recv().await
+        })
+        .await
+        .map_err(|_| BlockingStoreError::BackendUnavailable)?
+        .ok_or(BlockingStoreError::BackendUnavailable)
+    }
+
+    fn put(&self, store: PostgresCommandStore) -> Result<(), BlockingStoreError> {
+        self.sender
+            .blocking_send(store)
+            .map_err(|_| BlockingStoreError::BackendUnavailable)
+    }
 }
 
 /// Bounded bridge from async HTTP code to synchronous canonical stores.
@@ -61,7 +93,7 @@ enum BlockingBackend {
 /// backlog.
 #[derive(Clone)]
 pub(crate) struct BlockingStoreExecutor {
-    backend: Arc<BlockingBackend>,
+    backend: BlockingBackend,
     permits: Arc<Semaphore>,
     acquire_timeout: Duration,
     operation_timeout: Duration,
@@ -76,18 +108,59 @@ impl BlockingStoreExecutor {
         operation_timeout: Duration,
     ) -> Self {
         Self {
-            backend: Arc::new(BlockingBackend::Sqlite(Mutex::new(store))),
+            backend: BlockingBackend::Sqlite(Arc::new(Mutex::new(store))),
             permits: Arc::new(Semaphore::new(1)),
             acquire_timeout,
             operation_timeout,
         }
     }
 
+    /// Build a bounded local/development PostgreSQL pool without TLS.
+    ///
+    /// Production server wiring must use a TLS-capable constructor rather than
+    /// silently selecting this path. Connection creation itself runs on Tokio's
+    /// blocking pool so startup does not block an async runtime worker.
+    pub(crate) async fn postgres_no_tls(
+        url: String,
+        pool_size: usize,
+        acquire_timeout: Duration,
+        operation_timeout: Duration,
+    ) -> Result<Self, BlockingStoreError> {
+        if pool_size == 0 {
+            return Err(BlockingStoreError::Configuration(
+                "PostgreSQL pool size must be greater than zero".to_owned(),
+            ));
+        }
+        let stores = tokio::task::spawn_blocking(move || {
+            (0..pool_size)
+                .map(|_| PostgresCommandStore::connect_no_tls(&url))
+                .collect::<Result<Vec<_>, DomainError>>()
+        })
+        .await
+        .map_err(|error| BlockingStoreError::Join(error.to_string()))?
+        .map_err(BlockingStoreError::Domain)?;
+        let (sender, receiver) = mpsc::channel(pool_size);
+        for store in stores {
+            sender
+                .try_send(store)
+                .map_err(|_| BlockingStoreError::BackendUnavailable)?;
+        }
+        Ok(Self {
+            backend: BlockingBackend::Postgres(Arc::new(PostgresPool {
+                sender,
+                receiver: AsyncMutex::new(receiver),
+            })),
+            permits: Arc::new(Semaphore::new(pool_size)),
+            acquire_timeout,
+            operation_timeout,
+        })
+    }
+
     /// Execute one synchronous canonical-store session away from Tokio workers.
     ///
     /// The closure may perform several reads and one mutation on the same leased
-    /// store. PostgreSQL pooling can therefore reuse this boundary later without
-    /// duplicating transport/domain orchestration.
+    /// store. A timed-out caller stops waiting, but the blocking task keeps its
+    /// permit and any PostgreSQL connection until the closure actually exits.
     pub(crate) async fn run<R, F>(&self, operation: F) -> Result<R, BlockingStoreError>
     where
         R: Send + 'static,
@@ -100,18 +173,30 @@ impl BlockingStoreExecutor {
         .await
         .map_err(|_| BlockingStoreError::Saturated)?
         .map_err(|_| BlockingStoreError::BackendUnavailable)?;
-        let backend = Arc::clone(&self.backend);
-        let task = tokio::task::spawn_blocking(move || {
-            let _permit = permit;
-            match backend.as_ref() {
-                BlockingBackend::Sqlite(store) => {
+
+        let task = match &self.backend {
+            BlockingBackend::Sqlite(store) => {
+                let store = Arc::clone(store);
+                tokio::task::spawn_blocking(move || {
+                    let _permit = permit;
                     let mut store = store
                         .lock()
                         .map_err(|_| BlockingStoreError::BackendUnavailable)?;
-                    operation(&mut *store).map_err(BlockingStoreError::Domain)
-                }
+                    run_operation(&mut *store, operation)
+                })
             }
-        });
+            BlockingBackend::Postgres(pool) => {
+                let pool = Arc::clone(pool);
+                let mut store = pool.take(self.acquire_timeout).await?;
+                tokio::task::spawn_blocking(move || {
+                    let _permit = permit;
+                    let result = run_operation(&mut store, operation);
+                    pool.put(store)?;
+                    result
+                })
+            }
+        };
+
         match tokio::time::timeout(self.operation_timeout, task).await {
             Ok(Ok(result)) => result,
             Ok(Err(error)) => Err(BlockingStoreError::Join(error.to_string())),
@@ -122,8 +207,8 @@ impl BlockingStoreExecutor {
     /// Execute one existing [`CommandService`] orchestration against a leased store.
     ///
     /// The service borrows only for the lifetime of the blocking closure, so the
-    /// same handler implementation can operate on SQLite today and a pooled
-    /// PostgreSQL store later without owning or naming the concrete adapter.
+    /// same handler implementation can operate on SQLite or pooled PostgreSQL
+    /// without owning or naming the concrete adapter.
     pub(crate) async fn run_service<R, F>(&self, operation: F) -> Result<R, BlockingStoreError>
     where
         R: Send + 'static,
@@ -139,4 +224,16 @@ impl BlockingStoreExecutor {
         })
         .await
     }
+}
+
+fn run_operation<R, F>(
+    store: &mut dyn ServerCanonicalStore,
+    operation: F,
+) -> Result<R, BlockingStoreError>
+where
+    F: FnOnce(&mut dyn ServerCanonicalStore) -> Result<R, DomainError>,
+{
+    catch_unwind(AssertUnwindSafe(|| operation(store)))
+        .map_err(|_| BlockingStoreError::Join("canonical store operation panicked".to_owned()))?
+        .map_err(BlockingStoreError::Domain)
 }
