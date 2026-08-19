@@ -1,0 +1,86 @@
+name: patch PostgreSQL writer isolation
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.head_ref == 'agent/postgres-command-store'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: agent/postgres-command-store
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Use project-row locking for writer serialization
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path('crates/aidememo-store-postgres/src/lib.rs')
+          text = path.read_text()
+
+          def replace_tx(block: str, label: str, comment: str) -> str:
+              pattern = re.compile(
+                  r'let mut tx = client\s*'
+                  r'\.build_transaction\(\)\s*'
+                  r'\.isolation_level\(IsolationLevel::Serializable\)\s*'
+                  r'\.start\(\)\s*'
+                  + rf'\.map_err\(\|error\| storage\("{label}", error\)\)\?;'
+              )
+              replacement = comment + '''\n        let mut tx = client
+            .transaction()
+            .map_err(|error| storage("''' + label + '''", error))?;'''
+              block, count = pattern.subn(replacement, block, count=1)
+              if count != 1:
+                  raise SystemExit(f'{label} transaction pattern changed')
+              return block
+
+          init_start = text.find('    pub fn initialize_project(')
+          init_end = text.find('    /// Return the adapter schema version', init_start)
+          if init_start < 0 or init_end < 0:
+              raise SystemExit('initialize_project boundaries changed')
+          init = replace_tx(
+              text[init_start:init_end],
+              'initialize_begin',
+              '''// The project row is the synchronization primitive for initialization.
+        // READ COMMITTED lets concurrent idempotent initializers observe the winner
+        // after INSERT/row-lock waits instead of requiring serialization retries.''',
+          )
+          text = text[:init_start] + init + text[init_end:]
+
+          impl_start = text.find('impl CommandStore for PostgresCommandStore {')
+          receipt_start = text.find('    fn receipt(', impl_start)
+          if impl_start < 0 or receipt_start < 0:
+              raise SystemExit('CommandStore execute boundaries changed')
+          execute_block = replace_tx(
+              text[impl_start:receipt_start],
+              'command_begin',
+              '''// Every canonical mutation locks its tenant-project row before reading
+        // receipts or resource revisions. That explicit lock serializes writers per
+        // project, so READ COMMITTED preserves deterministic outcomes without exposing
+        // PostgreSQL serialization failures that would otherwise require whole-command retries.''',
+          )
+          text = text[:impl_start] + execute_block + text[receipt_start:]
+          path.write_text(text)
+          PY
+          cargo fmt --all
+          cargo test -p aidememo-store-postgres --no-run
+          cargo clippy -p aidememo-store-postgres --all-targets -- -D warnings
+          rm .github/workflows/patch-postgres-writer-isolation.yml
+          git diff --check
+      - name: Commit writer isolation fix
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m 'fix: serialize PostgreSQL writers with project row locks'
+          git push origin HEAD:agent/postgres-command-store
