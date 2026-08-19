@@ -1,58 +1,44 @@
 name: fresh checkout smoke
 
 on:
+  workflow_dispatch:
   pull_request:
     branches: [main]
     paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "crates/aidememo-core/**"
+      - "crates/aidememo-cli/**"
+      - "scripts/install.sh"
+      - "scripts/fresh-checkout-smoke.sh"
       - ".github/workflows/fresh-checkout-smoke.yml"
 
+concurrency:
+  group: fresh-checkout-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  patch:
-    if: github.head_ref == 'agent/postgres-concurrency'
+  smoke:
+    name: fresh checkout smoke
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
         with:
-          ref: agent/postgres-concurrency
+          python-version: "3.13"
+
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt, clippy
-      - name: Fix tenant Barrier harness
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          path = Path('crates/aidememo-store-postgres/tests/postgres_concurrency.rs')
-          text = path.read_text()
-          old = '''    let barrier = Arc::new(Barrier::new(2));
-    let first = spawn_execute(url.clone(), barrier.clone(), first_command)
-        .join()
-        .map_err(|_| "first tenant contender panicked")??;
-    let second = spawn_execute(url.clone(), barrier, second_command)
-        .join()
-        .map_err(|_| "second tenant contender panicked")??;'''
-          new = '''    let barrier = Arc::new(Barrier::new(2));
-    let first = spawn_execute(url.clone(), barrier.clone(), first_command);
-    let second = spawn_execute(url.clone(), barrier, second_command);
-    let first = first
-        .join()
-        .map_err(|_| "first tenant contender panicked")??;
-    let second = second
-        .join()
-        .map_err(|_| "second tenant contender panicked")??;'''
-          if text.count(old) != 1:
-              raise SystemExit('tenant barrier block changed')
-          path.write_text(text.replace(old, new, 1))
-          PY
-          cargo fmt --all
-          cargo clippy -p aidememo-store-postgres --all-targets -- -D warnings
-          git diff --check
-      - name: Commit source-only barrier fix
-        run: |
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add crates/aidememo-store-postgres/tests/postgres_concurrency.rs
-          git commit -m 'test: start tenant contenders before barrier join'
-          git push origin HEAD:agent/postgres-concurrency
+          toolchain: 1.96.0
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: fresh-checkout-smoke-v1
+
+      - name: fresh checkout smoke
+        run: scripts/fresh-checkout-smoke.sh
