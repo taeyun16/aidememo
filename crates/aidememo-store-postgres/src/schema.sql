@@ -81,6 +81,7 @@ CREATE TABLE IF NOT EXISTS ssot_handoff_index (
     tenant_id TEXT NOT NULL,
     project_id TEXT NOT NULL,
     handoff_id TEXT NOT NULL,
+    resource_kind TEXT NOT NULL DEFAULT 'handoff' CHECK (resource_kind = 'handoff'),
     from_actor TEXT NOT NULL,
     to_actor TEXT NOT NULL,
     source_id TEXT,
@@ -88,7 +89,7 @@ CREATE TABLE IF NOT EXISTS ssot_handoff_index (
     revision BIGINT NOT NULL CHECK (revision > 0),
     updated_seq BIGINT NOT NULL CHECK (updated_seq > 0),
     PRIMARY KEY (tenant_id, project_id, handoff_id),
-    FOREIGN KEY (tenant_id, project_id, 'handoff', handoff_id)
+    FOREIGN KEY (tenant_id, project_id, resource_kind, handoff_id)
         REFERENCES ssot_resources (tenant_id, project_id, resource_kind, resource_id)
         ON DELETE CASCADE
 );
