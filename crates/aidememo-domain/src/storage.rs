@@ -175,3 +175,110 @@ pub trait HandoffStore: CommandStore {
         query: &HandoffQuery,
     ) -> Result<HandoffPage, DomainError>;
 }
+
+/// Composite canonical store contract required by the authenticated server boundary.
+///
+/// The trait is object-safe so a blocking executor can lease either a SQLite or
+/// PostgreSQL adapter and expose it to shared transport logic without duplicating
+/// the command, handoff, or identity orchestration for each backend.
+pub trait ServerCanonicalStore: HandoffStore + ServerIdentityStore + Send {}
+
+impl<T> ServerCanonicalStore for T where T: HandoffStore + ServerIdentityStore + Send + ?Sized {}
+
+impl<T: CommandStore + ?Sized> CommandStore for &mut T {
+    fn execute(&mut self, command: &MutationCommand) -> Result<CommandReceipt, DomainError> {
+        (**self).execute(command)
+    }
+
+    fn receipt(
+        &self,
+        scope: &ProjectScope,
+        command_id: &CommandId,
+    ) -> Result<Option<CommandReceipt>, DomainError> {
+        (**self).receipt(scope, command_id)
+    }
+
+    fn changes(
+        &self,
+        scope: &ProjectScope,
+        cursor: &ChangeCursor,
+        limit: usize,
+    ) -> Result<ChangeBatch, DomainError> {
+        (**self).changes(scope, cursor, limit)
+    }
+
+    fn materialized_changes(
+        &self,
+        scope: &ProjectScope,
+        cursor: &ChangeCursor,
+        limit: usize,
+    ) -> Result<MaterializedChangeBatch, DomainError> {
+        (**self).materialized_changes(scope, cursor, limit)
+    }
+
+    fn snapshot(&self, scope: &ProjectScope) -> Result<ProjectSnapshot, DomainError> {
+        (**self).snapshot(scope)
+    }
+
+    fn resource(
+        &self,
+        scope: &ProjectScope,
+        resource: &ResourceRef,
+    ) -> Result<Option<CanonicalResource>, DomainError> {
+        (**self).resource(scope, resource)
+    }
+}
+
+impl<T: HandoffStore + ?Sized> HandoffStore for &mut T {
+    fn handoffs(
+        &self,
+        scope: &ProjectScope,
+        actor_id: &ActorId,
+        query: &HandoffQuery,
+    ) -> Result<HandoffPage, DomainError> {
+        (**self).handoffs(scope, actor_id, query)
+    }
+}
+
+impl<T: ServerIdentityStore + ?Sized> ServerIdentityStore for &mut T {
+    fn schema_version(&self) -> Result<u32, DomainError> {
+        (**self).schema_version()
+    }
+
+    fn project_epoch(&self, scope: &ProjectScope) -> Result<Option<ProjectEpoch>, DomainError> {
+        (**self).project_epoch(scope)
+    }
+
+    fn bootstrap_project(
+        &mut self,
+        tenant: &TenantRecord,
+        project: &ProjectRecord,
+    ) -> Result<(), DomainError> {
+        (**self).bootstrap_project(tenant, project)
+    }
+
+    fn provision_actor(
+        &mut self,
+        actor: &ActorRecord,
+        membership: &ProjectMembership,
+        token_sha256: &[u8],
+        created_at_ms: i64,
+    ) -> Result<(), DomainError> {
+        (**self).provision_actor(actor, membership, token_sha256, created_at_ms)
+    }
+
+    fn authenticate_token(
+        &self,
+        token_sha256: &[u8],
+    ) -> Result<Option<AuthenticatedActor>, DomainError> {
+        (**self).authenticate_token(token_sha256)
+    }
+
+    fn project_membership(
+        &self,
+        scope: &ProjectScope,
+        actor_id: &ActorId,
+    ) -> Result<Option<ProjectMembership>, DomainError> {
+        (**self).project_membership(scope, actor_id)
+    }
+}
