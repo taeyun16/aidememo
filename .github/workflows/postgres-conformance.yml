@@ -1,0 +1,50 @@
+name: PostgreSQL conformance
+
+on:
+  pull_request:
+    paths:
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "crates/aidememo-domain/**"
+      - "crates/aidememo-store-postgres/**"
+      - ".github/workflows/postgres-conformance.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "crates/aidememo-domain/**"
+      - "crates/aidememo-store-postgres/**"
+      - ".github/workflows/postgres-conformance.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  postgres-17:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: aidememo_conformance
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d aidememo_conformance"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      AIDEMEMO_POSTGRES_URL: postgres://postgres:postgres@127.0.0.1:5432/aidememo_conformance
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: postgres-conformance
+      - name: Run portable PostgreSQL conformance
+        run: cargo test -p aidememo-store-postgres --test postgres_contract -- --ignored --nocapture
