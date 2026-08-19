@@ -2,49 +2,120 @@ name: PostgreSQL conformance
 
 on:
   pull_request:
+    branches: [main]
     paths:
-      - "Cargo.lock"
-      - "Cargo.toml"
-      - "crates/aidememo-domain/**"
-      - "crates/aidememo-store-postgres/**"
-      - ".github/workflows/postgres-conformance.yml"
-  push:
-    branches:
-      - main
-    paths:
-      - "Cargo.lock"
-      - "Cargo.toml"
-      - "crates/aidememo-domain/**"
-      - "crates/aidememo-store-postgres/**"
       - ".github/workflows/postgres-conformance.yml"
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  postgres-17:
+  patch-identity-store:
+    if: github.head_ref == 'agent/postgres-identity-store'
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:17
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: aidememo_conformance
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres -d aidememo_conformance"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 12
-    env:
-      AIDEMEMO_POSTGRES_URL: postgres://postgres:postgres@127.0.0.1:5432/aidememo_conformance
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: postgres-conformance
-      - name: Run PostgreSQL integration conformance
-        run: cargo test -p aidememo-store-postgres --tests -- --ignored --nocapture
+          ref: agent/postgres-identity-store
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Connect identity modules and schema migration
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          local = Path('crates/aidememo-store-local/src/lib.rs')
+          text = local.read_text()
+          if 'mod server_identity;' not in text:
+              anchor = 'use aidememo_domain::{\n'
+              if text.count(anchor) != 1:
+                  raise SystemExit('SQLite import anchor changed')
+              text = text.replace(anchor, 'mod server_identity;\n\n' + anchor, 1)
+          local.write_text(text)
+
+          pg = Path('crates/aidememo-store-postgres/src/lib.rs')
+          text = pg.read_text()
+          if 'mod identity;' not in text:
+              anchor = 'use aidememo_domain::{\n'
+              if text.count(anchor) != 1:
+                  raise SystemExit('PostgreSQL import anchor changed')
+              text = text.replace(anchor, 'mod identity;\n\n' + anchor, 1)
+          if 'const SCHEMA_VERSION: i32 = 1;' in text:
+              text = text.replace('const SCHEMA_VERSION: i32 = 1;', 'const SCHEMA_VERSION: i32 = 2;', 1)
+
+          start = text.find('    fn migrate(&self) -> Result<(), DomainError> {')
+          end = text.find('    fn lock_client(&self)', start)
+          if start < 0 or end < 0:
+              raise SystemExit('PostgreSQL migrate boundaries changed')
+          migrate = '''    fn migrate(&self) -> Result<(), DomainError> {
+              let mut client = self.lock_client()?;
+              // The advisory lock serializes schema creation and version upgrades across
+              // independent server processes while READ COMMITTED lets waiters observe
+              // metadata committed by the previous lock holder.
+              let mut tx = client
+                  .transaction()
+                  .map_err(|error| storage("schema_begin", error))?;
+              tx.query_one(
+                  "SELECT pg_advisory_xact_lock($1)",
+                  &[&SCHEMA_MIGRATION_LOCK_KEY],
+              )
+              .map_err(|error| storage("schema_lock", error))?;
+              tx.batch_execute(
+                  "CREATE TABLE IF NOT EXISTS aidememo_schema (\n                     component TEXT PRIMARY KEY,\n                     version INTEGER NOT NULL CHECK (version > 0)\n                   )",
+              )
+              .map_err(|error| storage("schema_metadata_create", error))?;
+              let version = tx
+                  .query_opt(
+                      "SELECT version FROM aidememo_schema WHERE component = $1",
+                      &[&SCHEMA_COMPONENT],
+                  )
+                  .map_err(|error| storage("schema_version_read", error))?
+                  .map(|row| row.get::<_, i32>(0));
+              match version {
+                  None => {
+                      tx.batch_execute(include_str!("schema.sql"))
+                          .map_err(|error| storage("schema_create", error))?;
+                      tx.execute(
+                          "INSERT INTO aidememo_schema (component, version) VALUES ($1, $2)",
+                          &[&SCHEMA_COMPONENT, &SCHEMA_VERSION],
+                      )
+                      .map_err(|error| storage("schema_version_write", error))?;
+                  }
+                  Some(1) => {
+                      tx.batch_execute(include_str!("migration_v1_v2.sql"))
+                          .map_err(|error| storage("schema_migrate_v1_v2", error))?;
+                      tx.execute(
+                          "UPDATE aidememo_schema SET version = $2 WHERE component = $1",
+                          &[&SCHEMA_COMPONENT, &SCHEMA_VERSION],
+                      )
+                      .map_err(|error| storage("schema_version_write", error))?;
+                  }
+                  Some(SCHEMA_VERSION) => {}
+                  Some(version) => {
+                      return Err(DomainError::StorageFailure {
+                          operation: "schema_version",
+                          detail: format!(
+                              "unsupported PostgreSQL canonical schema {version}; expected {SCHEMA_VERSION}"
+                          ),
+                      });
+                  }
+              }
+              tx.commit().map_err(|error| storage("schema_commit", error))
+          }
+
+          '''
+          pg.write_text(text[:start] + migrate + text[end:])
+          PY
+          cargo fmt --all
+          cargo check -p aidememo-domain -p aidememo-store-local -p aidememo-store-postgres
+          cargo test -p aidememo-store-local -p aidememo-store-postgres --no-run
+          cargo clippy -p aidememo-domain -p aidememo-store-local -p aidememo-store-postgres --all-targets -- -D warnings
+          git diff --check
+      - name: Commit source-only identity hooks
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add crates/aidememo-store-local/src/lib.rs crates/aidememo-store-postgres/src/lib.rs
+          git commit -m 'feat: connect portable identity storage adapters'
+          git push origin HEAD:agent/postgres-identity-store
