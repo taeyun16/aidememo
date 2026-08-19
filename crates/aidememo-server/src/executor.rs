@@ -45,7 +45,6 @@ impl From<DomainError> for BlockingStoreError {
     }
 }
 
-#[derive(Debug)]
 enum BlockingBackend {
     Sqlite(Mutex<SqliteCommandStore>),
 }
@@ -57,7 +56,7 @@ enum BlockingBackend {
 /// but retains that permit until the synchronous database work actually exits.
 /// This prevents request cancellation from creating an unbounded blocking-task
 /// backlog.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub(crate) struct BlockingStoreExecutor {
     backend: Arc<BlockingBackend>,
     permits: Arc<Semaphore>,
