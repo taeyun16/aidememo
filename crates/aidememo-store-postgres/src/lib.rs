@@ -5,6 +5,8 @@
 //! production server boundary must place blocking database work behind a pool /
 //! blocking-executor boundary before enabling this adapter for HTTP traffic.
 
+mod identity;
+
 use aidememo_domain::{
     ActorId, CanonicalResource, ChangeBatch, ChangeCursor, ChangeEntry, ChangeOperation, CommandId,
     CommandReceipt, CommandStore, DomainError, HandoffListEntry, HandoffMailbox, HandoffPage,
@@ -19,7 +21,7 @@ use std::{
 };
 
 const SCHEMA_COMPONENT: &str = "canonical_store";
-const SCHEMA_VERSION: i32 = 1;
+const SCHEMA_VERSION: i32 = 2;
 // Stable application-scoped advisory lock key for canonical schema migration.
 // This serializes first-start DDL across multiple PostgreSQL connections.
 const SCHEMA_MIGRATION_LOCK_KEY: i64 = 0x4169_6465_4d65_6d6f;
@@ -125,9 +127,9 @@ impl PostgresCommandStore {
 
     fn migrate(&self) -> Result<(), DomainError> {
         let mut client = self.lock_client()?;
-        // The advisory lock is the migration serializer. Keep the transaction at
-        // PostgreSQL's default READ COMMITTED level so a waiter observes schema
-        // metadata committed by the lock holder after it acquires the lock.
+        // The advisory lock serializes schema creation and version upgrades across
+        // independent server processes while READ COMMITTED lets waiters observe
+        // metadata committed by the previous lock holder.
         let mut tx = client
             .transaction()
             .map_err(|error| storage("schema_begin", error))?;
@@ -136,29 +138,48 @@ impl PostgresCommandStore {
             &[&SCHEMA_MIGRATION_LOCK_KEY],
         )
         .map_err(|error| storage("schema_lock", error))?;
-        tx.batch_execute(include_str!("schema.sql"))
-            .map_err(|error| storage("schema_create", error))?;
-        tx.execute(
-            "INSERT INTO aidememo_schema (component, version)
-                 VALUES ($1, $2)
-                 ON CONFLICT (component) DO NOTHING",
-            &[&SCHEMA_COMPONENT, &SCHEMA_VERSION],
+        tx.batch_execute(
+            "CREATE TABLE IF NOT EXISTS aidememo_schema (
+                     component TEXT PRIMARY KEY,
+                     version INTEGER NOT NULL CHECK (version > 0)
+                   )",
         )
-        .map_err(|error| storage("schema_version_write", error))?;
-        let version: i32 = tx
-            .query_one(
+        .map_err(|error| storage("schema_metadata_create", error))?;
+        let version = tx
+            .query_opt(
                 "SELECT version FROM aidememo_schema WHERE component = $1",
                 &[&SCHEMA_COMPONENT],
             )
             .map_err(|error| storage("schema_version_read", error))?
-            .get(0);
-        if version != SCHEMA_VERSION {
-            return Err(DomainError::StorageFailure {
-                operation: "schema_version",
-                detail: format!(
-                    "unsupported PostgreSQL canonical schema {version}; expected {SCHEMA_VERSION}"
-                ),
-            });
+            .map(|row| row.get::<_, i32>(0));
+        match version {
+            None => {
+                tx.batch_execute(include_str!("schema.sql"))
+                    .map_err(|error| storage("schema_create", error))?;
+                tx.execute(
+                    "INSERT INTO aidememo_schema (component, version) VALUES ($1, $2)",
+                    &[&SCHEMA_COMPONENT, &SCHEMA_VERSION],
+                )
+                .map_err(|error| storage("schema_version_write", error))?;
+            }
+            Some(1) => {
+                tx.batch_execute(include_str!("migration_v1_v2.sql"))
+                    .map_err(|error| storage("schema_migrate_v1_v2", error))?;
+                tx.execute(
+                    "UPDATE aidememo_schema SET version = $2 WHERE component = $1",
+                    &[&SCHEMA_COMPONENT, &SCHEMA_VERSION],
+                )
+                .map_err(|error| storage("schema_version_write", error))?;
+            }
+            Some(SCHEMA_VERSION) => {}
+            Some(version) => {
+                return Err(DomainError::StorageFailure {
+                    operation: "schema_version",
+                    detail: format!(
+                        "unsupported PostgreSQL canonical schema {version}; expected {SCHEMA_VERSION}"
+                    ),
+                });
+            }
         }
         tx.commit().map_err(|error| storage("schema_commit", error))
     }
