@@ -45,8 +45,8 @@ fn concurrent_schema_initialization_is_serialized() -> Result<(), Box<dyn std::e
     let second = second
         .join()
         .map_err(|_| "second PostgreSQL init thread panicked")??;
-    assert_eq!(first.schema_version()?, 1);
-    assert_eq!(second.schema_version()?, 1);
+    assert_eq!(first.schema_version()?, 2);
+    assert_eq!(second.schema_version()?, 2);
     Ok(())
 }
 
