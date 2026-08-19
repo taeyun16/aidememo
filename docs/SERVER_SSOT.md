@@ -5,9 +5,10 @@ description: Target architecture and staged contract for running AideMemo as a m
 
 # Server and SSOT Architecture
 
-> Status: accepted target direction. Phase 0 and a bounded single-node typed
-> session/fact/handoff HTTP slice are implemented, but this is not the current
-> production contract.
+> Status: Phase 1 is complete for the bounded single-node typed remote SSOT
+> profile on main. It remains a workspace-only engineering contract, not the
+> production or hosted deployment contract; PostgreSQL, high availability, and
+> managed deployment remain Phase 2+ work.
 
 AideMemo is local-first today. One embedded store is opened by the Rust core and
 can be coordinated through stdio MCP, the local daemon, or `aidememo mcp-serve`.
@@ -518,18 +519,22 @@ than ignored. Canonical resource bodies, receipt, resource revision, project
 sequence, change entry, and audit row commit in one SQLite transaction.
 
 This process supports one application replica and has no built-in TLS, token
-rotation/revocation command, rate limits, PostgreSQL/S3, search, heartbeat,
-HTTP MCP gateway profile, retrieval-index replica, or offline outbox yet. Its
-separate local artifact repository is wired to authenticated reader/writer
+rotation/revocation command, rate limits, PostgreSQL canonical backend, or
+high-availability coordination. Phase 1 now includes authenticated
+sequence-aware lexical/hybrid retrieval, handoff lease heartbeat and stale-claim
+recovery, the stateless HTTP MCP gateway, a sequence-consistent exact-read
+replica, and a durable explicit remote-send outbox. The local replica is still
+not a BM25/HNSW retrieval-index replica. Its separate local artifact repository is wired to authenticated reader/writer
 routes and proves idempotent reservation, immutable upload, trusted
 SHA-256/size re-observation, CAS publication, exact-revision reads, abort, and
 restart-safe durable GC. Direct bodies are capped at 64 MiB; this is not the
 future hosted streaming contract.
-The CLI and stdio MCP support named connected handoff profiles, and
-the client can maintain a separate exact-read replica, but this is not a general
-remote storage backend. Typed facts are result evidence in the canonical ledger
-and are not indexed by the existing embedded retrieval engine. This is a server
-contract executable, not a released SaaS or a replacement for `aidememo mcp-serve`.
+The CLI and stdio MCP support named connected handoff profiles, and the client
+can maintain a separate exact-read replica, but this is not a general remote
+storage backend. Typed facts remain canonical result evidence; the server's
+lexical and semantic/HNSW projections are rebuildable derived state pinned to the
+canonical project sequence. This is a server contract executable, not a released
+SaaS or a replacement for `aidememo mcp-serve`.
 
 ### Hosted Cloudflare edge
 
@@ -632,9 +637,11 @@ replay/conflict behavior, reader-only sync, role enforcement, and a
 also stores two bearer profiles for one URL and completes both CLI and installed
 stdio MCP `codex-p1 -> codex-p2` flows through
 send/inbox/accept/return/outbox, then bootstraps the exact-read replica, reads a
-completed handoff after the server stops, and exercises guarded reset. No
-PostgreSQL, Durable Object, search adapter, HTTP MCP gateway profile, retrieval
-projection, or offline outbox is wired yet. Artifact HTTP tests cover
+completed handoff after the server stops, and exercises guarded reset. PostgreSQL and Durable Object canonical adapters are not wired yet. The
+single-node profile now wires sequence-aware lexical/hybrid retrieval, the
+stateless authenticated HTTP MCP gateway, the exact-read replica, lease-aware
+handoff recovery, and the explicit durable remote-send outbox. Artifact HTTP
+tests cover
 reader/writer authorization, exact reservation and publication replay, changed
 request reuse, revision-pinned local download, hosted upload/download grants,
 durable read retention, replacement, abort, expiry, and local/S3 garbage
@@ -674,35 +681,32 @@ Exit gate: Codex primary, Codex secondary, and Hermes complete a handoff through
 one remote project; an unavailable server preserves cached reads and creates no
 silent multi-primary writes.
 
-Current status: the first item is complete for the bounded single-node profile:
-canonical inline JSON resources, an authenticated local immutable artifact
-repository, persisted bearer
-identity/membership, exact reads, incremental
-change retrieval, and typed session/fact/handoff commands. An HTTP integration
-test completes a `codex-p1 -> codex-p2 -> Hermes` chain. Named CLI profiles can
-hold distinct bearer tokens for one URL/project; the connected CLI path now
-completes `send -> inbox -> accept -> return -> outbox` while rejecting actor
-overrides, materializing the participant-scoped context into a separate
-receiver store, and validating local result provenance against the
-authenticated server identity. `mcp-install --remote-profile` verifies that identity, pins the
-derived actor plus profile name to one agent config, and the binary integration
-test runs the installed arguments and environment through the same round trip.
-`replica pull --remote-profile` bootstraps from one actor-projected atomic
-current-state snapshot, then incrementally advances `<store>.replica.sqlite` only after
-revision-pinned resources commit with the whole batch. Scope and epoch
-mismatches and authenticated actor changes fail closed until
-`replica reset --force`; `replica status/get` are network-free and tested after
-server shutdown. Legacy unhydrated change ranges require a fresh snapshot
-instead of being reconstructed from newer state. Combined domain and HTTP tests reject wrong actor, claim,
-source/session evidence, read-only mutation, non-participant reads, and mailbox
-actor-filter injection. Indexed inbox/outbox queries support completed/source
-filters and exclusive sequence pagination; schema v2 migration backfill is
-tested. Artifact reservations and publication are retry-safe, local direct upload is
-authorized before its body is read, exact-revision download is reader-visible,
-and the S3 feature adds authenticated direct grants plus durable retention and
-provider GC. Replacement/abort/expiry feed the same leased worker. HTTP MCP gateway
-wiring, retrieval indexing, and offline write outbox remain open, so the full
-Phase 1 exit gate is not yet closed.
+Current status: **complete on main for the bounded single-node engineering
+profile.** Scenario T exercises Codex A -> remote SSOT -> Codex B -> Hermes on
+one project and one session/source boundary while deliberately injecting both a
+post-commit lost response and a server outage. The gate proves duplicate
+canonical resources and handoffs remain zero after retry, stale revisions and
+non-participant reads fail closed, cached exact reads stay available offline,
+queued sends survive separate CLI processes and publish only after explicit
+recovery, `at_least_seq` retrieval reaches the committed result sequence, and an
+expired worker cannot return after a newer claim. Final Hermes evidence remains
+attached to the original session/source and authenticated actor.
+
+`replica pull --remote-profile` remains the authenticated bootstrap and
+incremental-pull entry point for the exact-read cache. The completed Phase 1
+surface comprises the bounded SQLite SSOT ledger, local artifact lifecycle with
+optional S3-compatible bodies, named bearer-bound CLI
+and stdio MCP profiles, the authenticated stateless HTTP MCP gateway,
+sequence-aware lexical plus optional semantic/HNSW retrieval projections,
+lease-aware handoff heartbeat/recovery, the sequence-consistent exact-read
+replica, and the durable explicit remote-send outbox. These projections and
+caches remain subordinate to canonical records and the project sequence.
+
+This closes the Phase 1 engineering exit gate; it does **not** promote the
+workspace server to a production SaaS contract. PostgreSQL canonical storage,
+high availability, production TLS/rate-limit/token-rotation operations, managed
+R2/AWS conformance, backup/restore drills, and multi-replica deployment remain
+Phase 2 or later work. PostgreSQL implementation begins only after this gate.
 
 ### Phase 2 — portable production backend
 
