@@ -1,9 +1,10 @@
 //! Portable canonical command ledger boundary.
 
 use crate::{
-    ActorId, CanonicalResource, ChangeBatch, ChangeCursor, CommandId, CommandReceipt, DomainError,
-    HandoffPage, HandoffQuery, MaterializedChangeBatch, MutationCommand, ProjectScope,
-    ProjectSnapshot, ResourceRef,
+    ActorId, ActorRecord, AuthenticatedActor, CanonicalResource, ChangeBatch, ChangeCursor,
+    CommandId, CommandReceipt, DomainError, HandoffPage, HandoffQuery, MaterializedChangeBatch,
+    MutationCommand, ProjectEpoch, ProjectId, ProjectMembership, ProjectRecord, ProjectScope,
+    ProjectSnapshot, ResourceRef, TenantRecord,
 };
 
 /// Atomic receipt, resource-revision, audit, and change-feed persistence.
@@ -74,6 +75,87 @@ pub trait CommandStore {
         scope: &ProjectScope,
         resource: &ResourceRef,
     ) -> Result<Option<CanonicalResource>, DomainError>;
+}
+
+/// Server identity, membership, and bootstrap persistence shared by canonical adapters.
+///
+/// Bearer plaintext is deliberately outside this contract. Callers validate and
+/// hash tokens before provisioning or authentication and pass only SHA-256 bytes.
+pub trait ServerIdentityStore {
+    /// Return the adapter schema version exposed by server health endpoints.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stable storage error when schema metadata cannot be read.
+    fn schema_version(&self) -> Result<u32, DomainError>;
+
+    /// Return the current epoch for one existing tenant-project scope.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stable storage error when the project lookup cannot complete.
+    fn project_epoch(&self, scope: &ProjectScope) -> Result<Option<ProjectEpoch>, DomainError>;
+
+    /// Atomically bootstrap an idempotent tenant/project pair.
+    ///
+    /// # Errors
+    ///
+    /// Conflicting immutable identity, epoch, status, or revision state fails closed.
+    fn bootstrap_project(
+        &mut self,
+        tenant: &TenantRecord,
+        project: &ProjectRecord,
+    ) -> Result<(), DomainError>;
+
+    /// Provision an actor, membership, and active bearer digest atomically.
+    ///
+    /// # Errors
+    ///
+    /// Conflicting actor, membership, or token binding state fails closed.
+    fn provision_actor(
+        &mut self,
+        actor: &ActorRecord,
+        membership: &ProjectMembership,
+        token_sha256: &[u8],
+        created_at_ms: i64,
+    ) -> Result<(), DomainError>;
+
+    /// Resolve an active bearer digest to authenticated identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stable validation/storage error for invalid digest length or lookup failure.
+    fn authenticate_token(
+        &self,
+        token_sha256: &[u8],
+    ) -> Result<Option<AuthenticatedActor>, DomainError>;
+
+    /// Load one active membership inside an exact tenant-project scope.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stable storage/decode error when membership lookup cannot complete.
+    fn project_membership(
+        &self,
+        scope: &ProjectScope,
+        actor_id: &ActorId,
+    ) -> Result<Option<ProjectMembership>, DomainError>;
+
+    /// Load active project membership for an authenticated identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stable storage/decode error when membership lookup cannot complete.
+    fn membership(
+        &self,
+        authenticated: &AuthenticatedActor,
+        project_id: &ProjectId,
+    ) -> Result<Option<ProjectMembership>, DomainError> {
+        self.project_membership(
+            &ProjectScope::new(authenticated.tenant_id().clone(), project_id.clone()),
+            authenticated.actor_id(),
+        )
+    }
 }
 
 /// Indexed typed-handoff query boundary for canonical adapters.

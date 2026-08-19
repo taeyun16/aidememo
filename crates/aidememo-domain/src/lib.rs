@@ -12,6 +12,7 @@ pub mod conformance;
 mod error;
 mod handoff;
 mod identity;
+pub mod identity_conformance;
 mod record;
 mod storage;
 
@@ -39,4 +40,4 @@ pub use identity::{
     TenantId,
 };
 pub use record::{ActorKind, ActorRecord, ProjectRecord, RecordStatus, TenantRecord};
-pub use storage::{CommandStore, HandoffStore};
+pub use storage::{CommandStore, HandoffStore, ServerIdentityStore};

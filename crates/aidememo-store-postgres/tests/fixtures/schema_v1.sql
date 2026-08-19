@@ -1,68 +1,18 @@
-CREATE TABLE IF NOT EXISTS aidememo_schema (
+CREATE TABLE aidememo_schema (
     component TEXT PRIMARY KEY,
     version INTEGER NOT NULL CHECK (version > 0)
 );
+INSERT INTO aidememo_schema (component, version) VALUES ('canonical_store', 1);
 
-CREATE TABLE IF NOT EXISTS ssot_tenants (
-    tenant_id TEXT PRIMARY KEY,
-    display_name TEXT NOT NULL,
-    status TEXT NOT NULL CHECK (status IN ('active', 'suspended', 'archived')),
-    revision BIGINT NOT NULL CHECK (revision > 0),
-    created_at_ms BIGINT NOT NULL,
-    updated_at_ms BIGINT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS ssot_projects (
+CREATE TABLE ssot_projects (
     tenant_id TEXT NOT NULL,
     project_id TEXT NOT NULL,
     project_epoch TEXT NOT NULL,
     next_seq BIGINT NOT NULL CHECK (next_seq >= 0),
-    display_name TEXT NOT NULL DEFAULT '',
-    status TEXT NOT NULL DEFAULT 'active'
-        CHECK (status IN ('active', 'suspended', 'archived')),
-    revision BIGINT NOT NULL DEFAULT 1 CHECK (revision > 0),
-    created_at_ms BIGINT NOT NULL DEFAULT 0,
-    updated_at_ms BIGINT NOT NULL DEFAULT 0,
     PRIMARY KEY (tenant_id, project_id)
 );
 
-CREATE TABLE IF NOT EXISTS ssot_actors (
-    tenant_id TEXT NOT NULL,
-    actor_id TEXT NOT NULL,
-    display_name TEXT NOT NULL,
-    kind TEXT NOT NULL CHECK (kind IN ('human', 'agent', 'service')),
-    status TEXT NOT NULL CHECK (status IN ('active', 'suspended', 'archived')),
-    revision BIGINT NOT NULL CHECK (revision > 0),
-    created_at_ms BIGINT NOT NULL,
-    updated_at_ms BIGINT NOT NULL,
-    PRIMARY KEY (tenant_id, actor_id),
-    FOREIGN KEY (tenant_id) REFERENCES ssot_tenants (tenant_id) ON DELETE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS ssot_memberships (
-    tenant_id TEXT NOT NULL,
-    project_id TEXT NOT NULL,
-    actor_id TEXT NOT NULL,
-    role TEXT NOT NULL CHECK (role IN ('owner', 'admin', 'writer', 'reader')),
-    status TEXT NOT NULL CHECK (status IN ('active', 'suspended')),
-    PRIMARY KEY (tenant_id, project_id, actor_id),
-    FOREIGN KEY (tenant_id, project_id)
-        REFERENCES ssot_projects (tenant_id, project_id) ON DELETE CASCADE,
-    FOREIGN KEY (tenant_id, actor_id)
-        REFERENCES ssot_actors (tenant_id, actor_id) ON DELETE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS ssot_token_bindings (
-    token_sha256 BYTEA PRIMARY KEY CHECK (octet_length(token_sha256) = 32),
-    tenant_id TEXT NOT NULL,
-    actor_id TEXT NOT NULL,
-    active BOOLEAN NOT NULL,
-    created_at_ms BIGINT NOT NULL,
-    FOREIGN KEY (tenant_id, actor_id)
-        REFERENCES ssot_actors (tenant_id, actor_id) ON DELETE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS ssot_resources (
+CREATE TABLE ssot_resources (
     tenant_id TEXT NOT NULL,
     project_id TEXT NOT NULL,
     resource_kind TEXT NOT NULL,
@@ -76,7 +26,7 @@ CREATE TABLE IF NOT EXISTS ssot_resources (
         REFERENCES ssot_projects (tenant_id, project_id) ON DELETE CASCADE
 );
 
-CREATE TABLE IF NOT EXISTS ssot_receipts (
+CREATE TABLE ssot_receipts (
     tenant_id TEXT NOT NULL,
     project_id TEXT NOT NULL,
     command_id TEXT NOT NULL,
@@ -93,7 +43,7 @@ CREATE TABLE IF NOT EXISTS ssot_receipts (
         REFERENCES ssot_projects (tenant_id, project_id) ON DELETE CASCADE
 );
 
-CREATE TABLE IF NOT EXISTS ssot_changes (
+CREATE TABLE ssot_changes (
     tenant_id TEXT NOT NULL,
     project_id TEXT NOT NULL,
     project_epoch TEXT NOT NULL,
@@ -112,7 +62,7 @@ CREATE TABLE IF NOT EXISTS ssot_changes (
         REFERENCES ssot_projects (tenant_id, project_id) ON DELETE CASCADE
 );
 
-CREATE TABLE IF NOT EXISTS ssot_audit (
+CREATE TABLE ssot_audit (
     tenant_id TEXT NOT NULL,
     project_id TEXT NOT NULL,
     project_seq BIGINT NOT NULL CHECK (project_seq > 0),
@@ -128,7 +78,7 @@ CREATE TABLE IF NOT EXISTS ssot_audit (
         REFERENCES ssot_projects (tenant_id, project_id) ON DELETE CASCADE
 );
 
-CREATE TABLE IF NOT EXISTS ssot_handoff_index (
+CREATE TABLE ssot_handoff_index (
     tenant_id TEXT NOT NULL,
     project_id TEXT NOT NULL,
     handoff_id TEXT NOT NULL,
@@ -145,7 +95,7 @@ CREATE TABLE IF NOT EXISTS ssot_handoff_index (
         ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS ssot_handoff_inbox_idx
+CREATE INDEX ssot_handoff_inbox_idx
     ON ssot_handoff_index (tenant_id, project_id, to_actor, updated_seq DESC);
-CREATE INDEX IF NOT EXISTS ssot_handoff_outbox_idx
+CREATE INDEX ssot_handoff_outbox_idx
     ON ssot_handoff_index (tenant_id, project_id, from_actor, updated_seq DESC);
