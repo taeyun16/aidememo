@@ -124,10 +124,11 @@ impl PostgresCommandStore {
 
     fn migrate(&self) -> Result<(), DomainError> {
         let mut client = self.lock_client()?;
+        // The advisory lock is the migration serializer. Keep the transaction at
+        // PostgreSQL's default READ COMMITTED level so a waiter observes schema
+        // metadata committed by the lock holder after it acquires the lock.
         let mut tx = client
-            .build_transaction()
-            .isolation_level(IsolationLevel::Serializable)
-            .start()
+            .transaction()
             .map_err(|error| storage("schema_begin", error))?;
         tx.query_one(
             "SELECT pg_advisory_xact_lock($1)",
