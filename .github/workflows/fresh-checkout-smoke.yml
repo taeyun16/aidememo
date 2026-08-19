@@ -17,6 +17,6 @@ jobs:
       - name: Inspect concrete server storage coupling
         run: |
           echo '=== direct service access ==='
-          rg -n -C 8 'state\.service|CommandService<SqliteCommandStore>' crates/aidememo-server/src || true
+          grep -RIn -C 8 -E 'state\.service|CommandService<SqliteCommandStore>' crates/aidememo-server/src || true
           echo '=== helper signatures ==='
-          rg -n -C 5 'CommandService<' crates/aidememo-server/src || true
+          grep -RIn -C 5 'CommandService<' crates/aidememo-server/src || true
