@@ -1,0 +1,148 @@
+name: patch PostgreSQL migration lock
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.head_ref == 'agent/postgres-command-store'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: agent/postgres-command-store
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Serialize PostgreSQL schema migration
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          lib = Path('crates/aidememo-store-postgres/src/lib.rs')
+          text = lib.read_text()
+          old_const = '''const SCHEMA_COMPONENT: &str = "canonical_store";
+          const SCHEMA_VERSION: i32 = 1;'''
+          new_const = '''const SCHEMA_COMPONENT: &str = "canonical_store";
+          const SCHEMA_VERSION: i32 = 1;
+          // Stable application-scoped advisory lock key for canonical schema migration.
+          // This serializes first-start DDL across multiple PostgreSQL connections.
+          const SCHEMA_MIGRATION_LOCK_KEY: i64 = 0x4169_6465_4d65_6d6f;'''
+          if text.count(old_const) != 1:
+              raise SystemExit('schema constants changed')
+          text = text.replace(old_const, new_const, 1)
+
+          old_migrate = '''    fn migrate(&self) -> Result<(), DomainError> {
+              let mut client = self.lock_client()?;
+              client
+                  .batch_execute(include_str!("schema.sql"))
+                  .map_err(|error| storage("schema_create", error))?;
+              client
+                  .execute(
+                      "INSERT INTO aidememo_schema (component, version)\n                 VALUES ($1, $2)\n                 ON CONFLICT (component) DO NOTHING",
+                      &[&SCHEMA_COMPONENT, &SCHEMA_VERSION],
+                  )
+                  .map_err(|error| storage("schema_version_write", error))?;
+              let version: i32 = client
+                  .query_one(
+                      "SELECT version FROM aidememo_schema WHERE component = $1",
+                      &[&SCHEMA_COMPONENT],
+                  )
+                  .map_err(|error| storage("schema_version_read", error))?
+                  .get(0);
+              if version != SCHEMA_VERSION {
+                  return Err(DomainError::StorageFailure {
+                      operation: "schema_version",
+                      detail: format!(
+                          "unsupported PostgreSQL canonical schema {version}; expected {SCHEMA_VERSION}"
+                      ),
+                  });
+              }
+              Ok(())
+          }'''
+          new_migrate = '''    fn migrate(&self) -> Result<(), DomainError> {
+              let mut client = self.lock_client()?;
+              let mut tx = client
+                  .build_transaction()
+                  .isolation_level(IsolationLevel::Serializable)
+                  .start()
+                  .map_err(|error| storage("schema_begin", error))?;
+              tx.query_one(
+                  "SELECT pg_advisory_xact_lock($1)",
+                  &[&SCHEMA_MIGRATION_LOCK_KEY],
+              )
+              .map_err(|error| storage("schema_lock", error))?;
+              tx.batch_execute(include_str!("schema.sql"))
+                  .map_err(|error| storage("schema_create", error))?;
+              tx.execute(
+                  "INSERT INTO aidememo_schema (component, version)\n                 VALUES ($1, $2)\n                 ON CONFLICT (component) DO NOTHING",
+                  &[&SCHEMA_COMPONENT, &SCHEMA_VERSION],
+              )
+              .map_err(|error| storage("schema_version_write", error))?;
+              let version: i32 = tx
+                  .query_one(
+                      "SELECT version FROM aidememo_schema WHERE component = $1",
+                      &[&SCHEMA_COMPONENT],
+                  )
+                  .map_err(|error| storage("schema_version_read", error))?
+                  .get(0);
+              if version != SCHEMA_VERSION {
+                  return Err(DomainError::StorageFailure {
+                      operation: "schema_version",
+                      detail: format!(
+                          "unsupported PostgreSQL canonical schema {version}; expected {SCHEMA_VERSION}"
+                      ),
+                  });
+              }
+              tx.commit()
+                  .map_err(|error| storage("schema_commit", error))
+          }'''
+          if text.count(old_migrate) != 1:
+              raise SystemExit('migrate function changed')
+          lib.write_text(text.replace(old_migrate, new_migrate, 1))
+
+          test = Path('crates/aidememo-store-postgres/tests/postgres_contract.rs')
+          text = test.read_text()
+          anchor = '''#[test]
+          #[ignore = "requires disposable PostgreSQL via AIDEMEMO_POSTGRES_URL"]
+          fn handoff_mailbox_projection_tracks_canonical_lifecycle()'''
+          regression = '''#[test]
+          #[ignore = "requires disposable PostgreSQL via AIDEMEMO_POSTGRES_URL"]
+          fn concurrent_schema_initialization_is_serialized()
+          -> Result<(), Box<dyn std::error::Error>> {
+              let url = std::env::var("AIDEMEMO_POSTGRES_URL")?;
+              let first_url = url.clone();
+              let second_url = url;
+              let first = std::thread::spawn(move || PostgresCommandStore::connect_no_tls(&first_url));
+              let second = std::thread::spawn(move || PostgresCommandStore::connect_no_tls(&second_url));
+              let first = first.join().map_err(|_| "first PostgreSQL init thread panicked")??;
+              let second = second.join().map_err(|_| "second PostgreSQL init thread panicked")??;
+              assert_eq!(first.schema_version()?, 1);
+              assert_eq!(second.schema_version()?, 1);
+              Ok(())
+          }
+
+          #[test]
+          #[ignore = "requires disposable PostgreSQL via AIDEMEMO_POSTGRES_URL"]
+          fn handoff_mailbox_projection_tracks_canonical_lifecycle()'''
+          if text.count(anchor) != 1:
+              raise SystemExit('handoff test anchor changed')
+          test.write_text(text.replace(anchor, regression, 1))
+          PY
+          cargo fmt --all
+          cargo test -p aidememo-store-postgres --no-run
+          cargo clippy -p aidememo-store-postgres --all-targets -- -D warnings
+          rm .github/workflows/patch-postgres-migration-lock.yml
+          git diff --check
+      - name: Commit migration lock fix
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m 'fix: serialize PostgreSQL schema initialization'
+          git push origin HEAD:agent/postgres-command-store
