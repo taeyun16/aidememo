@@ -2,7 +2,7 @@ use crate::{PostgresCommandStore, storage};
 use aidememo_domain::{
     ActorId, ActorKind, ActorRecord, AuthenticatedActor, DomainError, MembershipRole,
     MembershipStatus, ProjectEpoch, ProjectId, ProjectMembership, ProjectRecord, ProjectScope,
-    RecordStatus, Revision, ServerIdentityStore, TenantId, TenantRecord,
+    RecordStatus, ServerIdentityStore, TenantId, TenantRecord,
 };
 
 impl ServerIdentityStore for PostgresCommandStore {
