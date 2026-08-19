@@ -1,0 +1,36 @@
+name: patch PostgreSQL store
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.head_ref == 'agent/postgres-command-store'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: agent/postgres-command-store
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Format and validate adapter
+        run: |
+          cargo fmt --all
+          cargo check -p aidememo-store-postgres
+          cargo test -p aidememo-store-postgres --no-run
+          cargo clippy -p aidememo-store-postgres --all-targets -- -D warnings
+          rm .github/workflows/patch-postgres-store.yml
+          git diff --check
+      - name: Commit formatted adapter and lockfile
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m 'build: validate PostgreSQL adapter compile surface'
+          git push origin HEAD:agent/postgres-command-store
