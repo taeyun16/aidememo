@@ -20,6 +20,9 @@ use std::{
 
 const SCHEMA_COMPONENT: &str = "canonical_store";
 const SCHEMA_VERSION: i32 = 1;
+// Stable application-scoped advisory lock key for canonical schema migration.
+// This serializes first-start DDL across multiple PostgreSQL connections.
+const SCHEMA_MIGRATION_LOCK_KEY: i64 = 0x4169_6465_4d65_6d6f;
 const MAX_CHANGE_LIMIT: usize = 10_000;
 const MAX_SNAPSHOT_RESOURCES: usize = 10_000;
 
@@ -121,18 +124,26 @@ impl PostgresCommandStore {
 
     fn migrate(&self) -> Result<(), DomainError> {
         let mut client = self.lock_client()?;
-        client
-            .batch_execute(include_str!("schema.sql"))
+        let mut tx = client
+            .build_transaction()
+            .isolation_level(IsolationLevel::Serializable)
+            .start()
+            .map_err(|error| storage("schema_begin", error))?;
+        tx.query_one(
+            "SELECT pg_advisory_xact_lock($1)",
+            &[&SCHEMA_MIGRATION_LOCK_KEY],
+        )
+        .map_err(|error| storage("schema_lock", error))?;
+        tx.batch_execute(include_str!("schema.sql"))
             .map_err(|error| storage("schema_create", error))?;
-        client
-            .execute(
-                "INSERT INTO aidememo_schema (component, version)
+        tx.execute(
+            "INSERT INTO aidememo_schema (component, version)
                  VALUES ($1, $2)
                  ON CONFLICT (component) DO NOTHING",
-                &[&SCHEMA_COMPONENT, &SCHEMA_VERSION],
-            )
-            .map_err(|error| storage("schema_version_write", error))?;
-        let version: i32 = client
+            &[&SCHEMA_COMPONENT, &SCHEMA_VERSION],
+        )
+        .map_err(|error| storage("schema_version_write", error))?;
+        let version: i32 = tx
             .query_one(
                 "SELECT version FROM aidememo_schema WHERE component = $1",
                 &[&SCHEMA_COMPONENT],
@@ -147,7 +158,7 @@ impl PostgresCommandStore {
                 ),
             });
         }
-        Ok(())
+        tx.commit().map_err(|error| storage("schema_commit", error))
     }
 
     fn lock_client(&self) -> Result<MutexGuard<'_, Client>, DomainError> {

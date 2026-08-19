@@ -2,9 +2,9 @@ use aidememo_domain::{
     ActorId, AuthenticatedActor, AuthorizedCommand, ChangeOperation, ClaimId, CommandEnvelope,
     CommandFingerprint, CommandId, CommandStore, FactId, FactRecord, HandoffId, HandoffMailbox,
     HandoffOutcome, HandoffQuery, HandoffRecord, HandoffStore, MembershipRole, MembershipStatus,
-    MutationCommand, OperationName, ProjectAuthorization, ProjectEpoch, ProjectId, ProjectMembership,
-    ProjectScope, ResourceId, ResourceKind, ResourceRef, Revision, SessionId, SessionRecord, SourceId,
-    TenantId, conformance,
+    MutationCommand, OperationName, ProjectAuthorization, ProjectEpoch, ProjectId,
+    ProjectMembership, ProjectScope, ResourceId, ResourceKind, ResourceRef, Revision, SessionId,
+    SessionRecord, SourceId, TenantId, conformance,
 };
 use aidememo_store_postgres::PostgresCommandStore;
 
@@ -33,8 +33,27 @@ fn portable_command_store_conformance() -> Result<(), Box<dyn std::error::Error>
 
 #[test]
 #[ignore = "requires disposable PostgreSQL via AIDEMEMO_POSTGRES_URL"]
-fn handoff_mailbox_projection_tracks_canonical_lifecycle()
--> Result<(), Box<dyn std::error::Error>> {
+fn concurrent_schema_initialization_is_serialized() -> Result<(), Box<dyn std::error::Error>> {
+    let url = std::env::var("AIDEMEMO_POSTGRES_URL")?;
+    let first_url = url.clone();
+    let second_url = url;
+    let first = std::thread::spawn(move || PostgresCommandStore::connect_no_tls(&first_url));
+    let second = std::thread::spawn(move || PostgresCommandStore::connect_no_tls(&second_url));
+    let first = first
+        .join()
+        .map_err(|_| "first PostgreSQL init thread panicked")??;
+    let second = second
+        .join()
+        .map_err(|_| "second PostgreSQL init thread panicked")??;
+    assert_eq!(first.schema_version()?, 1);
+    assert_eq!(second.schema_version()?, 1);
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires disposable PostgreSQL via AIDEMEMO_POSTGRES_URL"]
+fn handoff_mailbox_projection_tracks_canonical_lifecycle() -> Result<(), Box<dyn std::error::Error>>
+{
     let url = std::env::var("AIDEMEMO_POSTGRES_URL")?;
     let scope = ProjectScope::new(
         TenantId::try_from("tenant_handoff_fixture")?,
@@ -82,13 +101,7 @@ fn handoff_mailbox_projection_tracks_canonical_lifecycle()
     let inbox = store.handoffs(
         &scope,
         &receiver,
-        &HandoffQuery::new(
-            HandoffMailbox::Inbox,
-            Some(source.clone()),
-            false,
-            None,
-            10,
-        )?,
+        &HandoffQuery::new(HandoffMailbox::Inbox, Some(source.clone()), false, None, 10)?,
     )?;
     let outbox = store.handoffs(
         &scope,
@@ -142,12 +155,7 @@ fn handoff_mailbox_projection_tracks_canonical_lifecycle()
         receiver.clone(),
         "PostgreSQL handoff result evidence".to_owned(),
     )?;
-    handoff.return_result(
-        &receiver,
-        &claim,
-        &result_fact,
-        HandoffOutcome::Succeeded,
-    )?;
+    handoff.return_result(&receiver, &claim, &result_fact, HandoffOutcome::Succeeded)?;
     let completed = store.execute(&handoff_mutation(
         &scope,
         &receiver,
@@ -164,29 +172,20 @@ fn handoff_mailbox_projection_tracks_canonical_lifecycle()
     let active_only = store.handoffs(
         &scope,
         &receiver,
-        &HandoffQuery::new(
-            HandoffMailbox::Inbox,
-            Some(source.clone()),
-            false,
-            None,
-            10,
-        )?,
+        &HandoffQuery::new(HandoffMailbox::Inbox, Some(source.clone()), false, None, 10)?,
     )?;
     assert!(active_only.assignments.is_empty());
     let including_completed = store.handoffs(
         &scope,
         &receiver,
-        &HandoffQuery::new(
-            HandoffMailbox::Inbox,
-            Some(source),
-            true,
-            None,
-            10,
-        )?,
+        &HandoffQuery::new(HandoffMailbox::Inbox, Some(source), true, None, 10)?,
     )?;
     assert_eq!(including_completed.assignments.len(), 1);
     assert_eq!(including_completed.assignments[0].record, handoff);
-    assert_eq!(including_completed.assignments[0].revision, completed.revision);
+    assert_eq!(
+        including_completed.assignments[0].revision,
+        completed.revision
+    );
     assert_eq!(
         including_completed.assignments[0].project_seq,
         completed.project_seq
