@@ -11,7 +11,9 @@ async fn sqlite_executor_runs_borrowed_server_store() -> Result<(), Box<dyn std:
     let executor =
         BlockingStoreExecutor::sqlite(store, Duration::from_secs(1), Duration::from_secs(1));
 
-    let schema_version = executor.run(|store| store.schema_version()).await?;
+    let schema_version = executor
+        .run_service(|service| service.store().schema_version())
+        .await?;
     assert_eq!(schema_version, 4);
     Ok(())
 }
