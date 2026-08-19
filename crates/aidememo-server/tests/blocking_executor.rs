@@ -20,11 +20,8 @@ async fn sqlite_executor_runs_borrowed_server_store() -> Result<(), Box<dyn std:
 async fn timed_out_blocking_task_retains_capacity_until_it_exits()
 -> Result<(), Box<dyn std::error::Error>> {
     let store = SqliteCommandStore::open_in_memory()?;
-    let executor = BlockingStoreExecutor::sqlite(
-        store,
-        Duration::from_millis(100),
-        Duration::from_millis(40),
-    );
+    let executor =
+        BlockingStoreExecutor::sqlite(store, Duration::from_millis(100), Duration::from_millis(40));
     let (started_tx, started_rx) = tokio::sync::oneshot::channel();
     let (release_tx, release_rx) = mpsc::channel();
 
