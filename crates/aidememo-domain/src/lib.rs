@@ -39,4 +39,4 @@ pub use identity::{
     TenantId,
 };
 pub use record::{ActorKind, ActorRecord, ProjectRecord, RecordStatus, TenantRecord};
-pub use storage::{CommandStore, HandoffStore};
+pub use storage::{CommandStore, HandoffStore, ServerIdentityStore};
