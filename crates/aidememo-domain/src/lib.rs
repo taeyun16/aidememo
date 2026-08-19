@@ -12,6 +12,7 @@ pub mod conformance;
 mod error;
 mod handoff;
 mod identity;
+pub mod identity_conformance;
 mod record;
 mod storage;
 
