@@ -1,3 +1,4 @@
+#[allow(dead_code)]
 #[path = "../src/executor.rs"]
 mod executor;
 
