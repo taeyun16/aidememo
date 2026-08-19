@@ -41,7 +41,7 @@ fn concurrent_identical_command_replays_one_receipt() -> Result<(), Box<dyn std:
     assert_eq!(first.project_seq.get(), 1);
     assert_eq!(first.revision.get(), 1);
 
-    let mut verify = PostgresCommandStore::connect_no_tls(&url)?;
+    let verify = PostgresCommandStore::connect_no_tls(&url)?;
     let changes = verify.changes(
         &scope,
         &ChangeCursor {
@@ -103,7 +103,7 @@ fn concurrent_command_id_conflict_commits_once() -> Result<(), Box<dyn std::erro
         1
     );
 
-    let mut verify = PostgresCommandStore::connect_no_tls(&url)?;
+    let verify = PostgresCommandStore::connect_no_tls(&url)?;
     let changes = verify.changes(
         &scope,
         &ChangeCursor {
@@ -185,7 +185,7 @@ fn concurrent_stale_cas_loser_is_domain_error() -> Result<(), Box<dyn std::error
         1
     );
 
-    let mut verify = PostgresCommandStore::connect_no_tls(&url)?;
+    let verify = PostgresCommandStore::connect_no_tls(&url)?;
     let changes = verify.changes(
         &scope,
         &ChangeCursor {
