@@ -7,6 +7,7 @@ on:
       - "Cargo.toml"
       - "crates/aidememo-domain/**"
       - "crates/aidememo-store-postgres/**"
+      - "crates/aidememo-server/**"
       - ".github/workflows/postgres-conformance.yml"
   push:
     branches:
@@ -16,6 +17,7 @@ on:
       - "Cargo.toml"
       - "crates/aidememo-domain/**"
       - "crates/aidememo-store-postgres/**"
+      - "crates/aidememo-server/**"
       - ".github/workflows/postgres-conformance.yml"
 
 permissions:
@@ -46,5 +48,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: postgres-conformance
-      - name: Run PostgreSQL integration conformance
+      - name: Run PostgreSQL storage conformance
         run: cargo test -p aidememo-store-postgres --tests -- --ignored --nocapture
+      - name: Run PostgreSQL server executor conformance
+        run: cargo test -p aidememo-server --test postgres_executor -- --ignored --nocapture
