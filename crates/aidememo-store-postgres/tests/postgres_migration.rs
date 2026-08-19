@@ -30,7 +30,12 @@ fn v1_schema_migrates_to_identity_v2_without_losing_project_head()
     legacy.execute(
         "INSERT INTO ssot_projects (tenant_id, project_id, project_epoch, next_seq)
          VALUES ($1, $2, $3, $4)",
-        &[&"tenant_migration", &"project_migration", &"epoch_migration", &7_i64],
+        &[
+            &"tenant_migration",
+            &"project_migration",
+            &"epoch_migration",
+            &7_i64,
+        ],
     )?;
     drop(legacy);
 
@@ -88,7 +93,10 @@ fn v1_schema_migrates_to_identity_v2_without_losing_project_head()
         .authenticate_token(&token)?
         .ok_or("migrated actor token did not authenticate")?;
     assert_eq!(authenticated.actor_id(), &actor.actor_id);
-    assert_eq!(store.membership(&authenticated, &scope.project_id)?, Some(membership));
+    assert_eq!(
+        store.membership(&authenticated, &scope.project_id)?,
+        Some(membership)
+    );
 
     let mut verify = Client::connect(&migration_url, NoTls)?;
     let next_seq: i64 = verify
@@ -101,8 +109,6 @@ fn v1_schema_migrates_to_identity_v2_without_losing_project_head()
     drop(verify);
     drop(store);
 
-    admin.simple_query(&format!(
-        "DROP DATABASE {MIGRATION_DATABASE} WITH (FORCE)"
-    ))?;
+    admin.simple_query(&format!("DROP DATABASE {MIGRATION_DATABASE} WITH (FORCE)"))?;
     Ok(())
 }
