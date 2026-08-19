@@ -24,6 +24,8 @@ jobs:
         with:
           components: rustfmt, clippy
       - name: Apply project-row writer serialization
+        env:
+          CANONICAL_WORKFLOW_B64: bmFtZTogUG9zdGdyZVNRTCBjb25mb3JtYW5jZQoKb246CiAgcHVsbF9yZXF1ZXN0OgogICAgcGF0aHM6CiAgICAgIC0gIkNhcmdvLmxvY2siCiAgICAgIC0gIkNhcmdvLnRvbWwiCiAgICAgIC0gImNyYXRlcy9haWRlbWVtby1kb21haW4vKioiCiAgICAgIC0gImNyYXRlcy9haWRlbWVtby1zdG9yZS1wb3N0Z3Jlcy8qKiIKICAgICAgLSAiLmdpdGh1Yi93b3JrZmxvd3MvcG9zdGdyZXMtY29uZm9ybWFuY2UueW1sIgogIHB1c2g6CiAgICBicmFuY2hlczoKICAgICAgLSBtYWluCiAgICBwYXRoczoKICAgICAgLSAiQ2FyZ28ubG9jayIKICAgICAgLSAiQ2FyZ28udG9tbCIKICAgICAgLSAiY3JhdGVzL2FpZGVtZW1vLWRvbWFpbi8qKiIKICAgICAgLSAiY3JhdGVzL2FpZGVtZW1vLXN0b3JlLXBvc3RncmVzLyoqIgogICAgICAtICIuZ2l0aHViL3dvcmtmbG93cy9wb3N0Z3Jlcy1jb25mb3JtYW5jZS55bWwiCgpwZXJtaXNzaW9uczoKICBjb250ZW50czogcmVhZAoKam9iczoKICBwb3N0Z3Jlcy0xNzoKICAgIHJ1bnMtb246IHVidW50dS1sYXRlc3QKICAgIHNlcnZpY2VzOgogICAgICBwb3N0Z3JlczoKICAgICAgICBpbWFnZTogcG9zdGdyZXM6MTcKICAgICAgICBlbnY6CiAgICAgICAgICBQT1NUR1JFU19VU0VSOiBwb3N0Z3JlcwogICAgICAgICAgUE9TVEdSRVNfUEFTU1dPUkQ6IHBvc3RncmVzCiAgICAgICAgICBQT1NUR1JFU19EQjogYWlkZW1lbW9fY29uZm9ybWFuY2UKICAgICAgICBwb3J0czoKICAgICAgICAgIC0gNTQzMjo1NDMyCiAgICAgICAgb3B0aW9uczogPi0KICAgICAgICAgIC0taGVhbHRoLWNtZCAicGdfaXNyZWFkeSAtVSBwb3N0Z3JlcyAtZCBhaWRlbWVtb19jb25mb3JtYW5jZSIKICAgICAgICAgIC0taGVhbHRoLWludGVydmFsIDVzCiAgICAgICAgICAtLWhlYWx0aC10aW1lb3V0IDVzCiAgICAgICAgICAtLWhlYWx0aC1yZXRyaWVzIDEyCiAgICBlbnY6CiAgICAgIEFJREVNRU1PX1BPU1RHUkVTX1VSTDogcG9zdGdyZXM6Ly9wb3N0Z3Jlczpwb3N0Z3Jlc0AxMjcuMC4wLjE6NTQzMi9haWRlbWVtb19jb25mb3JtYW5jZQogICAgc3RlcHM6CiAgICAgIC0gdXNlczogYWN0aW9ucy9jaGVja291dEB2NwogICAgICAtIHVzZXM6IGR0b2xuYXkvcnVzdC10b29sY2hhaW5Ac3RhYmxlCiAgICAgIC0gdXNlczogU3dhdGluZW0vcnVzdC1jYWNoZUB2MgogICAgICAgIHdpdGg6CiAgICAgICAgICBzaGFyZWQta2V5OiBwb3N0Z3Jlcy1jb25mb3JtYW5jZQogICAgICAtIG5hbWU6IFJ1biBwb3J0YWJsZSBQb3N0Z3JlU1FMIGNvbmZvcm1hbmNlCiAgICAgICAgcnVuOiBjYXJnbyB0ZXN0IC1wIGFpZGVtZW1vLXN0b3JlLXBvc3RncmVzIC0tdGVzdCBwb3N0Z3Jlc19jb250cmFjdCAtLSAtLWlnbm9yZWQgLS1ub2NhcHR1cmUK
         run: |
           python3 - <<'PY'
           from pathlib import Path
@@ -75,60 +77,9 @@ jobs:
           )
           text = text[:impl_start] + execute_block + text[receipt_start:]
           path.write_text(text)
-
-          Path('.github/workflows/patch-postgres-writer-isolation.yml').unlink(missing_ok=True)
-          Path('.github/workflows/postgres-conformance.yml').write_text('''name: PostgreSQL conformance
-
-on:
-  pull_request:
-    paths:
-      - "Cargo.lock"
-      - "Cargo.toml"
-      - "crates/aidememo-domain/**"
-      - "crates/aidememo-store-postgres/**"
-      - ".github/workflows/postgres-conformance.yml"
-  push:
-    branches:
-      - main
-    paths:
-      - "Cargo.lock"
-      - "Cargo.toml"
-      - "crates/aidememo-domain/**"
-      - "crates/aidememo-store-postgres/**"
-      - ".github/workflows/postgres-conformance.yml"
-
-permissions:
-  contents: read
-
-jobs:
-  postgres-17:
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:17
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: aidememo_conformance
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres -d aidememo_conformance"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 12
-    env:
-      AIDEMEMO_POSTGRES_URL: postgres://postgres:postgres@127.0.0.1:5432/aidememo_conformance
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: postgres-conformance
-      - name: Run portable PostgreSQL conformance
-        run: cargo test -p aidememo-store-postgres --test postgres_contract -- --ignored --nocapture
-''')
           PY
+          rm -f .github/workflows/patch-postgres-writer-isolation.yml
+          printf '%s' "$CANONICAL_WORKFLOW_B64" | base64 --decode > .github/workflows/postgres-conformance.yml
           cargo fmt --all
           cargo test -p aidememo-store-postgres --no-run
           cargo clippy -p aidememo-store-postgres --all-targets -- -D warnings
