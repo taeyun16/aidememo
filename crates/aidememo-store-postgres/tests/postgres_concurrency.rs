@@ -86,7 +86,9 @@ fn concurrent_command_id_conflict_commits_once() -> Result<(), Box<dyn std::erro
     let barrier = Arc::new(Barrier::new(2));
     let first = spawn_execute(url.clone(), barrier.clone(), first_command);
     let second = spawn_execute(url.clone(), barrier, second_command);
-    let first = first.join().map_err(|_| "first conflict contender panicked")?;
+    let first = first
+        .join()
+        .map_err(|_| "first conflict contender panicked")?;
     let second = second
         .join()
         .map_err(|_| "second conflict contender panicked")?;
@@ -157,7 +159,9 @@ fn concurrent_stale_cas_loser_is_domain_error() -> Result<(), Box<dyn std::error
     let first = spawn_execute(url.clone(), barrier.clone(), first_command);
     let second = spawn_execute(url.clone(), barrier, second_command);
     let first = first.join().map_err(|_| "first stale contender panicked")?;
-    let second = second.join().map_err(|_| "second stale contender panicked")?;
+    let second = second
+        .join()
+        .map_err(|_| "second stale contender panicked")?;
     let outcomes = [first, second];
 
     let committed = outcomes
@@ -322,7 +326,9 @@ fn concurrent_handoff_claim_keeps_index_on_winner() -> Result<(), Box<dyn std::e
     let first = spawn_execute(url.clone(), barrier.clone(), first_command);
     let second = spawn_execute(url.clone(), barrier, second_command);
     let first = first.join().map_err(|_| "first claim contender panicked")?;
-    let second = second.join().map_err(|_| "second claim contender panicked")?;
+    let second = second
+        .join()
+        .map_err(|_| "second claim contender panicked")?;
     let outcomes = [first, second];
     assert_eq!(outcomes.iter().filter(|result| result.is_ok()).count(), 1);
     assert_eq!(
@@ -358,11 +364,7 @@ fn concurrent_handoff_claim_keeps_index_on_winner() -> Result<(), Box<dyn std::e
     Ok(())
 }
 
-fn initialize(
-    url: &str,
-    scope: &ProjectScope,
-    epoch: &ProjectEpoch,
-) -> Result<(), DomainError> {
+fn initialize(url: &str, scope: &ProjectScope, epoch: &ProjectEpoch) -> Result<(), DomainError> {
     let store = PostgresCommandStore::connect_no_tls(url)?;
     store.initialize_project(scope, epoch)
 }
