@@ -8,6 +8,14 @@ description: AideMemo 패키지의 배포 순서와 프리플라이트 검사를
 이 페이지는 패키지 배포 순서를 기록합니다. 의도적으로 보수적입니다. 저수준
 패키지를 먼저 배포하고 그 위 계층을 설치해 smoke test합니다.
 
+## 서버 릴리스 경계
+
+main의 단일 노드 원격 SSOT Phase 1 engineering gate는 완료됐습니다. 서버 기반은
+계속 workspace 전용이며 미배포 상태입니다. 공개 v0.1.0 package 계약에 포함되지
+않고 production SaaS 배포를 의미하지도 않습니다. PostgreSQL 정본 storage,
+고가용성, managed hosted 운영, production backup/restore는 Phase 2 이후의 release
+작업입니다.
+
 ## 1. 레지스트리와 저장소 설정
 
 첫 실제 배포 전에 repository environment와 registry trusted-publisher 항목을

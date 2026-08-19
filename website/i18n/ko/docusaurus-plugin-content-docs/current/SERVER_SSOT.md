@@ -5,8 +5,10 @@ description: AideMemo를 멀티테넌트 서버, SaaS 또는 Kubernetes 배포�
 
 # 서버 및 SSOT 아키텍처
 
-> 상태: 채택된 목표 방향입니다. Phase 0과 제한된 단일 노드 typed
-> session/fact/handoff HTTP 구간은 구현됐지만 현재 프로덕션 계약은 아닙니다.
+> 상태: main의 제한된 단일 노드 typed 원격 SSOT profile은 Phase 1을
+> 완료했습니다. 여전히 workspace 전용 engineering 계약이며 production/hosted
+> 배포 계약은 아닙니다. PostgreSQL, 고가용성, managed deployment는 Phase 2 이후
+> 작업으로 남습니다.
 
 현재 AideMemo는 로컬 우선 시스템입니다. Rust 코어가 하나의 임베디드
 저장소를 열고 stdio MCP, 로컬 daemon 또는 `aidememo mcp-serve`를 통해 이를
@@ -488,17 +490,20 @@ JSON은 `deny_unknown_fields`를
 resource body, receipt, resource revision, project sequence, change entry, audit
 row는 한 SQLite transaction으로 commit됩니다.
 
-현재 process는 application replica 하나만 지원하며 내장 TLS, token
-rotation/revocation command, rate limit, PostgreSQL/S3, search, heartbeat, HTTP MCP
-gateway profile, retrieval-index replica, offline outbox가 아직 없습니다. 별도 local
+이 process는 application replica 하나를 지원하며 built-in TLS, token
+rotation/revocation command, rate limit, PostgreSQL 정본 backend, 고가용성 coordination은
+아직 제공하지 않습니다. Phase 1에는 인증된 sequence-aware lexical/hybrid retrieval,
+handoff lease heartbeat와 stale-claim recovery, stateless HTTP MCP gateway,
+sequence-consistent exact-read replica, durable explicit remote-send outbox가 포함됩니다.
+로컬 replica 자체는 여전히 BM25/HNSW retrieval-index replica가 아닙니다. 별도 local
 artifact repository는 인증된 reader/writer route에 연결됐고 idempotent reservation,
 immutable upload, 신뢰 가능한 SHA-256/size 재관찰, CAS publication, exact-revision
 read, abort, 재시작에 안전한 durable GC를 검증합니다. Direct body는 64 MiB로
-제한되며 향후 hosted streaming 계약은 아닙니다. CLI와 stdio MCP는 named connected handoff profile을 지원하고
-client는 별도 exact-read replica를 유지할 수 있지만 일반 원격 storage backend는
-아닙니다. Typed fact는 정본 ledger의 결과 증거이며 기존 embedded retrieval
-engine에 index되지 않습니다. 서버 계약 실행 파일이지 출시된 SaaS나
-`aidememo mcp-serve`의 대체물이 아닙니다.
+제한되며 향후 hosted streaming 계약은 아닙니다. CLI와 stdio MCP는 named connected handoff profile을 지원하고 client는 별도 exact-read
+replica를 유지할 수 있지만 일반 remote storage backend는 아닙니다. Typed fact는 계속
+정본 result evidence이며 서버의 lexical 및 semantic/HNSW projection은 정본 project
+sequence에 고정되고 언제든 재구축 가능한 derived state입니다. 서버 계약 실행
+파일이지 출시된 SaaS나 `aidememo mcp-serve`의 대체물이 아닙니다.
 
 ### Cloudflare edge 호스팅
 
@@ -594,9 +599,10 @@ Hermes` typed handoff chain도 검사합니다. Binary 수준 test도 URL 하나
 profile 두 개를 저장하고 CLI와 설치된 stdio MCP 모두에서
 send/inbox/accept/return/outbox `codex-p1 -> codex-p2` 흐름을 완료한 뒤
 exact-read replica를 bootstrap하고 서버 종료 후 완료 handoff를 읽으며 guarded
-reset도 검사합니다. PostgreSQL, Durable Object, search adapter, HTTP MCP gateway
-profile, retrieval projection, offline outbox는 아직 연결되지 않았습니다. Artifact
-HTTP test는 reader/writer authorization, exact reservation과 publication replay,
+reset도 검사합니다. PostgreSQL과 Durable Object 정본 adapter는 아직 연결되지 않았습니다. 단일 노드
+profile에는 sequence-aware lexical/hybrid retrieval, stateless 인증 HTTP MCP gateway,
+exact-read replica, lease-aware handoff recovery, explicit durable remote-send outbox가
+연결됐습니다. Artifact HTTP test는 reader/writer authorization, exact reservation과 publication replay,
 변경된 request reuse, revision-pinned local download, hosted upload/download grant,
 durable read retention, replacement, abort, expiry, mock provider를 통한 local/S3 garbage
 collection을 검사합니다. Ignored provider test와 local MinIO harness는 실제
@@ -636,34 +642,30 @@ stdio MCP profile은 typed handoff surface를 실제로 사용합니다.
 handoff를 완료합니다. 서버가 중단되면 cache read는 유지되지만 조용한
 multi-primary write는 만들지 않습니다.
 
-현재 상태: 제한된 single-node profile에서는 첫 항목이 완료됐습니다. 정본 inline
-JSON resource, 인증된 local immutable artifact repository, 저장된 bearer
-identity/membership, exact read, incremental change 조회, typed
-session/fact/handoff command를 지원합니다. HTTP integration test는 `codex-p1 -> codex-p2 ->
-Hermes` chain을 완료합니다. Named CLI profile은 같은 URL/project에 서로 다른
-bearer token을 보관할 수 있고, connected CLI 경로는 actor override를 거부하며
-participant-scoped context를 별도 receiver store에 materialize하고 로컬 결과
-provenance를 인증된 서버 identity와 대조한 뒤
-`send -> inbox -> accept -> return -> outbox`를 완료합니다.
-`mcp-install --remote-profile`은 이 identity를 확인하고 파생 actor와 profile
-이름을 agent config 하나에 고정합니다. Binary integration test는 설치된 argument와
-환경을 그대로 사용해 같은 왕복을 실행합니다.
-`replica pull --remote-profile`은 actor-projected 원자적 현재 상태 snapshot에서 bootstrap하고,
-revision-pinned resource가 batch 전체와 commit된 경우에만
-`<store>.replica.sqlite` cursor를 증분 전진시킵니다. Scope와 epoch mismatch는
-물론 인증 actor 변경도 `replica reset --force` 전까지
-fail-closed하며 `replica status/get`은 network-free이고 서버 종료 뒤에도
-검증됩니다. Legacy unhydrated change 범위는 더 최신 상태로 재구성하지 않고 새
-snapshot을 요구합니다. 도메인과 HTTP test를 합쳐 잘못된 actor, claim, source/session 증거,
-read-only mutation, 비참여자 read, mailbox actor filter 주입을 거부합니다.
-Indexed inbox/outbox query는 completed/source filter와 exclusive sequence
-pagination을 지원하며 schema v2 migration backfill도 검사합니다. Artifact
-reservation과 publication은 retry-safe이고, local direct upload는 body를 읽기 전에
-authorization을 거치며, exact-revision download는 reader에게 열립니다. S3 feature는
-인증된 direct grant, durable retention, provider GC를 추가하며 replacement/abort/expiry는
-같은 leased worker로 전달됩니다. HTTP MCP gateway
-연결, retrieval indexing, offline write outbox는 아직 열려 있으므로
-Phase 1 종료 gate 전체는 닫히지 않았습니다.
+현재 상태: **main의 제한된 단일 노드 engineering profile에서 완료됐습니다.**
+Scenario T는 project 하나와 동일 session/source 경계에서 Codex A -> 원격 SSOT ->
+Codex B -> Hermes 흐름을 실행하면서 post-commit response loss와 서버 outage를
+의도적으로 주입합니다. 이 gate는 retry 뒤 duplicate canonical resource와 handoff가
+0개 추가되고, stale revision과 비참여자 read가 fail-closed하며, offline에서도 cached
+exact read가 유지되고, queued send가 서로 다른 CLI process 사이에서 살아남아 복구
+뒤 명시적 publish에서만 정본에 반영되며, `at_least_seq` retrieval이 commit된 결과
+sequence에 도달하고, 만료된 worker가 더 새로운 claim 뒤에 return할 수 없음을
+검증합니다. 최종 Hermes evidence는 원래 session/source와 인증 actor 경계에 그대로
+연결됩니다.
+
+`replica pull --remote-profile`은 exact-read cache의 인증 bootstrap 및 incremental
+pull 진입점으로 유지됩니다. 완료된 Phase 1 surface는 제한된 SQLite SSOT ledger,
+선택형 S3-compatible body를 가진 local artifact lifecycle, bearer binding을 사용하는 named CLI와 stdio MCP profile,
+인증된 stateless HTTP MCP gateway, sequence-aware lexical 및 선택형 semantic/HNSW
+retrieval projection, lease-aware handoff heartbeat/recovery, sequence-consistent
+exact-read replica, durable explicit remote-send outbox로 구성됩니다. Projection과 cache는
+계속 정본 record와 project sequence의 하위 derived state입니다.
+
+이로써 Phase 1 engineering 종료 gate를 닫습니다. 그러나 workspace server가
+production SaaS 계약으로 승격된 것은 **아닙니다**. PostgreSQL 정본 storage, 고가용성,
+production TLS/rate-limit/token-rotation 운영, managed R2/AWS conformance,
+backup/restore drill, multi-replica deployment는 Phase 2 이후 작업으로 남습니다.
+PostgreSQL 구현은 이 gate 이후에 시작합니다.
 
 ### Phase 2 — 이식 가능한 프로덕션 backend
 

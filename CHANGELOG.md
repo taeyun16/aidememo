@@ -4,6 +4,7 @@
 
 ### Added
 
+- **Single-node remote SSOT Phase 1 gate** — the bounded authenticated server now combines sequence-aware lexical/hybrid retrieval, an exact-read replica, explicit durable remote-send outbox replay, lease heartbeat/stale-claim recovery, and a stateless HTTP MCP gateway over the same typed domain invariants. Scenario T injects both a post-commit lost response and a server outage across Codex A -> Codex B -> Hermes, proving retry idempotency, offline cache/outbox behavior, stale-worker fencing, retrieval freshness, and final evidence provenance. This closes the Phase 1 engineering gate without claiming that the workspace-only server is a production SaaS or PostgreSQL-backed release.
 - **Handoff concurrency and lookup hardening** — assignment transitions now use
   optimistic compare-and-swap revisions so concurrent accept, heartbeat, and
   return writers fail closed instead of overwriting newer state. Automatic

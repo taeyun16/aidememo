@@ -9,6 +9,14 @@ This page records the package publish order. It is intentionally conservative:
 publish lower-level packages first, then install and smoke the layers above
 them.
 
+## Server release boundary
+
+The single-node remote SSOT Phase 1 engineering gate is complete on main. The
+server foundation remains workspace-only and unpublished; it is not part of the
+public v0.1.0 package contract and does not imply a production SaaS deployment.
+PostgreSQL canonical storage, high availability, managed hosted operations, and
+production backup/restore are Phase 2 or later release work.
+
 ## 1. Registry and repository setup
 
 Create the repository environments and registry trusted-publisher entries before
