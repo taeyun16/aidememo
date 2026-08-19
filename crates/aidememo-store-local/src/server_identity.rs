@@ -28,13 +28,7 @@ impl ServerIdentityStore for SqliteCommandStore {
         token_sha256: &[u8],
         created_at_ms: i64,
     ) -> Result<(), DomainError> {
-        SqliteCommandStore::provision_actor(
-            self,
-            actor,
-            membership,
-            token_sha256,
-            created_at_ms,
-        )
+        SqliteCommandStore::provision_actor(self, actor, membership, token_sha256, created_at_ms)
     }
 
     fn authenticate_token(

@@ -104,9 +104,12 @@ pub fn run<S: ServerIdentityStore>(
         "token_binding_conflict",
         "one bearer digest must not bind to another tenant/actor identity",
     )?;
-    let authenticated_after_conflict = store
-        .authenticate_token(&token)?
-        .ok_or_else(|| violation("token_binding_rollback", "original token binding disappeared"))?;
+    let authenticated_after_conflict = store.authenticate_token(&token)?.ok_or_else(|| {
+        violation(
+            "token_binding_rollback",
+            "original token binding disappeared",
+        )
+    })?;
     check(
         authenticated_after_conflict.actor_id() == &actor.actor_id,
         "token_binding_rollback",

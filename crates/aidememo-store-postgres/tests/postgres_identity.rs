@@ -1,13 +1,15 @@
 use aidememo_domain::{
-    ActorId, ActorKind, ActorRecord, MembershipRole, MembershipStatus, ProjectId, ProjectMembership,
-    ProjectRecord, ProjectScope, RecordStatus, Revision, ServerIdentityStore, TenantId, TenantRecord,
+    ActorId, ActorKind, ActorRecord, MembershipRole, MembershipStatus, ProjectId,
+    ProjectMembership, ProjectRecord, ProjectScope, RecordStatus, Revision, ServerIdentityStore,
+    TenantId, TenantRecord,
 };
 use aidememo_store_postgres::PostgresCommandStore;
 use postgres::{Client, NoTls};
 
 #[test]
 #[ignore = "requires disposable PostgreSQL via AIDEMEMO_POSTGRES_URL"]
-fn bootstrap_provision_and_authentication_are_idempotent() -> Result<(), Box<dyn std::error::Error>> {
+fn bootstrap_provision_and_authentication_are_idempotent() -> Result<(), Box<dyn std::error::Error>>
+{
     let url = std::env::var("AIDEMEMO_POSTGRES_URL")?;
     let (tenant, project, actor, membership) = fixture("identity_idempotent")?;
     let token = [0x11_u8; 32];
@@ -34,7 +36,10 @@ fn bootstrap_provision_and_authentication_are_idempotent() -> Result<(), Box<dyn
         )?,
         Some(membership)
     );
-    assert_eq!(store.project_epoch(&project_scope(&project))?, Some(project.project_epoch));
+    assert_eq!(
+        store.project_epoch(&project_scope(&project))?,
+        Some(project.project_epoch)
+    );
     assert_eq!(store.schema_version()?, 2);
     Ok(())
 }
@@ -66,9 +71,11 @@ fn conflicting_token_binding_fails_closed() -> Result<(), Box<dyn std::error::Er
         role: MembershipRole::Writer,
         status: MembershipStatus::Active,
     };
-    assert!(store
-        .provision_actor(&other_actor, &other_membership, &token, 1_000)
-        .is_err());
+    assert!(
+        store
+            .provision_actor(&other_actor, &other_membership, &token, 1_000)
+            .is_err()
+    );
 
     let authenticated = store
         .authenticate_token(&token)?
@@ -122,7 +129,10 @@ fn suspended_identity_and_membership_fail_closed() -> Result<(), Box<dyn std::er
         &[&tenant.tenant_id.as_str(), &actor.actor_id.as_str()],
     )?;
     assert_eq!(store.authenticate_token(&token)?, None);
-    assert_eq!(store.project_membership(&project_scope(&project), &actor.actor_id)?, None);
+    assert_eq!(
+        store.project_membership(&project_scope(&project), &actor.actor_id)?,
+        None
+    );
     Ok(())
 }
 
@@ -131,7 +141,8 @@ fn suspended_identity_and_membership_fail_closed() -> Result<(), Box<dyn std::er
 fn token_and_membership_are_tenant_scoped() -> Result<(), Box<dyn std::error::Error>> {
     let url = std::env::var("AIDEMEMO_POSTGRES_URL")?;
     let (first_tenant, first_project, first_actor, first_membership) = fixture("identity_scope_a")?;
-    let (second_tenant, second_project, second_actor, second_membership) = fixture("identity_scope_b")?;
+    let (second_tenant, second_project, second_actor, second_membership) =
+        fixture("identity_scope_b")?;
     let first_token = [0x44_u8; 32];
     let second_token = [0x55_u8; 32];
     let mut store = PostgresCommandStore::connect_no_tls(&url)?;
@@ -140,12 +151,22 @@ fn token_and_membership_are_tenant_scoped() -> Result<(), Box<dyn std::error::Er
     store.provision_actor(&first_actor, &first_membership, &first_token, 1_000)?;
     store.provision_actor(&second_actor, &second_membership, &second_token, 1_000)?;
 
-    let first_auth = store.authenticate_token(&first_token)?.ok_or("first token missing")?;
-    let second_auth = store.authenticate_token(&second_token)?.ok_or("second token missing")?;
+    let first_auth = store
+        .authenticate_token(&first_token)?
+        .ok_or("first token missing")?;
+    let second_auth = store
+        .authenticate_token(&second_token)?
+        .ok_or("second token missing")?;
     assert_eq!(first_auth.tenant_id(), &first_tenant.tenant_id);
     assert_eq!(second_auth.tenant_id(), &second_tenant.tenant_id);
-    assert_eq!(store.membership(&first_auth, &second_project.project_id)?, None);
-    assert_eq!(store.membership(&second_auth, &first_project.project_id)?, None);
+    assert_eq!(
+        store.membership(&first_auth, &second_project.project_id)?,
+        None
+    );
+    assert_eq!(
+        store.membership(&second_auth, &first_project.project_id)?,
+        None
+    );
     Ok(())
 }
 
@@ -160,7 +181,8 @@ fn invalid_bearer_digest_length_is_rejected() -> Result<(), Box<dyn std::error::
 
 fn fixture(
     suffix: &str,
-) -> Result<(TenantRecord, ProjectRecord, ActorRecord, ProjectMembership), Box<dyn std::error::Error>> {
+) -> Result<(TenantRecord, ProjectRecord, ActorRecord, ProjectMembership), Box<dyn std::error::Error>>
+{
     let tenant_id = TenantId::try_from(format!("tenant_{suffix}"))?;
     let project_id = ProjectId::try_from(format!("project_{suffix}"))?;
     let actor_id = ActorId::try_from(format!("actor_{suffix}"))?;
