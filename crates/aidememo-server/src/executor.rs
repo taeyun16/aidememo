@@ -38,7 +38,10 @@ impl fmt::Display for BlockingStoreError {
                 formatter.write_str("canonical store backend is unavailable")
             }
             Self::Configuration(detail) => {
-                write!(formatter, "invalid canonical store executor configuration: {detail}")
+                write!(
+                    formatter,
+                    "invalid canonical store executor configuration: {detail}"
+                )
             }
             Self::Join(detail) => {
                 write!(formatter, "canonical store blocking task failed: {detail}")

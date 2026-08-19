@@ -7,7 +7,8 @@ use std::{sync::mpsc, time::Duration};
 
 #[tokio::test]
 #[ignore = "requires disposable PostgreSQL via AIDEMEMO_POSTGRES_URL"]
-async fn postgres_executor_runs_bounded_service_sessions() -> Result<(), Box<dyn std::error::Error>> {
+async fn postgres_executor_runs_bounded_service_sessions() -> Result<(), Box<dyn std::error::Error>>
+{
     let url = std::env::var("AIDEMEMO_POSTGRES_URL")?;
     let executor = BlockingStoreExecutor::postgres_no_tls(
         url,
