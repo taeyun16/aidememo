@@ -3,12 +3,63 @@ CREATE TABLE IF NOT EXISTS aidememo_schema (
     version INTEGER NOT NULL CHECK (version > 0)
 );
 
+CREATE TABLE IF NOT EXISTS ssot_tenants (
+    tenant_id TEXT PRIMARY KEY,
+    display_name TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('active', 'suspended', 'archived')),
+    revision BIGINT NOT NULL CHECK (revision > 0),
+    created_at_ms BIGINT NOT NULL,
+    updated_at_ms BIGINT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS ssot_projects (
     tenant_id TEXT NOT NULL,
     project_id TEXT NOT NULL,
     project_epoch TEXT NOT NULL,
     next_seq BIGINT NOT NULL CHECK (next_seq >= 0),
+    display_name TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'active'
+        CHECK (status IN ('active', 'suspended', 'archived')),
+    revision BIGINT NOT NULL DEFAULT 1 CHECK (revision > 0),
+    created_at_ms BIGINT NOT NULL DEFAULT 0,
+    updated_at_ms BIGINT NOT NULL DEFAULT 0,
     PRIMARY KEY (tenant_id, project_id)
+);
+
+CREATE TABLE IF NOT EXISTS ssot_actors (
+    tenant_id TEXT NOT NULL,
+    actor_id TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('human', 'agent', 'service')),
+    status TEXT NOT NULL CHECK (status IN ('active', 'suspended', 'archived')),
+    revision BIGINT NOT NULL CHECK (revision > 0),
+    created_at_ms BIGINT NOT NULL,
+    updated_at_ms BIGINT NOT NULL,
+    PRIMARY KEY (tenant_id, actor_id),
+    FOREIGN KEY (tenant_id) REFERENCES ssot_tenants (tenant_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS ssot_memberships (
+    tenant_id TEXT NOT NULL,
+    project_id TEXT NOT NULL,
+    actor_id TEXT NOT NULL,
+    role TEXT NOT NULL CHECK (role IN ('owner', 'admin', 'writer', 'reader')),
+    status TEXT NOT NULL CHECK (status IN ('active', 'suspended')),
+    PRIMARY KEY (tenant_id, project_id, actor_id),
+    FOREIGN KEY (tenant_id, project_id)
+        REFERENCES ssot_projects (tenant_id, project_id) ON DELETE CASCADE,
+    FOREIGN KEY (tenant_id, actor_id)
+        REFERENCES ssot_actors (tenant_id, actor_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS ssot_token_bindings (
+    token_sha256 BYTEA PRIMARY KEY CHECK (octet_length(token_sha256) = 32),
+    tenant_id TEXT NOT NULL,
+    actor_id TEXT NOT NULL,
+    active BOOLEAN NOT NULL,
+    created_at_ms BIGINT NOT NULL,
+    FOREIGN KEY (tenant_id, actor_id)
+        REFERENCES ssot_actors (tenant_id, actor_id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS ssot_resources (
