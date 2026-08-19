@@ -2,7 +2,7 @@
 //!
 //! This crate implements the synchronous outcome contract from `aidememo-domain`.
 //! It is intentionally not wired directly into Axum request handling yet: the
-//! production server boundary must place blocking database work behind a pool / 
+//! production server boundary must place blocking database work behind a pool /
 //! blocking-executor boundary before enabling this adapter for HTTP traffic.
 
 use aidememo_domain::{
@@ -342,7 +342,8 @@ impl CommandStore for PostgresCommandStore {
         // Reading the head and page in one repeatable-read transaction prevents
         // a response from pairing a newer cursor validation with an older page.
         let _ = current_sequence;
-        tx.commit().map_err(|error| storage("changes_commit", error))?;
+        tx.commit()
+            .map_err(|error| storage("changes_commit", error))?;
         ChangeBatch::new(scope.clone(), cursor.clone(), entries, has_more)
     }
 
@@ -484,7 +485,9 @@ impl CommandStore for PostgresCommandStore {
                 ],
             )
             .map_err(|error| storage("resource_state_read", error))?;
-        row.as_ref().map(|row| decode_resource(scope, row)).transpose()
+        row.as_ref()
+            .map(|row| decode_resource(scope, row))
+            .transpose()
     }
 }
 
@@ -545,12 +548,11 @@ impl HandoffStore for PostgresCommandStore {
         let mut assignments = Vec::with_capacity(rows.len());
         for row in &rows {
             let body: Vec<u8> = row.get(8);
-            let record: HandoffRecord = serde_json::from_slice(&body).map_err(|error| {
-                DomainError::StorageFailure {
+            let record: HandoffRecord =
+                serde_json::from_slice(&body).map_err(|error| DomainError::StorageFailure {
                     operation: "handoff_mailbox_decode",
                     detail: error.to_string(),
-                }
-            })?;
+                })?;
             validate_handoff_index(row, &record)?;
             assignments.push(HandoffListEntry {
                 project_seq: project_sequence(row.get(0), "handoff_project_sequence")?,
@@ -848,12 +850,11 @@ fn update_handoff_index(
         operation: "handoff_index_decode",
         detail: "handoff upsert is missing its canonical body".to_owned(),
     })?;
-    let record: HandoffRecord = serde_json::from_slice(body).map_err(|error| {
-        DomainError::StorageFailure {
+    let record: HandoffRecord =
+        serde_json::from_slice(body).map_err(|error| DomainError::StorageFailure {
             operation: "handoff_index_decode",
             detail: error.to_string(),
-        }
-    })?;
+        })?;
     if record.handoff_id.as_str() != resource.id.as_str() {
         return Err(DomainError::StorageFailure {
             operation: "handoff_index_decode",
