@@ -71,10 +71,11 @@ impl PostgresCommandStore {
         epoch: &ProjectEpoch,
     ) -> Result<(), DomainError> {
         let mut client = self.lock_client()?;
+        // The project row is the synchronization primitive for initialization.
+        // READ COMMITTED lets concurrent idempotent initializers observe the winner
+        // after INSERT/row-lock waits instead of requiring serialization retries.
         let mut tx = client
-            .build_transaction()
-            .isolation_level(IsolationLevel::Serializable)
-            .start()
+            .transaction()
             .map_err(|error| storage("initialize_begin", error))?;
         tx.execute(
             "INSERT INTO ssot_projects (tenant_id, project_id, project_epoch, next_seq)
@@ -290,10 +291,12 @@ impl PostgresCommandStore {
 impl CommandStore for PostgresCommandStore {
     fn execute(&mut self, command: &MutationCommand) -> Result<CommandReceipt, DomainError> {
         let mut client = self.lock_client()?;
+        // Every canonical mutation locks its tenant-project row before reading
+        // receipts or resource revisions. That explicit lock serializes writers per
+        // project, so READ COMMITTED preserves deterministic outcomes without exposing
+        // PostgreSQL serialization failures that would otherwise require whole-command retries.
         let mut tx = client
-            .build_transaction()
-            .isolation_level(IsolationLevel::Serializable)
-            .start()
+            .transaction()
             .map_err(|error| storage("command_begin", error))?;
         let receipt = Self::execute_transaction(&mut tx, command)?;
         tx.commit()
