@@ -1,0 +1,18 @@
+[package]
+name = "aidememo-store-postgres"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "PostgreSQL canonical command ledger adapter for AideMemo server mode"
+license.workspace = true
+repository.workspace = true
+version.workspace = true
+publish = false
+
+[dependencies]
+aidememo-domain = { version = "0.1.0", path = "../aidememo-domain" }
+postgres = "0.19.14"
+serde_json = "1.0"
+
+[lints]
+workspace = true
