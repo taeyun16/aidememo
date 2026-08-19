@@ -30,52 +30,23 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           import re
-
           path = Path('crates/aidememo-store-postgres/src/lib.rs')
           text = path.read_text()
-
-          def replace_tx(block: str, label: str, comment: str) -> str:
-              pattern = re.compile(
-                  r'let mut tx = client\s*'
-                  r'\.build_transaction\(\)\s*'
-                  r'\.isolation_level\(IsolationLevel::Serializable\)\s*'
-                  r'\.start\(\)\s*'
-                  + rf'\.map_err\(\|error\| storage\("{label}", error\)\)\?;'
-              )
-              replacement = comment + '''\n        let mut tx = client
-            .transaction()
-            .map_err(|error| storage("''' + label + '''", error))?;'''
+          def replace_tx(block, label, comment):
+              pattern = re.compile(r'let mut tx = client\s*\.build_transaction\(\)\s*\.isolation_level\(IsolationLevel::Serializable\)\s*\.start\(\)\s*' + rf'\.map_err\(\|error\| storage\("{label}", error\)\)\?;')
+              replacement = comment + '\n        let mut tx = client\n            .transaction()\n            .map_err(|error| storage("' + label + '", error))?;'
               block, count = pattern.subn(replacement, block, count=1)
               if count != 1:
-                  raise SystemExit(f'{label} transaction pattern changed')
+                  raise SystemExit(label + ' transaction pattern changed')
               return block
-
           init_start = text.find('    pub fn initialize_project(')
           init_end = text.find('    /// Return the adapter schema version', init_start)
-          if init_start < 0 or init_end < 0:
-              raise SystemExit('initialize_project boundaries changed')
-          init = replace_tx(
-              text[init_start:init_end],
-              'initialize_begin',
-              '''// The project row is the synchronization primitive for initialization.
-        // READ COMMITTED lets concurrent idempotent initializers observe the winner
-        // after INSERT/row-lock waits instead of requiring serialization retries.''',
-          )
-          text = text[:init_start] + init + text[init_end:]
-
+          init_comment = '// The project row is the synchronization primitive for initialization.\n        // READ COMMITTED lets concurrent idempotent initializers observe the winner\n        // after INSERT/row-lock waits instead of requiring serialization retries.'
+          text = text[:init_start] + replace_tx(text[init_start:init_end], 'initialize_begin', init_comment) + text[init_end:]
           impl_start = text.find('impl CommandStore for PostgresCommandStore {')
           receipt_start = text.find('    fn receipt(', impl_start)
-          if impl_start < 0 or receipt_start < 0:
-              raise SystemExit('CommandStore execute boundaries changed')
-          execute_block = replace_tx(
-              text[impl_start:receipt_start],
-              'command_begin',
-              '''// Every canonical mutation locks its tenant-project row before reading
-        // receipts or resource revisions. That explicit lock serializes writers per
-        // project, so READ COMMITTED preserves deterministic outcomes without exposing
-        // PostgreSQL serialization failures that would otherwise require whole-command retries.''',
-          )
-          text = text[:impl_start] + execute_block + text[receipt_start:]
+          command_comment = '// Every canonical mutation locks its tenant-project row before reading\n        // receipts or resource revisions. That explicit lock serializes writers per\n        // project, so READ COMMITTED preserves deterministic outcomes without exposing\n        // PostgreSQL serialization failures that would otherwise require whole-command retries.'
+          text = text[:impl_start] + replace_tx(text[impl_start:receipt_start], 'command_begin', command_comment) + text[receipt_start:]
           path.write_text(text)
           PY
           rm -f .github/workflows/patch-postgres-writer-isolation.yml
