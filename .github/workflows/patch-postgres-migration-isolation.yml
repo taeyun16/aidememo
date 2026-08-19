@@ -23,22 +23,32 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
+          import re
+
           path = Path('crates/aidememo-store-postgres/src/lib.rs')
           text = path.read_text()
-          old = '''            let mut tx = client
-                .build_transaction()
-                .isolation_level(IsolationLevel::Serializable)
-                .start()
-                .map_err(|error| storage("schema_begin", error))?;'''
-          new = '''            // The advisory lock is the migration serializer. Keep the transaction at
-            // PostgreSQL's default READ COMMITTED level so a waiter observes schema
-            // metadata committed by the lock holder after it acquires the lock.
-            let mut tx = client
-                .transaction()
-                .map_err(|error| storage("schema_begin", error))?;'''
-          if text.count(old) != 1:
-              raise SystemExit('migration transaction block changed')
-          path.write_text(text.replace(old, new, 1))
+          start = text.find('    fn migrate(&self) -> Result<(), DomainError> {')
+          end = text.find('    fn lock_client(&self)', start)
+          if start < 0 or end < 0:
+              raise SystemExit('migration function boundaries changed')
+          block = text[start:end]
+          pattern = re.compile(
+              r'let mut tx = client\s*'
+              r'\.build_transaction\(\)\s*'
+              r'\.isolation_level\(IsolationLevel::Serializable\)\s*'
+              r'\.start\(\)\s*'
+              r'\.map_err\(\|error\| storage\("schema_begin", error\)\)\?;'
+          )
+          replacement = '''// The advisory lock is the migration serializer. Keep the transaction at
+              // PostgreSQL's default READ COMMITTED level so a waiter observes schema
+              // metadata committed by the lock holder after it acquires the lock.
+              let mut tx = client
+                  .transaction()
+                  .map_err(|error| storage("schema_begin", error))?;'''
+          block, count = pattern.subn(replacement, block, count=1)
+          if count != 1:
+              raise SystemExit('migration serializable transaction pattern changed')
+          path.write_text(text[:start] + block + text[end:])
           PY
           cargo fmt --all
           cargo test -p aidememo-store-postgres --no-run
