@@ -66,7 +66,7 @@ chrono = "0.4"
 regex = "1.10"
 interim = { version = "0.2", features = ["chrono_0_4"] }  # English NL dates with anchor
 fundu = "2.0"              # Duration normalization "1.5 weeks" → seconds
-rusty-money = "0.4"        # Currency parsing "$1,200.50" → typed Money
+rusty-money = "0.5"        # Currency parsing "$1,200.50" → typed Money
 
 # 시맨틱 검색 (선택)
 # Official Model2Vec Rust implementation. Kept as an optional dependency behind
