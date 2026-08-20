@@ -1,9 +1,10 @@
 name: agent server HTTP executor patch
 
 on:
-  push:
-    branches: [agent/server-http-executor]
+  pull_request:
+    branches: [main]
     paths:
+      - ".github/agent_server_http_executor_patch.py"
       - ".github/workflows/agent-server-http-executor.yml"
 
 permissions:
@@ -44,5 +45,6 @@ jobs:
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add -- crates/aidememo-server/src/lib.rs crates/aidememo-server/src/product.rs crates/aidememo-server/src/artifact.rs
+          git rm -- .github/agent_server_http_executor_patch.py .github/workflows/agent-server-http-executor.yml
           git commit -m 'refactor: run HTTP canonical storage off Tokio workers'
           git push origin HEAD:agent/server-http-executor
