@@ -1,0 +1,127 @@
+name: agent PostgreSQL TLS transport patch
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/agent_server_postgres_tls_patch.py"
+      - ".github/workflows/agent-server-postgres-tls.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: aidememo_plain
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d aidememo_plain"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      AIDEMEMO_POSTGRES_URL: postgres://postgres:postgres@127.0.0.1:5432/aidememo_plain?sslmode=disable
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: agent/server-postgres-tls
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.96.0
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: agent-server-postgres-tls-v1
+
+      - name: Apply PostgreSQL TLS transport
+        run: python3 .github/agent_server_postgres_tls_patch.py
+
+      - name: Format and verify source
+        run: |
+          cargo fmt --all
+          cargo check -p aidememo-store-postgres -p aidememo-server --all-features
+          cargo test -p aidememo-server --no-default-features
+          cargo test -p aidememo-server --features semantic
+          cargo clippy -p aidememo-store-postgres -p aidememo-server --all-targets --all-features -- -D warnings
+          git diff --check
+
+      - name: Start verified-TLS PostgreSQL 17 fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          tls_dir="$RUNNER_TEMP/aidememo-postgres-tls"
+          mkdir -p "$tls_dir"
+          openssl req -x509 -newkey rsa:2048 -nodes \
+            -keyout "$tls_dir/ca.key" -out "$tls_dir/ca.crt" \
+            -subj "/CN=AideMemo Test Root CA" -days 1
+          openssl req -newkey rsa:2048 -nodes \
+            -keyout "$tls_dir/server.key" -out "$tls_dir/server.csr" \
+            -subj "/CN=localhost"
+          cat > "$tls_dir/server.ext" <<'EOF'
+          subjectAltName=DNS:localhost,IP:127.0.0.1
+          extendedKeyUsage=serverAuth
+          EOF
+          openssl x509 -req -in "$tls_dir/server.csr" \
+            -CA "$tls_dir/ca.crt" -CAkey "$tls_dir/ca.key" -CAcreateserial \
+            -out "$tls_dir/server.crt" -days 1 -extfile "$tls_dir/server.ext"
+          openssl req -x509 -newkey rsa:2048 -nodes \
+            -keyout "$tls_dir/wrong-ca.key" -out "$tls_dir/wrong-ca.crt" \
+            -subj "/CN=AideMemo Wrong Root CA" -days 1
+          docker run -d --name aidememo-postgres-tls \
+            -p 55432:5432 \
+            -e POSTGRES_USER=postgres \
+            -e POSTGRES_PASSWORD=postgres \
+            -e POSTGRES_DB=aidememo_tls \
+            -v "$tls_dir:/tls:ro" \
+            --entrypoint bash postgres:17 -ceu '
+              cp /tls/server.crt /tmp/server.crt
+              cp /tls/server.key /tmp/server.key
+              chown postgres:postgres /tmp/server.crt /tmp/server.key
+              chmod 600 /tmp/server.key
+              exec /usr/local/bin/docker-entrypoint.sh postgres \
+                -c ssl=on \
+                -c ssl_cert_file=/tmp/server.crt \
+                -c ssl_key_file=/tmp/server.key
+            '
+          for attempt in $(seq 1 30); do
+            if docker exec aidememo-postgres-tls pg_isready -U postgres -d aidememo_tls; then
+              break
+            fi
+            if [ "$attempt" -eq 30 ]; then
+              docker logs aidememo-postgres-tls
+              exit 1
+            fi
+            sleep 1
+          done
+          echo "AIDEMEMO_POSTGRES_TLS_URL=postgres://postgres:postgres@localhost:55432/aidememo_tls?sslmode=disable" >> "$GITHUB_ENV"
+          echo "AIDEMEMO_POSTGRES_TLS_CA=$tls_dir/ca.crt" >> "$GITHUB_ENV"
+          echo "AIDEMEMO_POSTGRES_TLS_WRONG_CA=$tls_dir/wrong-ca.crt" >> "$GITHUB_ENV"
+
+      - name: Verify TLS transport and HTTP profile
+        run: |
+          cargo test -p aidememo-store-postgres --test tls -- --ignored --nocapture
+          cargo test -p aidememo-server --test postgres_tls_http -- --ignored --nocapture
+
+      - name: Stop TLS PostgreSQL fixture
+        if: always()
+        run: docker rm -f aidememo-postgres-tls || true
+
+      - name: Commit verified TLS implementation
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -- Cargo.lock crates/aidememo-store-postgres/Cargo.toml crates/aidememo-store-postgres/src/lib.rs crates/aidememo-store-postgres/tests/tls.rs crates/aidememo-server/src/executor.rs crates/aidememo-server/src/lib.rs crates/aidememo-server/src/main.rs crates/aidememo-server/tests/postgres_tls_http.rs .github/workflows/postgres-conformance.yml
+          git rm -- .github/agent_server_postgres_tls_patch.py .github/workflows/agent-server-postgres-tls.yml
+          git commit -m 'feat: require verified TLS for PostgreSQL production profile'
+          git push origin HEAD:agent/server-postgres-tls
