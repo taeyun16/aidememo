@@ -1,9 +1,8 @@
 //! PostgreSQL implementation of the portable AideMemo SSOT command ledger.
 //!
 //! This crate implements the synchronous outcome contract from `aidememo-domain`.
-//! It is intentionally not wired directly into Axum request handling yet: the
-//! production server boundary must place blocking database work behind a pool /
-//! blocking-executor boundary before enabling this adapter for HTTP traffic.
+//! Server HTTP use is mediated by the bounded blocking executor in
+//! `aidememo-server`; this adapter remains synchronous and transport-agnostic.
 
 mod identity;
 
@@ -17,7 +16,7 @@ use aidememo_domain::{
 use postgres::{Client, GenericClient, IsolationLevel, NoTls, Row, Transaction};
 use std::{
     sync::{Mutex, MutexGuard},
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 const SCHEMA_COMPONENT: &str = "canonical_store";
@@ -51,6 +50,33 @@ impl PostgresCommandStore {
     /// initialize, or validate the schema version.
     pub fn connect_no_tls(url: &str) -> Result<Self, DomainError> {
         let client = Client::connect(url, NoTls).map_err(|error| storage("connect", error))?;
+        let store = Self {
+            client: Mutex::new(client),
+        };
+        store.migrate()?;
+        Ok(store)
+    }
+
+    /// Connect without TLS, configure finite server-side timeouts, and migrate.
+    ///
+    /// This is the explicit local/development transport used by the server's
+    /// `insecure-no-tls` profile. Production callers must use a TLS-capable path.
+    /// Applying the settings before migration bounds advisory-lock and DDL waits
+    /// as well as later request statements on this connection.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stable storage error when the timeout is zero/out of PostgreSQL's
+    /// millisecond range or when connection, timeout configuration, or migration
+    /// fails.
+    pub fn connect_no_tls_with_timeouts(
+        url: &str,
+        statement_timeout: Duration,
+        lock_timeout: Duration,
+    ) -> Result<Self, DomainError> {
+        let mut client = Client::connect(url, NoTls).map_err(|error| storage("connect", error))?;
+        configure_timeout(&mut client, "statement_timeout", statement_timeout)?;
+        configure_timeout(&mut client, "lock_timeout", lock_timeout)?;
         let store = Self {
             client: Mutex::new(client),
         };
@@ -307,6 +333,29 @@ impl PostgresCommandStore {
         }
         Ok(receipt)
     }
+}
+
+fn configure_timeout(
+    client: &mut Client,
+    setting: &'static str,
+    timeout: Duration,
+) -> Result<(), DomainError> {
+    let millis = i32::try_from(timeout.as_millis()).map_err(|_| DomainError::StorageFailure {
+        operation: "postgres_timeout_config",
+        detail: format!("{setting} exceeds PostgreSQL millisecond range"),
+    })?;
+    if millis <= 0 {
+        return Err(DomainError::StorageFailure {
+            operation: "postgres_timeout_config",
+            detail: format!("{setting} must be greater than zero"),
+        });
+    }
+    let setting_name = setting.to_owned();
+    let value = format!("{millis}ms");
+    client
+        .query_one("SELECT set_config($1, $2, false)", &[&setting_name, &value])
+        .map_err(|error| storage("postgres_timeout_config", error))?;
+    Ok(())
 }
 
 impl CommandStore for PostgresCommandStore {
