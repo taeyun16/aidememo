@@ -1,0 +1,71 @@
+name: agent server PostgreSQL profile patch
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/agent_server_postgres_profile_patch.py"
+      - ".github/workflows/agent-server-postgres-profile.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: aidememo_profile
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d aidememo_profile"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      AIDEMEMO_POSTGRES_URL: postgres://postgres:postgres@127.0.0.1:5432/aidememo_profile
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: agent/server-postgres-profile
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.96.0
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: agent-server-postgres-profile-v1
+
+      - name: Apply PostgreSQL profile wiring
+        run: python3 .github/agent_server_postgres_profile_patch.py
+
+      - name: Format and verify source
+        run: |
+          cargo fmt --all
+          cargo check -p aidememo-store-postgres -p aidememo-server --all-features
+          cargo test -p aidememo-server --no-default-features
+          cargo test -p aidememo-server --features semantic
+          cargo clippy -p aidememo-store-postgres -p aidememo-server --all-targets --all-features -- -D warnings
+          git diff --check
+
+      - name: Verify PostgreSQL 17 execution path
+        run: |
+          cargo test -p aidememo-store-postgres --tests -- --ignored --nocapture
+          cargo test -p aidememo-server --test postgres_executor -- --ignored --nocapture
+
+      - name: Commit verified profile implementation
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -- crates/aidememo-store-postgres/src/lib.rs crates/aidememo-server/src/executor.rs crates/aidememo-server/src/lib.rs crates/aidememo-server/src/main.rs crates/aidememo-server/tests/postgres_executor.rs
+          git rm -- .github/agent_server_postgres_profile_patch.py .github/workflows/agent-server-postgres-profile.yml
+          git commit -m 'feat: add explicit PostgreSQL server profile'
+          git push origin HEAD:agent/server-postgres-profile
