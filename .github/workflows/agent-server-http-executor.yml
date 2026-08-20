@@ -1,0 +1,48 @@
+name: agent server HTTP executor patch
+
+on:
+  push:
+    branches: [agent/server-http-executor]
+    paths:
+      - ".github/workflows/agent-server-http-executor.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: agent/server-http-executor
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.96.0
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: agent-server-http-executor-v1
+
+      - name: Apply HTTP executor wiring
+        run: python3 .github/agent_server_http_executor_patch.py
+
+      - name: Format and verify
+        run: |
+          cargo fmt --all
+          cargo check -p aidememo-server --all-features
+          cargo test -p aidememo-server --no-default-features
+          cargo test -p aidememo-server --features semantic
+          cargo clippy -p aidememo-server --all-targets --all-features -- -D warnings
+          git diff --check
+
+      - name: Commit verified server wiring
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -- crates/aidememo-server/src/lib.rs crates/aidememo-server/src/product.rs crates/aidememo-server/src/artifact.rs
+          git commit -m 'refactor: run HTTP canonical storage off Tokio workers'
+          git push origin HEAD:agent/server-http-executor
