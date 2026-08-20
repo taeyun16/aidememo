@@ -52,3 +52,5 @@ jobs:
         run: cargo test -p aidememo-store-postgres --tests -- --ignored --nocapture
       - name: Run PostgreSQL server executor conformance
         run: cargo test -p aidememo-server --test postgres_executor -- --ignored --nocapture
+      - name: Run PostgreSQL server HTTP profile conformance
+        run: cargo test -p aidememo-server --test postgres_http -- --ignored --nocapture
