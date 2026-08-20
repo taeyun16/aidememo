@@ -15,6 +15,8 @@ async fn postgres_executor_runs_bounded_service_sessions() -> Result<(), Box<dyn
         2,
         Duration::from_millis(100),
         Duration::from_secs(1),
+        Duration::from_millis(800),
+        Duration::from_millis(100),
     )
     .await?;
 

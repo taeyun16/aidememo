@@ -2,8 +2,8 @@
 //!
 //! The server owns tenant and actor identity. Request bodies select only a
 //! project and resource; bearer-token digests resolve to persisted actors, and
-//! active membership is loaded from the same SQLite ledger before every read or
-//! mutation. This crate does not modify or expose the existing embedded store.
+//! active membership is loaded from the selected canonical ledger before every
+//! read or mutation. This crate does not modify or expose the existing embedded store.
 
 mod artifact;
 mod executor;
@@ -91,6 +91,44 @@ impl ServerState {
             #[cfg(feature = "semantic")]
             semantic_projection: Arc::new(Mutex::new(None)),
         }
+    }
+
+    /// Build an artifact-disabled PostgreSQL server state without TLS.
+    ///
+    /// This constructor exists only for explicit local/development profiles. The
+    /// server CLI fails closed to TLS-required mode unless the operator selects
+    /// `insecure-no-tls`; production PostgreSQL transport is a separate TLS slice.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stable storage error when pool construction, timeout policy,
+    /// connection, or schema initialization fails.
+    pub async fn postgres_no_tls_for_development(
+        url: String,
+        pool_size: usize,
+        acquire_timeout: Duration,
+        operation_timeout: Duration,
+        statement_timeout: Duration,
+        lock_timeout: Duration,
+    ) -> Result<Self, DomainError> {
+        let canonical = BlockingStoreExecutor::postgres_no_tls(
+            url,
+            pool_size,
+            acquire_timeout,
+            operation_timeout,
+            statement_timeout,
+            lock_timeout,
+        )
+        .await
+        .map_err(blocking_store_initialization_error)?;
+        Ok(Self {
+            canonical,
+            artifacts: None,
+            #[cfg(feature = "semantic")]
+            semantic_provider: None,
+            #[cfg(feature = "semantic")]
+            semantic_projection: Arc::new(Mutex::new(None)),
+        })
     }
 
     /// Wrap the command ledger together with an isolated local artifact repository.
@@ -205,6 +243,16 @@ impl ServerState {
                 Ok(Some(report))
             }
         }
+    }
+}
+
+fn blocking_store_initialization_error(error: BlockingStoreError) -> DomainError {
+    match error {
+        BlockingStoreError::Domain(error) => error,
+        error => DomainError::StorageFailure {
+            operation: "server_canonical_backend_init",
+            detail: error.to_string(),
+        },
     }
 }
 
