@@ -1,6 +1,9 @@
 //! Authenticated local artifact HTTP lifecycle for single-node SSOT mode.
 
-use super::{ApiError, ArtifactBodies, ArtifactState, ServerState, product::request_context};
+use super::{
+    ApiError, ArtifactBodies, ArtifactState, ServerState, bearer_digest_from_headers,
+    executor::BlockingStoreError, product::request_context,
+};
 #[cfg(feature = "s3")]
 use aidememo_artifacts::DirectBodyGrant;
 use aidememo_artifacts::{
@@ -350,18 +353,24 @@ async fn authorize(
     project_id: &ProjectId,
     mutation: bool,
 ) -> Result<ProjectScope, ArtifactHttpError> {
-    let service = state.service.lock().await;
-    let (authenticated, membership) = request_context(&service, headers, project_id)?;
-    if mutation && !membership.role.can_mutate() {
-        return Err(DomainError::ProjectUnauthorized {
-            project_id: project_id.clone(),
-        }
-        .into());
-    }
-    Ok(ProjectScope::new(
-        authenticated.tenant_id().clone(),
-        project_id.clone(),
-    ))
+    let digest = bearer_digest_from_headers(headers)?;
+    let project_id = project_id.clone();
+    let scope = state
+        .canonical
+        .run_service(move |service| {
+            let (authenticated, membership) = request_context(service, &digest, &project_id)?;
+            if mutation && !membership.role.can_mutate() {
+                return Err(DomainError::ProjectUnauthorized {
+                    project_id: project_id.clone(),
+                });
+            }
+            Ok(ProjectScope::new(
+                authenticated.tenant_id().clone(),
+                project_id,
+            ))
+        })
+        .await?;
+    Ok(scope)
 }
 
 fn artifact_store(state: &ServerState) -> Result<Arc<ArtifactState>, ArtifactHttpError> {
@@ -427,6 +436,7 @@ struct ArtifactErrorDetail {
 
 enum ArtifactHttpError {
     Domain(DomainError),
+    Executor(BlockingStoreError),
     Store(ArtifactStoreError),
     Unavailable,
     TransferMode,
@@ -435,6 +445,15 @@ enum ArtifactHttpError {
 impl From<DomainError> for ArtifactHttpError {
     fn from(error: DomainError) -> Self {
         Self::Domain(error)
+    }
+}
+
+impl From<BlockingStoreError> for ArtifactHttpError {
+    fn from(error: BlockingStoreError) -> Self {
+        match error {
+            BlockingStoreError::Domain(error) => Self::Domain(error),
+            error => Self::Executor(error),
+        }
     }
 }
 
@@ -451,6 +470,7 @@ impl IntoResponse for ArtifactHttpError {
     fn into_response(self) -> Response {
         match self {
             Self::Domain(error) => ApiError::from(error).into_response(),
+            Self::Executor(error) => ApiError::from(error).into_response(),
             Self::Unavailable => artifact_error(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "artifact_store_unavailable",

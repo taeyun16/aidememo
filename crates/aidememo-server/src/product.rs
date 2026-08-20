@@ -6,10 +6,9 @@ use aidememo_domain::{
     CommandId, DomainError, FactId, FactRecord, HandoffContextRecord, HandoffId, HandoffMailbox,
     HandoffOutcome, HandoffQuery, HandoffRecord, OperationName, ProjectId, ProjectMembership,
     ProjectScope, ProjectSequence, ResourceId, ResourceKind, ResourceRef, ResourceState, Revision,
-    SessionId, SessionRecord, SourceId,
+    ServerCanonicalStore, SessionId, SessionRecord, SourceId,
 };
 use aidememo_service::CommandService;
-use aidememo_store_local::SqliteCommandStore;
 use axum::{
     Json, Router,
     extract::{Path, Query, State, rejection::JsonRejection},
@@ -24,6 +23,8 @@ const FACT_KIND: &str = "fact";
 const HANDOFF_KIND: &str = "handoff";
 const HANDOFF_CONTEXT_KIND: &str = "handoff_context";
 const HANDOFF_LEASE_MS: i64 = 120_000;
+
+type CanonicalService<'store> = CommandService<&'store mut dyn ServerCanonicalStore>;
 
 pub(super) fn routes() -> Router<ServerState> {
     Router::new()
@@ -160,23 +161,27 @@ async fn get_identity(
     Path(project_id): Path<String>,
 ) -> Result<impl axum::response::IntoResponse, ApiError> {
     let project_id = ProjectId::try_from(project_id)?;
-    let service = state.service.lock().await;
-    let (authenticated, membership) = request_context(&service, &headers, &project_id)?;
-    let scope = ProjectScope::new(authenticated.tenant_id().clone(), project_id.clone());
-    let project_epoch =
-        service
-            .store()
-            .project_epoch(&scope)?
-            .ok_or_else(|| DomainError::ProjectUnauthorized {
-                project_id: project_id.clone(),
+    let digest = bearer_digest_from_headers(&headers)?;
+    let response = state
+        .canonical
+        .run_service(move |service| {
+            let (authenticated, membership) = request_context(service, &digest, &project_id)?;
+            let scope = ProjectScope::new(authenticated.tenant_id().clone(), project_id.clone());
+            let project_epoch = service.store().project_epoch(&scope)?.ok_or_else(|| {
+                DomainError::ProjectUnauthorized {
+                    project_id: project_id.clone(),
+                }
             })?;
-    Ok(Json(IdentityResponse {
-        tenant_id: authenticated.tenant_id().clone(),
-        project_id,
-        project_epoch,
-        actor_id: authenticated.actor_id().clone(),
-        role: membership.role,
-    }))
+            Ok(IdentityResponse {
+                tenant_id: authenticated.tenant_id().clone(),
+                project_id,
+                project_epoch,
+                actor_id: authenticated.actor_id().clone(),
+                role: membership.role,
+            })
+        })
+        .await?;
+    Ok(Json(response))
 }
 
 async fn list_handoffs(
@@ -187,7 +192,7 @@ async fn list_handoffs(
 ) -> Result<impl axum::response::IntoResponse, ApiError> {
     let project_id = ProjectId::try_from(project_id)?;
     let Query(query) =
-        query.map_err(|error| ApiError(DomainError::InvalidCommand(error.body_text())))?;
+        query.map_err(|error| ApiError::from(DomainError::InvalidCommand(error.body_text())))?;
     let include_completed = query
         .include_completed
         .unwrap_or(matches!(query.mailbox, HandoffMailbox::Outbox));
@@ -198,14 +203,15 @@ async fn list_handoffs(
         query.before_seq.map(ProjectSequence::new),
         query.limit.unwrap_or(20),
     )?;
-    let service = state.service.lock().await;
-    let (authenticated, membership) = request_context(&service, &headers, &project_id)?;
-    Ok(Json(service.handoffs(
-        &authenticated,
-        &membership,
-        &project_id,
-        &query,
-    )?))
+    let digest = bearer_digest_from_headers(&headers)?;
+    let handoffs = state
+        .canonical
+        .run_service(move |service| {
+            let (authenticated, membership) = request_context(service, &digest, &project_id)?;
+            service.handoffs(&authenticated, &membership, &project_id, &query)
+        })
+        .await?;
+    Ok(Json(handoffs))
 }
 
 async fn create_session(
@@ -223,38 +229,37 @@ async fn create_session(
         "session.create",
         request.payload.clone(),
     )?;
-    let mut service = state.service.lock().await;
-    let (authenticated, membership) = request_context(&service, &headers, &project_id)?;
-    if let Some(receipt) = service.replay(
-        &authenticated,
-        &membership,
-        &envelope,
-        &resource,
-        ChangeOperation::Upsert,
-    )? {
-        return Ok(Json(receipt));
-    }
-    ensure_absent(
-        &service,
-        &authenticated,
-        &membership,
-        &project_id,
-        &resource,
-    )?;
-    let record = SessionRecord::new(
-        request.payload.session_id,
-        request.payload.source_id,
-        request.payload.topic,
-        authenticated.actor_id().clone(),
-    )?;
-    let receipt = service.execute_with_body(
-        &authenticated,
-        &membership,
-        envelope,
-        resource,
-        ChangeOperation::Upsert,
-        &record,
-    )?;
+    let digest = bearer_digest_from_headers(&headers)?;
+    let receipt = state
+        .canonical
+        .run_service(move |service| {
+            let (authenticated, membership) = request_context(service, &digest, &project_id)?;
+            if let Some(receipt) = service.replay(
+                &authenticated,
+                &membership,
+                &envelope,
+                &resource,
+                ChangeOperation::Upsert,
+            )? {
+                return Ok(receipt);
+            }
+            ensure_absent(service, &authenticated, &membership, &project_id, &resource)?;
+            let record = SessionRecord::new(
+                request.payload.session_id,
+                request.payload.source_id,
+                request.payload.topic,
+                authenticated.actor_id().clone(),
+            )?;
+            service.execute_with_body(
+                &authenticated,
+                &membership,
+                envelope,
+                resource,
+                ChangeOperation::Upsert,
+                &record,
+            )
+        })
+        .await?;
     Ok(Json(receipt))
 }
 
@@ -273,46 +278,45 @@ async fn create_fact(
         "fact.create",
         request.payload.clone(),
     )?;
-    let mut service = state.service.lock().await;
-    let (authenticated, membership) = request_context(&service, &headers, &project_id)?;
-    if let Some(receipt) = service.replay(
-        &authenticated,
-        &membership,
-        &envelope,
-        &resource,
-        ChangeOperation::Upsert,
-    )? {
-        return Ok(Json(receipt));
-    }
-    let (_, session): (_, SessionRecord) = load_record(
-        &service,
-        &authenticated,
-        &membership,
-        &project_id,
-        &resource_ref(SESSION_KIND, request.payload.session_id.as_str())?,
-    )?;
-    ensure_absent(
-        &service,
-        &authenticated,
-        &membership,
-        &project_id,
-        &resource,
-    )?;
-    let record = FactRecord::new(
-        request.payload.fact_id,
-        session.session_id,
-        session.source_id,
-        authenticated.actor_id().clone(),
-        request.payload.content,
-    )?;
-    let receipt = service.execute_with_body(
-        &authenticated,
-        &membership,
-        envelope,
-        resource,
-        ChangeOperation::Upsert,
-        &record,
-    )?;
+    let digest = bearer_digest_from_headers(&headers)?;
+    let receipt = state
+        .canonical
+        .run_service(move |service| {
+            let (authenticated, membership) = request_context(service, &digest, &project_id)?;
+            if let Some(receipt) = service.replay(
+                &authenticated,
+                &membership,
+                &envelope,
+                &resource,
+                ChangeOperation::Upsert,
+            )? {
+                return Ok(receipt);
+            }
+            let (_, session): (_, SessionRecord) = load_record(
+                service,
+                &authenticated,
+                &membership,
+                &project_id,
+                &resource_ref(SESSION_KIND, request.payload.session_id.as_str())?,
+            )?;
+            ensure_absent(service, &authenticated, &membership, &project_id, &resource)?;
+            let record = FactRecord::new(
+                request.payload.fact_id,
+                session.session_id,
+                session.source_id,
+                authenticated.actor_id().clone(),
+                request.payload.content,
+            )?;
+            service.execute_with_body(
+                &authenticated,
+                &membership,
+                envelope,
+                resource,
+                ChangeOperation::Upsert,
+                &record,
+            )
+        })
+        .await?;
     Ok(Json(receipt))
 }
 
@@ -331,63 +335,62 @@ async fn send_handoff(
         "handoff.send",
         request.payload.clone(),
     )?;
-    let mut service = state.service.lock().await;
-    let (authenticated, membership) = request_context(&service, &headers, &project_id)?;
-    if let Some(receipt) = service.replay(
-        &authenticated,
-        &membership,
-        &envelope,
-        &resource,
-        ChangeOperation::Upsert,
-    )? {
-        return Ok(Json(receipt));
-    }
-    let (_, session): (_, SessionRecord) = load_record(
-        &service,
-        &authenticated,
-        &membership,
-        &project_id,
-        &resource_ref(SESSION_KIND, request.payload.session_id.as_str())?,
-    )?;
-    require_writable_receiver(
-        &service,
-        &authenticated,
-        &project_id,
-        &request.payload.to_actor,
-    )?;
-    ensure_absent(
-        &service,
-        &authenticated,
-        &membership,
-        &project_id,
-        &resource,
-    )?;
-    let mut record = HandoffRecord::new(
-        request.payload.handoff_id,
-        &session,
-        authenticated.actor_id().clone(),
-        request.payload.to_actor,
-        request.payload.focus,
-        request.payload.done_when,
-    )?;
-    if let Some(context_id) = request.payload.context_id {
-        let (_, context): (_, HandoffContextRecord) = load_record(
-            &service,
-            &authenticated,
-            &membership,
-            &project_id,
-            &resource_ref(HANDOFF_CONTEXT_KIND, context_id.as_str())?,
-        )?;
-        record.attach_context(&context)?;
-    }
-    let receipt = service.execute_with_body(
-        &authenticated,
-        &membership,
-        envelope,
-        resource,
-        ChangeOperation::Upsert,
-        &record,
-    )?;
+    let digest = bearer_digest_from_headers(&headers)?;
+    let receipt = state
+        .canonical
+        .run_service(move |service| {
+            let (authenticated, membership) = request_context(service, &digest, &project_id)?;
+            if let Some(receipt) = service.replay(
+                &authenticated,
+                &membership,
+                &envelope,
+                &resource,
+                ChangeOperation::Upsert,
+            )? {
+                return Ok(receipt);
+            }
+            let (_, session): (_, SessionRecord) = load_record(
+                service,
+                &authenticated,
+                &membership,
+                &project_id,
+                &resource_ref(SESSION_KIND, request.payload.session_id.as_str())?,
+            )?;
+            require_writable_receiver(
+                service,
+                &authenticated,
+                &project_id,
+                &request.payload.to_actor,
+            )?;
+            ensure_absent(service, &authenticated, &membership, &project_id, &resource)?;
+            let mut record = HandoffRecord::new(
+                request.payload.handoff_id,
+                &session,
+                authenticated.actor_id().clone(),
+                request.payload.to_actor,
+                request.payload.focus,
+                request.payload.done_when,
+            )?;
+            if let Some(context_id) = request.payload.context_id {
+                let (_, context): (_, HandoffContextRecord) = load_record(
+                    service,
+                    &authenticated,
+                    &membership,
+                    &project_id,
+                    &resource_ref(HANDOFF_CONTEXT_KIND, context_id.as_str())?,
+                )?;
+                record.attach_context(&context)?;
+            }
+            service.execute_with_body(
+                &authenticated,
+                &membership,
+                envelope,
+                resource,
+                ChangeOperation::Upsert,
+                &record,
+            )
+        })
+        .await?;
     Ok(Json(receipt))
 }
 
@@ -406,53 +409,52 @@ async fn create_handoff_context(
         "handoff_context.create",
         request.payload.clone(),
     )?;
-    let mut service = state.service.lock().await;
-    let (authenticated, membership) = request_context(&service, &headers, &project_id)?;
-    if let Some(receipt) = service.replay(
-        &authenticated,
-        &membership,
-        &envelope,
-        &resource,
-        ChangeOperation::Upsert,
-    )? {
-        return Ok(Json(receipt));
-    }
-    let (_, session): (_, SessionRecord) = load_record(
-        &service,
-        &authenticated,
-        &membership,
-        &project_id,
-        &resource_ref(SESSION_KIND, request.payload.session_id.as_str())?,
-    )?;
-    require_writable_receiver(
-        &service,
-        &authenticated,
-        &project_id,
-        &request.payload.to_actor,
-    )?;
-    ensure_absent(
-        &service,
-        &authenticated,
-        &membership,
-        &project_id,
-        &resource,
-    )?;
-    let record = HandoffContextRecord::new(
-        request.payload.context_id,
-        request.payload.handoff_id,
-        &session,
-        authenticated.actor_id().clone(),
-        request.payload.to_actor,
-        request.payload.content,
-    )?;
-    let receipt = service.execute_with_body(
-        &authenticated,
-        &membership,
-        envelope,
-        resource,
-        ChangeOperation::Upsert,
-        &record,
-    )?;
+    let digest = bearer_digest_from_headers(&headers)?;
+    let receipt = state
+        .canonical
+        .run_service(move |service| {
+            let (authenticated, membership) = request_context(service, &digest, &project_id)?;
+            if let Some(receipt) = service.replay(
+                &authenticated,
+                &membership,
+                &envelope,
+                &resource,
+                ChangeOperation::Upsert,
+            )? {
+                return Ok(receipt);
+            }
+            let (_, session): (_, SessionRecord) = load_record(
+                service,
+                &authenticated,
+                &membership,
+                &project_id,
+                &resource_ref(SESSION_KIND, request.payload.session_id.as_str())?,
+            )?;
+            require_writable_receiver(
+                service,
+                &authenticated,
+                &project_id,
+                &request.payload.to_actor,
+            )?;
+            ensure_absent(service, &authenticated, &membership, &project_id, &resource)?;
+            let record = HandoffContextRecord::new(
+                request.payload.context_id,
+                request.payload.handoff_id,
+                &session,
+                authenticated.actor_id().clone(),
+                request.payload.to_actor,
+                request.payload.content,
+            )?;
+            service.execute_with_body(
+                &authenticated,
+                &membership,
+                envelope,
+                resource,
+                ChangeOperation::Upsert,
+                &record,
+            )
+        })
+        .await?;
     Ok(Json(receipt))
 }
 
@@ -473,39 +475,40 @@ async fn accept_handoff(
         "handoff.accept",
         request.payload.clone(),
     )?;
-    let mut service = state.service.lock().await;
-    let (authenticated, membership) = request_context(&service, &headers, &project_id)?;
-    if let Some(receipt) = service.replay(
-        &authenticated,
-        &membership,
-        &envelope,
-        &resource,
-        ChangeOperation::Upsert,
-    )? {
-        return Ok(Json(receipt));
-    }
-    let (revision, mut record): (_, HandoffRecord) = load_record(
-        &service,
-        &authenticated,
-        &membership,
-        &project_id,
-        &resource,
-    )?;
-    require_revision(request.expected_revision, revision)?;
-    record.accept_with_lease(
-        authenticated.actor_id(),
-        request.payload.claim_id,
-        current_epoch_ms()?,
-        HANDOFF_LEASE_MS,
-    )?;
-    let receipt = service.execute_with_body(
-        &authenticated,
-        &membership,
-        envelope,
-        resource,
-        ChangeOperation::Upsert,
-        &record,
-    )?;
+    let digest = bearer_digest_from_headers(&headers)?;
+    let now_ms = current_epoch_ms()?;
+    let receipt = state
+        .canonical
+        .run_service(move |service| {
+            let (authenticated, membership) = request_context(service, &digest, &project_id)?;
+            if let Some(receipt) = service.replay(
+                &authenticated,
+                &membership,
+                &envelope,
+                &resource,
+                ChangeOperation::Upsert,
+            )? {
+                return Ok(receipt);
+            }
+            let (revision, mut record): (_, HandoffRecord) =
+                load_record(service, &authenticated, &membership, &project_id, &resource)?;
+            require_revision(request.expected_revision, revision)?;
+            record.accept_with_lease(
+                authenticated.actor_id(),
+                request.payload.claim_id,
+                now_ms,
+                HANDOFF_LEASE_MS,
+            )?;
+            service.execute_with_body(
+                &authenticated,
+                &membership,
+                envelope,
+                resource,
+                ChangeOperation::Upsert,
+                &record,
+            )
+        })
+        .await?;
     Ok(Json(receipt))
 }
 
@@ -526,39 +529,40 @@ async fn heartbeat_handoff(
         "handoff.heartbeat",
         request.payload.clone(),
     )?;
-    let mut service = state.service.lock().await;
-    let (authenticated, membership) = request_context(&service, &headers, &project_id)?;
-    if let Some(receipt) = service.replay(
-        &authenticated,
-        &membership,
-        &envelope,
-        &resource,
-        ChangeOperation::Upsert,
-    )? {
-        return Ok(Json(receipt));
-    }
-    let (revision, mut record): (_, HandoffRecord) = load_record(
-        &service,
-        &authenticated,
-        &membership,
-        &project_id,
-        &resource,
-    )?;
-    require_revision(request.expected_revision, revision)?;
-    record.heartbeat(
-        authenticated.actor_id(),
-        &request.payload.claim_id,
-        current_epoch_ms()?,
-        HANDOFF_LEASE_MS,
-    )?;
-    let receipt = service.execute_with_body(
-        &authenticated,
-        &membership,
-        envelope,
-        resource,
-        ChangeOperation::Upsert,
-        &record,
-    )?;
+    let digest = bearer_digest_from_headers(&headers)?;
+    let now_ms = current_epoch_ms()?;
+    let receipt = state
+        .canonical
+        .run_service(move |service| {
+            let (authenticated, membership) = request_context(service, &digest, &project_id)?;
+            if let Some(receipt) = service.replay(
+                &authenticated,
+                &membership,
+                &envelope,
+                &resource,
+                ChangeOperation::Upsert,
+            )? {
+                return Ok(receipt);
+            }
+            let (revision, mut record): (_, HandoffRecord) =
+                load_record(service, &authenticated, &membership, &project_id, &resource)?;
+            require_revision(request.expected_revision, revision)?;
+            record.heartbeat(
+                authenticated.actor_id(),
+                &request.payload.claim_id,
+                now_ms,
+                HANDOFF_LEASE_MS,
+            )?;
+            service.execute_with_body(
+                &authenticated,
+                &membership,
+                envelope,
+                resource,
+                ChangeOperation::Upsert,
+                &record,
+            )
+        })
+        .await?;
     Ok(Json(receipt))
 }
 
@@ -579,47 +583,48 @@ async fn return_handoff(
         "handoff.return",
         request.payload.clone(),
     )?;
-    let mut service = state.service.lock().await;
-    let (authenticated, membership) = request_context(&service, &headers, &project_id)?;
-    if let Some(receipt) = service.replay(
-        &authenticated,
-        &membership,
-        &envelope,
-        &resource,
-        ChangeOperation::Upsert,
-    )? {
-        return Ok(Json(receipt));
-    }
-    let (revision, mut record): (_, HandoffRecord) = load_record(
-        &service,
-        &authenticated,
-        &membership,
-        &project_id,
-        &resource,
-    )?;
-    require_revision(request.expected_revision, revision)?;
-    let (_, fact): (_, FactRecord) = load_record(
-        &service,
-        &authenticated,
-        &membership,
-        &project_id,
-        &resource_ref(FACT_KIND, request.payload.result_fact_id.as_str())?,
-    )?;
-    record.return_result_at(
-        authenticated.actor_id(),
-        &request.payload.claim_id,
-        &fact,
-        request.payload.outcome,
-        current_epoch_ms()?,
-    )?;
-    let receipt = service.execute_with_body(
-        &authenticated,
-        &membership,
-        envelope,
-        resource,
-        ChangeOperation::Upsert,
-        &record,
-    )?;
+    let digest = bearer_digest_from_headers(&headers)?;
+    let now_ms = current_epoch_ms()?;
+    let receipt = state
+        .canonical
+        .run_service(move |service| {
+            let (authenticated, membership) = request_context(service, &digest, &project_id)?;
+            if let Some(receipt) = service.replay(
+                &authenticated,
+                &membership,
+                &envelope,
+                &resource,
+                ChangeOperation::Upsert,
+            )? {
+                return Ok(receipt);
+            }
+            let (revision, mut record): (_, HandoffRecord) =
+                load_record(service, &authenticated, &membership, &project_id, &resource)?;
+            require_revision(request.expected_revision, revision)?;
+            let (_, fact): (_, FactRecord) = load_record(
+                service,
+                &authenticated,
+                &membership,
+                &project_id,
+                &resource_ref(FACT_KIND, request.payload.result_fact_id.as_str())?,
+            )?;
+            record.return_result_at(
+                authenticated.actor_id(),
+                &request.payload.claim_id,
+                &fact,
+                request.payload.outcome,
+                now_ms,
+            )?;
+            service.execute_with_body(
+                &authenticated,
+                &membership,
+                envelope,
+                resource,
+                ChangeOperation::Upsert,
+                &record,
+            )
+        })
+        .await?;
     Ok(Json(receipt))
 }
 
@@ -630,30 +635,35 @@ async fn get_handoff(
 ) -> Result<impl axum::response::IntoResponse, ApiError> {
     let project_id = ProjectId::try_from(project_id)?;
     let handoff_id = HandoffId::try_from(handoff_id)?;
-    let service = state.service.lock().await;
-    let (authenticated, membership) = request_context(&service, &headers, &project_id)?;
-    let (revision, record): (_, HandoffRecord) = load_record(
-        &service,
-        &authenticated,
-        &membership,
-        &project_id,
-        &resource_ref(HANDOFF_KIND, handoff_id.as_str())?,
-    )?;
-    if !record.is_visible_to(authenticated.actor_id()) {
-        return Err(DomainError::HandoffActorMismatch.into());
-    }
-    Ok(Json(TypedRecordResponse { revision, record }))
+    let digest = bearer_digest_from_headers(&headers)?;
+    let response = state
+        .canonical
+        .run_service(move |service| {
+            let (authenticated, membership) = request_context(service, &digest, &project_id)?;
+            let (revision, record): (_, HandoffRecord) = load_record(
+                service,
+                &authenticated,
+                &membership,
+                &project_id,
+                &resource_ref(HANDOFF_KIND, handoff_id.as_str())?,
+            )?;
+            if !record.is_visible_to(authenticated.actor_id()) {
+                return Err(DomainError::HandoffActorMismatch);
+            }
+            Ok(TypedRecordResponse { revision, record })
+        })
+        .await?;
+    Ok(Json(response))
 }
 
 pub(super) fn request_context(
-    service: &CommandService<SqliteCommandStore>,
-    headers: &HeaderMap,
+    service: &CanonicalService<'_>,
+    digest: &[u8; 32],
     project_id: &ProjectId,
 ) -> Result<(AuthenticatedActor, ProjectMembership), DomainError> {
-    let digest = bearer_digest_from_headers(headers)?;
     let authenticated = service
         .store()
-        .authenticate_token(&digest)?
+        .authenticate_token(digest)?
         .ok_or(DomainError::AuthenticationFailed)?;
     let membership = service
         .store()
@@ -678,7 +688,7 @@ fn current_epoch_ms() -> Result<i64, DomainError> {
 }
 
 fn ensure_absent(
-    service: &CommandService<SqliteCommandStore>,
+    service: &CanonicalService<'_>,
     authenticated: &AuthenticatedActor,
     membership: &ProjectMembership,
     project_id: &ProjectId,
@@ -695,7 +705,7 @@ fn ensure_absent(
 }
 
 fn load_record<T: DeserializeOwned>(
-    service: &CommandService<SqliteCommandStore>,
+    service: &CanonicalService<'_>,
     authenticated: &AuthenticatedActor,
     membership: &ProjectMembership,
     project_id: &ProjectId,
@@ -708,7 +718,7 @@ fn load_record<T: DeserializeOwned>(
 }
 
 fn require_writable_receiver(
-    service: &CommandService<SqliteCommandStore>,
+    service: &CanonicalService<'_>,
     authenticated: &AuthenticatedActor,
     project_id: &ProjectId,
     receiver_id: &ActorId,
@@ -793,5 +803,5 @@ fn require_revision(expected: Revision, current: Revision) -> Result<(), DomainE
 }
 
 fn decode_json<T>(payload: Result<Json<T>, JsonRejection>) -> Result<Json<T>, ApiError> {
-    payload.map_err(|error| ApiError(DomainError::InvalidCommand(error.body_text())))
+    payload.map_err(|error| ApiError::from(DomainError::InvalidCommand(error.body_text())))
 }

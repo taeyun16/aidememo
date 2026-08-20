@@ -6,6 +6,7 @@
 //! mutation. This crate does not modify or expose the existing embedded store.
 
 mod artifact;
+mod executor;
 mod lexical;
 mod mcp;
 mod product;
@@ -24,7 +25,6 @@ use aidememo_domain::{
     ProjectScope, ProjectSequence, ProjectSnapshot, ResourceId, ResourceKind, ResourceRef,
     ResourceState, Revision,
 };
-use aidememo_service::CommandService;
 use aidememo_store_local::SqliteCommandStore;
 use axum::{
     Json, Router,
@@ -34,12 +34,13 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{get, post},
 };
+use executor::{BlockingStoreError, BlockingStoreExecutor};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 #[cfg(feature = "semantic")]
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 #[cfg(feature = "semantic")]
 pub use semantic::{EmbeddingProvider, HttpEmbeddingProvider, SharedEmbeddingProvider};
@@ -49,11 +50,13 @@ const DEFAULT_CHANGE_LIMIT: usize = 100;
 const MAX_COMMAND_BODY_BYTES: usize = 1024 * 1024;
 const MAX_BEARER_BYTES: usize = 4096;
 const EXTENSION_RESOURCE_PREFIX: &str = "custom.";
+const DEFAULT_STORE_ACQUIRE_TIMEOUT: Duration = Duration::from_secs(1);
+const DEFAULT_STORE_OPERATION_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Cloneable application state around one single-node command service.
 #[derive(Clone)]
 pub struct ServerState {
-    service: Arc<Mutex<CommandService<SqliteCommandStore>>>,
+    canonical: BlockingStoreExecutor,
     artifacts: Option<Arc<ArtifactState>>,
     #[cfg(feature = "semantic")]
     semantic_provider: Option<SharedEmbeddingProvider>,
@@ -77,7 +80,11 @@ impl ServerState {
     #[must_use]
     pub fn new(store: SqliteCommandStore) -> Self {
         Self {
-            service: Arc::new(Mutex::new(CommandService::new(store))),
+            canonical: BlockingStoreExecutor::sqlite(
+                store,
+                DEFAULT_STORE_ACQUIRE_TIMEOUT,
+                DEFAULT_STORE_OPERATION_TIMEOUT,
+            ),
             artifacts: None,
             #[cfg(feature = "semantic")]
             semantic_provider: None,
@@ -97,7 +104,11 @@ impl ServerState {
     ) -> Result<Self, ArtifactStoreError> {
         artifacts.bind_body_store(LOCAL_BODY_STORE_IDENTITY)?;
         Ok(Self {
-            service: Arc::new(Mutex::new(CommandService::new(store))),
+            canonical: BlockingStoreExecutor::sqlite(
+                store,
+                DEFAULT_STORE_ACQUIRE_TIMEOUT,
+                DEFAULT_STORE_OPERATION_TIMEOUT,
+            ),
             artifacts: Some(Arc::new(ArtifactState {
                 catalog: Mutex::new(artifacts),
                 bodies: ArtifactBodies::Local,
@@ -123,7 +134,11 @@ impl ServerState {
     ) -> Result<Self, ArtifactStoreError> {
         catalog.bind_body_store(&bodies.catalog_identity()?)?;
         Ok(Self {
-            service: Arc::new(Mutex::new(CommandService::new(store))),
+            canonical: BlockingStoreExecutor::sqlite(
+                store,
+                DEFAULT_STORE_ACQUIRE_TIMEOUT,
+                DEFAULT_STORE_OPERATION_TIMEOUT,
+            ),
             artifacts: Some(Arc::new(ArtifactState {
                 catalog: Mutex::new(catalog),
                 bodies: ArtifactBodies::S3(bodies),
@@ -245,8 +260,10 @@ struct HealthResponse {
 }
 
 async fn health(State(state): State<ServerState>) -> Result<Json<HealthResponse>, ApiError> {
-    let service = state.service.lock().await;
-    let schema_version = service.store().schema_version()?;
+    let schema_version = state
+        .canonical
+        .run_service(|service| service.store().schema_version())
+        .await?;
     Ok(Json(HealthResponse {
         status: "ok",
         mode: "single_node",
@@ -281,34 +298,38 @@ async fn command(
     payload: Result<Json<CommandRequest>, JsonRejection>,
 ) -> Result<impl IntoResponse, ApiError> {
     let Json(request) =
-        payload.map_err(|error| ApiError(DomainError::InvalidCommand(error.body_text())))?;
+        payload.map_err(|error| ApiError::from(DomainError::InvalidCommand(error.body_text())))?;
     let digest = bearer_digest_from_headers(&headers)?;
-    let mut service = state.service.lock().await;
-    let authenticated = service
-        .store()
-        .authenticate_token(&digest)?
-        .ok_or(DomainError::AuthenticationFailed)?;
-    let membership = service
-        .store()
-        .membership(&authenticated, &request.project_id)?
-        .ok_or_else(|| DomainError::ProjectUnauthorized {
-            project_id: request.project_id.clone(),
-        })?;
-    validate_resource_command(&request)?;
-    let envelope = CommandEnvelope {
-        command_id: request.command_id,
-        project_id: request.project_id,
-        expected_revision: request.expected_revision,
-        operation: request.operation,
-        payload: request.payload,
-    };
-    let receipt = service.execute(
-        &authenticated,
-        &membership,
-        envelope,
-        request.resource,
-        request.change,
-    )?;
+    let receipt = state
+        .canonical
+        .run_service(move |service| {
+            let authenticated = service
+                .store()
+                .authenticate_token(&digest)?
+                .ok_or(DomainError::AuthenticationFailed)?;
+            let membership = service
+                .store()
+                .membership(&authenticated, &request.project_id)?
+                .ok_or_else(|| DomainError::ProjectUnauthorized {
+                    project_id: request.project_id.clone(),
+                })?;
+            validate_resource_command(&request)?;
+            let envelope = CommandEnvelope {
+                command_id: request.command_id,
+                project_id: request.project_id,
+                expected_revision: request.expected_revision,
+                operation: request.operation,
+                payload: request.payload,
+            };
+            service.execute(
+                &authenticated,
+                &membership,
+                envelope,
+                request.resource,
+                request.change,
+            )
+        })
+        .await?;
     Ok((StatusCode::OK, Json(receipt)))
 }
 
@@ -352,28 +373,32 @@ async fn changes(
 ) -> Result<impl IntoResponse, ApiError> {
     let project_id = ProjectId::try_from(project_id)?;
     let Query(query) =
-        query.map_err(|error| ApiError(DomainError::InvalidCommand(error.body_text())))?;
+        query.map_err(|error| ApiError::from(DomainError::InvalidCommand(error.body_text())))?;
     let digest = bearer_digest_from_headers(&headers)?;
-    let service = state.service.lock().await;
-    let authenticated = service
-        .store()
-        .authenticate_token(&digest)?
-        .ok_or(DomainError::AuthenticationFailed)?;
-    let membership = service
-        .store()
-        .membership(&authenticated, &project_id)?
-        .ok_or_else(|| DomainError::ProjectUnauthorized {
-            project_id: project_id.clone(),
-        })?;
-    let batch = service.changes(
-        &authenticated,
-        &membership,
-        &ChangeCursor {
-            project_epoch: query.project_epoch,
-            after_seq: ProjectSequence::new(query.after_seq),
-        },
-        query.limit.unwrap_or(DEFAULT_CHANGE_LIMIT),
-    )?;
+    let batch = state
+        .canonical
+        .run_service(move |service| {
+            let authenticated = service
+                .store()
+                .authenticate_token(&digest)?
+                .ok_or(DomainError::AuthenticationFailed)?;
+            let membership = service
+                .store()
+                .membership(&authenticated, &project_id)?
+                .ok_or_else(|| DomainError::ProjectUnauthorized {
+                    project_id: project_id.clone(),
+                })?;
+            service.changes(
+                &authenticated,
+                &membership,
+                &ChangeCursor {
+                    project_epoch: query.project_epoch,
+                    after_seq: ProjectSequence::new(query.after_seq),
+                },
+                query.limit.unwrap_or(DEFAULT_CHANGE_LIMIT),
+            )
+        })
+        .await?;
     Ok((StatusCode::OK, Json(batch)))
 }
 
@@ -385,28 +410,32 @@ async fn materialized_changes(
 ) -> Result<impl IntoResponse, ApiError> {
     let project_id = ProjectId::try_from(project_id)?;
     let Query(query) =
-        query.map_err(|error| ApiError(DomainError::InvalidCommand(error.body_text())))?;
+        query.map_err(|error| ApiError::from(DomainError::InvalidCommand(error.body_text())))?;
     let digest = bearer_digest_from_headers(&headers)?;
-    let service = state.service.lock().await;
-    let authenticated = service
-        .store()
-        .authenticate_token(&digest)?
-        .ok_or(DomainError::AuthenticationFailed)?;
-    let membership = service
-        .store()
-        .membership(&authenticated, &project_id)?
-        .ok_or_else(|| DomainError::ProjectUnauthorized {
-            project_id: project_id.clone(),
-        })?;
-    let batch = service.materialized_changes(
-        &authenticated,
-        &membership,
-        &ChangeCursor {
-            project_epoch: query.project_epoch,
-            after_seq: ProjectSequence::new(query.after_seq),
-        },
-        query.limit.unwrap_or(DEFAULT_CHANGE_LIMIT),
-    )?;
+    let batch = state
+        .canonical
+        .run_service(move |service| {
+            let authenticated = service
+                .store()
+                .authenticate_token(&digest)?
+                .ok_or(DomainError::AuthenticationFailed)?;
+            let membership = service
+                .store()
+                .membership(&authenticated, &project_id)?
+                .ok_or_else(|| DomainError::ProjectUnauthorized {
+                    project_id: project_id.clone(),
+                })?;
+            service.materialized_changes(
+                &authenticated,
+                &membership,
+                &ChangeCursor {
+                    project_epoch: query.project_epoch,
+                    after_seq: ProjectSequence::new(query.after_seq),
+                },
+                query.limit.unwrap_or(DEFAULT_CHANGE_LIMIT),
+            )
+        })
+        .await?;
     Ok((
         StatusCode::OK,
         Json(MaterializedChangeResponseBatch::try_from(batch)?),
@@ -420,18 +449,22 @@ async fn snapshot(
 ) -> Result<impl IntoResponse, ApiError> {
     let project_id = ProjectId::try_from(project_id)?;
     let digest = bearer_digest_from_headers(&headers)?;
-    let service = state.service.lock().await;
-    let authenticated = service
-        .store()
-        .authenticate_token(&digest)?
-        .ok_or(DomainError::AuthenticationFailed)?;
-    let membership = service
-        .store()
-        .membership(&authenticated, &project_id)?
-        .ok_or_else(|| DomainError::ProjectUnauthorized {
-            project_id: project_id.clone(),
-        })?;
-    let snapshot = service.snapshot(&authenticated, &membership, &project_id)?;
+    let snapshot = state
+        .canonical
+        .run_service(move |service| {
+            let authenticated = service
+                .store()
+                .authenticate_token(&digest)?
+                .ok_or(DomainError::AuthenticationFailed)?;
+            let membership = service
+                .store()
+                .membership(&authenticated, &project_id)?
+                .ok_or_else(|| DomainError::ProjectUnauthorized {
+                    project_id: project_id.clone(),
+                })?;
+            service.snapshot(&authenticated, &membership, &project_id)
+        })
+        .await?;
     Ok((StatusCode::OK, Json(SnapshotResponse::try_from(snapshot)?)))
 }
 
@@ -480,38 +513,40 @@ async fn search(
 ) -> Result<impl IntoResponse, ApiError> {
     let project_id = ProjectId::try_from(project_id)?;
     let Query(query) =
-        query.map_err(|error| ApiError(DomainError::InvalidCommand(error.body_text())))?;
+        query.map_err(|error| ApiError::from(DomainError::InvalidCommand(error.body_text())))?;
     let query_text = query.q.trim();
     if query_text.is_empty() || query_text.len() > MAX_SEARCH_QUERY_BYTES {
-        return Err(ApiError(DomainError::InvalidCommand(format!(
+        return Err(ApiError::from(DomainError::InvalidCommand(format!(
             "search query must contain 1..={MAX_SEARCH_QUERY_BYTES} bytes"
         ))));
     }
     let limit = query.limit.unwrap_or(DEFAULT_SEARCH_LIMIT);
     if !(1..=MAX_SEARCH_LIMIT).contains(&limit) {
-        return Err(ApiError(DomainError::InvalidCommand(format!(
+        return Err(ApiError::from(DomainError::InvalidCommand(format!(
             "search limit must be between 1 and {MAX_SEARCH_LIMIT}"
         ))));
     }
     let digest = bearer_digest_from_headers(&headers)?;
-    let snapshot = {
-        let service = state.service.lock().await;
-        let authenticated = service
-            .store()
-            .authenticate_token(&digest)?
-            .ok_or(DomainError::AuthenticationFailed)?;
-        let membership = service
-            .store()
-            .membership(&authenticated, &project_id)?
-            .ok_or_else(|| DomainError::ProjectUnauthorized {
-                project_id: project_id.clone(),
-            })?;
-        service.snapshot(&authenticated, &membership, &project_id)?
-    };
+    let snapshot = state
+        .canonical
+        .run_service(move |service| {
+            let authenticated = service
+                .store()
+                .authenticate_token(&digest)?
+                .ok_or(DomainError::AuthenticationFailed)?;
+            let membership = service
+                .store()
+                .membership(&authenticated, &project_id)?
+                .ok_or_else(|| DomainError::ProjectUnauthorized {
+                    project_id: project_id.clone(),
+                })?;
+            service.snapshot(&authenticated, &membership, &project_id)
+        })
+        .await?;
     if let Some(at_least_seq) = query.at_least_seq {
         let requested = ProjectSequence::new(at_least_seq);
         if requested > snapshot.at_seq {
-            return Err(ApiError(DomainError::CursorOutOfRange {
+            return Err(ApiError::from(DomainError::CursorOutOfRange {
                 after_seq: requested,
                 current: snapshot.at_seq,
             }));
@@ -527,7 +562,7 @@ async fn search(
         requested_mode.as_str(),
         "auto" | "lexical" | "semantic" | "hybrid"
     ) {
-        return Err(ApiError(DomainError::InvalidCommand(
+        return Err(ApiError::from(DomainError::InvalidCommand(
             "search mode must be auto, lexical, semantic, or hybrid".to_owned(),
         )));
     }
@@ -577,7 +612,7 @@ async fn search(
         } else if requested_mode == "auto" {
             ("lexical", None, lexical_search_hits(&lexical_hits, limit))
         } else {
-            return Err(ApiError(DomainError::InvalidCommand(
+            return Err(ApiError::from(DomainError::InvalidCommand(
                 "semantic retrieval is not configured on this server; use mode=lexical or configure an embedding endpoint".to_owned(),
             )));
         }
@@ -586,7 +621,7 @@ async fn search(
     #[cfg(not(feature = "semantic"))]
     let (effective_mode, semantic_model, mut results) = {
         if matches!(requested_mode.as_str(), "semantic" | "hybrid") {
-            return Err(ApiError(DomainError::InvalidCommand(
+            return Err(ApiError::from(DomainError::InvalidCommand(
                 "semantic retrieval requires an aidememo-server build with --features semantic"
                     .to_owned(),
             )));
@@ -834,20 +869,24 @@ async fn resource(
         id: ResourceId::try_from(resource_id)?,
     };
     let digest = bearer_digest_from_headers(&headers)?;
-    let service = state.service.lock().await;
-    let authenticated = service
-        .store()
-        .authenticate_token(&digest)?
-        .ok_or(DomainError::AuthenticationFailed)?;
-    let membership = service
-        .store()
-        .membership(&authenticated, &project_id)?
-        .ok_or_else(|| DomainError::ProjectUnauthorized {
-            project_id: project_id.clone(),
-        })?;
-    let canonical = service
-        .visible_resource(&authenticated, &membership, &project_id, &resource)?
-        .ok_or(DomainError::ResourceNotFound)?;
+    let canonical = state
+        .canonical
+        .run_service(move |service| {
+            let authenticated = service
+                .store()
+                .authenticate_token(&digest)?
+                .ok_or(DomainError::AuthenticationFailed)?;
+            let membership = service
+                .store()
+                .membership(&authenticated, &project_id)?
+                .ok_or_else(|| DomainError::ProjectUnauthorized {
+                    project_id: project_id.clone(),
+                })?;
+            service
+                .visible_resource(&authenticated, &membership, &project_id, &resource)?
+                .ok_or(DomainError::ResourceNotFound)
+        })
+        .await?;
     Ok((StatusCode::OK, Json(ResourceResponse::try_from(canonical)?)))
 }
 
@@ -875,33 +914,81 @@ struct ErrorDetail {
     message: String,
 }
 
-struct ApiError(DomainError);
+enum ApiError {
+    Domain(DomainError),
+    Executor(BlockingStoreError),
+}
 
 impl From<DomainError> for ApiError {
     fn from(error: DomainError) -> Self {
-        Self(error)
+        Self::Domain(error)
+    }
+}
+
+impl From<BlockingStoreError> for ApiError {
+    fn from(error: BlockingStoreError) -> Self {
+        Self::Executor(error)
     }
 }
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response<Body> {
-        let status = status_for_error(&self.0);
-        let code = self.0.code();
-        let message = match &self.0 {
-            DomainError::StorageFailure { .. } | DomainError::ConformanceViolation { .. } => {
-                tracing::error!(error = %self.0, "server request failed internally");
-                "internal server error".to_owned()
+        match self {
+            Self::Domain(error) => domain_error_response(error),
+            Self::Executor(BlockingStoreError::Domain(error)) => domain_error_response(error),
+            Self::Executor(
+                error @ (BlockingStoreError::Saturated
+                | BlockingStoreError::TimedOut
+                | BlockingStoreError::BackendUnavailable),
+            ) => {
+                tracing::warn!(error = %error, "canonical store temporarily unavailable");
+                (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    Json(ErrorResponse {
+                        error: ErrorDetail {
+                            code: ErrorCode::StorageFailure,
+                            message: "canonical storage temporarily unavailable".to_owned(),
+                        },
+                    }),
+                )
+                    .into_response()
             }
-            error => error.to_string(),
-        };
-        (
-            status,
-            Json(ErrorResponse {
-                error: ErrorDetail { code, message },
-            }),
-        )
-            .into_response()
+            Self::Executor(
+                error @ (BlockingStoreError::Configuration(_) | BlockingStoreError::Join(_)),
+            ) => {
+                tracing::error!(error = %error, "canonical store executor failed internally");
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse {
+                        error: ErrorDetail {
+                            code: ErrorCode::StorageFailure,
+                            message: "internal server error".to_owned(),
+                        },
+                    }),
+                )
+                    .into_response()
+            }
+        }
     }
+}
+
+fn domain_error_response(error: DomainError) -> Response<Body> {
+    let status = status_for_error(&error);
+    let code = error.code();
+    let message = match &error {
+        DomainError::StorageFailure { .. } | DomainError::ConformanceViolation { .. } => {
+            tracing::error!(error = %error, "server request failed internally");
+            "internal server error".to_owned()
+        }
+        error => error.to_string(),
+    };
+    (
+        status,
+        Json(ErrorResponse {
+            error: ErrorDetail { code, message },
+        }),
+    )
+        .into_response()
 }
 
 fn status_for_error(error: &DomainError) -> StatusCode {
@@ -927,6 +1014,38 @@ fn status_for_error(error: &DomainError) -> StatusCode {
         | DomainError::InvalidCommand(_) => StatusCode::BAD_REQUEST,
         DomainError::StorageFailure { .. } | DomainError::ConformanceViolation { .. } => {
             StatusCode::INTERNAL_SERVER_ERROR
+        }
+    }
+}
+
+#[cfg(test)]
+mod executor_error_tests {
+    use super::*;
+
+    #[test]
+    fn capacity_and_backend_errors_map_to_service_unavailable() {
+        for error in [
+            BlockingStoreError::Saturated,
+            BlockingStoreError::TimedOut,
+            BlockingStoreError::BackendUnavailable,
+        ] {
+            assert_eq!(
+                ApiError::from(error).into_response().status(),
+                StatusCode::SERVICE_UNAVAILABLE
+            );
+        }
+    }
+
+    #[test]
+    fn executor_internal_errors_remain_internal_server_errors() {
+        for error in [
+            BlockingStoreError::Configuration("invalid".to_owned()),
+            BlockingStoreError::Join("panic".to_owned()),
+        ] {
+            assert_eq!(
+                ApiError::from(error).into_response().status(),
+                StatusCode::INTERNAL_SERVER_ERROR
+            );
         }
     }
 }

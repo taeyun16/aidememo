@@ -23,6 +23,9 @@ pub(crate) enum BlockingStoreError {
     /// The backend synchronization primitive or connection pool became unusable.
     BackendUnavailable,
     /// The configured execution policy is invalid.
+    // Constructed by the PostgreSQL backend constructor, which is intentionally
+    // wired into the server CLI in the next backend-selection slice.
+    #[allow(dead_code)]
     Configuration(String),
     /// The Tokio blocking task terminated unexpectedly or handler code panicked.
     Join(String),
@@ -61,6 +64,9 @@ impl From<DomainError> for BlockingStoreError {
 #[derive(Clone)]
 enum BlockingBackend {
     Sqlite(Arc<Mutex<SqliteCommandStore>>),
+    // The PostgreSQL executor is validated by its dedicated integration test;
+    // production CLI selection is deliberately deferred to the next slice.
+    #[allow(dead_code)]
     Postgres(Arc<PostgresPool>),
 }
 
@@ -77,6 +83,7 @@ struct PostgresDropReaper {
 }
 
 impl PostgresDropReaper {
+    #[allow(dead_code)]
     fn new() -> Result<Self, BlockingStoreError> {
         let (sender, receiver) = std_mpsc::channel::<PostgresCommandStore>();
         std::thread::Builder::new()
@@ -110,6 +117,7 @@ struct PooledPostgresStore {
 }
 
 impl PooledPostgresStore {
+    #[allow(dead_code)]
     fn new(store: PostgresCommandStore, reaper: PostgresDropReaper) -> Self {
         Self {
             store: Some(store),
@@ -191,6 +199,7 @@ impl BlockingStoreExecutor {
     /// Production server wiring must use a TLS-capable constructor rather than
     /// silently selecting this path. Connection creation itself runs on Tokio's
     /// blocking pool so startup does not block an async runtime worker.
+    #[allow(dead_code)]
     pub(crate) async fn postgres_no_tls(
         url: String,
         pool_size: usize,
