@@ -93,11 +93,51 @@ impl ServerState {
         }
     }
 
+    /// Build an artifact-disabled PostgreSQL server state with verified TLS.
+    ///
+    /// System trust roots are used by default. `root_ca_pem` may contain one
+    /// additional PEM root certificate for a private/internal CA. The adapter
+    /// always forces PostgreSQL SSL mode to `require` and keeps hostname and
+    /// certificate verification enabled.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stable storage error when pool construction, TLS, timeout policy,
+    /// connection, or schema initialization fails.
+    pub async fn postgres_tls(
+        url: String,
+        root_ca_pem: Option<Vec<u8>>,
+        pool_size: usize,
+        acquire_timeout: Duration,
+        operation_timeout: Duration,
+        statement_timeout: Duration,
+        lock_timeout: Duration,
+    ) -> Result<Self, DomainError> {
+        let canonical = BlockingStoreExecutor::postgres_tls(
+            url,
+            root_ca_pem,
+            pool_size,
+            acquire_timeout,
+            operation_timeout,
+            statement_timeout,
+            lock_timeout,
+        )
+        .await
+        .map_err(blocking_store_initialization_error)?;
+        Ok(Self {
+            canonical,
+            artifacts: None,
+            #[cfg(feature = "semantic")]
+            semantic_provider: None,
+            #[cfg(feature = "semantic")]
+            semantic_projection: Arc::new(Mutex::new(None)),
+        })
+    }
+
     /// Build an artifact-disabled PostgreSQL server state without TLS.
     ///
-    /// This constructor exists only for explicit local/development profiles. The
-    /// server CLI fails closed to TLS-required mode unless the operator selects
-    /// `insecure-no-tls`; production PostgreSQL transport is a separate TLS slice.
+    /// This constructor exists only for explicit local/development profiles.
+    /// Production profiles should use [`Self::postgres_tls`].
     ///
     /// # Errors
     ///
