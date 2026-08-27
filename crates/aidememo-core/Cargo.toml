@@ -23,7 +23,7 @@ semantic-adapt = ["semantic"]
 fastembed = ["semantic", "dep:fastembed"]
 parallel = ["rayon"]
 remote = ["oneio"]
-s3 = ["sqlite", "dep:aws-config", "aws-sdk-s3", "aws-credential-types", "tokio/full", "zstd"]
+s3 = ["sqlite", "dep:aws-config", "aws-sdk-s3", "tokio/full", "zstd"]
 sqlite = ["dep:rusqlite"]
 
 [dependencies]
@@ -134,4 +134,3 @@ tracing = "0.1"
 
 [dev-dependencies]
 tempfile = "3.10"
-proptest = "1.4"
