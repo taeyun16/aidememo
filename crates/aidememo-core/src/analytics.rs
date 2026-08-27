@@ -61,11 +61,14 @@ impl AnalyticsEngine {
     /// and rebuilt without data loss.
     pub fn open(path: &Path) -> Result<Self> {
         let conn = Connection::open(path).map_err(|e| {
-            AideMemoError::StoreOpen(format!("failed to open DuckDB analytics engine: {}", e))
+            AideMemoError::StoreOpen {
+                path: path.to_path_buf(),
+                source: Box::new(e),
+            }
         })?;
 
         // Initialize schema if needed
-        Self::init_schema(&conn)?;
+        Self::init_schema(&conn, path)?;
 
         // Load watermarks
         let (last_fact_seq, last_entity_seq, last_relation_seq) = Self::load_watermarks(&conn)?;
@@ -79,7 +82,7 @@ impl AnalyticsEngine {
     }
 
     /// Initialize DuckDB schema for analytics.
-    fn init_schema(conn: &Connection) -> Result<()> {
+    fn init_schema(conn: &Connection, path: &Path) -> Result<()> {
         // Metadata table for watermarks
         conn.execute(
             "CREATE TABLE IF NOT EXISTS _analytics_meta (
@@ -88,7 +91,10 @@ impl AnalyticsEngine {
             )",
             [],
         )
-        .map_err(|e| AideMemoError::StoreOpen(format!("failed to init meta table: {}", e)))?;
+        .map_err(|e| AideMemoError::StoreOpen {
+            path: path.to_path_buf(),
+            source: Box::new(e),
+        })?;
 
         // Facts table (columnar, optimized for OLAP)
         conn.execute(
@@ -113,7 +119,10 @@ impl AnalyticsEngine {
             )",
             [],
         )
-        .map_err(|e| AideMemoError::StoreOpen(format!("failed to init facts table: {}", e)))?;
+        .map_err(|e| AideMemoError::StoreOpen {
+            path: path.to_path_buf(),
+            source: Box::new(e),
+        })?;
 
         // Entities table
         conn.execute(
@@ -128,7 +137,10 @@ impl AnalyticsEngine {
             )",
             [],
         )
-        .map_err(|e| AideMemoError::StoreOpen(format!("failed to init entities table: {}", e)))?;
+        .map_err(|e| AideMemoError::StoreOpen {
+            path: path.to_path_buf(),
+            source: Box::new(e),
+        })?;
 
         // Relations table
         conn.execute(
@@ -142,7 +154,10 @@ impl AnalyticsEngine {
             )",
             [],
         )
-        .map_err(|e| AideMemoError::StoreOpen(format!("failed to init relations table: {}", e)))?;
+        .map_err(|e| AideMemoError::StoreOpen {
+            path: path.to_path_buf(),
+            source: Box::new(e),
+        })?;
 
         // Fact-entity junction table (many-to-many)
         conn.execute(
@@ -153,8 +168,9 @@ impl AnalyticsEngine {
             )",
             [],
         )
-        .map_err(|e| {
-            AideMemoError::StoreOpen(format!("failed to init fact_entities table: {}", e))
+        .map_err(|e| AideMemoError::StoreOpen {
+            path: path.to_path_buf(),
+            source: Box::new(e),
         })?;
 
         // Indexes for common query patterns
