@@ -181,13 +181,13 @@ pub fn restore_postgres_backup(
 
     // Validate checksum
     if dump_bytes.len() as u64 != manifest.database.stored_bytes {
-        return Err(DomainError::InvalidInput(
+        return Err(DomainError::InvalidCommand(
             "backup dump file size mismatch".to_string(),
         ));
     }
     let actual_sha256 = sha256_hex(&dump_bytes);
     if actual_sha256 != manifest.database.stored_sha256 {
-        return Err(DomainError::InvalidInput(
+        return Err(DomainError::InvalidCommand(
             "backup dump checksum mismatch".to_string(),
         ));
     }
@@ -258,11 +258,12 @@ pub fn export_tenant(
     });
 
     let manifest_path = output_dir.join("tenant_export.json");
-    let manifest_bytes =
-        serde_json::to_vec_pretty(&manifest).map_err(|error| DomainError::SerializeFailure {
-            context: "tenant export manifest".to_string(),
-            source: error,
-        })?;
+    let manifest_bytes = serde_json::to_vec_pretty(&manifest).map_err(|error| {
+        DomainError::StorageFailure {
+            operation: "tenant_export_serialize",
+            detail: format!("failed to serialize tenant export manifest: {error}"),
+        }
+    })?;
     std::fs::write(&manifest_path, manifest_bytes).map_err(|error| {
         DomainError::StorageFailure {
             operation: "tenant_export_write",
@@ -296,9 +297,9 @@ fn write_manifest(
     manifest: &PostgresBackupManifest,
 ) -> Result<(), DomainError> {
     let bytes = serde_json::to_vec_pretty(manifest).map_err(|error| {
-        DomainError::SerializeFailure {
-            context: "postgres backup manifest".to_string(),
-            source: error,
+        DomainError::StorageFailure {
+            operation: "backup_manifest_serialize",
+            detail: format!("failed to serialize backup manifest: {error}"),
         }
     })?;
     std::fs::write(path, bytes).map_err(|error| {
@@ -322,21 +323,21 @@ fn read_manifest(path: &Path) -> Result<PostgresBackupManifest, DomainError> {
             ),
         }
     })?;
-    serde_json::from_slice(&bytes).map_err(|error| DomainError::DeserializeFailure {
-        context: "postgres backup manifest".to_string(),
-        source: error,
+    serde_json::from_slice(&bytes).map_err(|error| DomainError::StorageFailure {
+        operation: "backup_manifest_deserialize",
+        detail: format!("failed to deserialize backup manifest: {error}"),
     })
 }
 
 fn validate_manifest_metadata(manifest: &PostgresBackupManifest) -> Result<(), DomainError> {
     if manifest.schema != 1 {
-        return Err(DomainError::InvalidInput(format!(
+        return Err(DomainError::InvalidCommand(format!(
             "unsupported postgres backup manifest schema {}",
             manifest.schema
         )));
     }
     if manifest.backend != "postgres" {
-        return Err(DomainError::InvalidInput(format!(
+        return Err(DomainError::InvalidCommand(format!(
             "postgres backup manifest backend `{}` is not postgres-compatible",
             manifest.backend
         )));
