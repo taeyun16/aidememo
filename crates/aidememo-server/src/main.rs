@@ -49,9 +49,12 @@ struct BootstrapArgs {
     /// Environment variable containing the PostgreSQL URL. Plaintext URL is never accepted on CLI.
     #[arg(long, default_value = "AIDEMEMO_POSTGRES_URL")]
     postgres_url_env: String,
-    /// PostgreSQL transport policy. TLS-required fails closed until the TLS connector slice lands.
+    /// PostgreSQL transport policy. Verified TLS is the production default.
     #[arg(long, value_enum, default_value_t = PostgresTransportArg::RequireTls)]
     postgres_transport: PostgresTransportArg,
+    /// Optional PEM root CA file added to the platform trust store for PostgreSQL TLS.
+    #[arg(long)]
+    postgres_root_ca_file: Option<PathBuf>,
     /// PostgreSQL statement timeout in milliseconds.
     #[arg(long, default_value_t = 8_000)]
     postgres_statement_timeout_ms: u64,
@@ -96,6 +99,9 @@ struct ServeArgs {
     /// PostgreSQL transport policy. Use insecure-no-tls only for explicit local/test environments.
     #[arg(long, value_enum, default_value_t = PostgresTransportArg::RequireTls)]
     postgres_transport: PostgresTransportArg,
+    /// Optional PEM root CA file added to the platform trust store for PostgreSQL TLS.
+    #[arg(long)]
+    postgres_root_ca_file: Option<PathBuf>,
     /// Maximum live PostgreSQL connections and blocking canonical sessions.
     #[arg(long, default_value_t = 8)]
     postgres_pool_size: usize,
@@ -239,6 +245,9 @@ async fn bootstrap(args: BootstrapArgs) -> Result<(), Box<dyn Error>> {
     };
     let backend = args.canonical_backend;
     let database = args.database;
+    let postgres_transport = args.postgres_transport;
+    let postgres_root_ca =
+        read_postgres_root_ca(postgres_transport, args.postgres_root_ca_file.as_deref())?;
     let statement_timeout = Duration::from_millis(args.postgres_statement_timeout_ms);
     let lock_timeout = Duration::from_millis(args.postgres_lock_timeout_ms);
     let tenant_name = args.tenant_name;
@@ -275,11 +284,23 @@ async fn bootstrap(args: BootstrapArgs) -> Result<(), Box<dyn Error>> {
                     operation: "server_bootstrap_config",
                     detail: "PostgreSQL URL environment variable was not resolved".to_owned(),
                 })?;
-                let mut store = PostgresCommandStore::connect_no_tls_with_timeouts(
-                    &url,
-                    statement_timeout,
-                    lock_timeout,
-                )?;
+                let mut store = match postgres_transport {
+                    PostgresTransportArg::RequireTls => {
+                        PostgresCommandStore::connect_tls_with_timeouts(
+                            &url,
+                            postgres_root_ca.as_deref(),
+                            statement_timeout,
+                            lock_timeout,
+                        )?
+                    }
+                    PostgresTransportArg::InsecureNoTls => {
+                        PostgresCommandStore::connect_no_tls_with_timeouts(
+                            &url,
+                            statement_timeout,
+                            lock_timeout,
+                        )?
+                    }
+                };
                 bootstrap_store(
                     &mut store,
                     tenant_id,
@@ -452,15 +473,35 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn Error>> {
         }
         CanonicalBackendArg::Postgres => {
             let url = postgres_url_from_env(&args.postgres_url_env)?;
-            let state = ServerState::postgres_no_tls_for_development(
-                url,
-                args.postgres_pool_size,
-                Duration::from_millis(args.postgres_acquire_timeout_ms),
-                Duration::from_millis(args.postgres_operation_timeout_ms),
-                Duration::from_millis(args.postgres_statement_timeout_ms),
-                Duration::from_millis(args.postgres_lock_timeout_ms),
-            )
-            .await?;
+            let root_ca = read_postgres_root_ca(
+                args.postgres_transport,
+                args.postgres_root_ca_file.as_deref(),
+            )?;
+            let state = match args.postgres_transport {
+                PostgresTransportArg::RequireTls => {
+                    ServerState::postgres_tls(
+                        url,
+                        root_ca,
+                        args.postgres_pool_size,
+                        Duration::from_millis(args.postgres_acquire_timeout_ms),
+                        Duration::from_millis(args.postgres_operation_timeout_ms),
+                        Duration::from_millis(args.postgres_statement_timeout_ms),
+                        Duration::from_millis(args.postgres_lock_timeout_ms),
+                    )
+                    .await?
+                }
+                PostgresTransportArg::InsecureNoTls => {
+                    ServerState::postgres_no_tls_for_development(
+                        url,
+                        args.postgres_pool_size,
+                        Duration::from_millis(args.postgres_acquire_timeout_ms),
+                        Duration::from_millis(args.postgres_operation_timeout_ms),
+                        Duration::from_millis(args.postgres_statement_timeout_ms),
+                        Duration::from_millis(args.postgres_lock_timeout_ms),
+                    )
+                    .await?
+                }
+            };
             (state, None, "disabled")
         }
     };
@@ -561,6 +602,12 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn Error>> {
 fn validate_bootstrap_args(args: &BootstrapArgs) -> Result<(), std::io::Error> {
     match args.canonical_backend {
         CanonicalBackendArg::Sqlite => {
+            if args.postgres_root_ca_file.is_some() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "--postgres-root-ca-file requires --canonical-backend postgres",
+                ));
+            }
             if args.database.is_none() {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
@@ -575,7 +622,10 @@ fn validate_bootstrap_args(args: &BootstrapArgs) -> Result<(), std::io::Error> {
                     "--database is SQLite-only and must be omitted for PostgreSQL",
                 ));
             }
-            validate_postgres_transport(args.postgres_transport)?;
+            validate_postgres_transport(
+                args.postgres_transport,
+                args.postgres_root_ca_file.as_deref(),
+            )?;
             validate_postgres_session_timeouts(
                 args.postgres_statement_timeout_ms,
                 args.postgres_lock_timeout_ms,
@@ -586,14 +636,28 @@ fn validate_bootstrap_args(args: &BootstrapArgs) -> Result<(), std::io::Error> {
     Ok(())
 }
 
-fn validate_postgres_transport(transport: PostgresTransportArg) -> Result<(), std::io::Error> {
-    if transport == PostgresTransportArg::RequireTls {
+fn validate_postgres_transport(
+    transport: PostgresTransportArg,
+    root_ca_file: Option<&Path>,
+) -> Result<(), std::io::Error> {
+    if transport == PostgresTransportArg::InsecureNoTls && root_ca_file.is_some() {
         return Err(std::io::Error::new(
-            std::io::ErrorKind::Unsupported,
-            "PostgreSQL TLS is required by default and is not yet implemented; local/test use must explicitly select --postgres-transport insecure-no-tls",
+            std::io::ErrorKind::InvalidInput,
+            "--postgres-root-ca-file is valid only with --postgres-transport require-tls",
         ));
     }
     Ok(())
+}
+
+fn read_postgres_root_ca(
+    transport: PostgresTransportArg,
+    root_ca_file: Option<&Path>,
+) -> Result<Option<Vec<u8>>, std::io::Error> {
+    validate_postgres_transport(transport, root_ca_file)?;
+    match root_ca_file {
+        Some(path) => std::fs::read(path).map(Some),
+        None => Ok(None),
+    }
 }
 
 fn validate_postgres_timeouts(
@@ -689,6 +753,12 @@ fn validate_serve_args(args: &ServeArgs) -> Result<(), std::io::Error> {
 
     match args.canonical_backend {
         CanonicalBackendArg::Sqlite => {
+            if args.postgres_root_ca_file.is_some() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "--postgres-root-ca-file requires --canonical-backend postgres",
+                ));
+            }
             if args.database.is_none() {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
@@ -709,7 +779,10 @@ fn validate_serve_args(args: &ServeArgs) -> Result<(), std::io::Error> {
                     "PostgreSQL canonical backend currently requires --artifact-backend disabled because artifact catalog metadata is node-local SQLite",
                 ));
             }
-            validate_postgres_transport(args.postgres_transport)?;
+            validate_postgres_transport(
+                args.postgres_transport,
+                args.postgres_root_ca_file.as_deref(),
+            )?;
             validate_postgres_timeouts(
                 args.postgres_pool_size,
                 args.postgres_acquire_timeout_ms,
@@ -826,6 +899,7 @@ mod tests {
             database: Some(PathBuf::from("server.sqlite")),
             postgres_url_env: "AIDEMEMO_POSTGRES_URL".to_owned(),
             postgres_transport: PostgresTransportArg::RequireTls,
+            postgres_root_ca_file: None,
             postgres_pool_size: 8,
             postgres_acquire_timeout_ms: 500,
             postgres_operation_timeout_ms: 10_000,
@@ -859,17 +933,25 @@ mod tests {
     }
 
     #[test]
-    fn postgres_requires_explicit_insecure_transport_until_tls_lands() -> Result<(), Box<dyn Error>>
-    {
+    fn postgres_tls_is_the_valid_default_transport() -> Result<(), Box<dyn Error>> {
         let mut args = serve_args(ArtifactBackendArg::Disabled);
         args.canonical_backend = CanonicalBackendArg::Postgres;
         args.database = None;
+        validate_serve_args(&args)?;
+        Ok(())
+    }
+
+    #[test]
+    fn insecure_postgres_rejects_root_ca_file() -> Result<(), Box<dyn Error>> {
+        let mut args = serve_args(ArtifactBackendArg::Disabled);
+        args.canonical_backend = CanonicalBackendArg::Postgres;
+        args.database = None;
+        args.postgres_transport = PostgresTransportArg::InsecureNoTls;
+        args.postgres_root_ca_file = Some(PathBuf::from("private-ca.pem"));
         let Err(error) = validate_serve_args(&args) else {
-            return Err(
-                std::io::Error::other("PostgreSQL silently accepted non-TLS transport").into(),
-            );
+            return Err(std::io::Error::other("insecure PostgreSQL accepted a TLS root CA").into());
         };
-        assert_eq!(error.kind(), std::io::ErrorKind::Unsupported);
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
         Ok(())
     }
 
