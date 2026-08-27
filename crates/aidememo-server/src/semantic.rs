@@ -298,6 +298,20 @@ impl SemanticProjection {
             && self.dimension == provider.dimension()
     }
 
+    /// Return the project epoch this projection was built from.
+    #[allow(dead_code)]
+    #[must_use]
+    pub(crate) const fn project_epoch(&self) -> &ProjectEpoch {
+        &self.project_epoch
+    }
+
+    /// Return the canonical sequence number this projection represents.
+    #[allow(dead_code)]
+    #[must_use]
+    pub(crate) const fn index_seq(&self) -> ProjectSequence {
+        self.index_seq
+    }
+
     /// Search the HNSW projection and recompute exact cosine scores for the
     /// returned candidates.
     ///

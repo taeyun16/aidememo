@@ -254,7 +254,7 @@ impl ServerState {
     #[must_use]
     pub fn with_semantic_provider(mut self, provider: SharedEmbeddingProvider) -> Self {
         self.semantic_provider = Some(provider.clone());
-        if let Some(worker) = &self.projection_worker {
+        if let Some(_worker) = &self.projection_worker {
             // Create a new worker with the semantic provider
             let new_worker =
                 projection_worker::ProjectionWorker::new(self.canonical.clone(), Some(provider));

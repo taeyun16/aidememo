@@ -6,7 +6,7 @@
 //! bounded executor to avoid blocking Axum runtime workers.
 
 #[cfg(feature = "semantic")]
-use crate::semantic::{EmbeddingProvider, SemanticProjection, SharedEmbeddingProvider};
+use crate::semantic::{SemanticProjection, SharedEmbeddingProvider};
 use crate::{executor::BlockingStoreExecutor, lexical::LexicalProjection};
 use aidememo_domain::{DomainError, ProjectEpoch, ProjectScope, ProjectSequence, ProjectSnapshot};
 use std::{sync::Arc, time::Duration};
@@ -29,21 +29,25 @@ pub(crate) struct CachedLexicalProjection {
 }
 
 impl CachedLexicalProjection {
+    #[allow(dead_code)]
     #[must_use]
     pub(crate) fn projection(&self) -> &Arc<LexicalProjection> {
         &self.projection
     }
 
+    #[allow(dead_code)]
     #[must_use]
     pub(crate) fn scope(&self) -> &ProjectScope {
         &self.scope
     }
 
+    #[allow(dead_code)]
     #[must_use]
     pub(crate) fn index_seq(&self) -> ProjectSequence {
         self.projection.index_seq()
     }
 
+    #[allow(dead_code)]
     #[must_use]
     pub(crate) fn project_epoch(&self) -> &ProjectEpoch {
         self.projection.project_epoch()
@@ -52,12 +56,14 @@ impl CachedLexicalProjection {
 
 #[cfg(feature = "semantic")]
 #[derive(Clone)]
+#[allow(dead_code)]
 pub(crate) struct CachedSemanticProjection {
     projection: Arc<SemanticProjection>,
     scope: ProjectScope,
 }
 
 #[cfg(feature = "semantic")]
+#[allow(dead_code)]
 impl CachedSemanticProjection {
     #[must_use]
     pub(crate) fn projection(&self) -> &Arc<SemanticProjection> {
@@ -118,6 +124,7 @@ impl ProjectionWorker {
     }
 
     #[cfg(feature = "semantic")]
+    #[allow(dead_code)]
     pub(crate) async fn get_semantic(
         &self,
         scope: &ProjectScope,
