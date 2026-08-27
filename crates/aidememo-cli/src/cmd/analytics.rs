@@ -2,7 +2,9 @@
 //!
 //! Provides access to DuckDB-backed OLAP queries over canonical memory.
 
+#[cfg(feature = "analytics")]
 use aidememo_core::AideMemo;
+#[cfg(feature = "analytics")]
 use bpaf::Bpaf;
 
 #[cfg(feature = "analytics")]
@@ -198,11 +200,4 @@ fn run_report(report_type: &str, limit: Option<usize>, g: &AideMemo) -> anyhow::
     }
 
     Ok(())
-}
-
-#[cfg(not(feature = "analytics"))]
-pub fn run_analytics(_cmd: AnalyticsCommand, _g: &AideMemo) -> anyhow::Result<()> {
-    Err(anyhow::anyhow!(
-        "Analytics feature not enabled. Rebuild with --features analytics"
-    ))
 }
