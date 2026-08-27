@@ -1,5 +1,33 @@
 name: CI
 
+# Main CI workflow for aidememo. Job structure:
+#
+# Fast gates (< 1 min, run in parallel):
+#   - workflow-lint: actionlint + portability checks
+#   - docs-site: Docusaurus build + audit
+#   - audit: cargo-audit security scan
+#
+# Static analysis (< 2 min, shares cache, blocks tests):
+#   - lint: rustfmt, clippy, rustdoc (workspace + semantic feature)
+#   - msrv: Rust 1.95 MSRV check
+#
+# Test matrix (depends on lint, 5-10 min per OS):
+#   - test (ubuntu + macos): core tests, semantic feature, backend gates
+#
+# Feature gates (depends on lint, parallel):
+#   - optional-features: analytics (DuckDB + C++), s3, etc.
+#   - storage-backend-compat: SQLite/redb parity + SDK bindings
+#   - cargo-package-readiness: crate publish readiness
+#   - scenario-d: concurrent writer stress test
+#   - workflow-release-smoke: workflow memory E2E
+#   - sdk-promotion-check: SDK wording/parity
+#   - dhat-build: profiling build smoke
+#   - ffi-c-smoke: C FFI binding smoke
+#   - hermes-plugin: Hermes plugin tests (py3.10 + py3.12)
+#
+# All jobs use rust-toolchain 1.96.0 and share the ubuntu-aidememo-v2 cache
+# where possible. The lint job writes the cache; tests read it.
+
 on:
   push:
     branches: [main]
@@ -44,14 +72,17 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version: "1.25.x"
-      - name: install actionlint
+      - name: Install actionlint
         run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
-      - name: actionlint
+      - name: Run actionlint
         run: |
           actionlint_bin="$(go env GOPATH)/bin/actionlint"
+          echo "Running actionlint on workflow files..."
           "$actionlint_bin"
-      - name: public portability
-        run: python3 scripts/public-portability-check.py
+      - name: Check public portability
+        run: |
+          echo "Checking public portability of workflows..."
+          python3 scripts/public-portability-check.py
 
   docs-site:
     name: Docusaurus docs
@@ -194,14 +225,22 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
-      - name: storage backend parity
-        run: scripts/storage-backend-parity.sh
-      - name: storage backend real corpus diff
-        run: scripts/storage-backend-real-corpus-diff.sh
-      - name: SQLite MCP soak
-        run: scripts/storage-backend-sqlite-mcp-soak.sh
-      - name: SDK binding backend check
-        run: scripts/storage-backend-sdk-bindings-check.sh
+      - name: Check storage backend parity
+        run: |
+          echo "Verifying SQLite and redb backend parity..."
+          scripts/storage-backend-parity.sh
+      - name: Check storage backend real corpus diff
+        run: |
+          echo "Testing backends against real corpus..."
+          scripts/storage-backend-real-corpus-diff.sh
+      - name: Run SQLite MCP soak test
+        run: |
+          echo "Running SQLite MCP concurrent write soak test..."
+          scripts/storage-backend-sqlite-mcp-soak.sh
+      - name: Check SDK binding backend compatibility
+        run: |
+          echo "Verifying SDK bindings work with both backends..."
+          scripts/storage-backend-sdk-bindings-check.sh
 
   # Upstream-CVE check. Pulls the RustSec advisory DB, parses our
   # committed Cargo.lock, and fails the build on any known-vulnerable
@@ -210,7 +249,7 @@ jobs:
   # `lint`, so a fresh security advisory doesn't have to wait for a
   # fmt/clippy/doc rerun.
   audit:
-    name: cargo audit
+    name: cargo audit (security)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -224,7 +263,9 @@ jobs:
       # carries the prose rationale, this list is what cargo-audit's
       # CLI actually honours when run from CI (it doesn't auto-load
       # an audit.toml in repo root).
-      - run: |
+      - name: Run cargo audit with exceptions
+        run: |
+          echo "Checking for known security vulnerabilities in dependencies..."
           cargo audit \
             --ignore RUSTSEC-2026-0194 \
             --ignore RUSTSEC-2026-0195 \
@@ -234,6 +275,7 @@ jobs:
             --ignore RUSTSEC-2025-0141 \
             --ignore RUSTSEC-2025-0057 \
             --ignore RUSTSEC-2024-0436
+          echo "✓ No unacknowledged security vulnerabilities found"
 
   # Multi-process write contention regression. Verifies the documented
   # redb single-process lock contract — fail-fast, no data loss, no
@@ -329,6 +371,63 @@ jobs:
           shared-key: ubuntu-aidememo-v2
           save-if: false
       - run: cargo build --profile release-debug -p aidememo-cli --features aidememo-core/semantic,dhat-heap
+
+  # Optional feature matrix: analytics (DuckDB OLAP), s3, etc. Each feature
+  # has its own build/test requirements. Analytics needs a C++ toolchain for
+  # the bundled DuckDB; s3 needs nothing extra (pure Rust via aws-sdk-s3).
+  # The analytics feature is feature-gated in Cargo.toml; this job compiles
+  # and tests it when present without blocking other PRs.
+  optional-features:
+    name: optional features (${{ matrix.feature }})
+    needs: lint
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        feature:
+          - analytics
+          - s3
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.96.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ubuntu-aidememo-v2
+          save-if: false
+
+      # Analytics feature (DuckDB) requires a C++ compiler for the bundled build.
+      # Install build-essential only for the analytics matrix entry to avoid
+      # slowing down other jobs. The `if` condition checks the matrix var at
+      # runtime so non-analytics jobs skip this step entirely.
+      - name: Install C++ toolchain (analytics only)
+        if: matrix.feature == 'analytics'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential g++
+
+      # Check that the feature compiles. The `|| true` fallback lets this job
+      # pass when the feature doesn't exist yet (e.g., before PR #100 merges)
+      # while still catching real build errors when the feature is present.
+      - name: Check ${{ matrix.feature }} feature
+        run: |
+          if cargo metadata --format-version 1 | jq -e '.packages[] | select(.name == "aidememo-core") | .features | has("${{ matrix.feature }}")' > /dev/null 2>&1; then
+            cargo check -p aidememo-core --features ${{ matrix.feature }}
+            cargo check -p aidememo-cli --features ${{ matrix.feature }}
+          else
+            echo "Feature ${{ matrix.feature }} not present in aidememo-core; skipping"
+          fi
+
+      # Run tests when the feature exists.
+      - name: Test ${{ matrix.feature }} feature
+        run: |
+          if cargo metadata --format-version 1 | jq -e '.packages[] | select(.name == "aidememo-core") | .features | has("${{ matrix.feature }}")' > /dev/null 2>&1; then
+            cargo test -p aidememo-core --features ${{ matrix.feature }}
+            cargo test -p aidememo-cli --features ${{ matrix.feature }}
+          else
+            echo "Feature ${{ matrix.feature }} not present; skipping tests"
+          fi
 
   ffi-c-smoke:
     name: aidememo-ffi C smoke
