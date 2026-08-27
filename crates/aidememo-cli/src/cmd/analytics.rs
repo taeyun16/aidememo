@@ -54,7 +54,10 @@ pub fn run_analytics(cmd: AnalyticsCommand, g: &AideMemo) -> anyhow::Result<()> 
                 let stats = engine.stats()?;
                 println!("✓ Rebuild complete:");
                 println!("  Entities: {}", stats.entity_count);
-                println!("  Facts: {} ({} current)", stats.fact_count, stats.current_fact_count);
+                println!(
+                    "  Facts: {} ({} current)",
+                    stats.fact_count, stats.current_fact_count
+                );
                 println!("  Relations: {}", stats.relation_count);
             } else {
                 return Err(anyhow::anyhow!("Analytics engine not initialized"));
@@ -67,7 +70,10 @@ pub fn run_analytics(cmd: AnalyticsCommand, g: &AideMemo) -> anyhow::Result<()> 
                 let stats = engine.stats()?;
                 println!("Analytics Engine Statistics:");
                 println!("  Entities: {}", stats.entity_count);
-                println!("  Facts: {} ({} current)", stats.fact_count, stats.current_fact_count);
+                println!(
+                    "  Facts: {} ({} current)",
+                    stats.fact_count, stats.current_fact_count
+                );
                 println!("  Relations: {}", stats.relation_count);
                 println!("  Watermarks:");
                 println!("    Last entity timestamp: {}", stats.last_entity_seq);
@@ -94,9 +100,7 @@ pub fn run_analytics(cmd: AnalyticsCommand, g: &AideMemo) -> anyhow::Result<()> 
             }
             Ok(())
         }
-        AnalyticsCommand::Report { report_type, limit } => {
-            run_report(&report_type, limit, g)
-        }
+        AnalyticsCommand::Report { report_type, limit } => run_report(&report_type, limit, g),
     }
 }
 

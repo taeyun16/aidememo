@@ -152,6 +152,12 @@ fn main() {
         cmd::Command::AutoRelate(sub) => handle_auto_relate(&store_path, config, sub),
         cmd::Command::Overview(sub) => handle_overview(&store_path, config, sub, json),
         cmd::Command::Consolidate(sub) => handle_consolidate(&store_path, config, sub, json),
+        #[cfg(feature = "analytics")]
+        cmd::Command::Analytics(sub) => {
+            let store = open_store_with_config(&store_path, config, json)?;
+            cmd::analytics::run_analytics(sub, &store)?;
+            Ok(Output::None)
+        }
         cmd::Command::Auth(sub) => cmd::auth::run_auth(sub),
     };
 
