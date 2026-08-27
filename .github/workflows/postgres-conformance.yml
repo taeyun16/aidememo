@@ -45,9 +45,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.96.0
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: postgres-conformance
+          shared-key: postgres-conformance-v1
       - name: Run PostgreSQL storage conformance
         run: cargo test -p aidememo-store-postgres --tests -- --ignored --nocapture
       - name: Run PostgreSQL server executor conformance
