@@ -92,9 +92,11 @@ jobs:
             fi
             sleep 1
           done
-          echo "AIDEMEMO_POSTGRES_TLS_URL=postgres://postgres:postgres@localhost:55432/aidememo_tls?sslmode=disable" >> "$GITHUB_ENV"
-          echo "AIDEMEMO_POSTGRES_TLS_CA=$tls_dir/ca.crt" >> "$GITHUB_ENV"
-          echo "AIDEMEMO_POSTGRES_TLS_WRONG_CA=$tls_dir/wrong-ca.crt" >> "$GITHUB_ENV"
+          {
+            echo "AIDEMEMO_POSTGRES_TLS_URL=postgres://postgres:postgres@localhost:55432/aidememo_tls?sslmode=disable"
+            echo "AIDEMEMO_POSTGRES_TLS_CA=$tls_dir/ca.crt"
+            echo "AIDEMEMO_POSTGRES_TLS_WRONG_CA=$tls_dir/wrong-ca.crt"
+          } >> "$GITHUB_ENV"
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.96.0
