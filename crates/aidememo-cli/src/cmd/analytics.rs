@@ -35,10 +35,6 @@ pub enum AnalyticsCommand {
     },
 }
 
-pub fn analytics_command() -> impl bpaf::Parser<AnalyticsCommand> {
-    analytics_command_inner()
-}
-
 #[cfg(feature = "analytics")]
 pub fn run_analytics(cmd: AnalyticsCommand, g: &AideMemo) -> anyhow::Result<()> {
     use aidememo_core::analytics::AnalyticsEngine;
