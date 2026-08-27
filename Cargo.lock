@@ -90,7 +90,6 @@ dependencies = [
  "axum",
  "bpaf",
  "chrono",
- "clap",
  "comfy-table",
  "cpu-time",
  "crossterm",
@@ -134,16 +133,12 @@ dependencies = [
 name = "aidememo-core"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "aws-config",
  "aws-credential-types",
  "aws-sdk-s3",
  "bincode",
  "bm25",
- "bpaf",
- "bytes",
  "chrono",
- "comfy-table",
  "fastembed",
  "fundu",
  "instant-distance",
@@ -151,7 +146,6 @@ dependencies = [
  "lru 0.18.1",
  "memchr",
  "model2vec-rs",
- "once_cell",
  "oneio",
  "parking_lot",
  "proptest",
@@ -159,7 +153,6 @@ dependencies = [
  "redb",
  "regex",
  "rusqlite",
- "rusty-money",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -5325,16 +5318,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rust_decimal"
-version = "1.41.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2ce901f9a19d251159075a4c37af514c3b8ef99c22e02dd8c19161cf397ee94a"
-dependencies = [
- "arrayvec",
- "num-traits",
-]
-
-[[package]]
 name = "rustc-demangle"
 version = "0.1.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5465,15 +5448,6 @@ dependencies = [
  "quick-error 1.2.3",
  "tempfile",
  "wait-timeout",
-]
-
-[[package]]
-name = "rusty-money"
-version = "0.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "08cda49b2c0126c2672b3886d66552ce3bfa47a9bd4473a5c53acd061270bc17"
-dependencies = [
- "rust_decimal",
 ]
 
 [[package]]
