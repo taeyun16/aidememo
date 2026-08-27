@@ -30,7 +30,7 @@
 //! // Query
 //! let result = analytics.query(
 //!     "SELECT fact_type, COUNT(*) as count FROM facts GROUP BY fact_type",
-//!     vec![]
+//!     []
 //! )?;
 //! ```
 
@@ -411,21 +411,20 @@ impl AnalyticsEngine {
             .map_err(|e| AideMemoError::Internal(format!("failed to prepare relation insert: {}", e)))?;
 
         for relation in relations {
-            let created = relation.created_at.unwrap_or(0);
             stmt.execute(params![
                 format!(
                     "{}-{}-{}",
-                    relation.source, relation.target, relation.relation_type
+                    relation.source_id, relation.target_id, relation.relation_type
                 ),
-                relation.source.to_string(),
-                relation.target.to_string(),
+                relation.source_id.to_string(),
+                relation.target_id.to_string(),
                 relation.relation_type.to_string(),
                 relation.weight,
-                created as i64,
+                relation.created_at as i64,
             ])
             .map_err(|e| AideMemoError::Internal(format!("failed to insert relation: {}", e)))?;
 
-            max_ts = max_ts.max(created);
+            max_ts = max_ts.max(relation.created_at);
         }
 
         Ok(max_ts)
@@ -549,11 +548,7 @@ impl AnalyticsEngine {
         }
 
         // Sync new/updated relations
-        let relations = store.relation_list(ListOpts {
-            limit: None,
-            offset: 0,
-            ..Default::default()
-        })?;
+        let relations = store.relations_list_all()?;
 
         let mut relation_upsert_stmt = self
             .conn
@@ -566,26 +561,25 @@ impl AnalyticsEngine {
             })?;
 
         for relation in relations {
-            let created = relation.created_at.unwrap_or(0);
             // Only sync if created after last watermark
-            if created > self.last_relation_seq {
+            if relation.created_at > self.last_relation_seq {
                 relation_upsert_stmt
                     .execute(params![
                         format!(
                             "{}-{}-{}",
-                            relation.source, relation.target, relation.relation_type
+                            relation.source_id, relation.target_id, relation.relation_type
                         ),
-                        relation.source.to_string(),
-                        relation.target.to_string(),
+                        relation.source_id.to_string(),
+                        relation.target_id.to_string(),
                         relation.relation_type.to_string(),
                         relation.weight,
-                        created as i64,
+                        relation.created_at as i64,
                     ])
                     .map_err(|e| {
                         AideMemoError::Internal(format!("failed to upsert relation: {}", e))
                     })?;
 
-                max_relation_ts = max_relation_ts.max(created);
+                max_relation_ts = max_relation_ts.max(relation.created_at);
             }
         }
 
@@ -611,7 +605,7 @@ impl AnalyticsEngine {
     ///
     /// This function provides raw SQL access. Callers must sanitize inputs
     /// and use parameter binding to prevent SQL injection.
-    pub fn query<P: ToSql>(&self, sql: &str, params: &[P]) -> Result<Vec<Vec<String>>> {
+    pub fn query(&self, sql: &str, params: impl duckdb::Params) -> Result<Vec<Vec<String>>> {
         let mut stmt = self
             .conn
             .prepare(sql)
@@ -640,10 +634,9 @@ impl AnalyticsEngine {
     }
 
     /// Execute a query that returns a single scalar value.
-    pub fn query_scalar<T, P>(&self, sql: &str, params: &[P]) -> Result<T>
+    pub fn query_scalar<T>(&self, sql: &str) -> Result<T>
     where
         T: duckdb::types::FromSql,
-        P: ToSql,
     {
         let mut stmt = self
             .conn
@@ -651,7 +644,7 @@ impl AnalyticsEngine {
             .map_err(|e| AideMemoError::InvalidInput(format!("invalid SQL query: {}", e)))?;
 
         let result = stmt
-            .query_row(params, |row| row.get(0))
+            .query_row([], |row| row.get(0))
             .map_err(|e| AideMemoError::Internal(format!("scalar query failed: {}", e)))?;
 
         Ok(result)
@@ -659,14 +652,12 @@ impl AnalyticsEngine {
 
     /// Get analytics engine statistics.
     pub fn stats(&self) -> Result<AnalyticsStats> {
-        let fact_count: i64 = self
-            .query_scalar("SELECT COUNT(*) FROM facts", &[])
-            .unwrap_or(0);
+        let fact_count: i64 = self.query_scalar("SELECT COUNT(*) FROM facts").unwrap_or(0);
         let entity_count: i64 = self
-            .query_scalar("SELECT COUNT(*) FROM entities", &[])
+            .query_scalar("SELECT COUNT(*) FROM entities")
             .unwrap_or(0);
         let relation_count: i64 = self
-            .query_scalar("SELECT COUNT(*) FROM relations", &[])
+            .query_scalar("SELECT COUNT(*) FROM relations")
             .unwrap_or(0);
         let current_fact_count = fact_count; // All facts are current in this projection
 
@@ -724,7 +715,7 @@ mod tests {
             .query(
                 "SELECT table_name FROM information_schema.tables 
                  WHERE table_schema = 'main' ORDER BY table_name",
-                &[],
+                [],
             )
             .unwrap();
 
@@ -813,7 +804,7 @@ mod tests {
         let fact_types: Vec<Vec<String>> = analytics
             .query(
                 "SELECT fact_type, COUNT(*) as count FROM facts GROUP BY fact_type",
-                &[],
+                [],
             )
             .unwrap();
 
@@ -901,7 +892,7 @@ mod tests {
         analytics.rebuild_from_canonical(&store).unwrap();
 
         let count: i64 = analytics
-            .query_scalar("SELECT COUNT(*) FROM facts", &[])
+            .query_scalar("SELECT COUNT(*) FROM facts")
             .unwrap();
         assert_eq!(count, 0);
     }
