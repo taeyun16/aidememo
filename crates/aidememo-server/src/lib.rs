@@ -256,10 +256,8 @@ impl ServerState {
         self.semantic_provider = Some(provider.clone());
         if let Some(worker) = &self.projection_worker {
             // Create a new worker with the semantic provider
-            let new_worker = projection_worker::ProjectionWorker::new(
-                self.canonical.clone(),
-                Some(provider),
-            );
+            let new_worker =
+                projection_worker::ProjectionWorker::new(self.canonical.clone(), Some(provider));
             self.projection_worker = Some(Arc::new(new_worker));
         }
         self
@@ -279,9 +277,9 @@ impl ServerState {
         scope: ProjectScope,
         refresh_interval: Option<Duration>,
     ) -> Option<tokio::task::JoinHandle<()>> {
-        self.projection_worker.as_ref().map(|worker| {
-            Arc::clone(worker).spawn_refresh_task(scope, refresh_interval)
-        })
+        self.projection_worker
+            .as_ref()
+            .map(|worker| Arc::clone(worker).spawn_refresh_task(scope, refresh_interval))
     }
 
     /// Run one bounded artifact garbage-collection pass when artifacts are configured.

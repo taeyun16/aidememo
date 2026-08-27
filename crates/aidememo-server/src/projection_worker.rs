@@ -5,20 +5,14 @@
 //! periodically refreshes projections when new canonical data arrives, using the
 //! bounded executor to avoid blocking Axum runtime workers.
 
-use crate::{
-    executor::BlockingStoreExecutor,
-    lexical::LexicalProjection,
-};
 #[cfg(feature = "semantic")]
 use crate::semantic::{EmbeddingProvider, SemanticProjection, SharedEmbeddingProvider};
+use crate::{executor::BlockingStoreExecutor, lexical::LexicalProjection};
 use aidememo_domain::{DomainError, ProjectEpoch, ProjectScope, ProjectSequence, ProjectSnapshot};
-use std::{
-    sync::Arc,
-    time::Duration,
-};
+use std::{sync::Arc, time::Duration};
 use tokio::{
     sync::RwLock,
-    time::{interval, MissedTickBehavior},
+    time::{MissedTickBehavior, interval},
 };
 
 /// Minimum refresh interval to avoid excessive rebuild pressure.
@@ -115,10 +109,7 @@ impl ProjectionWorker {
     }
 
     /// Get the current cached lexical projection for a scope, if available and fresh.
-    pub(crate) async fn get_lexical(
-        &self,
-        scope: &ProjectScope,
-    ) -> Option<Arc<LexicalProjection>> {
+    pub(crate) async fn get_lexical(&self, scope: &ProjectScope) -> Option<Arc<LexicalProjection>> {
         let cache = self.lexical_cache.read().await;
         cache
             .as_ref()
@@ -141,10 +132,7 @@ impl ProjectionWorker {
     /// Rebuild projections for a specific scope from a fresh snapshot.
     ///
     /// This operation runs on the bounded executor to avoid blocking Axum workers.
-    pub(crate) async fn rebuild_for_scope(
-        &self,
-        scope: ProjectScope,
-    ) -> Result<(), DomainError> {
+    pub(crate) async fn rebuild_for_scope(&self, scope: ProjectScope) -> Result<(), DomainError> {
         let scope_for_snapshot = scope.clone();
         let snapshot = self
             .executor
@@ -167,14 +155,13 @@ impl ProjectionWorker {
     ) -> Result<(), DomainError> {
         // Rebuild lexical on blocking pool
         let lexical_snapshot = snapshot.clone();
-        let lexical_projection = tokio::task::spawn_blocking(move || {
-            LexicalProjection::rebuild(&lexical_snapshot)
-        })
-        .await
-        .map_err(|error| DomainError::StorageFailure {
-            operation: "projection_worker_lexical_task",
-            detail: error.to_string(),
-        })??;
+        let lexical_projection =
+            tokio::task::spawn_blocking(move || LexicalProjection::rebuild(&lexical_snapshot))
+                .await
+                .map_err(|error| DomainError::StorageFailure {
+                    operation: "projection_worker_lexical_task",
+                    detail: error.to_string(),
+                })??;
 
         {
             let mut cache = self.lexical_cache.write().await;
