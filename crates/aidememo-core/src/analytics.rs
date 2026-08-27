@@ -29,7 +29,7 @@
 //!
 //! // Query
 //! let result = analytics.query(
-//!     "SELECT fact_type, COUNT(*) as count FROM facts WHERE is_current = true GROUP BY fact_type",
+//!     "SELECT fact_type, COUNT(*) as count FROM facts GROUP BY fact_type",
 //!     vec![]
 //! )?;
 //! ```
@@ -102,18 +102,8 @@ impl AnalyticsEngine {
                 fact_type VARCHAR NOT NULL,
                 source_id VARCHAR,
                 actor_id VARCHAR,
-                created_at TIMESTAMP NOT NULL,
-                updated_at TIMESTAMP NOT NULL,
-                superseded_at TIMESTAMP,
-                superseded_by VARCHAR,
-                is_current BOOLEAN NOT NULL,
-                session_id VARCHAR,
-                -- Analytical generated columns
-                created_at_date DATE GENERATED ALWAYS AS (CAST(created_at AS DATE)),
-                created_at_year INTEGER GENERATED ALWAYS AS (EXTRACT(YEAR FROM created_at)),
-                created_at_month INTEGER GENERATED ALWAYS AS (EXTRACT(MONTH FROM created_at)),
-                created_at_day INTEGER GENERATED ALWAYS AS (EXTRACT(DAY FROM created_at)),
-                created_at_hour INTEGER GENERATED ALWAYS AS (EXTRACT(HOUR FROM created_at))
+                created_at BIGINT NOT NULL,
+                updated_at BIGINT NOT NULL
             )",
             [],
         )
@@ -122,16 +112,13 @@ impl AnalyticsEngine {
             source: Box::new(e),
         })?;
 
-        // Entities table
+        // Entities table (projected from EntitySummary)
         conn.execute(
             "CREATE TABLE IF NOT EXISTS entities (
                 id VARCHAR PRIMARY KEY,
                 name VARCHAR NOT NULL,
-                normalized_name VARCHAR NOT NULL,
                 entity_type VARCHAR NOT NULL,
-                summary TEXT,
-                created_at TIMESTAMP NOT NULL,
-                updated_at TIMESTAMP NOT NULL
+                fact_count INTEGER NOT NULL
             )",
             [],
         )
@@ -331,24 +318,21 @@ impl AnalyticsEngine {
         let mut stmt = self
             .conn
             .prepare(
-                "INSERT INTO entities (id, name, normalized_name, entity_type, summary, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO entities (id, name, entity_type, fact_count)
+                 VALUES (?, ?, ?, ?)",
             )
-            .map_err(|e| AideMemoError::Internal(format!("failed to prepare entity insert: {}", e)))?;
+            .map_err(|e| {
+                AideMemoError::Internal(format!("failed to prepare entity insert: {}", e))
+            })?;
 
         for entity in entities {
             stmt.execute(params![
                 entity.id.to_string(),
                 entity.name,
-                entity.normalized_name,
                 entity.entity_type.to_string(),
-                entity.summary,
-                entity.created_at as i64,
-                entity.updated_at as i64,
+                entity.fact_count as i64,
             ])
             .map_err(|e| AideMemoError::Internal(format!("failed to insert entity: {}", e)))?;
-
-            max_ts = max_ts.max(entity.updated_at);
         }
 
         Ok(max_ts)
@@ -369,9 +353,8 @@ impl AnalyticsEngine {
         let mut fact_stmt = self
             .conn
             .prepare(
-                "INSERT INTO facts (id, content, fact_type, source_id, actor_id, created_at, updated_at, 
-                                     superseded_at, superseded_by, is_current, session_id)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO facts (id, content, fact_type, source_id, actor_id, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)",
             )
             .map_err(|e| AideMemoError::Internal(format!("failed to prepare fact insert: {}", e)))?;
 
@@ -393,15 +376,11 @@ impl AnalyticsEngine {
                     fact.actor_id,
                     fact.created_at as i64,
                     fact.updated_at as i64,
-                    fact.superseded_at.map(|t| t as i64),
-                    fact.superseded_by.as_ref().map(|id| id.to_string()),
-                    fact.superseded_at.is_none(),
-                    fact.session_id.as_ref().map(|id| id.to_string()),
                 ])
                 .map_err(|e| AideMemoError::Internal(format!("failed to insert fact: {}", e)))?;
 
             // Insert fact-entity links
-            for entity_id in &fact.entities {
+            for entity_id in &fact.entity_ids {
                 fact_entity_stmt
                     .execute(params![fact.id.to_string(), entity_id.to_string()])
                     .map_err(|e| {
@@ -418,11 +397,7 @@ impl AnalyticsEngine {
     /// Sync relations from canonical store, returning max created_at timestamp.
     fn sync_relations(&mut self, store: &StoreKind) -> Result<u64> {
         // Get all relations
-        let relations = store.relation_list(ListOpts {
-            limit: None,
-            offset: 0,
-            ..Default::default()
-        })?;
+        let relations = store.relations_list_all()?;
 
         let mut max_ts = 0u64;
 
@@ -479,7 +454,7 @@ impl AnalyticsEngine {
         let mut max_fact_ts = self.last_fact_seq;
         let mut max_relation_ts = self.last_relation_seq;
 
-        // Sync new/updated entities
+        // Sync entities (EntitySummary has no timestamps, so we replace all)
         let entities = store.entity_list(ListOpts {
             limit: None,
             offset: 0,
@@ -489,30 +464,22 @@ impl AnalyticsEngine {
         let mut entity_upsert_stmt = self
             .conn
             .prepare(
-                "INSERT OR REPLACE INTO entities (id, name, normalized_name, entity_type, summary, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "INSERT OR REPLACE INTO entities (id, name, entity_type, fact_count)
+                 VALUES (?, ?, ?, ?)",
             )
-            .map_err(|e| AideMemoError::Internal(format!("failed to prepare entity upsert: {}", e)))?;
+            .map_err(|e| {
+                AideMemoError::Internal(format!("failed to prepare entity upsert: {}", e))
+            })?;
 
         for entity in entities {
-            // Only sync if updated after last watermark
-            if entity.updated_at > self.last_entity_seq {
-                entity_upsert_stmt
-                    .execute(params![
-                        entity.id.to_string(),
-                        entity.name,
-                        entity.normalized_name,
-                        entity.entity_type.to_string(),
-                        entity.summary,
-                        entity.created_at as i64,
-                        entity.updated_at as i64,
-                    ])
-                    .map_err(|e| {
-                        AideMemoError::Internal(format!("failed to upsert entity: {}", e))
-                    })?;
-
-                max_entity_ts = max_entity_ts.max(entity.updated_at);
-            }
+            entity_upsert_stmt
+                .execute(params![
+                    entity.id.to_string(),
+                    entity.name,
+                    entity.entity_type.to_string(),
+                    entity.fact_count as i64,
+                ])
+                .map_err(|e| AideMemoError::Internal(format!("failed to upsert entity: {}", e)))?;
         }
 
         // Sync new/updated facts
@@ -525,9 +492,8 @@ impl AnalyticsEngine {
         let mut fact_upsert_stmt = self
             .conn
             .prepare(
-                "INSERT OR REPLACE INTO facts (id, content, fact_type, source_id, actor_id, created_at, updated_at, 
-                                                superseded_at, superseded_by, is_current, session_id)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT OR REPLACE INTO facts (id, content, fact_type, source_id, actor_id, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)",
             )
             .map_err(|e| AideMemoError::Internal(format!("failed to prepare fact upsert: {}", e)))?;
 
@@ -558,10 +524,6 @@ impl AnalyticsEngine {
                         fact.actor_id,
                         fact.created_at as i64,
                         fact.updated_at as i64,
-                        fact.superseded_at.map(|t| t as i64),
-                        fact.superseded_by.as_ref().map(|id| id.to_string()),
-                        fact.superseded_at.is_none(),
-                        fact.session_id.as_ref().map(|id| id.to_string()),
                     ])
                     .map_err(|e| {
                         AideMemoError::Internal(format!("failed to upsert fact: {}", e))
@@ -574,7 +536,7 @@ impl AnalyticsEngine {
                         AideMemoError::Internal(format!("failed to delete fact_entities: {}", e))
                     })?;
 
-                for entity_id in &fact.entities {
+                for entity_id in &fact.entity_ids {
                     fact_entity_insert_stmt
                         .execute(params![fact.id.to_string(), entity_id.to_string()])
                         .map_err(|e| {
@@ -706,9 +668,7 @@ impl AnalyticsEngine {
         let relation_count: i64 = self
             .query_scalar("SELECT COUNT(*) FROM relations", &[])
             .unwrap_or(0);
-        let current_fact_count: i64 = self
-            .query_scalar("SELECT COUNT(*) FROM facts WHERE is_current = true", &[])
-            .unwrap_or(0);
+        let current_fact_count = fact_count; // All facts are current in this projection
 
         Ok(AnalyticsStats {
             fact_count: fact_count as usize,
