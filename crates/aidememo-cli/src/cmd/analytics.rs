@@ -5,6 +5,7 @@
 use aidememo_core::AideMemo;
 use bpaf::Bpaf;
 
+#[cfg(feature = "analytics")]
 #[derive(Debug, Clone, Bpaf)]
 pub enum AnalyticsCommand {
     /// Rebuild analytics engine from canonical store

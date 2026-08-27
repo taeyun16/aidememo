@@ -309,8 +309,8 @@ aidememo analytics type-evolution --months 6
 
 **Exit gate**: 
 - `cargo test -p aidememo-core --features analytics` passes
-- Rebuild from 10K-fact corpus completes in <5s
-- Incremental sync of 100 facts completes in <100ms
+- Rebuild from 10K-fact corpus completes in less than 5s
+- Incremental sync of 100 facts completes in less than 100ms
 
 ### Phase 2: MCP integration
 
@@ -343,8 +343,8 @@ aidememo analytics type-evolution --months 6
 - Document performance characteristics
 
 **Exit gate**:
-- 100K-fact rebuild completes in <30s
-- Complex analytical queries complete in <500ms
+- 100K-fact rebuild completes in less than 30s
+- Complex analytical queries complete in less than 500ms
 
 ## Boundary conditions
 
