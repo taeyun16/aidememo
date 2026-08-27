@@ -37,7 +37,7 @@
 use std::path::Path;
 use std::time::Duration;
 
-use duckdb::{params, Connection, Result as DuckDBResult, ToSql};
+use duckdb::{Connection, Result as DuckDBResult, ToSql, params};
 
 use crate::backend::{StoreBackend, StoreKind};
 use crate::error::{AideMemoError, Result};
@@ -232,7 +232,9 @@ impl AnalyticsEngine {
                 "INSERT OR REPLACE INTO _analytics_meta (key, value) VALUES (?, ?)",
                 params!["last_fact_timestamp", self.last_fact_seq as i64],
             )
-            .map_err(|e| AideMemoError::Internal(format!("failed to save fact watermark: {}", e)))?;
+            .map_err(|e| {
+                AideMemoError::Internal(format!("failed to save fact watermark: {}", e))
+            })?;
 
         self.conn
             .execute(
@@ -268,7 +270,9 @@ impl AnalyticsEngine {
         // Truncate tables
         self.conn
             .execute("DELETE FROM fact_entities", [])
-            .map_err(|e| AideMemoError::Internal(format!("failed to truncate fact_entities: {}", e)))?;
+            .map_err(|e| {
+                AideMemoError::Internal(format!("failed to truncate fact_entities: {}", e))
+            })?;
         self.conn
             .execute("DELETE FROM relations", [])
             .map_err(|e| AideMemoError::Internal(format!("failed to truncate relations: {}", e)))?;
@@ -489,7 +493,9 @@ impl AnalyticsEngine {
                         entity.created_at as i64,
                         entity.updated_at as i64,
                     ])
-                    .map_err(|e| AideMemoError::Internal(format!("failed to upsert entity: {}", e)))?;
+                    .map_err(|e| {
+                        AideMemoError::Internal(format!("failed to upsert entity: {}", e))
+                    })?;
 
                 max_entity_ts = max_entity_ts.max(entity.updated_at);
             }
@@ -543,7 +549,9 @@ impl AnalyticsEngine {
                         fact.superseded_at.is_none(),
                         fact.session_id.as_ref().map(|id| id.to_string()),
                     ])
-                    .map_err(|e| AideMemoError::Internal(format!("failed to upsert fact: {}", e)))?;
+                    .map_err(|e| {
+                        AideMemoError::Internal(format!("failed to upsert fact: {}", e))
+                    })?;
 
                 // Update fact-entity links (delete old, insert new)
                 fact_entity_delete_stmt
@@ -838,6 +846,75 @@ mod tests {
         assert_eq!(fact_types.len(), 1);
         assert_eq!(fact_types[0][0], "claim");
         assert_eq!(fact_types[0][1], "2");
+    }
+
+    #[test]
+    fn test_incremental_sync_appends_new_facts() {
+        let (mut store, _temp_dir) = create_test_store();
+        let temp_dir2 = TempDir::new().unwrap();
+        let analytics_path = temp_dir2.path().join("analytics.duckdb");
+
+        // Add initial data
+        let redis_id = store
+            .entity_add(EntityInput {
+                name: "Redis".to_string(),
+                entity_type: EntityType::Technology,
+                aliases: vec![],
+                summary: None,
+            })
+            .unwrap();
+
+        store
+            .fact_add(FactInput {
+                content: "Redis is fast".to_string(),
+                fact_type: FactType::Claim,
+                entities: vec![redis_id.clone()],
+                source_id: None,
+                actor_id: None,
+                session_id: None,
+            })
+            .unwrap();
+
+        // Rebuild analytics
+        let mut analytics = AnalyticsEngine::open(&analytics_path).unwrap();
+        analytics.rebuild_from_canonical(&store).unwrap();
+
+        let stats_before = analytics.stats().unwrap();
+        assert_eq!(stats_before.fact_count, 1);
+        assert_eq!(stats_before.entity_count, 1);
+
+        // Add more data
+        let postgres_id = store
+            .entity_add(EntityInput {
+                name: "PostgreSQL".to_string(),
+                entity_type: EntityType::Technology,
+                aliases: vec![],
+                summary: None,
+            })
+            .unwrap();
+
+        store
+            .fact_add(FactInput {
+                content: "PostgreSQL is reliable".to_string(),
+                fact_type: FactType::Claim,
+                entities: vec![postgres_id.clone()],
+                source_id: None,
+                actor_id: None,
+                session_id: None,
+            })
+            .unwrap();
+
+        // Incremental sync
+        analytics.incremental_sync(&store).unwrap();
+
+        // Verify new data synced
+        let stats_after = analytics.stats().unwrap();
+        assert_eq!(stats_after.fact_count, 2);
+        assert_eq!(stats_after.entity_count, 2);
+
+        // Verify watermarks advanced
+        assert!(analytics.last_fact_seq > stats_before.last_fact_seq);
+        assert!(analytics.last_entity_seq > stats_before.last_entity_seq);
     }
 
     #[test]
