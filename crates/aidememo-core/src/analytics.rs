@@ -192,7 +192,11 @@ impl AnalyticsEngine {
             .map_err(|e| AideMemoError::Internal(format!("failed to load watermarks: {}", e)))?;
 
         let mut rows = stmt
-            .query(params!["last_fact_seq", "last_entity_seq", "last_relation_seq"])
+            .query(params![
+                "last_fact_timestamp",
+                "last_entity_timestamp",
+                "last_relation_timestamp"
+            ])
             .map_err(|e| AideMemoError::Internal(format!("failed to query watermarks: {}", e)))?;
 
         let mut last_fact_seq = 0u64;
@@ -211,9 +215,9 @@ impl AnalyticsEngine {
                 .map_err(|e| AideMemoError::Internal(format!("failed to get value: {}", e)))?;
 
             match key.as_str() {
-                "last_fact_seq" => last_fact_seq = value as u64,
-                "last_entity_seq" => last_entity_seq = value as u64,
-                "last_relation_seq" => last_relation_seq = value as u64,
+                "last_fact_timestamp" => last_fact_seq = value as u64,
+                "last_entity_timestamp" => last_entity_seq = value as u64,
+                "last_relation_timestamp" => last_relation_seq = value as u64,
                 _ => {}
             }
         }
@@ -226,14 +230,14 @@ impl AnalyticsEngine {
         self.conn
             .execute(
                 "INSERT OR REPLACE INTO _analytics_meta (key, value) VALUES (?, ?)",
-                params!["last_fact_seq", self.last_fact_seq as i64],
+                params!["last_fact_timestamp", self.last_fact_seq as i64],
             )
             .map_err(|e| AideMemoError::Internal(format!("failed to save fact watermark: {}", e)))?;
 
         self.conn
             .execute(
                 "INSERT OR REPLACE INTO _analytics_meta (key, value) VALUES (?, ?)",
-                params!["last_entity_seq", self.last_entity_seq as i64],
+                params!["last_entity_timestamp", self.last_entity_seq as i64],
             )
             .map_err(|e| {
                 AideMemoError::Internal(format!("failed to save entity watermark: {}", e))
@@ -242,7 +246,7 @@ impl AnalyticsEngine {
         self.conn
             .execute(
                 "INSERT OR REPLACE INTO _analytics_meta (key, value) VALUES (?, ?)",
-                params!["last_relation_seq", self.last_relation_seq as i64],
+                params!["last_relation_timestamp", self.last_relation_seq as i64],
             )
             .map_err(|e| {
                 AideMemoError::Internal(format!("failed to save relation watermark: {}", e))
@@ -276,14 +280,14 @@ impl AnalyticsEngine {
             .map_err(|e| AideMemoError::Internal(format!("failed to truncate entities: {}", e)))?;
 
         // Sync all data
-        self.sync_entities(store)?;
-        self.sync_facts(store)?;
-        self.sync_relations(store)?;
+        let max_entity_ts = self.sync_entities(store)?;
+        let max_fact_ts = self.sync_facts(store)?;
+        let max_relation_ts = self.sync_relations(store)?;
 
-        // Update watermarks (set to max since we've synced everything)
-        self.last_fact_seq = u64::MAX;
-        self.last_entity_seq = u64::MAX;
-        self.last_relation_seq = u64::MAX;
+        // Update watermarks to actual max timestamps
+        self.last_fact_seq = max_fact_ts;
+        self.last_entity_seq = max_entity_ts;
+        self.last_relation_seq = max_relation_ts;
         self.save_watermarks()?;
 
         // Commit transaction
@@ -294,14 +298,16 @@ impl AnalyticsEngine {
         Ok(())
     }
 
-    /// Sync entities from canonical store.
-    fn sync_entities(&mut self, store: &StoreKind) -> Result<()> {
+    /// Sync entities from canonical store, returning max updated_at timestamp.
+    fn sync_entities(&mut self, store: &StoreKind) -> Result<u64> {
         // Get all entities
         let entities = store.entity_list(ListOpts {
             limit: None,
             offset: 0,
             ..Default::default()
         })?;
+
+        let mut max_ts = 0u64;
 
         // Prepare batch insert
         let mut stmt = self
@@ -323,19 +329,23 @@ impl AnalyticsEngine {
                 entity.updated_at as i64,
             ])
             .map_err(|e| AideMemoError::Internal(format!("failed to insert entity: {}", e)))?;
+
+            max_ts = max_ts.max(entity.updated_at);
         }
 
-        Ok(())
+        Ok(max_ts)
     }
 
-    /// Sync facts from canonical store.
-    fn sync_facts(&mut self, store: &StoreKind) -> Result<()> {
+    /// Sync facts from canonical store, returning max updated_at timestamp.
+    fn sync_facts(&mut self, store: &StoreKind) -> Result<u64> {
         // Get all facts
         let facts = store.fact_list(FactListOpts {
             limit: None,
             offset: 0,
             ..Default::default()
         })?;
+
+        let mut max_ts = 0u64;
 
         // Prepare batch inserts
         let mut fact_stmt = self
@@ -380,19 +390,23 @@ impl AnalyticsEngine {
                         AideMemoError::Internal(format!("failed to insert fact_entity: {}", e))
                     })?;
             }
+
+            max_ts = max_ts.max(fact.updated_at);
         }
 
-        Ok(())
+        Ok(max_ts)
     }
 
-    /// Sync relations from canonical store.
-    fn sync_relations(&mut self, store: &StoreKind) -> Result<()> {
+    /// Sync relations from canonical store, returning max created_at timestamp.
+    fn sync_relations(&mut self, store: &StoreKind) -> Result<u64> {
         // Get all relations
         let relations = store.relation_list(ListOpts {
             limit: None,
             offset: 0,
             ..Default::default()
         })?;
+
+        let mut max_ts = 0u64;
 
         // Prepare batch insert
         let mut stmt = self
@@ -404,27 +418,204 @@ impl AnalyticsEngine {
             .map_err(|e| AideMemoError::Internal(format!("failed to prepare relation insert: {}", e)))?;
 
         for relation in relations {
+            let created = relation.created_at.unwrap_or(0);
             stmt.execute(params![
-                format!("{}-{}-{}", relation.source, relation.target, relation.relation_type),
+                format!(
+                    "{}-{}-{}",
+                    relation.source, relation.target, relation.relation_type
+                ),
                 relation.source.to_string(),
                 relation.target.to_string(),
                 relation.relation_type.to_string(),
                 relation.weight,
-                relation.created_at.unwrap_or(0) as i64,
+                created as i64,
             ])
             .map_err(|e| AideMemoError::Internal(format!("failed to insert relation: {}", e)))?;
+
+            max_ts = max_ts.max(created);
         }
 
-        Ok(())
+        Ok(max_ts)
     }
 
-    /// Incremental sync from canonical store (not yet implemented — placeholder).
+    /// Incremental sync from canonical store using timestamp watermarks.
     ///
-    /// This would read facts/entities/relations created after the last watermark
-    /// and append them to analytics tables. For Phase 1, rebuild is sufficient.
-    pub fn incremental_sync(&mut self, _store: &StoreKind) -> Result<()> {
-        // TODO: Implement incremental sync using watermarks
-        // For Phase 1, callers should use rebuild_from_canonical()
+    /// Syncs entities/facts/relations created or updated after the last sync.
+    /// Falls back to full rebuild if watermarks are at u64::MAX (post-rebuild state).
+    pub fn incremental_sync(&mut self, store: &StoreKind) -> Result<()> {
+        // If watermarks are at MAX, we need a full rebuild first
+        if self.last_fact_seq == u64::MAX
+            || self.last_entity_seq == u64::MAX
+            || self.last_relation_seq == u64::MAX
+        {
+            return self.rebuild_from_canonical(store);
+        }
+
+        // Begin transaction
+        self.conn.execute("BEGIN TRANSACTION", []).map_err(|e| {
+            AideMemoError::Internal(format!("failed to begin sync transaction: {}", e))
+        })?;
+
+        // Track max timestamps for this sync
+        let mut max_entity_ts = self.last_entity_seq;
+        let mut max_fact_ts = self.last_fact_seq;
+        let mut max_relation_ts = self.last_relation_seq;
+
+        // Sync new/updated entities
+        let entities = store.entity_list(ListOpts {
+            limit: None,
+            offset: 0,
+            ..Default::default()
+        })?;
+
+        let mut entity_upsert_stmt = self
+            .conn
+            .prepare(
+                "INSERT OR REPLACE INTO entities (id, name, normalized_name, entity_type, summary, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)",
+            )
+            .map_err(|e| AideMemoError::Internal(format!("failed to prepare entity upsert: {}", e)))?;
+
+        for entity in entities {
+            // Only sync if updated after last watermark
+            if entity.updated_at > self.last_entity_seq {
+                entity_upsert_stmt
+                    .execute(params![
+                        entity.id.to_string(),
+                        entity.name,
+                        entity.normalized_name,
+                        entity.entity_type.to_string(),
+                        entity.summary,
+                        entity.created_at as i64,
+                        entity.updated_at as i64,
+                    ])
+                    .map_err(|e| AideMemoError::Internal(format!("failed to upsert entity: {}", e)))?;
+
+                max_entity_ts = max_entity_ts.max(entity.updated_at);
+            }
+        }
+
+        // Sync new/updated facts
+        let facts = store.fact_list(FactListOpts {
+            limit: None,
+            offset: 0,
+            ..Default::default()
+        })?;
+
+        let mut fact_upsert_stmt = self
+            .conn
+            .prepare(
+                "INSERT OR REPLACE INTO facts (id, content, fact_type, source_id, actor_id, created_at, updated_at, 
+                                                superseded_at, superseded_by, is_current, session_id)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            )
+            .map_err(|e| AideMemoError::Internal(format!("failed to prepare fact upsert: {}", e)))?;
+
+        let mut fact_entity_delete_stmt = self
+            .conn
+            .prepare("DELETE FROM fact_entities WHERE fact_id = ?")
+            .map_err(|e| {
+                AideMemoError::Internal(format!("failed to prepare fact_entity delete: {}", e))
+            })?;
+
+        let mut fact_entity_insert_stmt = self
+            .conn
+            .prepare("INSERT INTO fact_entities (fact_id, entity_id) VALUES (?, ?)")
+            .map_err(|e| {
+                AideMemoError::Internal(format!("failed to prepare fact_entity insert: {}", e))
+            })?;
+
+        for fact in facts {
+            // Only sync if updated after last watermark
+            if fact.updated_at > self.last_fact_seq {
+                // Upsert fact
+                fact_upsert_stmt
+                    .execute(params![
+                        fact.id.to_string(),
+                        fact.content,
+                        fact.fact_type.to_string(),
+                        fact.source_id,
+                        fact.actor_id,
+                        fact.created_at as i64,
+                        fact.updated_at as i64,
+                        fact.superseded_at.map(|t| t as i64),
+                        fact.superseded_by.as_ref().map(|id| id.to_string()),
+                        fact.superseded_at.is_none(),
+                        fact.session_id.as_ref().map(|id| id.to_string()),
+                    ])
+                    .map_err(|e| AideMemoError::Internal(format!("failed to upsert fact: {}", e)))?;
+
+                // Update fact-entity links (delete old, insert new)
+                fact_entity_delete_stmt
+                    .execute(params![fact.id.to_string()])
+                    .map_err(|e| {
+                        AideMemoError::Internal(format!("failed to delete fact_entities: {}", e))
+                    })?;
+
+                for entity_id in &fact.entities {
+                    fact_entity_insert_stmt
+                        .execute(params![fact.id.to_string(), entity_id.to_string()])
+                        .map_err(|e| {
+                            AideMemoError::Internal(format!("failed to insert fact_entity: {}", e))
+                        })?;
+                }
+
+                max_fact_ts = max_fact_ts.max(fact.updated_at);
+            }
+        }
+
+        // Sync new/updated relations
+        let relations = store.relation_list(ListOpts {
+            limit: None,
+            offset: 0,
+            ..Default::default()
+        })?;
+
+        let mut relation_upsert_stmt = self
+            .conn
+            .prepare(
+                "INSERT OR REPLACE INTO relations (id, source_entity_id, target_entity_id, relation_type, weight, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?)",
+            )
+            .map_err(|e| {
+                AideMemoError::Internal(format!("failed to prepare relation upsert: {}", e))
+            })?;
+
+        for relation in relations {
+            let created = relation.created_at.unwrap_or(0);
+            // Only sync if created after last watermark
+            if created > self.last_relation_seq {
+                relation_upsert_stmt
+                    .execute(params![
+                        format!(
+                            "{}-{}-{}",
+                            relation.source, relation.target, relation.relation_type
+                        ),
+                        relation.source.to_string(),
+                        relation.target.to_string(),
+                        relation.relation_type.to_string(),
+                        relation.weight,
+                        created as i64,
+                    ])
+                    .map_err(|e| {
+                        AideMemoError::Internal(format!("failed to upsert relation: {}", e))
+                    })?;
+
+                max_relation_ts = max_relation_ts.max(created);
+            }
+        }
+
+        // Update watermarks
+        self.last_entity_seq = max_entity_ts;
+        self.last_fact_seq = max_fact_ts;
+        self.last_relation_seq = max_relation_ts;
+        self.save_watermarks()?;
+
+        // Commit transaction
+        self.conn
+            .execute("COMMIT", [])
+            .map_err(|e| AideMemoError::Internal(format!("failed to commit sync: {}", e)))?;
+
         Ok(())
     }
 
