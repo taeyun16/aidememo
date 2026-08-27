@@ -10,6 +10,7 @@ mod executor;
 mod lexical;
 mod mcp;
 mod product;
+mod projection_worker;
 #[cfg(feature = "semantic")]
 mod semantic;
 
@@ -62,6 +63,7 @@ pub struct ServerState {
     semantic_provider: Option<SharedEmbeddingProvider>,
     #[cfg(feature = "semantic")]
     semantic_projection: Arc<Mutex<Option<Arc<semantic::SemanticProjection>>>>,
+    projection_worker: Option<Arc<projection_worker::ProjectionWorker>>,
 }
 
 pub(crate) struct ArtifactState {
@@ -90,6 +92,7 @@ impl ServerState {
             semantic_provider: None,
             #[cfg(feature = "semantic")]
             semantic_projection: Arc::new(Mutex::new(None)),
+            projection_worker: None,
         }
     }
 
@@ -124,6 +127,11 @@ impl ServerState {
         )
         .await
         .map_err(blocking_store_initialization_error)?;
+        let worker = projection_worker::ProjectionWorker::new(
+            canonical.clone(),
+            #[cfg(feature = "semantic")]
+            None,
+        );
         Ok(Self {
             canonical,
             artifacts: None,
@@ -131,6 +139,7 @@ impl ServerState {
             semantic_provider: None,
             #[cfg(feature = "semantic")]
             semantic_projection: Arc::new(Mutex::new(None)),
+            projection_worker: Some(Arc::new(worker)),
         })
     }
 
@@ -161,6 +170,11 @@ impl ServerState {
         )
         .await
         .map_err(blocking_store_initialization_error)?;
+        let worker = projection_worker::ProjectionWorker::new(
+            canonical.clone(),
+            #[cfg(feature = "semantic")]
+            None,
+        );
         Ok(Self {
             canonical,
             artifacts: None,
@@ -168,6 +182,7 @@ impl ServerState {
             semantic_provider: None,
             #[cfg(feature = "semantic")]
             semantic_projection: Arc::new(Mutex::new(None)),
+            projection_worker: Some(Arc::new(worker)),
         })
     }
 
@@ -195,6 +210,7 @@ impl ServerState {
             semantic_provider: None,
             #[cfg(feature = "semantic")]
             semantic_projection: Arc::new(Mutex::new(None)),
+            projection_worker: None,
         })
     }
 
@@ -225,6 +241,7 @@ impl ServerState {
             semantic_provider: None,
             #[cfg(feature = "semantic")]
             semantic_projection: Arc::new(Mutex::new(None)),
+            projection_worker: None,
         })
     }
 
@@ -232,11 +249,39 @@ impl ServerState {
     ///
     /// The provider owns no canonical data; cached HNSW state is rebuilt from
     /// canonical project snapshots whenever sequence or model identity changes.
+    /// If a projection worker exists, it will also be updated to use this provider.
     #[cfg(feature = "semantic")]
     #[must_use]
     pub fn with_semantic_provider(mut self, provider: SharedEmbeddingProvider) -> Self {
-        self.semantic_provider = Some(provider);
+        self.semantic_provider = Some(provider.clone());
+        if let Some(worker) = &self.projection_worker {
+            // Create a new worker with the semantic provider
+            let new_worker = projection_worker::ProjectionWorker::new(
+                self.canonical.clone(),
+                Some(provider),
+            );
+            self.projection_worker = Some(Arc::new(new_worker));
+        }
         self
+    }
+
+    /// Start background projection refresh for a specific project scope.
+    ///
+    /// This spawns a background task that periodically checks for new canonical
+    /// data and rebuilds projections when the project sequence advances. The task
+    /// uses the bounded executor to avoid blocking Axum workers.
+    ///
+    /// Returns a join handle that can be used to await worker shutdown, though
+    /// in normal operation the worker runs for the server lifetime.
+    #[must_use]
+    pub fn start_projection_refresh(
+        &self,
+        scope: ProjectScope,
+        refresh_interval: Option<Duration>,
+    ) -> Option<tokio::task::JoinHandle<()>> {
+        self.projection_worker.as_ref().map(|worker| {
+            Arc::clone(worker).spawn_refresh_task(scope, refresh_interval)
+        })
     }
 
     /// Run one bounded artifact garbage-collection pass when artifacts are configured.
@@ -654,7 +699,25 @@ async fn search(
             "search mode must be auto, lexical, semantic, or hybrid".to_owned(),
         )));
     }
-    let projection = lexical::LexicalProjection::rebuild(&snapshot)?;
+    // Try to use cached projection from worker if available and fresh enough
+    let projection = if let Some(worker) = &state.projection_worker {
+        if let Some(cached) = worker.get_lexical(&snapshot.scope).await {
+            if cached.project_epoch() == &snapshot.project_epoch
+                && cached.index_seq() >= snapshot.at_seq
+            {
+                cached.as_ref().clone()
+            } else {
+                // Cache is stale or wrong epoch, rebuild
+                lexical::LexicalProjection::rebuild(&snapshot)?
+            }
+        } else {
+            // No cache yet, rebuild
+            lexical::LexicalProjection::rebuild(&snapshot)?
+        }
+    } else {
+        // No worker, always rebuild
+        lexical::LexicalProjection::rebuild(&snapshot)?
+    };
     let candidate_limit = limit.saturating_mul(8).max(limit).min(512);
     let lexical_hits = projection.search(
         query_text,
