@@ -249,7 +249,7 @@ jobs:
   # `lint`, so a fresh security advisory doesn't have to wait for a
   # fmt/clippy/doc rerun.
   audit:
-    name: cargo audit (security)
+    name: cargo audit
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
