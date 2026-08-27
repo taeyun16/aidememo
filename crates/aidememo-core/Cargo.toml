@@ -25,6 +25,10 @@ parallel = ["rayon"]
 remote = ["oneio"]
 s3 = ["sqlite", "dep:aws-config", "aws-sdk-s3", "aws-credential-types", "tokio/full", "zstd"]
 sqlite = ["dep:rusqlite"]
+# `analytics` opts the user into DuckDB-backed OLAP analytics engine.
+# Derived projection rebuilt from canonical facts/entities/relations.
+# Adds ~15 MB for bundled DuckDB library.
+analytics = ["dep:duckdb"]
 
 [dependencies]
 # CLI 파싱
@@ -40,6 +44,9 @@ toml = "0.8"
 # 영속 스토리지
 redb = { version = "2.0", optional = true }
 rusqlite = { version = "0.40.1", default-features = false, features = ["bundled", "backup"], optional = true }
+
+# 분석 엔진 (선택)
+duckdb = { version = "1.1", features = ["bundled"], optional = true }
 
 # 검색 엔진
 bm25 = "2.3"

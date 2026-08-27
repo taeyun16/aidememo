@@ -4,6 +4,8 @@
 compile_error!("aidememo-core requires at least one storage backend feature: `sqlite` or `redb`.");
 
 pub mod adapt;
+#[cfg(feature = "analytics")]
+pub mod analytics;
 pub mod archive;
 pub mod backend;
 pub mod backup;
