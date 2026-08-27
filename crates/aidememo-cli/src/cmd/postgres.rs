@@ -2,8 +2,7 @@
 
 use aidememo_core::AideMemoError;
 use bpaf::*;
-use serde_json::json;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use crate::cmd::Command;
 
@@ -124,35 +123,10 @@ pub fn run_postgres(
             json,
         } => {
             let json = json || global_json;
-            #[cfg(feature = "postgres")]
-            {
-                use aidememo_store_postgres::backup;
-                let report = backup::create_postgres_backup(&database_url, &destination)
-                    .map_err(domain_error_to_core)?;
-                if json {
-                    serde_json::to_string_pretty(&report).map_err(|source| {
-                        AideMemoError::Serialize {
-                            context: "postgres backup create report".to_string(),
-                            source,
-                        }
-                    })
-                } else {
-                    Ok(format!(
-                        "postgres backup created: {}\nmanifest: {}\ndatabase: {}\nsha256: {}",
-                        report.destination,
-                        report.manifest_uri,
-                        report.database_uri,
-                        report.manifest.database.stored_sha256
-                    ))
-                }
-            }
-            #[cfg(not(feature = "postgres"))]
-            {
-                let _ = (database_url, destination, json);
-                Err(AideMemoError::InvalidInput(
-                    "PostgreSQL backup requires the `postgres` feature".to_string(),
-                ))
-            }
+            let _ = (database_url, destination, json);
+            Err(AideMemoError::InvalidInput(
+                "PostgreSQL backup requires aidememo-store-postgres; use --backend postgres with aidememo backup for SQLite-like stores".to_string(),
+            ))
         }
         PostgresSub::BackupRestore {
             source,
@@ -160,32 +134,10 @@ pub fn run_postgres(
             json,
         } => {
             let json = json || global_json;
-            #[cfg(feature = "postgres")]
-            {
-                use aidememo_store_postgres::backup;
-                let report = backup::restore_postgres_backup(&source, &database_url)
-                    .map_err(domain_error_to_core)?;
-                if json {
-                    serde_json::to_string_pretty(&report).map_err(|source| {
-                        AideMemoError::Serialize {
-                            context: "postgres backup restore report".to_string(),
-                            source,
-                        }
-                    })
-                } else {
-                    Ok(format!(
-                        "postgres backup restored: {} -> {}",
-                        report.source, report.target_database
-                    ))
-                }
-            }
-            #[cfg(not(feature = "postgres"))]
-            {
-                let _ = (source, database_url, json);
-                Err(AideMemoError::InvalidInput(
-                    "PostgreSQL restore requires the `postgres` feature".to_string(),
-                ))
-            }
+            let _ = (source, database_url, json);
+            Err(AideMemoError::InvalidInput(
+                "PostgreSQL restore requires aidememo-store-postgres; use --backend postgres with aidememo backup for SQLite-like stores".to_string(),
+            ))
         }
         PostgresSub::TenantExport {
             tenant_id,
@@ -194,39 +146,10 @@ pub fn run_postgres(
             json,
         } => {
             let json = json || global_json;
-            #[cfg(feature = "postgres")]
-            {
-                use aidememo_domain::TenantId;
-                use aidememo_store_postgres::{PostgresCommandStore, backup};
-                let tenant = TenantId::try_from(tenant_id.as_str())
-                    .map_err(|error| {
-                        AideMemoError::InvalidInput(format!("invalid tenant ID: {error}"))
-                    })?;
-                let store = PostgresCommandStore::connect_no_tls(&database_url)
-                    .map_err(domain_error_to_core)?;
-                let report = backup::export_tenant(&store, &tenant, &destination)
-                    .map_err(domain_error_to_core)?;
-                if json {
-                    serde_json::to_string_pretty(&report).map_err(|source| {
-                        AideMemoError::Serialize {
-                            context: "tenant export report".to_string(),
-                            source,
-                        }
-                    })
-                } else {
-                    Ok(format!(
-                        "tenant exported: {}\nresources: {}\nmanifest: {}",
-                        report.tenant_id, report.resource_count, report.manifest_uri
-                    ))
-                }
-            }
-            #[cfg(not(feature = "postgres"))]
-            {
-                let _ = (tenant_id, destination, database_url, json);
-                Err(AideMemoError::InvalidInput(
-                    "Tenant export requires the `postgres` feature".to_string(),
-                ))
-            }
+            let _ = (tenant_id, destination, database_url, json);
+            Err(AideMemoError::InvalidInput(
+                "Tenant export requires aidememo-store-postgres".to_string(),
+            ))
         }
         PostgresSub::TenantDelete {
             tenant_id,
@@ -240,59 +163,10 @@ pub fn run_postgres(
                 ));
             }
             let json = json || global_json;
-            #[cfg(feature = "postgres")]
-            {
-                use aidememo_domain::TenantId;
-                use aidememo_store_postgres::{PostgresCommandStore, backup};
-                let tenant = TenantId::try_from(tenant_id.as_str())
-                    .map_err(|error| {
-                        AideMemoError::InvalidInput(format!("invalid tenant ID: {error}"))
-                    })?;
-                let store = PostgresCommandStore::connect_no_tls(&database_url)
-                    .map_err(domain_error_to_core)?;
-                let report = backup::delete_tenant(&store, &tenant)
-                    .map_err(domain_error_to_core)?;
-                if json {
-                    serde_json::to_string_pretty(&report).map_err(|source| {
-                        AideMemoError::Serialize {
-                            context: "tenant delete report".to_string(),
-                            source,
-                        }
-                    })
-                } else {
-                    Ok(format!(
-                        "tenant deleted: {}\nresources: {}\nreceipts: {}\nchanges: {}",
-                        report.tenant_id,
-                        report.deleted_resources,
-                        report.deleted_receipts,
-                        report.deleted_changes
-                    ))
-                }
-            }
-            #[cfg(not(feature = "postgres"))]
-            {
-                let _ = (tenant_id, database_url, confirm, json);
-                Err(AideMemoError::InvalidInput(
-                    "Tenant delete requires the `postgres` feature".to_string(),
-                ))
-            }
+            let _ = (tenant_id, database_url, confirm, json);
+            Err(AideMemoError::InvalidInput(
+                "Tenant delete requires aidememo-store-postgres".to_string(),
+            ))
         }
-    }
-}
-
-#[cfg(feature = "postgres")]
-fn domain_error_to_core(error: aidememo_domain::DomainError) -> AideMemoError {
-    match error {
-        aidememo_domain::DomainError::InvalidInput(msg) => AideMemoError::InvalidInput(msg),
-        aidememo_domain::DomainError::StorageFailure { operation, detail } => {
-            AideMemoError::Internal(format!("storage {operation}: {detail}"))
-        }
-        aidememo_domain::DomainError::SerializeFailure { context, source } => {
-            AideMemoError::Serialize { context, source }
-        }
-        aidememo_domain::DomainError::DeserializeFailure { context, source } => {
-            AideMemoError::Deserialize { context, source }
-        }
-        _ => AideMemoError::Internal(error.to_string()),
     }
 }
