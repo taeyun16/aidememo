@@ -92,15 +92,18 @@ pub fn postgres_command() -> impl Parser<Command> {
         .map(Command::Postgres)
 }
 
-pub fn run_postgres(sub: PostgresSub, global_json: bool) -> Result<(), AideMemoError> {
-    let database_url = std::env::var("AIDEMEMO_POSTGRES_URL").map_err(|_| {
-        AideMemoError::InvalidInput(
-            "AIDEMEMO_POSTGRES_URL environment variable is required for PostgreSQL operations"
-                .to_string(),
-        )
-    })?;
+pub fn run_postgres(sub: PostgresSub, global_json: bool) -> Result<(), ()> {
+    let database_url = match std::env::var("AIDEMEMO_POSTGRES_URL") {
+        Ok(url) => url,
+        Err(_) => {
+            eprintln!(
+                "Error: AIDEMEMO_POSTGRES_URL environment variable is required for PostgreSQL operations"
+            );
+            return Err(());
+        }
+    };
 
-    match sub {
+    let result = match sub {
         PostgresSub::BackupCreate { destination, json } => {
             let json = json || global_json;
             let _ = (database_url, destination, json);
@@ -132,15 +135,21 @@ pub fn run_postgres(sub: PostgresSub, global_json: bool) -> Result<(), AideMemoE
             json,
         } => {
             if !confirm {
-                return Err(AideMemoError::InvalidInput(
-                    "tenant delete is destructive; pass --confirm to proceed".to_string(),
-                ));
+                return Err(());
             }
             let json = json || global_json;
             let _ = (database_url, tenant_id, confirm, json);
             Err(AideMemoError::InvalidInput(
                 "Tenant delete requires aidememo-store-postgres".to_string(),
             ))
+        }
+    };
+
+    match result {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            Err(())
         }
     }
 }
