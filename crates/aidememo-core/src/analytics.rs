@@ -60,11 +60,9 @@ impl AnalyticsEngine {
     /// The DuckDB file is separate from the canonical store and can be deleted
     /// and rebuilt without data loss.
     pub fn open(path: &Path) -> Result<Self> {
-        let conn = Connection::open(path).map_err(|e| {
-            AideMemoError::StoreOpen {
-                path: path.to_path_buf(),
-                source: Box::new(e),
-            }
+        let conn = Connection::open(path).map_err(|e| AideMemoError::StoreOpen {
+            path: path.to_path_buf(),
+            source: Box::new(e),
         })?;
 
         // Initialize schema if needed
