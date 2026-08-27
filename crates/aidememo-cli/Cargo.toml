@@ -34,6 +34,7 @@ peak_alloc = "0.3"
 # allocator (only one #[global_allocator] is allowed at link time).
 dhat = { version = "0.3", optional = true }
 
+anyhow = "1.0"
 bpaf = { version = "0.9", features = ["derive", "autocomplete"] }
 chrono = "0.4"
 serde = { version = "1.0", features = ["derive"] }
@@ -88,6 +89,7 @@ default = ["sqlite"]
 sqlite = ["aidememo-core/sqlite"]
 redb = ["aidememo-core/redb"]
 s3 = ["aidememo-core/s3"]
+analytics = ["aidememo-core/analytics"]
 fastembed = ["aidememo-core/fastembed"]
 # Replace the GlobalAlloc with dhat's instrumented allocator. The bin
 # emits dhat-heap.json on exit (or when the Profiler guard drops),

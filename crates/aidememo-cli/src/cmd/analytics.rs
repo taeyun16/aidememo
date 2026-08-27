@@ -6,7 +6,6 @@ use aidememo_core::AideMemo;
 use bpaf::Bpaf;
 
 #[derive(Debug, Clone, Bpaf)]
-#[bpaf(command("analytics"))]
 pub enum AnalyticsCommand {
     /// Rebuild analytics engine from canonical store
     #[bpaf(command("rebuild"))]
