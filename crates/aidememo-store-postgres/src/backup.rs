@@ -82,10 +82,13 @@ pub fn create_postgres_backup(
     let backup_id = format!("backup-{}", Ulid::new());
     let output_dir = destination_dir.join(&backup_id);
     std::fs::create_dir_all(&output_dir).map_err(|error| {
-        DomainError::StorageFailure(format!(
-            "failed to create backup directory {}: {error}",
-            output_dir.display()
-        ))
+        DomainError::StorageFailure {
+            operation: "backup_create_dir",
+            detail: format!(
+                "failed to create backup directory {}: {error}",
+                output_dir.display()
+            ),
+        }
     })?;
 
     let dump_path = output_dir.join(POSTGRES_DUMP_OBJECT);
@@ -102,21 +105,28 @@ pub fn create_postgres_backup(
         .stderr(Stdio::piped())
         .output()
         .map_err(|error| {
-            DomainError::StorageFailure(format!("pg_dump execution failed: {error}"))
+            DomainError::StorageFailure {
+                operation: "pg_dump_execute",
+                detail: format!("pg_dump execution failed: {error}"),
+            }
         })?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(DomainError::StorageFailure(format!(
-            "pg_dump failed: {stderr}"
-        )));
+        return Err(DomainError::StorageFailure {
+            operation: "pg_dump",
+            detail: format!("pg_dump failed: {stderr}"),
+        });
     }
 
     let dump_bytes = std::fs::read(&dump_path).map_err(|error| {
-        DomainError::StorageFailure(format!(
-            "failed to read dump file {}: {error}",
-            dump_path.display()
-        ))
+        DomainError::StorageFailure {
+            operation: "backup_read_dump",
+            detail: format!(
+                "failed to read dump file {}: {error}",
+                dump_path.display()
+            ),
+        }
     })?;
     let dump_sha256 = sha256_hex(&dump_bytes);
 
@@ -160,10 +170,13 @@ pub fn restore_postgres_backup(
 
     let dump_path = source_dir.join(&manifest.database.object);
     let dump_bytes = std::fs::read(&dump_path).map_err(|error| {
-        DomainError::StorageFailure(format!(
-            "failed to read dump file {}: {error}",
-            dump_path.display()
-        ))
+        DomainError::StorageFailure {
+            operation: "backup_restore_read",
+            detail: format!(
+                "failed to read dump file {}: {error}",
+                dump_path.display()
+            ),
+        }
     })?;
 
     // Validate checksum
@@ -192,14 +205,18 @@ pub fn restore_postgres_backup(
         .stderr(Stdio::piped())
         .output()
         .map_err(|error| {
-            DomainError::StorageFailure(format!("pg_restore execution failed: {error}"))
+            DomainError::StorageFailure {
+                operation: "pg_restore_execute",
+                detail: format!("pg_restore execution failed: {error}"),
+            }
         })?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(DomainError::StorageFailure(format!(
-            "pg_restore failed: {stderr}"
-        )));
+        return Err(DomainError::StorageFailure {
+            operation: "pg_restore",
+            detail: format!("pg_restore failed: {stderr}"),
+        });
     }
 
     Ok(PostgresBackupRestoreReport {
@@ -218,10 +235,13 @@ pub fn export_tenant(
     let export_id = format!("tenant-export-{}-{}", tenant_id, Ulid::new());
     let output_dir = destination_dir.join(&export_id);
     std::fs::create_dir_all(&output_dir).map_err(|error| {
-        DomainError::StorageFailure(format!(
-            "failed to create export directory {}: {error}",
-            output_dir.display()
-        ))
+        DomainError::StorageFailure {
+            operation: "tenant_export_create_dir",
+            detail: format!(
+                "failed to create export directory {}: {error}",
+                output_dir.display()
+            ),
+        }
     })?;
 
     // Query all resources for this tenant
@@ -244,10 +264,13 @@ pub fn export_tenant(
             source: error,
         })?;
     std::fs::write(&manifest_path, manifest_bytes).map_err(|error| {
-        DomainError::StorageFailure(format!(
-            "failed to write export manifest {}: {error}",
-            manifest_path.display()
-        ))
+        DomainError::StorageFailure {
+            operation: "tenant_export_write",
+            detail: format!(
+                "failed to write export manifest {}: {error}",
+                manifest_path.display()
+            ),
+        }
     })?;
 
     Ok(TenantExportReport {
@@ -279,19 +302,25 @@ fn write_manifest(
         }
     })?;
     std::fs::write(path, bytes).map_err(|error| {
-        DomainError::StorageFailure(format!(
-            "failed to write manifest {}: {error}",
-            path.display()
-        ))
+        DomainError::StorageFailure {
+            operation: "backup_manifest_write",
+            detail: format!(
+                "failed to write manifest {}: {error}",
+                path.display()
+            ),
+        }
     })
 }
 
 fn read_manifest(path: &Path) -> Result<PostgresBackupManifest, DomainError> {
     let bytes = std::fs::read(path).map_err(|error| {
-        DomainError::StorageFailure(format!(
-            "failed to read manifest {}: {error}",
-            path.display()
-        ))
+        DomainError::StorageFailure {
+            operation: "backup_manifest_read",
+            detail: format!(
+                "failed to read manifest {}: {error}",
+                path.display()
+            ),
+        }
     })?;
     serde_json::from_slice(&bytes).map_err(|error| DomainError::DeserializeFailure {
         context: "postgres backup manifest".to_string(),

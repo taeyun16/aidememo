@@ -153,7 +153,10 @@ fn main() {
         cmd::Command::Overview(sub) => handle_overview(&store_path, config, sub, json),
         cmd::Command::Consolidate(sub) => handle_consolidate(&store_path, config, sub, json),
         cmd::Command::Auth(sub) => cmd::auth::run_auth(sub),
-        cmd::Command::Postgres(sub) => cmd::postgres::run_postgres(sub, json),
+        cmd::Command::Postgres(sub) => {
+            cmd::postgres::run_postgres(sub, json)?;
+            Ok(())
+        }
     };
 
     match result {
