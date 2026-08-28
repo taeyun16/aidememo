@@ -32,6 +32,8 @@ pub mod skill;
 pub mod watch;
 
 pub use adapt::AdaptSub;
+#[cfg(feature = "analytics")]
+pub use analytics::AnalyticsCommand;
 pub use bench::BenchSub;
 pub use completions::CompletionsSub;
 pub use doctor::DoctorSub;
