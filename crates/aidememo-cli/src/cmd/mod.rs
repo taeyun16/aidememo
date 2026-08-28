@@ -4,6 +4,7 @@ use bpaf::*;
 use std::path::PathBuf;
 
 pub mod adapt;
+pub mod analytics;
 pub mod artifacts;
 pub mod auth;
 pub mod bench;
@@ -32,6 +33,8 @@ pub mod skill;
 pub mod watch;
 
 pub use adapt::AdaptSub;
+#[cfg(feature = "analytics")]
+pub use analytics::AnalyticsCommand;
 pub use bench::BenchSub;
 pub use completions::CompletionsSub;
 pub use doctor::DoctorSub;
@@ -107,6 +110,9 @@ pub enum Command {
     AutoRelate(AutoRelateSub),
     Overview(OverviewSub),
     Consolidate(ConsolidateSub),
+    /// Analytics (DuckDB-backed OLAP)
+    #[cfg(feature = "analytics")]
+    Analytics(analytics::AnalyticsCommand),
     Auth(auth::AuthSub),
     Postgres(PostgresSub),
 }

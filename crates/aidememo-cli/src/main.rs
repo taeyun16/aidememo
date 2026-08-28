@@ -152,6 +152,8 @@ fn main() {
         cmd::Command::AutoRelate(sub) => handle_auto_relate(&store_path, config, sub),
         cmd::Command::Overview(sub) => handle_overview(&store_path, config, sub, json),
         cmd::Command::Consolidate(sub) => handle_consolidate(&store_path, config, sub, json),
+        #[cfg(feature = "analytics")]
+        cmd::Command::Analytics(sub) => handle_analytics(&store_path, config, sub),
         cmd::Command::Auth(sub) => cmd::auth::run_auth(sub),
         cmd::Command::Postgres(sub) => cmd::postgres::run_postgres(sub, json),
     };
@@ -3782,6 +3784,19 @@ fn handle_consolidate(
             stats.max_cosine,
             elapsed_ms,
         ))
+    })
+}
+
+#[cfg(feature = "analytics")]
+fn handle_analytics(
+    path: &Path,
+    config: Config,
+    sub: cmd::AnalyticsCommand,
+) -> Result<String, AideMemoError> {
+    with_wiki(path, config, |wiki| {
+        cmd::analytics::run_analytics(sub, &wiki)
+            .map_err(|e| AideMemoError::Internal(e.to_string()))?;
+        Ok(String::new())
     })
 }
 

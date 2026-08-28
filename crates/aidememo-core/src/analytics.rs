@@ -1,0 +1,973 @@
+//! DuckDB-backed analytics engine — derived OLAP projection over canonical memory.
+//!
+//! This module provides analytical query capabilities optimized for aggregations,
+//! time-series analysis, and complex joins. It is a **derived projection** that
+//! can be rebuilt from canonical fact/entity/relation data, similar to BM25 and
+//! HNSW indexes.
+//!
+//! ## Architecture
+//!
+//! - **Not a canonical store**: writes go through aidememo-core → StoreKind
+//! - **Derived and rebuildable**: tracks canonical watermarks, syncs incrementally
+//! - **OLAP workloads**: columnar storage, analytical SQL, optimized aggregations
+//! - **Bounded operations**: queries have timeouts, results have size limits
+//!
+//! ## Usage
+//!
+//! ```rust,ignore
+//! use aidememo_core::analytics::AnalyticsEngine;
+//! use aidememo_core::backend::StoreKind;
+//!
+//! // Open analytics engine next to canonical store
+//! let mut analytics = AnalyticsEngine::open(&store_path.with_extension("duckdb"))?;
+//!
+//! // Rebuild from canonical store
+//! analytics.rebuild_from_canonical(&store)?;
+//!
+//! // Incremental sync (call after write operations)
+//! analytics.incremental_sync(&store)?;
+//!
+//! // Query
+//! let result = analytics.query(
+//!     "SELECT fact_type, COUNT(*) as count FROM facts GROUP BY fact_type",
+//!     &[]
+//! )?;
+//! ```
+
+use std::path::Path;
+use std::sync::{Arc, Mutex};
+
+use duckdb::{Connection, params};
+
+use crate::backend::{StoreBackend, StoreKind};
+use crate::error::{AideMemoError, Result};
+use crate::types::{FactListOpts, ListOpts};
+
+/// DuckDB analytics engine — derived OLAP projection.
+///
+/// The connection is wrapped in Arc<Mutex<>> to enable Send+Sync for use
+/// in multi-threaded environments like axum servers.
+pub struct AnalyticsEngine {
+    conn: Arc<Mutex<Connection>>,
+    /// Last canonical fact sequence number synced
+    last_fact_seq: u64,
+    /// Last canonical entity sequence number synced
+    last_entity_seq: u64,
+    /// Last canonical relation sequence number synced
+    last_relation_seq: u64,
+}
+
+impl AnalyticsEngine {
+    /// Open or create an analytics engine at the given path.
+    ///
+    /// The DuckDB file is separate from the canonical store and can be deleted
+    /// and rebuilt without data loss.
+    pub fn open(path: &Path) -> Result<Self> {
+        let conn = Connection::open(path).map_err(|e| AideMemoError::StoreOpen {
+            path: path.to_path_buf(),
+            source: Box::new(e),
+        })?;
+
+        // Initialize schema if needed
+        Self::init_schema(&conn, path)?;
+
+        // Load watermarks
+        let (last_fact_seq, last_entity_seq, last_relation_seq) = Self::load_watermarks(&conn)?;
+
+        Ok(Self {
+            conn: Arc::new(Mutex::new(conn)),
+            last_fact_seq,
+            last_entity_seq,
+            last_relation_seq,
+        })
+    }
+
+    /// Initialize DuckDB schema for analytics.
+    fn init_schema(conn: &Connection, path: &Path) -> Result<()> {
+        // Metadata table for watermarks
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS _analytics_meta (
+                key VARCHAR PRIMARY KEY,
+                value BIGINT NOT NULL
+            )",
+            [],
+        )
+        .map_err(|e| AideMemoError::StoreOpen {
+            path: path.to_path_buf(),
+            source: Box::new(e),
+        })?;
+
+        // Facts table (columnar, optimized for OLAP)
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS facts (
+                id VARCHAR PRIMARY KEY,
+                content TEXT NOT NULL,
+                fact_type VARCHAR NOT NULL,
+                source_id VARCHAR,
+                actor_id VARCHAR,
+                created_at BIGINT NOT NULL,
+                updated_at BIGINT NOT NULL
+            )",
+            [],
+        )
+        .map_err(|e| AideMemoError::StoreOpen {
+            path: path.to_path_buf(),
+            source: Box::new(e),
+        })?;
+
+        // Entities table (projected from EntitySummary)
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS entities (
+                id VARCHAR PRIMARY KEY,
+                name VARCHAR NOT NULL,
+                entity_type VARCHAR NOT NULL,
+                fact_count INTEGER NOT NULL
+            )",
+            [],
+        )
+        .map_err(|e| AideMemoError::StoreOpen {
+            path: path.to_path_buf(),
+            source: Box::new(e),
+        })?;
+
+        // Relations table
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS relations (
+                id VARCHAR PRIMARY KEY,
+                source_entity_id VARCHAR NOT NULL,
+                target_entity_id VARCHAR NOT NULL,
+                relation_type VARCHAR NOT NULL,
+                weight DOUBLE NOT NULL,
+                created_at TIMESTAMP NOT NULL
+            )",
+            [],
+        )
+        .map_err(|e| AideMemoError::StoreOpen {
+            path: path.to_path_buf(),
+            source: Box::new(e),
+        })?;
+
+        // Fact-entity junction table (many-to-many)
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS fact_entities (
+                fact_id VARCHAR NOT NULL,
+                entity_id VARCHAR NOT NULL,
+                PRIMARY KEY (fact_id, entity_id)
+            )",
+            [],
+        )
+        .map_err(|e| AideMemoError::StoreOpen {
+            path: path.to_path_buf(),
+            source: Box::new(e),
+        })?;
+
+        // Indexes for common query patterns
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_facts_created_at ON facts(created_at)",
+            [],
+        )
+        .map_err(|e| AideMemoError::Internal(format!("failed to create index: {}", e)))?;
+
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_facts_fact_type ON facts(fact_type)",
+            [],
+        )
+        .map_err(|e| AideMemoError::Internal(format!("failed to create index: {}", e)))?;
+
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_facts_source_id ON facts(source_id)",
+            [],
+        )
+        .map_err(|e| AideMemoError::Internal(format!("failed to create index: {}", e)))?;
+
+        Ok(())
+    }
+
+    /// Load sync watermarks from metadata table.
+    fn load_watermarks(conn: &Connection) -> Result<(u64, u64, u64)> {
+        let mut stmt = conn
+            .prepare("SELECT key, value FROM _analytics_meta WHERE key IN (?, ?, ?)")
+            .map_err(|e| AideMemoError::Internal(format!("failed to load watermarks: {}", e)))?;
+
+        let mut rows = stmt
+            .query(params![
+                "last_fact_timestamp",
+                "last_entity_timestamp",
+                "last_relation_timestamp"
+            ])
+            .map_err(|e| AideMemoError::Internal(format!("failed to query watermarks: {}", e)))?;
+
+        let mut last_fact_seq = 0u64;
+        let mut last_entity_seq = 0u64;
+        let mut last_relation_seq = 0u64;
+
+        while let Some(row) = rows
+            .next()
+            .map_err(|e| AideMemoError::Internal(format!("failed to read watermark row: {}", e)))?
+        {
+            let key: String = row
+                .get(0)
+                .map_err(|e| AideMemoError::Internal(format!("failed to get key: {}", e)))?;
+            let value: i64 = row
+                .get(1)
+                .map_err(|e| AideMemoError::Internal(format!("failed to get value: {}", e)))?;
+
+            match key.as_str() {
+                "last_fact_timestamp" => last_fact_seq = value as u64,
+                "last_entity_timestamp" => last_entity_seq = value as u64,
+                "last_relation_timestamp" => last_relation_seq = value as u64,
+                _ => {}
+            }
+        }
+
+        Ok((last_fact_seq, last_entity_seq, last_relation_seq))
+    }
+
+    /// Save sync watermarks to metadata table.
+    fn save_watermarks(&self) -> Result<()> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AideMemoError::Internal(format!("failed to lock connection: {}", e)))?;
+
+        conn.execute(
+            "INSERT OR REPLACE INTO _analytics_meta (key, value) VALUES (?, ?)",
+            params!["last_fact_timestamp", self.last_fact_seq as i64],
+        )
+        .map_err(|e| AideMemoError::Internal(format!("failed to save fact watermark: {}", e)))?;
+
+        conn.execute(
+            "INSERT OR REPLACE INTO _analytics_meta (key, value) VALUES (?, ?)",
+            params!["last_entity_timestamp", self.last_entity_seq as i64],
+        )
+        .map_err(|e| AideMemoError::Internal(format!("failed to save entity watermark: {}", e)))?;
+
+        conn.execute(
+            "INSERT OR REPLACE INTO _analytics_meta (key, value) VALUES (?, ?)",
+            params!["last_relation_timestamp", self.last_relation_seq as i64],
+        )
+        .map_err(|e| {
+            AideMemoError::Internal(format!("failed to save relation watermark: {}", e))
+        })?;
+
+        Ok(())
+    }
+
+    /// Rebuild analytics engine from canonical store.
+    ///
+    /// This truncates all analytics tables and rebuilds from scratch. Safe to
+    /// call at any time — analytics data is derived and rebuildable.
+    pub fn rebuild_from_canonical(&mut self, store: &StoreKind) -> Result<()> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AideMemoError::Internal(format!("failed to lock connection: {}", e)))?;
+
+        // Begin transaction
+        conn.execute("BEGIN TRANSACTION", []).map_err(|e| {
+            AideMemoError::Internal(format!("failed to begin rebuild transaction: {}", e))
+        })?;
+
+        // Truncate tables
+        conn.execute("DELETE FROM fact_entities", []).map_err(|e| {
+            AideMemoError::Internal(format!("failed to truncate fact_entities: {}", e))
+        })?;
+        conn.execute("DELETE FROM relations", [])
+            .map_err(|e| AideMemoError::Internal(format!("failed to truncate relations: {}", e)))?;
+        conn.execute("DELETE FROM facts", [])
+            .map_err(|e| AideMemoError::Internal(format!("failed to truncate facts: {}", e)))?;
+        conn.execute("DELETE FROM entities", [])
+            .map_err(|e| AideMemoError::Internal(format!("failed to truncate entities: {}", e)))?;
+
+        // Drop lock before calling sync methods that need their own lock
+        drop(conn);
+
+        // Sync all data
+        let max_entity_ts = self.sync_entities(store)?;
+        let max_fact_ts = self.sync_facts(store)?;
+        let max_relation_ts = self.sync_relations(store)?;
+
+        // Update watermarks to actual max timestamps
+        self.last_fact_seq = max_fact_ts;
+        self.last_entity_seq = max_entity_ts;
+        self.last_relation_seq = max_relation_ts;
+        self.save_watermarks()?;
+
+        // Commit transaction
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AideMemoError::Internal(format!("failed to lock connection: {}", e)))?;
+        conn.execute("COMMIT", [])
+            .map_err(|e| AideMemoError::Internal(format!("failed to commit rebuild: {}", e)))?;
+
+        Ok(())
+    }
+
+    /// Sync entities from canonical store, returning max updated_at timestamp.
+    fn sync_entities(&mut self, store: &StoreKind) -> Result<u64> {
+        // Get all entities
+        let entities = store.entity_list(ListOpts {
+            limit: None,
+            offset: 0,
+            ..Default::default()
+        })?;
+
+        let max_ts = 0u64;
+
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AideMemoError::Internal(format!("failed to lock connection: {}", e)))?;
+
+        // Prepare batch insert
+        let mut stmt = conn
+            .prepare(
+                "INSERT INTO entities (id, name, entity_type, fact_count)
+                 VALUES (?, ?, ?, ?)",
+            )
+            .map_err(|e| {
+                AideMemoError::Internal(format!("failed to prepare entity insert: {}", e))
+            })?;
+
+        for entity in entities {
+            stmt.execute(params![
+                entity.id.to_string(),
+                entity.name,
+                entity.entity_type.to_string(),
+                entity.fact_count as i64,
+            ])
+            .map_err(|e| AideMemoError::Internal(format!("failed to insert entity: {}", e)))?;
+        }
+
+        Ok(max_ts)
+    }
+
+    /// Sync facts from canonical store, returning max updated_at timestamp.
+    fn sync_facts(&mut self, store: &StoreKind) -> Result<u64> {
+        // Get all facts
+        let facts = store.fact_list(FactListOpts {
+            limit: None,
+            offset: 0,
+            ..Default::default()
+        })?;
+
+        let mut max_ts = 0u64;
+
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AideMemoError::Internal(format!("failed to lock connection: {}", e)))?;
+
+        // Prepare batch inserts
+        let mut fact_stmt = conn
+            .prepare(
+                "INSERT INTO facts (id, content, fact_type, source_id, actor_id, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)",
+            )
+            .map_err(|e| AideMemoError::Internal(format!("failed to prepare fact insert: {}", e)))?;
+
+        let mut fact_entity_stmt = conn
+            .prepare("INSERT INTO fact_entities (fact_id, entity_id) VALUES (?, ?)")
+            .map_err(|e| {
+                AideMemoError::Internal(format!("failed to prepare fact_entity insert: {}", e))
+            })?;
+
+        for fact in facts {
+            // Insert fact
+            fact_stmt
+                .execute(params![
+                    fact.id.to_string(),
+                    fact.content,
+                    fact.fact_type.to_string(),
+                    fact.source_id,
+                    fact.actor_id,
+                    fact.created_at as i64,
+                    fact.updated_at as i64,
+                ])
+                .map_err(|e| AideMemoError::Internal(format!("failed to insert fact: {}", e)))?;
+
+            // Insert fact-entity links
+            for entity_id in &fact.entity_ids {
+                fact_entity_stmt
+                    .execute(params![fact.id.to_string(), entity_id.to_string()])
+                    .map_err(|e| {
+                        AideMemoError::Internal(format!("failed to insert fact_entity: {}", e))
+                    })?;
+            }
+
+            max_ts = max_ts.max(fact.updated_at);
+        }
+
+        Ok(max_ts)
+    }
+
+    /// Sync relations from canonical store, returning max created_at timestamp.
+    fn sync_relations(&mut self, store: &StoreKind) -> Result<u64> {
+        // Get all relations
+        let relations = store.relations_list_all()?;
+
+        let mut max_ts = 0u64;
+
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AideMemoError::Internal(format!("failed to lock connection: {}", e)))?;
+
+        // Prepare batch insert
+        let mut stmt = conn
+            .prepare(
+                "INSERT INTO relations (id, source_entity_id, target_entity_id, relation_type, weight, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?)",
+            )
+            .map_err(|e| AideMemoError::Internal(format!("failed to prepare relation insert: {}", e)))?;
+
+        for relation in relations {
+            stmt.execute(params![
+                format!(
+                    "{}-{}-{}",
+                    relation.source_id, relation.target_id, relation.relation_type
+                ),
+                relation.source_id.to_string(),
+                relation.target_id.to_string(),
+                relation.relation_type.to_string(),
+                relation.weight,
+                relation.created_at as i64,
+            ])
+            .map_err(|e| AideMemoError::Internal(format!("failed to insert relation: {}", e)))?;
+
+            max_ts = max_ts.max(relation.created_at);
+        }
+
+        Ok(max_ts)
+    }
+
+    /// Incremental sync from canonical store using timestamp watermarks.
+    ///
+    /// Syncs entities/facts/relations created or updated after the last sync.
+    /// Falls back to full rebuild if watermarks are at u64::MAX (post-rebuild state).
+    pub fn incremental_sync(&mut self, store: &StoreKind) -> Result<()> {
+        // If watermarks are at MAX, we need a full rebuild first
+        if self.last_fact_seq == u64::MAX
+            || self.last_entity_seq == u64::MAX
+            || self.last_relation_seq == u64::MAX
+        {
+            return self.rebuild_from_canonical(store);
+        }
+
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AideMemoError::Internal(format!("failed to lock connection: {}", e)))?;
+
+        // Begin transaction
+        conn.execute("BEGIN TRANSACTION", []).map_err(|e| {
+            AideMemoError::Internal(format!("failed to begin sync transaction: {}", e))
+        })?;
+
+        // Track max timestamps for this sync
+        let mut max_entity_ts = self.last_entity_seq;
+        let mut max_fact_ts = self.last_fact_seq;
+        let mut max_relation_ts = self.last_relation_seq;
+
+        // Sync entities (EntitySummary has no timestamps, so we replace all)
+        let entities = store.entity_list(ListOpts {
+            limit: None,
+            offset: 0,
+            ..Default::default()
+        })?;
+
+        let mut entity_upsert_stmt = conn
+            .prepare(
+                "INSERT OR REPLACE INTO entities (id, name, entity_type, fact_count)
+                 VALUES (?, ?, ?, ?)",
+            )
+            .map_err(|e| {
+                AideMemoError::Internal(format!("failed to prepare entity upsert: {}", e))
+            })?;
+
+        for entity in entities {
+            entity_upsert_stmt
+                .execute(params![
+                    entity.id.to_string(),
+                    entity.name,
+                    entity.entity_type.to_string(),
+                    entity.fact_count as i64,
+                ])
+                .map_err(|e| AideMemoError::Internal(format!("failed to upsert entity: {}", e)))?;
+        }
+
+        // Sync new/updated facts
+        let facts = store.fact_list(FactListOpts {
+            limit: None,
+            offset: 0,
+            ..Default::default()
+        })?;
+
+        let mut fact_upsert_stmt = conn
+            .prepare(
+                "INSERT OR REPLACE INTO facts (id, content, fact_type, source_id, actor_id, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)",
+            )
+            .map_err(|e| AideMemoError::Internal(format!("failed to prepare fact upsert: {}", e)))?;
+
+        let mut fact_entity_delete_stmt = conn
+            .prepare("DELETE FROM fact_entities WHERE fact_id = ?")
+            .map_err(|e| {
+                AideMemoError::Internal(format!("failed to prepare fact_entity delete: {}", e))
+            })?;
+
+        let mut fact_entity_insert_stmt = conn
+            .prepare("INSERT INTO fact_entities (fact_id, entity_id) VALUES (?, ?)")
+            .map_err(|e| {
+                AideMemoError::Internal(format!("failed to prepare fact_entity insert: {}", e))
+            })?;
+
+        for fact in facts {
+            // Only sync if updated after last watermark
+            if fact.updated_at > self.last_fact_seq {
+                // Upsert fact
+                fact_upsert_stmt
+                    .execute(params![
+                        fact.id.to_string(),
+                        fact.content,
+                        fact.fact_type.to_string(),
+                        fact.source_id,
+                        fact.actor_id,
+                        fact.created_at as i64,
+                        fact.updated_at as i64,
+                    ])
+                    .map_err(|e| {
+                        AideMemoError::Internal(format!("failed to upsert fact: {}", e))
+                    })?;
+
+                // Update fact-entity links (delete old, insert new)
+                fact_entity_delete_stmt
+                    .execute(params![fact.id.to_string()])
+                    .map_err(|e| {
+                        AideMemoError::Internal(format!("failed to delete fact_entities: {}", e))
+                    })?;
+
+                for entity_id in &fact.entity_ids {
+                    fact_entity_insert_stmt
+                        .execute(params![fact.id.to_string(), entity_id.to_string()])
+                        .map_err(|e| {
+                            AideMemoError::Internal(format!("failed to insert fact_entity: {}", e))
+                        })?;
+                }
+
+                max_fact_ts = max_fact_ts.max(fact.updated_at);
+            }
+        }
+
+        // Sync new/updated relations
+        let relations = store.relations_list_all()?;
+
+        let mut relation_upsert_stmt = conn
+            .prepare(
+                "INSERT OR REPLACE INTO relations (id, source_entity_id, target_entity_id, relation_type, weight, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?)",
+            )
+            .map_err(|e| {
+                AideMemoError::Internal(format!("failed to prepare relation upsert: {}", e))
+            })?;
+
+        for relation in relations {
+            // Only sync if created after last watermark
+            if relation.created_at > self.last_relation_seq {
+                relation_upsert_stmt
+                    .execute(params![
+                        format!(
+                            "{}-{}-{}",
+                            relation.source_id, relation.target_id, relation.relation_type
+                        ),
+                        relation.source_id.to_string(),
+                        relation.target_id.to_string(),
+                        relation.relation_type.to_string(),
+                        relation.weight,
+                        relation.created_at as i64,
+                    ])
+                    .map_err(|e| {
+                        AideMemoError::Internal(format!("failed to upsert relation: {}", e))
+                    })?;
+
+                max_relation_ts = max_relation_ts.max(relation.created_at);
+            }
+        }
+
+        // Update watermarks
+        // Entity watermark tracks fact watermark since EntitySummary has no timestamps
+        max_entity_ts = max_fact_ts;
+        self.last_entity_seq = max_entity_ts;
+        self.last_fact_seq = max_fact_ts;
+        self.last_relation_seq = max_relation_ts;
+
+        // Drop conn to release lock before save_watermarks which needs its own lock
+        drop(conn);
+        self.save_watermarks()?;
+
+        // Commit transaction
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AideMemoError::Internal(format!("failed to lock connection: {}", e)))?;
+        conn.execute("COMMIT", [])
+            .map_err(|e| AideMemoError::Internal(format!("failed to commit sync: {}", e)))?;
+
+        Ok(())
+    }
+
+    /// Execute an analytical SQL query with parameter binding.
+    ///
+    /// Parameters are bound using `?` placeholders in the SQL string.
+    ///
+    /// # Safety
+    ///
+    /// This function provides raw SQL access. Callers must sanitize inputs
+    /// and use parameter binding to prevent SQL injection.
+    pub fn query(&self, sql: &str, params: &[&dyn duckdb::ToSql]) -> Result<Vec<Vec<String>>> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AideMemoError::Internal(format!("failed to lock connection: {}", e)))?;
+
+        let mut stmt = conn
+            .prepare(sql)
+            .map_err(|e| AideMemoError::InvalidInput(format!("invalid SQL query: {}", e)))?;
+
+        let mut rows = stmt
+            .query(params)
+            .map_err(|e| AideMemoError::Internal(format!("query execution failed: {}", e)))?;
+
+        let column_count = rows
+            .as_ref()
+            .ok_or_else(|| {
+                AideMemoError::Internal("failed to get statement reference".to_string())
+            })?
+            .column_count();
+
+        let mut results = Vec::new();
+
+        while let Some(row) = rows
+            .next()
+            .map_err(|e| AideMemoError::Internal(format!("failed to read row: {}", e)))?
+        {
+            let mut row_data = Vec::with_capacity(column_count);
+            for i in 0..column_count {
+                let value_ref = row.get_ref(i).map_err(|e| {
+                    AideMemoError::Internal(format!("failed to get column {}: {}", i, e))
+                })?;
+
+                use duckdb::types::ValueRef;
+                let value_str = match value_ref {
+                    ValueRef::Null => "NULL".to_string(),
+                    ValueRef::Boolean(b) => b.to_string(),
+                    ValueRef::TinyInt(i) => i.to_string(),
+                    ValueRef::SmallInt(i) => i.to_string(),
+                    ValueRef::Int(i) => i.to_string(),
+                    ValueRef::BigInt(i) => i.to_string(),
+                    ValueRef::HugeInt(i) => i.to_string(),
+                    ValueRef::UTinyInt(i) => i.to_string(),
+                    ValueRef::USmallInt(i) => i.to_string(),
+                    ValueRef::UInt(i) => i.to_string(),
+                    ValueRef::UBigInt(i) => i.to_string(),
+                    ValueRef::Float(f) => f.to_string(),
+                    ValueRef::Double(f) => f.to_string(),
+                    ValueRef::Decimal(d) => d.to_string(),
+                    ValueRef::Text(bytes) => String::from_utf8_lossy(bytes).to_string(),
+                    ValueRef::Blob(bytes) => {
+                        format!("<blob {} bytes>", bytes.len())
+                    }
+                    _ => format!("{:?}", value_ref),
+                };
+                row_data.push(value_str);
+            }
+            results.push(row_data);
+        }
+
+        Ok(results)
+    }
+
+    /// Execute a query that returns a single scalar value.
+    pub fn query_scalar<T>(&self, sql: &str) -> Result<T>
+    where
+        T: duckdb::types::FromSql,
+    {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AideMemoError::Internal(format!("failed to lock connection: {}", e)))?;
+
+        let mut stmt = conn
+            .prepare(sql)
+            .map_err(|e| AideMemoError::InvalidInput(format!("invalid SQL query: {}", e)))?;
+
+        let result = stmt
+            .query_row([], |row| row.get(0))
+            .map_err(|e| AideMemoError::Internal(format!("scalar query failed: {}", e)))?;
+
+        Ok(result)
+    }
+
+    /// Get analytics engine statistics.
+    pub fn stats(&self) -> Result<AnalyticsStats> {
+        let fact_count: i64 = self.query_scalar("SELECT COUNT(*) FROM facts").unwrap_or(0);
+        let entity_count: i64 = self
+            .query_scalar("SELECT COUNT(*) FROM entities")
+            .unwrap_or(0);
+        let relation_count: i64 = self
+            .query_scalar("SELECT COUNT(*) FROM relations")
+            .unwrap_or(0);
+        let current_fact_count = fact_count; // All facts are current in this projection
+
+        Ok(AnalyticsStats {
+            fact_count: fact_count as usize,
+            entity_count: entity_count as usize,
+            relation_count: relation_count as usize,
+            current_fact_count: current_fact_count as usize,
+            last_fact_seq: self.last_fact_seq,
+            last_entity_seq: self.last_entity_seq,
+            last_relation_seq: self.last_relation_seq,
+        })
+    }
+}
+
+/// Analytics engine statistics.
+#[derive(Debug, Clone)]
+pub struct AnalyticsStats {
+    pub fact_count: usize,
+    pub entity_count: usize,
+    pub relation_count: usize,
+    pub current_fact_count: usize,
+    pub last_fact_seq: u64,
+    pub last_entity_seq: u64,
+    pub last_relation_seq: u64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Config;
+    use crate::types::{EntityInput, EntityType, FactInput, FactType};
+    use tempfile::TempDir;
+
+    fn create_test_store() -> (StoreKind, TempDir) {
+        let temp_dir = TempDir::new().expect("failed to create temp dir");
+        let store_path = temp_dir.path().join("test.sqlite");
+
+        let config = Config::default();
+        let store = StoreKind::open(&store_path, config).expect("failed to open store");
+
+        (store, temp_dir)
+    }
+
+    #[test]
+    fn test_open_creates_schema() {
+        let temp_dir = TempDir::new().unwrap();
+        let analytics_path = temp_dir.path().join("analytics.duckdb");
+
+        let analytics = AnalyticsEngine::open(&analytics_path).unwrap();
+
+        // Check that tables exist
+        let tables: Vec<Vec<String>> = analytics
+            .query(
+                "SELECT table_name FROM information_schema.tables 
+                 WHERE table_schema = 'main' ORDER BY table_name",
+                &[],
+            )
+            .unwrap();
+
+        let table_names: Vec<String> = tables.iter().map(|row| row[0].clone()).collect();
+
+        assert!(table_names.contains(&"_analytics_meta".to_string()));
+        assert!(table_names.contains(&"facts".to_string()));
+        assert!(table_names.contains(&"entities".to_string()));
+        assert!(table_names.contains(&"relations".to_string()));
+        assert!(table_names.contains(&"fact_entities".to_string()));
+    }
+
+    #[test]
+    fn test_rebuild_from_empty_store() {
+        let (store, _temp_dir) = create_test_store();
+        let temp_dir2 = TempDir::new().unwrap();
+        let analytics_path = temp_dir2.path().join("analytics.duckdb");
+
+        let mut analytics = AnalyticsEngine::open(&analytics_path).unwrap();
+        analytics.rebuild_from_canonical(&store).unwrap();
+
+        let stats = analytics.stats().unwrap();
+        assert_eq!(stats.fact_count, 0);
+        assert_eq!(stats.entity_count, 0);
+        assert_eq!(stats.relation_count, 0);
+    }
+
+    #[test]
+    fn test_rebuild_syncs_entities_and_facts() {
+        let (mut store, _temp_dir) = create_test_store();
+        let temp_dir2 = TempDir::new().unwrap();
+        let analytics_path = temp_dir2.path().join("analytics.duckdb");
+
+        // Add test data to canonical store
+        let redis_id = store
+            .entity_add(EntityInput {
+                name: "Redis".to_string(),
+                entity_type: Some(EntityType::Technology),
+                aliases: None,
+                tags: None,
+                source_page: None,
+            })
+            .unwrap();
+
+        let postgres_id = store
+            .entity_add(EntityInput {
+                name: "PostgreSQL".to_string(),
+                entity_type: Some(EntityType::Technology),
+                aliases: None,
+                tags: None,
+                source_page: None,
+            })
+            .unwrap();
+
+        store
+            .fact_add(FactInput {
+                content: "Redis is fast".to_string(),
+                fact_type: Some(FactType::Claim),
+                entity_ids: Some(vec![redis_id.clone()]),
+                source_id: None,
+                actor_id: None,
+                tags: None,
+                source: None,
+                source_confidence: None,
+                observed_at: None,
+            })
+            .unwrap();
+
+        store
+            .fact_add(FactInput {
+                content: "PostgreSQL is reliable".to_string(),
+                fact_type: Some(FactType::Claim),
+                entity_ids: Some(vec![postgres_id.clone()]),
+                source_id: None,
+                actor_id: None,
+                tags: None,
+                source: None,
+                source_confidence: None,
+                observed_at: None,
+            })
+            .unwrap();
+
+        // Rebuild analytics engine
+        let mut analytics = AnalyticsEngine::open(&analytics_path).unwrap();
+        analytics.rebuild_from_canonical(&store).unwrap();
+
+        // Verify stats
+        let stats = analytics.stats().unwrap();
+        assert_eq!(stats.entity_count, 2);
+        assert_eq!(stats.fact_count, 2);
+        assert_eq!(stats.current_fact_count, 2);
+
+        // Verify query
+        let fact_types: Vec<Vec<String>> = analytics
+            .query(
+                "SELECT fact_type, COUNT(*) as count FROM facts GROUP BY fact_type",
+                &[],
+            )
+            .unwrap();
+
+        assert_eq!(fact_types.len(), 1);
+        assert_eq!(fact_types[0][0], "claim");
+        assert_eq!(fact_types[0][1], "2");
+    }
+
+    #[test]
+    fn test_incremental_sync_appends_new_facts() {
+        let (mut store, _temp_dir) = create_test_store();
+        let temp_dir2 = TempDir::new().unwrap();
+        let analytics_path = temp_dir2.path().join("analytics.duckdb");
+
+        // Add initial data
+        let redis_id = store
+            .entity_add(EntityInput {
+                name: "Redis".to_string(),
+                entity_type: Some(EntityType::Technology),
+                aliases: None,
+                tags: None,
+                source_page: None,
+            })
+            .unwrap();
+
+        store
+            .fact_add(FactInput {
+                content: "Redis is fast".to_string(),
+                fact_type: Some(FactType::Claim),
+                entity_ids: Some(vec![redis_id.clone()]),
+                source_id: None,
+                actor_id: None,
+                tags: None,
+                source: None,
+                source_confidence: None,
+                observed_at: None,
+            })
+            .unwrap();
+
+        // Rebuild analytics
+        let mut analytics = AnalyticsEngine::open(&analytics_path).unwrap();
+        analytics.rebuild_from_canonical(&store).unwrap();
+
+        let stats_before = analytics.stats().unwrap();
+        assert_eq!(stats_before.fact_count, 1);
+        assert_eq!(stats_before.entity_count, 1);
+
+        // Add more data
+        let postgres_id = store
+            .entity_add(EntityInput {
+                name: "PostgreSQL".to_string(),
+                entity_type: Some(EntityType::Technology),
+                aliases: None,
+                tags: None,
+                source_page: None,
+            })
+            .unwrap();
+
+        store
+            .fact_add(FactInput {
+                content: "PostgreSQL is reliable".to_string(),
+                fact_type: Some(FactType::Claim),
+                entity_ids: Some(vec![postgres_id.clone()]),
+                source_id: None,
+                actor_id: None,
+                tags: None,
+                source: None,
+                source_confidence: None,
+                observed_at: None,
+            })
+            .unwrap();
+
+        // Incremental sync
+        analytics.incremental_sync(&store).unwrap();
+
+        // Verify new data synced
+        let stats_after = analytics.stats().unwrap();
+        assert_eq!(stats_after.fact_count, 2);
+        assert_eq!(stats_after.entity_count, 2);
+
+        // Verify watermarks advanced
+        assert!(analytics.last_fact_seq > stats_before.last_fact_seq);
+        assert!(analytics.last_entity_seq > stats_before.last_entity_seq);
+    }
+
+    #[test]
+    fn test_query_scalar() {
+        let (store, _temp_dir) = create_test_store();
+        let temp_dir2 = TempDir::new().unwrap();
+        let analytics_path = temp_dir2.path().join("analytics.duckdb");
+
+        let mut analytics = AnalyticsEngine::open(&analytics_path).unwrap();
+        analytics.rebuild_from_canonical(&store).unwrap();
+
+        let count: i64 = analytics
+            .query_scalar("SELECT COUNT(*) FROM facts")
+            .unwrap();
+        assert_eq!(count, 0);
+    }
+}
