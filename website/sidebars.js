@@ -16,6 +16,7 @@ const sidebars = {
         'MCP',
         'SHARED_MEMORY',
         'SERVER_SSOT',
+        'ARTIFACT_CONFORMANCE',
         'CODING_AGENTS',
         'CODEX_MULTI_PROFILE',
         'AGENT_WORKFLOWS',
