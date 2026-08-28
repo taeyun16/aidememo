@@ -81,18 +81,16 @@ pub fn create_postgres_backup(
 ) -> Result<PostgresBackupCreateReport, DomainError> {
     let backup_id = format!("backup-{}", Ulid::new());
     let output_dir = destination_dir.join(&backup_id);
-    std::fs::create_dir_all(&output_dir).map_err(|error| {
-        DomainError::StorageFailure {
-            operation: "backup_create_dir",
-            detail: format!(
-                "failed to create backup directory {}: {error}",
-                output_dir.display()
-            ),
-        }
+    std::fs::create_dir_all(&output_dir).map_err(|error| DomainError::StorageFailure {
+        operation: "backup_create_dir",
+        detail: format!(
+            "failed to create backup directory {}: {error}",
+            output_dir.display()
+        ),
     })?;
 
     let dump_path = output_dir.join(POSTGRES_DUMP_OBJECT);
-    
+
     // Execute pg_dump with custom format (compressed)
     let output = Command::new("pg_dump")
         .arg(database_url)
@@ -104,11 +102,9 @@ pub fn create_postgres_backup(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .output()
-        .map_err(|error| {
-            DomainError::StorageFailure {
-                operation: "pg_dump_execute",
-                detail: format!("pg_dump execution failed: {error}"),
-            }
+        .map_err(|error| DomainError::StorageFailure {
+            operation: "pg_dump_execute",
+            detail: format!("pg_dump execution failed: {error}"),
         })?;
 
     if !output.status.success() {
@@ -119,14 +115,9 @@ pub fn create_postgres_backup(
         });
     }
 
-    let dump_bytes = std::fs::read(&dump_path).map_err(|error| {
-        DomainError::StorageFailure {
-            operation: "backup_read_dump",
-            detail: format!(
-                "failed to read dump file {}: {error}",
-                dump_path.display()
-            ),
-        }
+    let dump_bytes = std::fs::read(&dump_path).map_err(|error| DomainError::StorageFailure {
+        operation: "backup_read_dump",
+        detail: format!("failed to read dump file {}: {error}", dump_path.display()),
     })?;
     let dump_sha256 = sha256_hex(&dump_bytes);
 
@@ -157,7 +148,7 @@ pub fn create_postgres_backup(
 }
 
 /// Restore a PostgreSQL logical backup using pg_restore.
-/// 
+///
 /// **WARNING**: This drops and recreates the target database schema.
 /// Ensure the target database URL points to a database that can be safely replaced.
 pub fn restore_postgres_backup(
@@ -169,14 +160,9 @@ pub fn restore_postgres_backup(
     validate_manifest_metadata(&manifest)?;
 
     let dump_path = source_dir.join(&manifest.database.object);
-    let dump_bytes = std::fs::read(&dump_path).map_err(|error| {
-        DomainError::StorageFailure {
-            operation: "backup_restore_read",
-            detail: format!(
-                "failed to read dump file {}: {error}",
-                dump_path.display()
-            ),
-        }
+    let dump_bytes = std::fs::read(&dump_path).map_err(|error| DomainError::StorageFailure {
+        operation: "backup_restore_read",
+        detail: format!("failed to read dump file {}: {error}", dump_path.display()),
     })?;
 
     // Validate checksum
@@ -204,11 +190,9 @@ pub fn restore_postgres_backup(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .output()
-        .map_err(|error| {
-            DomainError::StorageFailure {
-                operation: "pg_restore_execute",
-                detail: format!("pg_restore execution failed: {error}"),
-            }
+        .map_err(|error| DomainError::StorageFailure {
+            operation: "pg_restore_execute",
+            detail: format!("pg_restore execution failed: {error}"),
         })?;
 
     if !output.status.success() {
@@ -234,14 +218,12 @@ pub fn export_tenant(
 ) -> Result<TenantExportReport, DomainError> {
     let export_id = format!("tenant-export-{}-{}", tenant_id, Ulid::new());
     let output_dir = destination_dir.join(&export_id);
-    std::fs::create_dir_all(&output_dir).map_err(|error| {
-        DomainError::StorageFailure {
-            operation: "tenant_export_create_dir",
-            detail: format!(
-                "failed to create export directory {}: {error}",
-                output_dir.display()
-            ),
-        }
+    std::fs::create_dir_all(&output_dir).map_err(|error| DomainError::StorageFailure {
+        operation: "tenant_export_create_dir",
+        detail: format!(
+            "failed to create export directory {}: {error}",
+            output_dir.display()
+        ),
     })?;
 
     // Query all resources for this tenant
@@ -258,12 +240,11 @@ pub fn export_tenant(
     });
 
     let manifest_path = output_dir.join("tenant_export.json");
-    let manifest_bytes = serde_json::to_vec_pretty(&manifest).map_err(|error| {
-        DomainError::StorageFailure {
+    let manifest_bytes =
+        serde_json::to_vec_pretty(&manifest).map_err(|error| DomainError::StorageFailure {
             operation: "tenant_export_serialize",
             detail: format!("failed to serialize tenant export manifest: {error}"),
-        }
-    })?;
+        })?;
     std::fs::write(&manifest_path, manifest_bytes).map_err(|error| {
         DomainError::StorageFailure {
             operation: "tenant_export_write",
@@ -283,7 +264,7 @@ pub fn export_tenant(
 }
 
 /// Delete all resources for a specific tenant from the PostgreSQL store.
-/// 
+///
 /// **WARNING**: This is a destructive operation that removes all data for the tenant.
 pub fn delete_tenant(
     store: &crate::PostgresCommandStore,
@@ -292,36 +273,22 @@ pub fn delete_tenant(
     store.delete_tenant_data(tenant_id)
 }
 
-fn write_manifest(
-    path: &Path,
-    manifest: &PostgresBackupManifest,
-) -> Result<(), DomainError> {
-    let bytes = serde_json::to_vec_pretty(manifest).map_err(|error| {
-        DomainError::StorageFailure {
+fn write_manifest(path: &Path, manifest: &PostgresBackupManifest) -> Result<(), DomainError> {
+    let bytes =
+        serde_json::to_vec_pretty(manifest).map_err(|error| DomainError::StorageFailure {
             operation: "backup_manifest_serialize",
             detail: format!("failed to serialize backup manifest: {error}"),
-        }
-    })?;
-    std::fs::write(path, bytes).map_err(|error| {
-        DomainError::StorageFailure {
-            operation: "backup_manifest_write",
-            detail: format!(
-                "failed to write manifest {}: {error}",
-                path.display()
-            ),
-        }
+        })?;
+    std::fs::write(path, bytes).map_err(|error| DomainError::StorageFailure {
+        operation: "backup_manifest_write",
+        detail: format!("failed to write manifest {}: {error}", path.display()),
     })
 }
 
 fn read_manifest(path: &Path) -> Result<PostgresBackupManifest, DomainError> {
-    let bytes = std::fs::read(path).map_err(|error| {
-        DomainError::StorageFailure {
-            operation: "backup_manifest_read",
-            detail: format!(
-                "failed to read manifest {}: {error}",
-                path.display()
-            ),
-        }
+    let bytes = std::fs::read(path).map_err(|error| DomainError::StorageFailure {
+        operation: "backup_manifest_read",
+        detail: format!("failed to read manifest {}: {error}", path.display()),
     })?;
     serde_json::from_slice(&bytes).map_err(|error| DomainError::StorageFailure {
         operation: "backup_manifest_deserialize",
@@ -394,17 +361,21 @@ mod tests {
         assert!(validate_manifest_metadata(&manifest).is_ok());
 
         manifest.schema = 2;
-        assert!(validate_manifest_metadata(&manifest)
-            .unwrap_err()
-            .to_string()
-            .contains("unsupported"));
+        assert!(
+            validate_manifest_metadata(&manifest)
+                .unwrap_err()
+                .to_string()
+                .contains("unsupported")
+        );
 
         manifest.schema = 1;
         manifest.backend = "sqlite".to_string();
-        assert!(validate_manifest_metadata(&manifest)
-            .unwrap_err()
-            .to_string()
-            .contains("not postgres-compatible"));
+        assert!(
+            validate_manifest_metadata(&manifest)
+                .unwrap_err()
+                .to_string()
+                .contains("not postgres-compatible")
+        );
     }
 
     #[test]
@@ -413,9 +384,6 @@ mod tests {
             sanitize_database_url("postgres://user:pass@localhost:5432/db"),
             "postgres://<credentials>@localhost:5432/db"
         );
-        assert_eq!(
-            sanitize_database_url("invalid"),
-            "postgres://<redacted>"
-        );
+        assert_eq!(sanitize_database_url("invalid"), "postgres://<redacted>");
     }
 }
