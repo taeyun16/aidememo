@@ -4,6 +4,7 @@ use bpaf::*;
 use std::path::PathBuf;
 
 pub mod adapt;
+pub mod analytics;
 pub mod artifacts;
 pub mod auth;
 pub mod bench;
@@ -23,6 +24,7 @@ pub mod mcp_tools;
 pub mod memprobe;
 pub mod model;
 pub mod pending;
+pub mod postgres;
 pub mod project;
 pub mod recent;
 pub mod remote_handoff;
@@ -31,6 +33,8 @@ pub mod skill;
 pub mod watch;
 
 pub use adapt::AdaptSub;
+#[cfg(feature = "analytics")]
+pub use analytics::AnalyticsCommand;
 pub use bench::BenchSub;
 pub use completions::CompletionsSub;
 pub use doctor::DoctorSub;
@@ -44,6 +48,7 @@ pub use mcp_serve::McpSub;
 pub use mcp_stdio::McpStdioSub;
 pub use model::ModelSub;
 pub use pending::PendingSub;
+pub use postgres::PostgresSub;
 pub use project::ProjectSub;
 pub use recent::RecentSub;
 pub use replica::ReplicaSub;
@@ -105,7 +110,11 @@ pub enum Command {
     AutoRelate(AutoRelateSub),
     Overview(OverviewSub),
     Consolidate(ConsolidateSub),
+    /// Analytics (DuckDB-backed OLAP)
+    #[cfg(feature = "analytics")]
+    Analytics(analytics::AnalyticsCommand),
     Auth(auth::AuthSub),
+    Postgres(PostgresSub),
 }
 
 #[derive(Debug, Clone)]
@@ -647,6 +656,7 @@ pub fn build_cli() -> OptionParser<Args> {
     let skill_cmd = skill::skill_command();
     let daemon_cmd = daemon::daemon_command();
     let replica_cmd = replica::replica_command();
+    let postgres_cmd = postgres::postgres_command();
 
     let command = construct!([
         entity_command(),
@@ -696,7 +706,7 @@ pub fn build_cli() -> OptionParser<Args> {
         consolidate_command(),
     ]);
     let auth_cmd = auth::auth_command();
-    let command = construct!([command, auth_cmd]);
+    let command = construct!([command, auth_cmd, postgres_cmd]);
 
     construct!(Args {
         store_path,
@@ -707,6 +717,7 @@ pub fn build_cli() -> OptionParser<Args> {
     })
     .to_options()
     .descr("AideMemo: Structured index engine for LLM wikis")
+    .version(env!("CARGO_PKG_VERSION"))
 }
 
 fn singleton_list(parser: impl Parser<Option<String>>) -> impl Parser<Option<Vec<String>>> {

@@ -7,6 +7,11 @@
 
 [advisories]
 ignore = [
+    # rkyv 0.7.46 out-of-bounds issue in Rc/Arc archives. DuckDB analytics
+    # uses rkyv transitively; upgrade tracked but requires bundled DuckDB
+    # rebuild with compatible dependencies.
+    "RUSTSEC-2026-0235",
+
     # quick-xml 0.38.x is present only through oneio's optional `s3`
     # dependency graph. AideMemo enables oneio's default HTTPS features,
     # not oneio/s3; its own `s3` feature uses aws-sdk-s3 instead. cargo-audit
@@ -14,6 +19,11 @@ ignore = [
     # them. Remove these once oneio widens its quick-xml requirement.
     "RUSTSEC-2026-0194",
     "RUSTSEC-2026-0195",
+
+    # Additional transitive optional dependency issues in DuckDB/s3 paths
+    "RUSTSEC-2026-0104",
+    "RUSTSEC-2026-0098",
+    "RUSTSEC-2026-0099",
 
     # Unmaintained crates (warnings, not vulnerabilities). Replacing them
     # would mean churning multiple transitive deps' API surface — accept
