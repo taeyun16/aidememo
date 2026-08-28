@@ -2,7 +2,7 @@
 
 #[cfg(test)]
 mod tests {
-    use aidememo_domain::{ProjectEpoch, TenantId};
+    use aidememo_domain::{ProjectEpoch, ProjectScope, TenantId};
     use aidememo_store_postgres::{
         PostgresCommandStore,
         backup::{create_postgres_backup, export_tenant, restore_postgres_backup},
