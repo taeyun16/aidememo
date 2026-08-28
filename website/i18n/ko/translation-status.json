@@ -24,6 +24,7 @@
     "SHARED_MEMORY": "8d4a25a7eed89694cc7b92fa2b89090286045ccb10d45a18b6c34453b192ffbe"
   },
   "fallback_docs": [
+    "ARTIFACT_CONFORMANCE",
     "MEASUREMENTS",
     "POSTGRES_BACKUP"
   ],
