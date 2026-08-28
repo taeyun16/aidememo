@@ -180,12 +180,6 @@ impl AnalyticsEngine {
         )
         .map_err(|e| AideMemoError::Internal(format!("failed to create index: {}", e)))?;
 
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_facts_is_current ON facts(is_current)",
-            [],
-        )
-        .map_err(|e| AideMemoError::Internal(format!("failed to create index: {}", e)))?;
-
         Ok(())
     }
 
