@@ -64,6 +64,7 @@ python3 scripts/docs-site-e2e.py
 | `aidememo overview` | Produce a first-impression snapshot of an unfamiliar store. |
 | `aidememo consolidate` | Deduplicate, expire, or GAC-cluster facts for lifecycle maintenance. |
 | `aidememo auth` | Generate, store, list, and clear bearer-token credentials for HTTP MCP. |
+| `aidememo postgres` | PostgreSQL-specific logical backup, restore, tenant export, and tenant delete operations. |
 
 ## CLI subcommands
 
