@@ -36,9 +36,8 @@
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
-use duckdb::{Connection, Result as DuckDBResult, ToSql, params};
+use duckdb::{Connection, params};
 
 use crate::backend::{StoreBackend, StoreKind};
 use crate::error::{AideMemoError, Result};
@@ -320,7 +319,7 @@ impl AnalyticsEngine {
             ..Default::default()
         })?;
 
-        let mut max_ts = 0u64;
+        let max_ts = 0u64;
 
         let conn = self
             .conn
@@ -473,7 +472,7 @@ impl AnalyticsEngine {
         })?;
 
         // Track max timestamps for this sync
-        let mut max_entity_ts = self.last_entity_seq;
+        let max_entity_ts = self.last_entity_seq;
         let mut max_fact_ts = self.last_fact_seq;
         let mut max_relation_ts = self.last_relation_seq;
 
@@ -723,7 +722,6 @@ mod tests {
     use super::*;
     use crate::config::Config;
     use crate::types::{EntityInput, EntityType, FactInput, FactType};
-    use std::path::PathBuf;
     use tempfile::TempDir;
 
     fn create_test_store() -> (StoreKind, TempDir) {
@@ -786,40 +784,48 @@ mod tests {
         let redis_id = store
             .entity_add(EntityInput {
                 name: "Redis".to_string(),
-                entity_type: EntityType::Technology,
-                aliases: vec![],
-                summary: None,
+                entity_type: Some(EntityType::Technology),
+                aliases: None,
+                tags: None,
+                source_page: None,
             })
             .unwrap();
 
         let postgres_id = store
             .entity_add(EntityInput {
                 name: "PostgreSQL".to_string(),
-                entity_type: EntityType::Technology,
-                aliases: vec![],
-                summary: None,
+                entity_type: Some(EntityType::Technology),
+                aliases: None,
+                tags: None,
+                source_page: None,
             })
             .unwrap();
 
         store
             .fact_add(FactInput {
                 content: "Redis is fast".to_string(),
-                fact_type: FactType::Claim,
-                entities: vec![redis_id.clone()],
+                fact_type: Some(FactType::Claim),
+                entity_ids: Some(vec![redis_id.clone()]),
                 source_id: None,
                 actor_id: None,
-                session_id: None,
+                tags: None,
+                source: None,
+                source_confidence: None,
+                observed_at: None,
             })
             .unwrap();
 
         store
             .fact_add(FactInput {
                 content: "PostgreSQL is reliable".to_string(),
-                fact_type: FactType::Claim,
-                entities: vec![postgres_id.clone()],
+                fact_type: Some(FactType::Claim),
+                entity_ids: Some(vec![postgres_id.clone()]),
                 source_id: None,
                 actor_id: None,
-                session_id: None,
+                tags: None,
+                source: None,
+                source_confidence: None,
+                observed_at: None,
             })
             .unwrap();
 
@@ -856,20 +862,24 @@ mod tests {
         let redis_id = store
             .entity_add(EntityInput {
                 name: "Redis".to_string(),
-                entity_type: EntityType::Technology,
-                aliases: vec![],
-                summary: None,
+                entity_type: Some(EntityType::Technology),
+                aliases: None,
+                tags: None,
+                source_page: None,
             })
             .unwrap();
 
         store
             .fact_add(FactInput {
                 content: "Redis is fast".to_string(),
-                fact_type: FactType::Claim,
-                entities: vec![redis_id.clone()],
+                fact_type: Some(FactType::Claim),
+                entity_ids: Some(vec![redis_id.clone()]),
                 source_id: None,
                 actor_id: None,
-                session_id: None,
+                tags: None,
+                source: None,
+                source_confidence: None,
+                observed_at: None,
             })
             .unwrap();
 
@@ -885,20 +895,24 @@ mod tests {
         let postgres_id = store
             .entity_add(EntityInput {
                 name: "PostgreSQL".to_string(),
-                entity_type: EntityType::Technology,
-                aliases: vec![],
-                summary: None,
+                entity_type: Some(EntityType::Technology),
+                aliases: None,
+                tags: None,
+                source_page: None,
             })
             .unwrap();
 
         store
             .fact_add(FactInput {
                 content: "PostgreSQL is reliable".to_string(),
-                fact_type: FactType::Claim,
-                entities: vec![postgres_id.clone()],
+                fact_type: Some(FactType::Claim),
+                entity_ids: Some(vec![postgres_id.clone()]),
                 source_id: None,
                 actor_id: None,
-                session_id: None,
+                tags: None,
+                source: None,
+                source_confidence: None,
+                observed_at: None,
             })
             .unwrap();
 
