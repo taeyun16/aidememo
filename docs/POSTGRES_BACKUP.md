@@ -19,9 +19,8 @@ The PostgreSQL adapter provides logical backup and restore functionality using `
 Create a logical backup of a PostgreSQL canonical store:
 
 ```bash
-aidememo postgres backup-create \
-  --database-url "postgres://user:pass@localhost:5432/aidememo" \
-  /path/to/backup
+export AIDEMEMO_POSTGRES_URL="postgres://user:pass@localhost:5432/aidememo"
+aidememo postgres backup-create /path/to/backup
 ```
 
 This creates:
@@ -42,9 +41,8 @@ The manifest includes:
 Restore a logical backup to a PostgreSQL database:
 
 ```bash
-aidememo postgres backup-restore \
-  --database-url "postgres://user:pass@localhost:5432/aidememo_restored" \
-  /path/to/backup/backup-<ULID>
+export AIDEMEMO_POSTGRES_URL="postgres://user:pass@localhost:5432/aidememo_restored"
+aidememo postgres backup-restore /path/to/backup/backup-<ULID>
 ```
 
 **WARNING**: This uses `pg_restore --clean`, which:
@@ -63,10 +61,8 @@ For production restores:
 Export all resources for a specific tenant:
 
 ```bash
-aidememo postgres tenant-export \
-  --database-url "postgres://user:pass@localhost:5432/aidememo" \
-  <TENANT_ID> \
-  /path/to/export
+export AIDEMEMO_POSTGRES_URL="postgres://user:pass@localhost:5432/aidememo"
+aidememo postgres tenant-export <TENANT_ID> /path/to/export
 ```
 
 This creates a JSON manifest containing:
@@ -85,10 +81,8 @@ Use cases:
 **DESTRUCTIVE OPERATION**: Delete all data for a tenant:
 
 ```bash
-aidememo postgres tenant-delete \
-  --database-url "postgres://user:pass@localhost:5432/aidememo" \
-  --confirm \
-  <TENANT_ID>
+export AIDEMEMO_POSTGRES_URL="postgres://user:pass@localhost:5432/aidememo"
+aidememo postgres tenant-delete --confirm <TENANT_ID>
 ```
 
 This permanently deletes:
@@ -108,10 +102,8 @@ The `--confirm` flag is required to prevent accidental deletion.
 All commands support `--json` for machine-readable output:
 
 ```bash
-aidememo postgres backup-create \
-  --database-url "..." \
-  --json \
-  /path/to/backup
+export AIDEMEMO_POSTGRES_URL="postgres://user:pass@localhost:5432/aidememo"
+aidememo postgres backup-create --json /path/to/backup
 ```
 
 ## Replica Rebuild
