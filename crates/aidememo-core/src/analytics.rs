@@ -45,7 +45,7 @@ use crate::error::{AideMemoError, Result};
 use crate::types::{FactListOpts, ListOpts};
 
 /// DuckDB analytics engine — derived OLAP projection.
-/// 
+///
 /// The connection is wrapped in Arc<Mutex<>> to enable Send+Sync for use
 /// in multi-threaded environments like axum servers.
 pub struct AnalyticsEngine {
@@ -232,33 +232,30 @@ impl AnalyticsEngine {
 
     /// Save sync watermarks to metadata table.
     fn save_watermarks(&self) -> Result<()> {
-        let conn = self.conn.lock().map_err(|e| {
-            AideMemoError::Internal(format!("failed to lock connection: {}", e))
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AideMemoError::Internal(format!("failed to lock connection: {}", e)))?;
+
+        conn.execute(
+            "INSERT OR REPLACE INTO _analytics_meta (key, value) VALUES (?, ?)",
+            params!["last_fact_timestamp", self.last_fact_seq as i64],
+        )
+        .map_err(|e| AideMemoError::Internal(format!("failed to save fact watermark: {}", e)))?;
+
+        conn.execute(
+            "INSERT OR REPLACE INTO _analytics_meta (key, value) VALUES (?, ?)",
+            params!["last_entity_timestamp", self.last_entity_seq as i64],
+        )
+        .map_err(|e| AideMemoError::Internal(format!("failed to save entity watermark: {}", e)))?;
+
+        conn.execute(
+            "INSERT OR REPLACE INTO _analytics_meta (key, value) VALUES (?, ?)",
+            params!["last_relation_timestamp", self.last_relation_seq as i64],
+        )
+        .map_err(|e| {
+            AideMemoError::Internal(format!("failed to save relation watermark: {}", e))
         })?;
-
-        conn.execute(
-                "INSERT OR REPLACE INTO _analytics_meta (key, value) VALUES (?, ?)",
-                params!["last_fact_timestamp", self.last_fact_seq as i64],
-            )
-            .map_err(|e| {
-                AideMemoError::Internal(format!("failed to save fact watermark: {}", e))
-            })?;
-
-        conn.execute(
-                "INSERT OR REPLACE INTO _analytics_meta (key, value) VALUES (?, ?)",
-                params!["last_entity_timestamp", self.last_entity_seq as i64],
-            )
-            .map_err(|e| {
-                AideMemoError::Internal(format!("failed to save entity watermark: {}", e))
-            })?;
-
-        conn.execute(
-                "INSERT OR REPLACE INTO _analytics_meta (key, value) VALUES (?, ?)",
-                params!["last_relation_timestamp", self.last_relation_seq as i64],
-            )
-            .map_err(|e| {
-                AideMemoError::Internal(format!("failed to save relation watermark: {}", e))
-            })?;
 
         Ok(())
     }
@@ -268,9 +265,10 @@ impl AnalyticsEngine {
     /// This truncates all analytics tables and rebuilds from scratch. Safe to
     /// call at any time — analytics data is derived and rebuildable.
     pub fn rebuild_from_canonical(&mut self, store: &StoreKind) -> Result<()> {
-        let conn = self.conn.lock().map_err(|e| {
-            AideMemoError::Internal(format!("failed to lock connection: {}", e))
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AideMemoError::Internal(format!("failed to lock connection: {}", e)))?;
 
         // Begin transaction
         conn.execute("BEGIN TRANSACTION", []).map_err(|e| {
@@ -278,10 +276,9 @@ impl AnalyticsEngine {
         })?;
 
         // Truncate tables
-        conn.execute("DELETE FROM fact_entities", [])
-            .map_err(|e| {
-                AideMemoError::Internal(format!("failed to truncate fact_entities: {}", e))
-            })?;
+        conn.execute("DELETE FROM fact_entities", []).map_err(|e| {
+            AideMemoError::Internal(format!("failed to truncate fact_entities: {}", e))
+        })?;
         conn.execute("DELETE FROM relations", [])
             .map_err(|e| AideMemoError::Internal(format!("failed to truncate relations: {}", e)))?;
         conn.execute("DELETE FROM facts", [])
@@ -304,9 +301,10 @@ impl AnalyticsEngine {
         self.save_watermarks()?;
 
         // Commit transaction
-        let conn = self.conn.lock().map_err(|e| {
-            AideMemoError::Internal(format!("failed to lock connection: {}", e))
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AideMemoError::Internal(format!("failed to lock connection: {}", e)))?;
         conn.execute("COMMIT", [])
             .map_err(|e| AideMemoError::Internal(format!("failed to commit rebuild: {}", e)))?;
 
@@ -324,9 +322,10 @@ impl AnalyticsEngine {
 
         let mut max_ts = 0u64;
 
-        let conn = self.conn.lock().map_err(|e| {
-            AideMemoError::Internal(format!("failed to lock connection: {}", e))
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AideMemoError::Internal(format!("failed to lock connection: {}", e)))?;
 
         // Prepare batch insert
         let mut stmt = conn
@@ -362,9 +361,10 @@ impl AnalyticsEngine {
 
         let mut max_ts = 0u64;
 
-        let conn = self.conn.lock().map_err(|e| {
-            AideMemoError::Internal(format!("failed to lock connection: {}", e))
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AideMemoError::Internal(format!("failed to lock connection: {}", e)))?;
 
         // Prepare batch inserts
         let mut fact_stmt = conn
@@ -416,9 +416,10 @@ impl AnalyticsEngine {
 
         let mut max_ts = 0u64;
 
-        let conn = self.conn.lock().map_err(|e| {
-            AideMemoError::Internal(format!("failed to lock connection: {}", e))
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AideMemoError::Internal(format!("failed to lock connection: {}", e)))?;
 
         // Prepare batch insert
         let mut stmt = conn
@@ -461,9 +462,10 @@ impl AnalyticsEngine {
             return self.rebuild_from_canonical(store);
         }
 
-        let conn = self.conn.lock().map_err(|e| {
-            AideMemoError::Internal(format!("failed to lock connection: {}", e))
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AideMemoError::Internal(format!("failed to lock connection: {}", e)))?;
 
         // Begin transaction
         conn.execute("BEGIN TRANSACTION", []).map_err(|e| {
@@ -604,15 +606,16 @@ impl AnalyticsEngine {
         self.last_entity_seq = max_entity_ts;
         self.last_fact_seq = max_fact_ts;
         self.last_relation_seq = max_relation_ts;
-        
+
         // Drop conn to release lock before save_watermarks which needs its own lock
         drop(conn);
         self.save_watermarks()?;
 
         // Commit transaction
-        let conn = self.conn.lock().map_err(|e| {
-            AideMemoError::Internal(format!("failed to lock connection: {}", e))
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AideMemoError::Internal(format!("failed to lock connection: {}", e)))?;
         conn.execute("COMMIT", [])
             .map_err(|e| AideMemoError::Internal(format!("failed to commit sync: {}", e)))?;
 
@@ -628,9 +631,10 @@ impl AnalyticsEngine {
     /// This function provides raw SQL access. Callers must sanitize inputs
     /// and use parameter binding to prevent SQL injection.
     pub fn query(&self, sql: &str, params: &[&dyn duckdb::ToSql]) -> Result<Vec<Vec<String>>> {
-        let conn = self.conn.lock().map_err(|e| {
-            AideMemoError::Internal(format!("failed to lock connection: {}", e))
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AideMemoError::Internal(format!("failed to lock connection: {}", e)))?;
 
         let mut stmt = conn
             .prepare(sql)
@@ -663,9 +667,10 @@ impl AnalyticsEngine {
     where
         T: duckdb::types::FromSql,
     {
-        let conn = self.conn.lock().map_err(|e| {
-            AideMemoError::Internal(format!("failed to lock connection: {}", e))
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AideMemoError::Internal(format!("failed to lock connection: {}", e)))?;
 
         let mut stmt = conn
             .prepare(sql)
