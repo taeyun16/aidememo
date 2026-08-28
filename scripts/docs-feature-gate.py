@@ -535,12 +535,10 @@ DOC_CONTENT_REQUIREMENTS = [
     (
         LFM_EXPERIMENTS_DOC,
         [
-            "not bundled with AideMemo",
-            "not the global default",
-            "aidememo config set model.provider lfm-sidecar",
-            "scripts/lfm_mlx_docs_recall_eval.py",
-            "scripts/lfm_fact_type_threshold_eval.py",
-            "AIDEMEMO_FACT_TYPE_SHADOW_LOG",
+            "moved outside this repository",
+            "Operations",
+            "Evidence",
+            "Measurements",
         ],
     ),
     (
@@ -566,14 +564,9 @@ MERMAID_CONTENT_REQUIREMENTS = [
         [
             "default_path",
             "optional_models",
-            "lfm_embed",
-            "lfm_rerank",
-            "lfm_type",
-            "type_review",
+            "external_embed",
+            "external_rerank",
             "privacy_model",
-            "LFM2.5 Embedding 350M",
-            "LFM2.5 ColBERT 350M",
-            "LFM2.5 1.2B + LoRA",
         ],
     ),
     (
@@ -581,42 +574,31 @@ MERMAID_CONTENT_REQUIREMENTS = [
         [
             "default_path",
             "optional_models",
-            "lfm_embed",
-            "lfm_rerank",
-            "lfm_type",
-            "type_review",
+            "external_embed",
+            "external_rerank",
             "privacy_model",
-            "LFM2.5 Embedding 350M",
-            "LFM2.5 ColBERT 350M",
-            "LFM2.5 1.2B + LoRA",
         ],
     ),
     (
         ARCHITECTURE_DOC,
         [
             "optional_models",
-            "lfm_embed",
-            "lfm_rerank",
-            "lfm_type",
+            "external_embed",
+            "external_rerank",
+            "external_classifier",
             "hint",
             "privacy_model",
-            "LFM2.5 Embedding 350M 4-bit",
-            "LFM2.5 ColBERT 350M 4-bit",
-            "LFM2.5 1.2B Instruct + LoRA",
         ],
     ),
     (
         KO_ARCHITECTURE_DOC,
         [
             "optional_models",
-            "lfm_embed",
-            "lfm_rerank",
-            "lfm_type",
+            "external_embed",
+            "external_rerank",
+            "external_classifier",
             "hint",
             "privacy_model",
-            "LFM2.5 Embedding 350M 4-bit",
-            "LFM2.5 ColBERT 350M 4-bit",
-            "LFM2.5 1.2B Instruct + LoRA",
         ],
     ),
 ]
@@ -1174,10 +1156,10 @@ def check_mermaid_content_requirements(path: Path, tokens: list[str]) -> list[st
 
 def check_mermaid_content_self_test() -> list[str]:
     errors: list[str] = []
-    if check_mermaid_content_requirements(README, ["lfm_embed"]):
-        errors.append("Mermaid content self-test rejected a required README SLM node")
-    if check_mermaid_content_requirements(README_KO, ["lfm_embed"]):
-        errors.append("Mermaid content self-test rejected a required Korean README SLM node")
+    if check_mermaid_content_requirements(README, ["external_embed"]):
+        errors.append("Mermaid content self-test rejected a required README external model node")
+    if check_mermaid_content_requirements(README_KO, ["external_embed"]):
+        errors.append("Mermaid content self-test rejected a required Korean README external model node")
     missing = check_mermaid_content_requirements(README, ["missing_slm_contract_node"])
     if not any("missing local SLM architecture token" in error for error in missing):
         errors.append("Mermaid content self-test did not reject a missing SLM node")
