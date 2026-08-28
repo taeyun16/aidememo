@@ -278,6 +278,10 @@ pub fn export_tenant(
 /// Delete all resources for a specific tenant from the PostgreSQL store.
 ///
 /// **WARNING**: This is a destructive operation that removes all data for the tenant.
+///
+/// # Errors
+///
+/// Returns an error if the database deletion transaction fails.
 pub fn delete_tenant(
     store: &crate::PostgresCommandStore,
     tenant_id: &TenantId,
