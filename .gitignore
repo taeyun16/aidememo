@@ -35,6 +35,7 @@ __pycache__/
 website/.docusaurus/
 website/build/
 website/node_modules/
+website/package-lock.json
 crates/aidememo-napi/node_modules/
 crates/aidememo-napi/package-lock.json
 crates/aidememo-napi/*.tgz
