@@ -44,13 +44,75 @@ jobs:
       AIDEMEMO_POSTGRES_URL: postgres://postgres:postgres@127.0.0.1:5432/aidememo_conformance
     steps:
       - uses: actions/checkout@v7
+      - name: Start verified-TLS PostgreSQL 17 fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          tls_dir="$RUNNER_TEMP/aidememo-postgres-tls"
+          mkdir -p "$tls_dir"
+          openssl req -x509 -newkey rsa:2048 -nodes \
+            -keyout "$tls_dir/ca.key" -out "$tls_dir/ca.crt" \
+            -subj "/CN=AideMemo Test Root CA" -days 1
+          openssl req -newkey rsa:2048 -nodes \
+            -keyout "$tls_dir/server.key" -out "$tls_dir/server.csr" \
+            -subj "/CN=localhost"
+          cat > "$tls_dir/server.ext" <<'EOF'
+          subjectAltName=DNS:localhost,IP:127.0.0.1
+          extendedKeyUsage=serverAuth
+          EOF
+          openssl x509 -req -in "$tls_dir/server.csr" \
+            -CA "$tls_dir/ca.crt" -CAkey "$tls_dir/ca.key" -CAcreateserial \
+            -out "$tls_dir/server.crt" -days 1 -extfile "$tls_dir/server.ext"
+          openssl req -x509 -newkey rsa:2048 -nodes \
+            -keyout "$tls_dir/wrong-ca.key" -out "$tls_dir/wrong-ca.crt" \
+            -subj "/CN=AideMemo Wrong Root CA" -days 1
+          docker run -d --name aidememo-postgres-tls \
+            -p 55432:5432 \
+            -e POSTGRES_USER=postgres \
+            -e POSTGRES_PASSWORD=postgres \
+            -e POSTGRES_DB=aidememo_tls \
+            -v "$tls_dir:/tls:ro" \
+            --entrypoint bash postgres:17 -ceu '
+              cp /tls/server.crt /tmp/server.crt
+              cp /tls/server.key /tmp/server.key
+              chown postgres:postgres /tmp/server.crt /tmp/server.key
+              chmod 600 /tmp/server.key
+              exec /usr/local/bin/docker-entrypoint.sh postgres \
+                -c ssl=on \
+                -c ssl_cert_file=/tmp/server.crt \
+                -c ssl_key_file=/tmp/server.key
+            '
+          for attempt in $(seq 1 30); do
+            if docker exec aidememo-postgres-tls pg_isready -U postgres -d aidememo_tls; then
+              break
+            fi
+            if [ "$attempt" -eq 30 ]; then
+              docker logs aidememo-postgres-tls
+              exit 1
+            fi
+            sleep 1
+          done
+          {
+            echo "AIDEMEMO_POSTGRES_TLS_URL=postgres://postgres:postgres@localhost:55432/aidememo_tls?sslmode=disable"
+            echo "AIDEMEMO_POSTGRES_TLS_CA=$tls_dir/ca.crt"
+            echo "AIDEMEMO_POSTGRES_TLS_WRONG_CA=$tls_dir/wrong-ca.crt"
+          } >> "$GITHUB_ENV"
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.96.0
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: postgres-conformance
+          shared-key: postgres-conformance-v1
       - name: Run PostgreSQL storage conformance
         run: cargo test -p aidememo-store-postgres --tests -- --ignored --nocapture
       - name: Run PostgreSQL server executor conformance
         run: cargo test -p aidememo-server --test postgres_executor -- --ignored --nocapture
       - name: Run PostgreSQL server HTTP profile conformance
         run: cargo test -p aidememo-server --test postgres_http -- --ignored --nocapture
+      - name: Run verified TLS adapter conformance
+        run: cargo test -p aidememo-store-postgres --test tls -- --ignored --nocapture
+      - name: Run verified TLS server HTTP profile conformance
+        run: cargo test -p aidememo-server --test postgres_tls_http -- --ignored --nocapture
+      - name: Stop TLS PostgreSQL fixture
+        if: always()
+        run: docker rm -f aidememo-postgres-tls || true
