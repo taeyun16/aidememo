@@ -33,9 +33,8 @@ flowchart TB
   shadow["Optional fact-type shadow log<br/>reviewed JSONL; no write mutation"]
 
   subgraph optional_models["Opt-in local model sidecars - downloaded separately"]
-    lfm_embed["LFM2.5 Embedding 350M 4-bit<br/>MLX / TEI-compatible embeddings"]
-    lfm_rerank["LFM2.5 ColBERT 350M 4-bit<br/>candidate rerank experiment"]
-    lfm_type["LFM2.5 1.2B Instruct + LoRA<br/>shadow fact_type_hint only"]
+    external_embed["External embedding provider<br/>TEI-compatible / OpenAI-compatible"]
+    external_rerank["External reranker<br/>TEI-compatible"]
     privacy_model["OpenAI Privacy Filter MLX mxfp4<br/>report / redact / block"]
   end
 
@@ -57,9 +56,8 @@ flowchart TB
   core --> indexes
   cli -. "AIDEMEMO_FACT_TYPE_SHADOW_LOG" .-> shadow
   mcp -. "AIDEMEMO_FACT_TYPE_SHADOW_LOG" .-> shadow
-  lfm_embed -. "model.provider=lfm-sidecar" .-> indexes
-  lfm_rerank -. "optional compatible reranker" .-> indexes
-  shadow -. "offline train and evaluate" .-> lfm_type
+  external_embed -. "model.provider" .-> indexes
+  external_rerank -. "optional compatible reranker" .-> indexes
   privacy_model -. "privacy.provider" .-> core
 ```
 
@@ -115,13 +113,12 @@ flowchart TD
   bm25["BM25 lexical search"]
   auto_gate{"Lexical evidence strong?"}
   model2vec["model2vec<br/>built-in default semantic provider"]
-  lfm_embed["LFM2.5 Embedding 350M 4-bit<br/>opt-in MLX / TEI sidecar"]
+  external_embed["External embedding provider<br/>opt-in TEI / OpenAI-compatible sidecar"]
   hnsw["Semantic HNSW lookup"]
   fuse["RRF fusion with BM25"]
   candidates["Candidate facts"]
   rerank_gate{"rerank.provider enabled?"}
   rerank["TEI-compatible candidate rerank<br/>non-fatal fallback"]
-  lfm_rerank["LFM2.5 ColBERT 350M 4-bit<br/>opt-in evaluated path"]
   graphCtx["Optional graph and recent context"]
   result["Ranked facts and context pack"]
 
@@ -137,14 +134,13 @@ flowchart TD
   auto_gate -->|yes| candidates
   auto_gate -->|weak or CJK and semantic ready| hnsw
   model2vec --> hnsw
-  lfm_embed -. "configured provider" .-> hnsw
+  external_embed -. "configured provider" .-> hnsw
   bm25 --> fuse
   hnsw --> fuse
   fuse --> candidates
   candidates --> rerank_gate
   rerank_gate -->|no| graphCtx
   rerank_gate -->|yes| rerank
-  lfm_rerank -. "compatible local scorer" .-> rerank
   rerank --> graphCtx
   graphCtx --> result
 ```
@@ -181,7 +177,7 @@ flowchart TD
   rebuild["vector-rebuild --current-only"]
   read["Future search / query / context"]
   shadow["Reviewed shadow corpus<br/>explicit labels + hints"]
-  lfm_type["LFM2.5 1.2B Instruct + LoRA<br/>offline classifier"]
+  external_classifier["External classifier<br/>offline trained model"]
   hint["Confidence + margin gated fact_type_hint<br/>pending review only"]
 
   fact --> classify --> privacy_gate
@@ -200,7 +196,7 @@ flowchart TD
   archive --> read
   rebuild --> read
   hot -. "AIDEMEMO_FACT_TYPE_SHADOW_LOG" .-> shadow
-  shadow --> lfm_type --> hint
+  shadow --> external_classifier --> hint
 ```
 
 Facts are intentionally explicit. AideMemo does not need a built-in hosted
@@ -246,7 +242,7 @@ semantic conflicts between competing decisions remain application policy.
 | Storage dispatch | `crates/aidememo-core/src/backend.rs`, `sqlite_store.rs`, `store.rs` | [`Operations`](OPERATIONS.md), [`Feature Inventory`](FEATURES.md) |
 | Python agent SDK | `packages/aidememo-agent-sdk/src/aidememo_agent/sdk.py` | [`Python SDK`](SDK.md), [`Agent Workflows`](AGENT_WORKFLOWS.md) |
 | Native bindings | `crates/aidememo-python`, `crates/aidememo-napi`, `crates/aidememo-nif`, `crates/aidememo-ffi` | [`Python SDK`](SDK.md), package READMEs |
-| Local model sidecars and evaluation | `scripts/lfm_mlx_embedding_sidecar.py`, `scripts/lfm_colbert_rerank.py`, `scripts/lfm_fact_type_sidecar.py`, `scripts/privacy_filter_mlx_sidecar.py` | [`Operations`](OPERATIONS.md), [`Measurements`](MEASUREMENTS.md) |
+| Privacy filtering sidecar | `scripts/privacy_filter_mlx_sidecar.py` | [`Operations`](OPERATIONS.md) |
 | Validation and release gates | `scripts/changelog-release-check.py`, `scripts/registry-readiness-check.py`, `scripts/cargo-package-readiness.sh`, `scripts/docs-feature-gate.py`, `scripts/docs-i18n-status.py`, `scripts/docs-site-e2e.py`, `scripts/*smoke*.sh`, `scripts/ci-local.sh` | [`Measurements`](MEASUREMENTS.md), [`Release Checklist`](RELEASE.md) |
 
 ## Documentation contract

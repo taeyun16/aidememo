@@ -4,6 +4,8 @@
 //! `aidememo-core` store. It proves atomic receipt, resource revision, audit,
 //! and change-feed semantics without changing existing local file formats.
 
+mod server_identity;
+
 use aidememo_domain::{
     ActorId, ActorKind, ActorRecord, AuthenticatedActor, CanonicalResource, ChangeBatch,
     ChangeCursor, ChangeEntry, ChangeOperation, CommandFingerprint, CommandId, CommandReceipt,

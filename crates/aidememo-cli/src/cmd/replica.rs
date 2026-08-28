@@ -1,4 +1,4 @@
-//! `aidememo replica` — exact-read cache for an authenticated remote SSOT.
+//! `aidememo replica` — exact-read cache and explicit outbox for an authenticated remote SSOT.
 
 use aidememo_client::{HttpReplicaClient, RemoteProfile, ReplicaStore, pull_to_current};
 use aidememo_core::AideMemoError;
@@ -7,7 +7,7 @@ use bpaf::*;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
-use crate::cmd::{Command, auth};
+use crate::cmd::{Command, auth, remote_handoff};
 
 #[derive(Debug, Clone)]
 pub enum ReplicaSub {
@@ -23,6 +23,12 @@ pub enum ReplicaSub {
         replica_path: Option<PathBuf>,
         resource_kind: String,
         resource_id: String,
+    },
+    Outbox {
+        remote_profile: Option<String>,
+    },
+    Publish {
+        remote_profile: String,
     },
     Reset {
         replica_path: Option<PathBuf>,
@@ -73,6 +79,23 @@ pub fn replica_command() -> impl Parser<Command> {
     .command("get")
     .help("Read one cached canonical resource while offline");
 
+    let remote_profile = long("remote-profile")
+        .help("Only show queued sends for this named SSOT profile")
+        .argument::<String>("NAME")
+        .optional();
+    let outbox = construct!(ReplicaSub::Outbox { remote_profile })
+        .to_options()
+        .command("outbox")
+        .help("Inspect queued remote sends without contacting the server");
+
+    let remote_profile = long("remote-profile")
+        .help("Named authenticated SSOT profile whose queued sends should be published")
+        .argument::<String>("NAME");
+    let publish = construct!(ReplicaSub::Publish { remote_profile })
+        .to_options()
+        .command("publish")
+        .help("Explicitly replay queued idempotent sends after connectivity returns");
+
     let force = long("force")
         .help("Confirm removal of cached scope, cursor, resources, and tombstones")
         .switch();
@@ -85,11 +108,11 @@ pub fn replica_command() -> impl Parser<Command> {
     .command("reset")
     .help("Explicitly clear a replica after project restore or reassignment");
 
-    construct!([pull, status, get, reset])
+    construct!([pull, status, get, outbox, publish, reset])
         .map(Command::Replica)
         .to_options()
         .command("replica")
-        .help("Authenticated remote SSOT exact-read replica lifecycle")
+        .help("Authenticated remote SSOT exact-read replica and outbox lifecycle")
 }
 
 pub fn run_replica(
@@ -196,6 +219,35 @@ pub fn run_replica(
                 serde_json::to_string_pretty(&value).map_err(serialize_error)
             } else {
                 Ok(value.to_string())
+            }
+        }
+        ReplicaSub::Outbox { remote_profile } => {
+            let value = remote_handoff::remote_outbox_entries(remote_profile.as_deref())?;
+            if json_output {
+                serde_json::to_string_pretty(&value).map_err(serialize_error)
+            } else {
+                let count = value.get("count").and_then(Value::as_u64).unwrap_or(0);
+                if count == 0 {
+                    Ok("remote outbox: empty".to_owned())
+                } else {
+                    Ok(format!(
+                        "remote outbox: {count} queued send(s)\n{}",
+                        serde_json::to_string_pretty(&value).map_err(serialize_error)?
+                    ))
+                }
+            }
+        }
+        ReplicaSub::Publish { remote_profile } => {
+            let value = remote_handoff::publish_remote_outbox(&remote_profile)?;
+            if json_output {
+                serde_json::to_string_pretty(&value).map_err(serialize_error)
+            } else {
+                let published = value.get("published").and_then(Value::as_u64).unwrap_or(0);
+                let failed = value.get("failed").and_then(Value::as_u64).unwrap_or(0);
+                let conflicts = value.get("conflicts").and_then(Value::as_u64).unwrap_or(0);
+                Ok(format!(
+                    "remote outbox publish: profile={remote_profile} published={published} failed={failed} conflicts={conflicts}"
+                ))
             }
         }
         ReplicaSub::Reset {

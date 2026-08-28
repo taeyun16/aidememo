@@ -42,7 +42,7 @@ python3 scripts/docs-site-e2e.py
 | `aidememo stats` | 저장소 통계 표시 |
 | `aidememo ingest` | Markdown 파일을 저장소로 ingest |
 | `aidememo sync` | 로컬 Markdown을 증분 ingest하거나 MCP 서버에서 원격 delta 가져오기 |
-| `aidememo replica` | 별도 인증 SSOT exact-read cache bootstrap, 상태 확인, 읽기, 명시적 reset |
+| `aidememo replica` | 별도 인증 SSOT exact-read cache bootstrap, 상태 확인, 읽기, 원격 send outbox 확인·재전송, 명시적 reset |
 | `aidememo config` | 로컬 설정 조회와 변경 |
 | `aidememo model` | 로컬 임베딩 모델 캐시 상태 확인과 관리 |
 | `aidememo feedback` | 순위 조정을 위한 검색 결과 feedback 기록 |
@@ -64,6 +64,7 @@ python3 scripts/docs-site-e2e.py
 | `aidememo overview` | 익숙하지 않은 저장소의 첫 인상 snapshot 생성 |
 | `aidememo consolidate` | 생명주기 관리를 위해 팩트 중복 제거, 만료, GAC clustering |
 | `aidememo auth` | HTTP MCP bearer-token credential 생성, 저장, 목록, 삭제 |
+|| `aidememo postgres` | PostgreSQL 전용 논리적 백업, 복원, 테넌트 내보내기 및 테넌트 삭제 작업 |
 
 ## CLI 하위 명령
 
@@ -77,7 +78,9 @@ python3 scripts/docs-site-e2e.py
 | 백업과 복원 | `aidememo backup create`, `aidememo backup restore` |
 | 브랜치 로그 | `aidememo branch push`, `aidememo branch merge` |
 | 동기화 | `aidememo sync ingest`, `aidememo sync pull`, `aidememo sync status` |
-| SSOT replica | `aidememo replica pull`, `aidememo replica status`, `aidememo replica get`, `aidememo replica reset` |
+| SSOT replica | `aidememo replica pull`, `aidememo replica status`, `aidememo replica get`, `aidememo replica outbox`, `aidememo replica publish`, `aidememo replica reset` |
+
+원격 전송 복구는 `aidememo replica outbox`로 대기 작업을 확인하고 `aidememo replica publish`로 명시적으로 재전송합니다.
 | 설정 | `aidememo config list`, `aidememo config get`, `aidememo config set` |
 | 모델 캐시 | `aidememo model list`, `aidememo model status`, `aidememo model download` |
 | 순위 adapter | `aidememo adapt train`, `aidememo adapt status`, `aidememo adapt eval` |
@@ -90,6 +93,7 @@ python3 scripts/docs-site-e2e.py
 | 워크플로 | `aidememo workflow start` |
 | 프로필 아티팩트 | `aidememo profile export` |
 | 인증 | `aidememo auth generate`, `aidememo auth login`, `aidememo auth logout`, `aidememo auth list` |
+|| PostgreSQL 작업 | `aidememo postgres backup-create`, `aidememo postgres backup-restore`, `aidememo postgres tenant-export`, `aidememo postgres tenant-delete` |
 
 ## MCP 도구
 

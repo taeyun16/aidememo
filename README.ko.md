@@ -90,22 +90,18 @@ flowchart TB
         auto_gate -->|약함 또는 CJK| semantic --> ranked
     end
 
-    subgraph optional_models["선택형 로컬 SLM 사이드카 - 별도 다운로드"]
-        lfm_embed["LFM2.5 Embedding 350M<br/>MLX / TEI 호환"]
-        lfm_rerank["LFM2.5 ColBERT 350M<br/>후보 재랭킹"]
-        lfm_type["LFM2.5 1.2B + LoRA<br/>fact_type_hint 전용"]
-        type_review["검토 대기<br/>자동 쓰기 없음"]
+    subgraph optional_models["선택형 로컬 모델 사이드카 - 별도 다운로드"]
         privacy_model["OpenAI Privacy Filter<br/>저장 전 교정 / 차단"]
-        lfm_type -. "confidence 기준" .-> type_review
+        external_embed["외부 임베딩 provider<br/>TEI 호환 / OpenAI 호환"]
+        external_rerank["외부 재랭커<br/>TEI 호환"]
     end
 
     sdk --> core
     mcp --> core
     cli --> core
     bindings --> core
-    lfm_embed -. "선택형 embedding provider" .-> semantic
-    lfm_rerank -. "선택형 rerank" .-> ranked
-    write_path -. "리뷰된 shadow 데이터" .-> lfm_type
+    external_embed -. "선택형 embedding provider" .-> semantic
+    external_rerank -. "선택형 rerank" .-> ranked
     privacy_model -. "저장 전 정책" .-> write_path
 ```
 
@@ -149,6 +145,10 @@ auto-hybrid 검색이며, 아래 모델은 각각 별도로 다운로드하고 �
 
 대표 사용 사례: [격리된 Codex 프로필이 하나의 프로젝트 메모리 공유](docs/CODEX_MULTI_PROFILE.md).
 
+### 기본 설치 (SQLite, 외부 의존성 없음)
+
+기본 바이너리는 SQLite(번들)를 포함하며 C++ 컴파일러 없이 실행됩니다.
+
 ```bash
 # 사전 빌드 CLI와 MCP 서버 설치(macOS/Linux, arm64/x64)
 curl -fsSL https://raw.githubusercontent.com/taeyun16/aidememo/main/scripts/install.sh | bash
@@ -163,11 +163,26 @@ cargo install --git https://github.com/taeyun16/aidememo aidememo-cli
 cargo install --path crates/aidememo-cli
 ```
 
-바이너리 이름은 `aidememo`입니다. 필요한 경우 `~/.local/bin` 또는
-`~/.cargo/bin`을 `PATH`에 추가하세요. CI와 로컬 개발 버전은
-[`mise.toml`](mise.toml)에 고정되어 있습니다. 체크아웃에서 `mise install`을
-실행하면 동일한 Rust, Node, Python, Go, Elixir/Erlang 버전을 사용할 수
-있습니다. 워크스페이스 MSRV는 `1.95`입니다.
+바이너리 이름은 `aidememo`입니다. 필요한 경우 `~/.cargo/bin`을 `PATH`에 추가하세요.
+
+### 선택형 기능
+
+필요에 따라 추가 기능과 함께 빌드:
+
+```bash
+# 선택형 redb 백엔드 (단일 작성자 파일 락)
+cargo install --path crates/aidememo-cli --features redb
+
+# 선택형 S3 백업/복원 (AWS S3, R2, MinIO)
+cargo install --path crates/aidememo-cli --features s3
+
+# 선택형 fastembed (ONNX 기반 BGE 모델)
+cargo install --path crates/aidememo-cli --features fastembed
+```
+
+**진행 중인 기능 (PR [#100](https://github.com/taeyun16/aidememo/pull/100), main에 미포함):** 파생 OLAP 프로젝션으로 DuckDB 분석 기능. 가능해지면 `--features analytics`로 빌드. **C++ 툴체인 필요** (Linux는 `build-essential`/`g++`, macOS는 Xcode Command Line Tools) — 번들 DuckDB가 네이티브 코드를 컴파일하기 때문입니다.
+
+워크스페이스 MSRV는 `1.95`입니다. CI와 로컬 개발 버전은 [`mise.toml`](mise.toml)에 고정되어 있습니다. 체크아웃에서 `mise install`을 실행하면 동일한 Rust, Node, Python, Go, Elixir/Erlang 버전을 사용할 수 있습니다.
 
 공개 패키지는 [crates.io](https://crates.io/crates/aidememo-cli)의
 `aidememo-cli`, PyPI의
@@ -698,18 +713,19 @@ curl http://127.0.0.1:3000/admin/status
 
 ## 기능 지도
 
-| 영역 | 기능 |
-|---|---|
-| 검색 | BM25, semantic HNSW, hybrid RRF, 선택형 TEI / `lfm-sidecar`, fastembed 및 리랭크 경로 |
-| 그래프 | 엔티티, 팩트, 관계, 탐색, 최단 경로, Mermaid / DOT 내보내기 |
-| 시간 | `supersede`, `current_only`, `as_of`, archive / cold tier |
-| 에이전트 도구 | `aidememo_workflow_start`, `aidememo_handoff`, `aidememo_handoff_inbox`, `aidememo_context`, `aidememo_query`, `aidememo_aggregate`, `aidememo_fact_add_many`를 포함한 29개 MCP 도구 |
-| 캡처 | `aidememo_extract`, pending review queue, review-only LFM LoRA `fact_type_hint` shadow 경로, 선택형 Hermes/OpenClaw 캡처 어댑터 |
-| 산출물 | 타입 있는 팩트에 대한 제한적이고 감사 가능한 Markdown 뷰인 `aidememo session canvas`, `aidememo session handoff`, `aidememo profile export` |
-| 운영 | `doctor` / MCP `aidememo_doctor`, `overview`, `bench`, `vector-rebuild`, `consolidate`, `auto-relate` |
-| 공유 | `source_id`, 설치별 `actor_id`, pull 기반 세션 할당, 멀티 프로젝트 저장소, stdio/HTTP MCP, 데몬 탐색, branch log |
-| 코드 우선 조합 | `Memory.open`, `search_rows`, `coverage_by`, `aggregate_many`, `remember`, handoff inbox/accept/return/outbox/status를 제공하는 `aidememo-agent-sdk` |
-| 바인딩 | Python, Node, Elixir, C |
+| 영역 | 기능 | 상태 |
+|---|---|---|
+| 검색 | BM25, semantic HNSW, hybrid RRF, 선택형 TEI / `lfm-sidecar`, fastembed 및 리랭크 경로 | 배포됨 |
+| 그래프 | 엔티티, 팩트, 관계, 탐색, 최단 경로, Mermaid / DOT 내보내기 | 배포됨 |
+| 시간 | `supersede`, `current_only`, `as_of`, archive / cold tier | 배포됨 |
+| 분석 | 빠른 집계, 시간 범위 스캔, 그래프 분석을 위한 DuckDB 기반 OLAP 프로젝션 (PR [#100](https://github.com/taeyun16/aidememo/pull/100)) | 초안 — main 미포함 |
+| 에이전트 도구 | `aidememo_workflow_start`, `aidememo_handoff`, `aidememo_handoff_inbox`, `aidememo_context`, `aidememo_query`, `aidememo_aggregate`, `aidememo_fact_add_many`를 포함한 29개 MCP 도구 | 배포됨 |
+| 캡처 | `aidememo_extract`, pending review queue, review-only LFM LoRA `fact_type_hint` shadow 경로, 선택형 Hermes/OpenClaw 캡처 어댑터 | 배포됨 |
+| 산출물 | 타입 있는 팩트에 대한 제한적이고 감사 가능한 Markdown 뷰인 `aidememo session canvas`, `aidememo session handoff`, `aidememo profile export` | 배포됨 |
+| 운영 | `doctor` / MCP `aidememo_doctor`, `overview`, `bench`, `vector-rebuild`, `consolidate`, `auto-relate` | 배포됨 |
+| 공유 | `source_id`, 설치별 `actor_id`, pull 기반 세션 할당, 멀티 프로젝트 저장소, stdio/HTTP MCP, 데몬 탐색, branch log | 배포됨 |
+| 코드 우선 조합 | `Memory.open`, `search_rows`, `coverage_by`, `aggregate_many`, `remember`, handoff inbox/accept/return/outbox/status를 제공하는 `aidememo-agent-sdk` | 배포됨 |
+| 바인딩 | Python, Node, Elixir, C | 배포됨 |
 
 ## CLI 참고
 
@@ -760,15 +776,31 @@ g = aidememo.AideMemo("./_meta/wiki.redb", backend="redb")
 
 ## 아키텍처
 
+**`aidememo-core`는 모든 쓰기의 정규 Single Source of Truth(SSOT)입니다.** 타입 있는 팩트, 엔티티, 관계, 시간 유효 기간을 지닌 쓰기 원장을 유지합니다. 모든 영속 백엔드는 이 정규 저장소에서 동기화합니다.
+
+### 스토리지 백엔드
+
+| 백엔드 | 상태 | 사용 시점 |
+|---|---|---|
+| **SQLite** (기본) | 배포됨 | 로컬 우선 기본 경로. 번들 `libsqlite3`, 외부 의존성 없음. 여러 에이전트 쓰기는 busy timeout이나 공유 `mcp-serve` 데몬으로 처리. |
+| **redb** (선택형 Cargo 기능) | 배포됨 | 선택형 Rust 네이티브 임베디드 저장소. 단일 작성자 파일 락; 동시 에이전트는 공유 `mcp-serve` 사용. |
+| **PostgreSQL** | Phase 2 진행 중 ([#87](https://github.com/taeyun16/aidememo/pull/87), [#94](https://github.com/taeyun16/aidememo/pull/94), [#98](https://github.com/taeyun16/aidememo/pull/98)) | 프로덕션 멀티 테넌트 서버 백엔드. 미완성; Phase 2 병합 시 문서 업데이트 예정. |
+| **DuckDB 분석** | 초안 ([#100](https://github.com/taeyun16/aidememo/pull/100)) | 빠른 집계와 그래프 분석을 위한 파생 OLAP 프로젝션. 쓰기 원장이 아니며 정규 저장소에서 증분 동기화. C++ 툴체인 필요. |
+
+BM25와 HNSW 시맨틱 인덱스도 동일 패턴: 정규 저장소에서 재구축하는 파생 프로젝션. 쓰기는 항상 `aidememo-core`를 먼저 거친 뒤 부차 인덱스와 프로젝션으로 동기화합니다.
+
+### Crate
+
 | Crate | 역할 |
 |---|---|
-| `aidememo-core` | SQLite 기본 저장소, 선택형 redb 저장소, ingest, BM25, semantic 검색, 그래프, lint, lifecycle |
+| `aidememo-core` | 정규 SSOT: 쓰기 원장, ingest, BM25, semantic 검색, 그래프, lint, lifecycle |
 | `aidememo-cli` | `aidememo` 바이너리: CLI, stdio MCP, HTTP/SSE MCP |
 | `aidememo-agent-sdk` | 코드를 실행하는 에이전트(Codex, Claude Code, Hermes, CI)를 위한 Python 조합 계층. `aidememo-python` 또는 CLI 폴백 사용 |
 | `aidememo-python` | PyO3 바인딩 |
 | `aidememo-napi` | Node.js 바인딩 |
 | `aidememo-nif` | Elixir/Erlang 바인딩 |
 | `aidememo-ffi` | C ABI 바인딩 |
+| `aidememo-domain`, `aidememo-service`, `aidememo-store-local`, `aidememo-server`, `aidememo-client`, `aidememo-artifacts` | 서버/SSOT 기반(Phase 2) — [docs/SERVER_SSOT.md](docs/SERVER_SSOT.md) 참고 |
 | `benchmarks` | Rust 벤치마크 바이너리와 재현 가능한 fixture |
 
 ## 영향과 참고 자료

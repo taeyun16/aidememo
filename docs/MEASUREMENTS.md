@@ -12,6 +12,8 @@ files were removed; durable numbers should live here, in
 Raw scenario output under `bench/**/results` is intentionally ignored because it
 contains temporary paths and run-specific identifiers.
 
+**Note:** The LFM and LongMemEval evaluation scripts (`lfm_*.py`, `longmemeval_*.py`) have been removed from this repository. The measurement results below remain as historical evidence. For current evaluation approaches, see the product CI scripts in `scripts/`.
+
 For a concise product-facing scorecard, start with [Evidence](EVIDENCE.md).
 
 ## Re-run Commands
