@@ -4707,8 +4707,10 @@ fn tool_analytics_query(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult,
         .as_ref()
         .ok_or("analytics engine not initialized")?;
 
+    // Convert Vec<String> to &[&dyn ToSql]
+    let param_refs: Vec<&dyn duckdb::ToSql> = params.iter().map(|s| s as &dyn duckdb::ToSql).collect();
     let rows = engine
-        .query(sql, &params)
+        .query(sql, &param_refs)
         .map_err(|e| format!("analytics query failed: {}", e))?;
 
     let payload = json!({
@@ -4720,7 +4722,7 @@ fn tool_analytics_query(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult,
 
     Ok(ToolCallResult {
         content: vec![ContentBlock {
-            content_type: "text".into(),
+            block_type: "text".into(),
             text: Some(serde_json::to_string_pretty(&payload).unwrap()),
             ..Default::default()
         }],

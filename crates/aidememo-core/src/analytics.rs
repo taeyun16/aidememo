@@ -30,7 +30,7 @@
 //! // Query
 //! let result = analytics.query(
 //!     "SELECT fact_type, COUNT(*) as count FROM facts GROUP BY fact_type",
-//!     []
+//!     &[]
 //! )?;
 //! ```
 
@@ -605,7 +605,7 @@ impl AnalyticsEngine {
     ///
     /// This function provides raw SQL access. Callers must sanitize inputs
     /// and use parameter binding to prevent SQL injection.
-    pub fn query(&self, sql: &str, params: impl duckdb::Params) -> Result<Vec<Vec<String>>> {
+    pub fn query(&self, sql: &str, params: &[&dyn duckdb::ToSql]) -> Result<Vec<Vec<String>>> {
         let mut stmt = self
             .conn
             .prepare(sql)
@@ -715,7 +715,7 @@ mod tests {
             .query(
                 "SELECT table_name FROM information_schema.tables 
                  WHERE table_schema = 'main' ORDER BY table_name",
-                [],
+                &[],
             )
             .unwrap();
 
@@ -804,7 +804,7 @@ mod tests {
         let fact_types: Vec<Vec<String>> = analytics
             .query(
                 "SELECT fact_type, COUNT(*) as count FROM facts GROUP BY fact_type",
-                [],
+                &[],
             )
             .unwrap();
 
