@@ -408,27 +408,43 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential g++
 
-      # Check that the feature compiles. The `|| true` fallback lets this job
-      # pass when the feature doesn't exist yet (e.g., before PR #100 merges)
-      # while still catching real build errors when the feature is present.
-      - name: Check ${{ matrix.feature }} feature
+      # Check if the feature exists using cargo metadata. Store the result
+      # explicitly so we can verify tests actually run when the feature exists.
+      - name: Detect ${{ matrix.feature }} feature
+        id: detect
         run: |
-          if cargo metadata --format-version 1 | jq -e '.packages[] | select(.name == "aidememo-core") | .features | has("${{ matrix.feature }}")' > /dev/null 2>&1; then
-            cargo check -p aidememo-core --features ${{ matrix.feature }}
-            cargo check -p aidememo-cli --features ${{ matrix.feature }}
+          if cargo metadata --format-version 1 | jq -e '.packages[] | select(.name == "aidememo-core") | .features | has("${{ matrix.feature }}")' > /dev/null; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "✓ Feature ${{ matrix.feature }} found in aidememo-core"
           else
-            echo "Feature ${{ matrix.feature }} not present in aidememo-core; skipping"
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "Feature ${{ matrix.feature }} not present in aidememo-core; will skip"
           fi
 
-      # Run tests when the feature exists.
-      - name: Test ${{ matrix.feature }} feature
+      # When the feature exists, compile it. This must succeed for the job to pass.
+      - name: Check ${{ matrix.feature }} feature
+        if: steps.detect.outputs.exists == 'true'
         run: |
-          if cargo metadata --format-version 1 | jq -e '.packages[] | select(.name == "aidememo-core") | .features | has("${{ matrix.feature }}")' > /dev/null 2>&1; then
-            cargo test -p aidememo-core --features ${{ matrix.feature }}
-            cargo test -p aidememo-cli --features ${{ matrix.feature }}
-          else
-            echo "Feature ${{ matrix.feature }} not present; skipping tests"
-          fi
+          echo "Checking aidememo-core with --features ${{ matrix.feature }}..."
+          cargo check -p aidememo-core --features "${{ matrix.feature }}"
+          echo "Checking aidememo-cli with --features ${{ matrix.feature }}..."
+          cargo check -p aidememo-cli --features "${{ matrix.feature }}"
+
+      # When the feature exists, test it. This must succeed for the job to pass.
+      - name: Test ${{ matrix.feature }} feature
+        if: steps.detect.outputs.exists == 'true'
+        run: |
+          echo "Testing aidememo-core with --features ${{ matrix.feature }}..."
+          cargo test -p aidememo-core --features "${{ matrix.feature }}"
+          echo "Testing aidememo-cli with --features ${{ matrix.feature }}..."
+          cargo test -p aidememo-cli --features "${{ matrix.feature }}"
+
+      # Verify that when the feature exists, tests actually ran. This prevents
+      # silent passes when the skip logic is broken.
+      - name: Verify tests ran
+        if: steps.detect.outputs.exists == 'true'
+        run: |
+          echo "✓ Verified: ${{ matrix.feature }} tests completed"
 
   ffi-c-smoke:
     name: aidememo-ffi C smoke
