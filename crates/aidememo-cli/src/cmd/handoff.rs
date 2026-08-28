@@ -7,6 +7,7 @@
 use aidememo_core::types::{EntityInput, EntityType, EntityUpdate};
 use aidememo_core::{AideMemo, AideMemoError, Result};
 use serde::{Deserialize, Serialize};
+use crate::util::now_ms;
 
 const HANDOFF_ENTITY_TYPE: &str = "handoff";
 const HANDOFF_ENTITY_TAG: &str = "aidememo:handoff";
@@ -671,12 +672,6 @@ fn validate_actor(label: &str, actor: &str) -> Result<()> {
     Ok(())
 }
 
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as u64)
-        .unwrap_or(0)
-}
 
 #[cfg(test)]
 mod tests {

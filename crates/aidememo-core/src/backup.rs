@@ -7,7 +7,6 @@
 
 use crate::{AideMemoError, Result};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use ulid::Ulid;
 
@@ -157,7 +156,7 @@ pub fn create_local_backup(
     let sqlite_bytes = std::fs::read(snapshot.path()).map_err(|source| {
         AideMemoError::FileRead(snapshot.path().to_path_buf(), source.to_string())
     })?;
-    let sqlite_sha256 = sha256_hex(&sqlite_bytes);
+    let sqlite_sha256 = crate::util::sha256_hex_bytes(&sqlite_bytes);
     let db_path = output_dir.join(SQLITE_OBJECT);
     std::fs::write(&db_path, &sqlite_bytes).map_err(|source| AideMemoError::StoreWrite {
         table: "backup",
@@ -274,11 +273,11 @@ pub async fn create_s3_backup(
     let sqlite_bytes = std::fs::read(snapshot.path()).map_err(|source| {
         AideMemoError::FileRead(snapshot.path().to_path_buf(), source.to_string())
     })?;
-    let sqlite_sha256 = sha256_hex(&sqlite_bytes);
+    let sqlite_sha256 = crate::util::sha256_hex_bytes(&sqlite_bytes);
     let stored = zstd::stream::encode_all(&sqlite_bytes[..], 0).map_err(|source| {
         AideMemoError::Internal(format!("backup compression failed: {source}"))
     })?;
-    let stored_sha256 = sha256_hex(&stored);
+    let stored_sha256 = crate::util::sha256_hex_bytes(&stored);
     let db_key = prefix.object_key(SQLITE_ZSTD_OBJECT);
     let cold_backup = if let Some(cold_snapshot) = snapshots.cold {
         let cold_sqlite_bytes = read_snapshot_bytes(cold_snapshot.path())?;
@@ -1149,7 +1148,7 @@ fn validate_stored_database(tier: &str, database: &BackupDatabase, stored: &[u8]
             "backup {tier} stored payload size mismatch"
         )));
     }
-    let actual = sha256_hex(stored);
+    let actual = crate::util::sha256_hex_bytes(stored);
     if database.stored_sha256 != actual {
         return Err(AideMemoError::InvalidInput(format!(
             "backup {tier} stored payload checksum mismatch"
@@ -1170,7 +1169,7 @@ fn decode_validated_database(
             "backup {tier} SQLite payload size mismatch"
         )));
     }
-    if sha256_hex(&sqlite_bytes) != database.sqlite_sha256 {
+    if crate::util::sha256_hex_bytes(&sqlite_bytes) != database.sqlite_sha256 {
         return Err(AideMemoError::InvalidInput(format!(
             "backup {tier} SQLite payload checksum mismatch"
         )));
@@ -1205,9 +1204,9 @@ fn database_manifest(
         object: object.to_string(),
         compression: compression.to_string(),
         stored_bytes: stored.len() as u64,
-        stored_sha256: sha256_hex(stored),
+        stored_sha256: crate::util::sha256_hex_bytes(stored),
         sqlite_bytes: sqlite.len() as u64,
-        sqlite_sha256: sha256_hex(sqlite),
+        sqlite_sha256: crate::util::sha256_hex_bytes(sqlite),
     }
 }
 
@@ -1259,15 +1258,6 @@ fn append_suffix(path: &Path, suffix: &str) -> PathBuf {
     PathBuf::from(raw)
 }
 
-fn sha256_hex(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
-    let mut out = String::with_capacity(digest.len() * 2);
-    for byte in digest {
-        use std::fmt::Write as _;
-        let _ = write!(&mut out, "{byte:02x}");
-    }
-    out
-}
 
 #[cfg(feature = "s3")]
 #[derive(Debug, Clone)]

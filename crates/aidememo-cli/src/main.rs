@@ -2,6 +2,7 @@
 
 mod cmd;
 mod output;
+mod util;
 
 use aidememo_core::{
     AideMemo, AideMemoError, Config, EntityInput, EntitySort, EntityType, ExportScope, FactInput,

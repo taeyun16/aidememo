@@ -35,6 +35,7 @@ pub mod store;
 pub mod sync;
 pub mod time;
 pub mod types;
+pub mod util;
 #[cfg(feature = "semantic")]
 pub mod vector_index;
 #[cfg(feature = "s3")]

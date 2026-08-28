@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCommand, Stdio};
 
 use crate::cmd::Command;
+use crate::util::format_bytes;
 use aidememo_core::{AideMemoError, Config};
 
 #[derive(Debug, Clone)]
@@ -351,22 +352,6 @@ fn dir_stats(path: &Path) -> Result<(usize, u64), AideMemoError> {
     Ok((files, bytes))
 }
 
-fn format_bytes(bytes: u64) -> String {
-    const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
-    let mut size = bytes as f64;
-    let mut unit = 0usize;
-
-    while size >= 1024.0 && unit < UNITS.len() - 1 {
-        size /= 1024.0;
-        unit += 1;
-    }
-
-    if unit == 0 {
-        format!("{} {}", bytes, UNITS[unit])
-    } else {
-        format!("{:.1} {}", size, UNITS[unit])
-    }
-}
 
 fn expand_path(raw: &str) -> PathBuf {
     if let Some(stripped) = raw.strip_prefix("~/") {

@@ -6,6 +6,7 @@
 
 use crate::error::{AideMemoError, Result};
 use crate::types::{SearchFeedback, SearchSession};
+use crate::util::now_ms;
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -259,12 +260,6 @@ fn sqlite_write(table: &'static str, key: &str, source: rusqlite::Error) -> Aide
     }
 }
 
-fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as u64)
-        .unwrap_or_default()
-}
 
 #[cfg(test)]
 mod tests {

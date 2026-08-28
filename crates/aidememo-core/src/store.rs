@@ -2927,25 +2927,13 @@ impl Store {
 /// SHA-256 hex digest of the content portion of the dedup key. We hash raw
 /// bytes (no content normalisation or lowercasing), so punctuation-different
 /// content does not collide; that belongs to the semantic-dedup pass.
-fn sha256_hex(s: &str) -> String {
-    use sha2::Digest;
-    let mut hasher = sha2::Sha256::new();
-    hasher.update(s.as_bytes());
-    let digest = hasher.finalize();
-    let mut out = String::with_capacity(digest.len() * 2);
-    for byte in digest {
-        use std::fmt::Write as _;
-        let _ = write!(&mut out, "{byte:02x}");
-    }
-    out
-}
 
 /// Source-aware exact-dedup key. A NUL separator is unambiguous because the
 /// content digest is fixed-width lowercase hex; the source namespace itself
 /// remains case-sensitive.
 fn fact_dedup_key(source_id: Option<&str>, content: &str) -> String {
     let source_id = normalize_source_id(source_id).unwrap_or_default();
-    format!("{source_id}\0{}", sha256_hex(content))
+    format!("{source_id}\0{}", crate::util::sha256_hex_str(content))
 }
 
 #[cfg(test)]
@@ -3084,7 +3072,7 @@ mod tests {
             let mut index = write_txn.open_table(FACT_CONTENT_HASH_TABLE).unwrap();
             index.retain(|_, _| false).unwrap();
             index
-                .insert(sha256_hex(content).as_str(), alpha.as_bytes().as_slice())
+                .insert(crate::util::sha256_hex_str(content).as_str(), alpha.as_bytes().as_slice())
                 .unwrap();
         }
         write_txn.commit().unwrap();

@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 
 use crate::cmd::Command;
 use crate::cmd::daemon::{self, RegistryState};
+use crate::util::format_bytes;
 use crate::cmd::mcp_install::{
     codex_config_path, cursor_config_path, opencode_config_path, verify_registered,
 };
@@ -1108,20 +1109,6 @@ fn model_load_bytes(name: &str) -> Option<u64> {
     Some(mb * 1024 * 1024)
 }
 
-fn format_bytes(bytes: u64) -> String {
-    const KB: u64 = 1024;
-    const MB: u64 = KB * 1024;
-    const GB: u64 = MB * 1024;
-    if bytes >= GB {
-        format!("{:.2} GB", bytes as f64 / GB as f64)
-    } else if bytes >= MB {
-        format!("{:.1} MB", bytes as f64 / MB as f64)
-    } else if bytes >= KB {
-        format!("{:.1} KB", bytes as f64 / KB as f64)
-    } else {
-        format!("{} B", bytes)
-    }
-}
 
 fn format_memory(memory: &MemoryReport) -> String {
     let mut out = String::from("Memory:\n");

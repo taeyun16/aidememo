@@ -12,6 +12,7 @@
 //! reclaim space without blocking ingest.
 
 use crate::error::{AideMemoError, Result};
+use crate::util::now_ms;
 use crate::wal::{WALSegment, wal_compact};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -249,12 +250,6 @@ fn segment_size_bytes(segment: &WALSegment) -> Result<usize> {
     Ok(segment.jsonl()?.len())
 }
 
-fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as u64)
-        .unwrap_or_default()
-}
 
 #[cfg(test)]
 mod tests {

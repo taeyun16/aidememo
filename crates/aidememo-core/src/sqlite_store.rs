@@ -452,7 +452,7 @@ impl SqliteStore {
                 params![
                     id,
                     record.source_id,
-                    sha256_hex(&record.content),
+                    crate::util::sha256_hex_str(&record.content),
                     record_json
                 ],
             )
@@ -651,7 +651,7 @@ impl SqliteStore {
                 record.superseded_at.map(|v| v as i64),
                 if record.pinned { 1 } else { 0 },
                 bytes,
-                sha256_hex(&record.content)
+                crate::util::sha256_hex_str(&record.content)
             ],
         )
         .map_err(|source| sqlite_write("facts", &record.id.to_string(), source))?;
@@ -1305,7 +1305,7 @@ impl StoreBackend for SqliteStore {
             let mut record = Self::get_fact_record(&tx, &id)?;
             record.update(input.clone());
             record.source_id = normalize_source_id(record.source_id.as_deref());
-            let content_hash = sha256_hex(&record.content);
+            let content_hash = crate::util::sha256_hex_str(&record.content);
             if let Some(existing_id) =
                 Self::fact_id_by_hash(&tx, record.source_id.as_deref(), &content_hash)?
                 && existing_id != id
@@ -1354,7 +1354,7 @@ impl StoreBackend for SqliteStore {
         sqlite_lock_retry(lock_retry_ms, || {
             let mut record = record.clone();
             record.source_id = normalize_source_id(record.source_id.as_deref());
-            let content_hash = sha256_hex(&record.content);
+            let content_hash = crate::util::sha256_hex_str(&record.content);
             let mut conn = self.conn.lock();
             let tx = conn
                 .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -1729,18 +1729,6 @@ fn relation_key(record: &RelationRecord) -> String {
     )
 }
 
-fn sha256_hex(s: &str) -> String {
-    use sha2::Digest;
-    let mut hasher = sha2::Sha256::new();
-    hasher.update(s.as_bytes());
-    let digest = hasher.finalize();
-    let mut out = String::with_capacity(digest.len() * 2);
-    for byte in digest {
-        use std::fmt::Write as _;
-        let _ = write!(&mut out, "{byte:02x}");
-    }
-    out
-}
 
 fn sqlite_read(table: &'static str, key: &str, source: rusqlite::Error) -> AideMemoError {
     AideMemoError::StoreRead {
@@ -1773,7 +1761,7 @@ fn sqlite_fact_add_many_once(
     let mut ids = Vec::with_capacity(inputs.len());
 
     for input in inputs {
-        let content_hash = sha256_hex(&input.content);
+        let content_hash = crate::util::sha256_hex_str(&input.content);
         let source_id = normalize_source_id(input.source_id.as_deref());
         if let Some(existing_id) =
             SqliteStore::fact_id_by_hash(&tx, source_id.as_deref(), &content_hash)?
@@ -2048,7 +2036,7 @@ mod tests {
              ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, NULL, NULL, 0, ?9)",
             params![
                 legacy.id.to_string(),
-                sha256_hex(&legacy.content),
+                crate::util::sha256_hex_str(&legacy.content),
                 legacy.content,
                 legacy.fact_type.to_string(),
                 legacy.source_confidence,

@@ -36,6 +36,7 @@ use std::process::{Command as ProcCommand, Stdio};
 use std::time::{Duration, Instant};
 
 use crate::cmd::Command;
+use crate::util::now_ms;
 
 const START_HEALTH_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -217,12 +218,6 @@ fn pick_free_port() -> Option<u16> {
         .map(|a| a.port())
 }
 
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
-}
 
 pub fn run_daemon(
     sub: DaemonSub,

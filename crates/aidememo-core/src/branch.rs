@@ -12,7 +12,6 @@ use crate::{
     ListOpts, Result,
 };
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use ulid::Ulid;
@@ -426,7 +425,7 @@ fn export_branch_segment_with_compression(
         .map_err(|source| AideMemoError::Internal(format!("branch segment UTF-8: {source}")))?;
     let end_cursor = Some(BackupSyncCursor::from_sync(cursor_from_jsonl(jsonl)?));
     let payload_bytes = payload.len() as u64;
-    let payload_sha256 = sha256_hex(&payload);
+    let payload_sha256 = crate::util::sha256_hex_bytes(&payload);
 
     let (object, compression, stored) = if compress {
         #[cfg(feature = "s3")]
@@ -458,7 +457,7 @@ fn export_branch_segment_with_compression(
         .next()
         .unwrap_or(object.as_str())
         .to_string();
-    let stored_sha256 = sha256_hex(&stored);
+    let stored_sha256 = crate::util::sha256_hex_bytes(&stored);
     let manifest = BranchSegmentManifest {
         schema: 1,
         branch_id: branch_id.to_string(),
@@ -549,7 +548,7 @@ fn validate_and_decode(manifest: &BranchSegmentManifest, stored: &[u8]) -> Resul
             "branch segment stored size mismatch".to_string(),
         ));
     }
-    if manifest.stored_sha256 != sha256_hex(stored) {
+    if manifest.stored_sha256 != crate::util::sha256_hex_bytes(stored) {
         return Err(AideMemoError::InvalidInput(
             "branch segment stored checksum mismatch".to_string(),
         ));
@@ -560,7 +559,7 @@ fn validate_and_decode(manifest: &BranchSegmentManifest, stored: &[u8]) -> Resul
             "branch segment payload size mismatch".to_string(),
         ));
     }
-    if manifest.payload_sha256 != sha256_hex(&payload) {
+    if manifest.payload_sha256 != crate::util::sha256_hex_bytes(&payload) {
         return Err(AideMemoError::InvalidInput(
             "branch segment payload checksum mismatch".to_string(),
         ));
@@ -631,15 +630,6 @@ fn validate_branch_id(branch_id: &str) -> Result<String> {
     Ok(trimmed.to_string())
 }
 
-fn sha256_hex(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
-    let mut out = String::with_capacity(digest.len() * 2);
-    for byte in digest {
-        use std::fmt::Write as _;
-        let _ = write!(&mut out, "{byte:02x}");
-    }
-    out
-}
 
 impl BranchMergeReport {
     fn apply_stats(&mut self, stats: SyncImportStats) {
