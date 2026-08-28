@@ -23,6 +23,7 @@ pub mod mcp_tools;
 pub mod memprobe;
 pub mod model;
 pub mod pending;
+pub mod postgres;
 pub mod project;
 pub mod recent;
 pub mod remote_handoff;
@@ -44,6 +45,7 @@ pub use mcp_serve::McpSub;
 pub use mcp_stdio::McpStdioSub;
 pub use model::ModelSub;
 pub use pending::PendingSub;
+pub use postgres::PostgresSub;
 pub use project::ProjectSub;
 pub use recent::RecentSub;
 pub use replica::ReplicaSub;
@@ -106,6 +108,7 @@ pub enum Command {
     Overview(OverviewSub),
     Consolidate(ConsolidateSub),
     Auth(auth::AuthSub),
+    Postgres(PostgresSub),
 }
 
 #[derive(Debug, Clone)]
@@ -647,6 +650,7 @@ pub fn build_cli() -> OptionParser<Args> {
     let skill_cmd = skill::skill_command();
     let daemon_cmd = daemon::daemon_command();
     let replica_cmd = replica::replica_command();
+    let postgres_cmd = postgres::postgres_command();
 
     let command = construct!([
         entity_command(),
@@ -696,7 +700,7 @@ pub fn build_cli() -> OptionParser<Args> {
         consolidate_command(),
     ]);
     let auth_cmd = auth::auth_command();
-    let command = construct!([command, auth_cmd]);
+    let command = construct!([command, auth_cmd, postgres_cmd]);
 
     construct!(Args {
         store_path,
