@@ -414,10 +414,10 @@ jobs:
         id: detect
         run: |
           if cargo metadata --format-version 1 | jq -e '.packages[] | select(.name == "aidememo-core") | .features | has("${{ matrix.feature }}")' > /dev/null; then
-            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "exists=true" >> "$GITHUB_OUTPUT"
             echo "✓ Feature ${{ matrix.feature }} found in aidememo-core"
           else
-            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "exists=false" >> "$GITHUB_OUTPUT"
             echo "Feature ${{ matrix.feature }} not present in aidememo-core; will skip"
           fi
 
