@@ -466,7 +466,7 @@ impl AnalyticsEngine {
         })?;
 
         // Track max timestamps for this sync
-        let max_entity_ts = self.last_entity_seq;
+        let mut max_entity_ts = self.last_entity_seq;
         let mut max_fact_ts = self.last_fact_seq;
         let mut max_relation_ts = self.last_relation_seq;
 
@@ -596,6 +596,8 @@ impl AnalyticsEngine {
         }
 
         // Update watermarks
+        // Entity watermark tracks fact watermark since EntitySummary has no timestamps
+        max_entity_ts = max_fact_ts;
         self.last_entity_seq = max_entity_ts;
         self.last_fact_seq = max_fact_ts;
         self.last_relation_seq = max_relation_ts;
@@ -652,8 +654,33 @@ impl AnalyticsEngine {
         {
             let mut row_data = Vec::with_capacity(column_count);
             for i in 0..column_count {
-                let value: Option<String> = row.get(i).ok();
-                row_data.push(value.unwrap_or_else(|| "NULL".to_string()));
+                let value_ref = row.get_ref(i).map_err(|e| {
+                    AideMemoError::Internal(format!("failed to get column {}: {}", i, e))
+                })?;
+
+                use duckdb::types::ValueRef;
+                let value_str = match value_ref {
+                    ValueRef::Null => "NULL".to_string(),
+                    ValueRef::Boolean(b) => b.to_string(),
+                    ValueRef::TinyInt(i) => i.to_string(),
+                    ValueRef::SmallInt(i) => i.to_string(),
+                    ValueRef::Int(i) => i.to_string(),
+                    ValueRef::BigInt(i) => i.to_string(),
+                    ValueRef::HugeInt(i) => i.to_string(),
+                    ValueRef::UTinyInt(i) => i.to_string(),
+                    ValueRef::USmallInt(i) => i.to_string(),
+                    ValueRef::UInt(i) => i.to_string(),
+                    ValueRef::UBigInt(i) => i.to_string(),
+                    ValueRef::Float(f) => f.to_string(),
+                    ValueRef::Double(f) => f.to_string(),
+                    ValueRef::Decimal(d) => d.to_string(),
+                    ValueRef::Text(bytes) => String::from_utf8_lossy(bytes).to_string(),
+                    ValueRef::Blob(bytes) => {
+                        format!("<blob {} bytes>", bytes.len())
+                    }
+                    _ => format!("{:?}", value_ref),
+                };
+                row_data.push(value_str);
             }
             results.push(row_data);
         }
