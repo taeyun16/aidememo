@@ -5,10 +5,10 @@
 //! canonical PostgreSQL database; backup creates a logical dump plus a manifest,
 //! and restore verifies the manifest before importing.
 
-use aidememo_domain::{DomainError, ProjectScope, TenantId};
+use aidememo_domain::{DomainError, TenantId};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Command, Stdio};
 use ulid::Ulid;
 
@@ -75,6 +75,10 @@ pub struct TenantDeleteReport {
 }
 
 /// Create a PostgreSQL logical backup using pg_dump custom format.
+///
+/// # Errors
+///
+/// Returns an error if directory creation, pg_dump execution, or manifest writing fails.
 pub fn create_postgres_backup(
     database_url: &str,
     destination_dir: &Path,
@@ -151,6 +155,10 @@ pub fn create_postgres_backup(
 ///
 /// **WARNING**: This drops and recreates the target database schema.
 /// Ensure the target database URL points to a database that can be safely replaced.
+///
+/// # Errors
+///
+/// Returns an error if manifest reading, checksum validation, or pg_restore execution fails.
 pub fn restore_postgres_backup(
     source_dir: &Path,
     target_database_url: &str,
@@ -211,6 +219,10 @@ pub fn restore_postgres_backup(
 }
 
 /// Export all resources for a specific tenant to a manifest file.
+///
+/// # Errors
+///
+/// Returns an error if resource export, directory creation, or manifest writing fails.
 pub fn export_tenant(
     store: &crate::PostgresCommandStore,
     tenant_id: &TenantId,
@@ -332,7 +344,7 @@ fn current_epoch_ms() -> u64 {
 fn sanitize_database_url(url: &str) -> String {
     // Remove password from URL for logging
     url.split('@')
-        .last()
+        .next_back()
         .map(|s| format!("postgres://<credentials>@{}", s))
         .unwrap_or_else(|| "postgres://<redacted>".to_string())
 }
