@@ -22,6 +22,7 @@ const sidebars = {
         'SDK',
         'FEATURES',
         'OPERATIONS',
+        'DUCKDB_ANALYTICS',
         'LFM_EXPERIMENTS',
         'BRANCHES',
         'EVIDENCE',

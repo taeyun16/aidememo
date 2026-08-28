@@ -4708,7 +4708,8 @@ fn tool_analytics_query(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult,
         .ok_or("analytics engine not initialized")?;
 
     // Convert Vec<String> to &[&dyn ToSql]
-    let param_refs: Vec<&dyn duckdb::ToSql> = params.iter().map(|s| s as &dyn duckdb::ToSql).collect();
+    let param_refs: Vec<&dyn duckdb::ToSql> =
+        params.iter().map(|s| s as &dyn duckdb::ToSql).collect();
     let rows = engine
         .query(sql, &param_refs)
         .map_err(|e| format!("analytics query failed: {}", e))?;
