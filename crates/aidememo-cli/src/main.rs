@@ -155,8 +155,9 @@ fn main() {
         #[cfg(feature = "analytics")]
         cmd::Command::Analytics(sub) => {
             let store = open_store_with_config(&store_path, config, json)?;
-            cmd::analytics::run_analytics(sub, &store)?;
-            Ok(Output::None)
+            cmd::analytics::run_analytics(sub, &store)
+                .map_err(|e| AideMemoError::Internal(e.to_string()))?;
+            Ok(String::new())
         }
         cmd::Command::Auth(sub) => cmd::auth::run_auth(sub),
     };

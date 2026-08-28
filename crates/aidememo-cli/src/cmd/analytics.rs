@@ -85,7 +85,9 @@ pub fn run_analytics(cmd: AnalyticsCommand, g: &AideMemo) -> anyhow::Result<()> 
         AnalyticsCommand::Query { sql, params } => {
             let engine_guard = g.analytics_engine()?;
             if let Some(engine) = engine_guard.as_ref() {
-                let results = engine.query(&sql, &params)?;
+                let param_refs: Vec<&dyn duckdb::ToSql> =
+                    params.iter().map(|s| s as &dyn duckdb::ToSql).collect();
+                let results = engine.query(&sql, &param_refs)?;
                 if results.is_empty() {
                     println!("(no results)");
                 } else {
@@ -122,7 +124,7 @@ fn run_report(report_type: &str, limit: Option<usize>, g: &AideMemo) -> anyhow::
                  GROUP BY created_at_year, created_at_month
                  ORDER BY created_at_year DESC, created_at_month DESC
                  LIMIT ?",
-                &[limit as i64],
+                &[&(limit as i64)],
             )?;
             println!("Fact Growth by Month:");
             println!("Month\t\tCount");
@@ -141,7 +143,7 @@ fn run_report(report_type: &str, limit: Option<usize>, g: &AideMemo) -> anyhow::
                  GROUP BY source_id
                  ORDER BY fact_count DESC
                  LIMIT ?",
-                &[limit as i64],
+                &[&(limit as i64)],
             )?;
             println!("Top Sources by Current Facts:");
             println!("Source\t\tCount");
@@ -163,7 +165,7 @@ fn run_report(report_type: &str, limit: Option<usize>, g: &AideMemo) -> anyhow::
                  GROUP BY e.id, e.name
                  ORDER BY total_degree DESC
                  LIMIT ?",
-                &[limit as i64],
+                &[&(limit as i64)],
             )?;
             println!("Most Connected Entities:");
             println!("Entity\t\tOut\tIn\tTotal");
@@ -183,7 +185,7 @@ fn run_report(report_type: &str, limit: Option<usize>, g: &AideMemo) -> anyhow::
                  GROUP BY DATE_TRUNC('day', created_at), fact_type
                  ORDER BY day DESC, count DESC
                  LIMIT ?",
-                &[limit as i64],
+                &[&(limit as i64)],
             )?;
             println!("Recent Facts Timeline (last 30 days):");
             println!("Date\t\tType\t\tCount");
