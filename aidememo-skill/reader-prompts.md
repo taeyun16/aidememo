@@ -113,16 +113,7 @@ LongMemEval-style queries (categorical 측정 필요).
 
 ## 측정 가이드
 
-`scripts/longmemeval_e2e.py`의 `--reader-prompt {basic,omega-tricks}`
-flag로 같은 retrievals + 같은 reader에 prompt만 바꿔 A/B 가능.
-
-```bash
-python3 scripts/longmemeval_e2e.py \
-  --retrievals /tmp/aidememo_retrievals_500_bge_rerank_wide.jsonl \
-  --gold /tmp/longmemeval/longmemeval_s_cleaned.json \
-  --reader gpt-4.1 --judge gpt-4o --reader-max-tokens 800 \
-  --reader-prompt omega-tricks    # vs basic
-```
+**Note:** LongMemEval 평가 스크립트(`longmemeval_*.py`)는 이 리포지토리에서 제거되었습니다. 아래의 reader prompt 패턴은 개념적 가이드로 유지됩니다.
 
 비용 차이 ≈ 0 (system prompt token 200개 추가 × 500q ≈ 100k tokens
 ≈ \$0.02 on gpt-4o-mini).

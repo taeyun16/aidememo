@@ -90,22 +90,18 @@ flowchart TB
         auto_gate -->|약함 또는 CJK| semantic --> ranked
     end
 
-    subgraph optional_models["선택형 로컬 SLM 사이드카 - 별도 다운로드"]
-        lfm_embed["LFM2.5 Embedding 350M<br/>MLX / TEI 호환"]
-        lfm_rerank["LFM2.5 ColBERT 350M<br/>후보 재랭킹"]
-        lfm_type["LFM2.5 1.2B + LoRA<br/>fact_type_hint 전용"]
-        type_review["검토 대기<br/>자동 쓰기 없음"]
+    subgraph optional_models["선택형 로컬 모델 사이드카 - 별도 다운로드"]
         privacy_model["OpenAI Privacy Filter<br/>저장 전 교정 / 차단"]
-        lfm_type -. "confidence 기준" .-> type_review
+        external_embed["외부 임베딩 provider<br/>TEI 호환 / OpenAI 호환"]
+        external_rerank["외부 재랭커<br/>TEI 호환"]
     end
 
     sdk --> core
     mcp --> core
     cli --> core
     bindings --> core
-    lfm_embed -. "선택형 embedding provider" .-> semantic
-    lfm_rerank -. "선택형 rerank" .-> ranked
-    write_path -. "리뷰된 shadow 데이터" .-> lfm_type
+    external_embed -. "선택형 embedding provider" .-> semantic
+    external_rerank -. "선택형 rerank" .-> ranked
     privacy_model -. "저장 전 정책" .-> write_path
 ```
 
