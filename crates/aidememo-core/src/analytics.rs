@@ -633,7 +633,6 @@ impl AnalyticsEngine {
             .prepare(sql)
             .map_err(|e| AideMemoError::InvalidInput(format!("invalid SQL query: {}", e)))?;
 
-        let column_count = stmt.column_count();
         let mut rows = stmt
             .query(params)
             .map_err(|e| AideMemoError::Internal(format!("query execution failed: {}", e)))?;
@@ -644,6 +643,7 @@ impl AnalyticsEngine {
             .next()
             .map_err(|e| AideMemoError::Internal(format!("failed to read row: {}", e)))?
         {
+            let column_count = row.column_count();
             let mut row_data = Vec::with_capacity(column_count);
             for i in 0..column_count {
                 let value: Option<String> = row.get(i).ok();
