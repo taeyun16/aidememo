@@ -155,6 +155,7 @@ fn main() {
         #[cfg(feature = "analytics")]
         cmd::Command::Analytics(sub) => handle_analytics(&store_path, config, sub),
         cmd::Command::Auth(sub) => cmd::auth::run_auth(sub),
+        cmd::Command::Postgres(sub) => cmd::postgres::run_postgres(sub, json),
     };
 
     match result {

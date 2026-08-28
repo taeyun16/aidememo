@@ -199,32 +199,13 @@ impl BlockingStoreExecutor {
         statement_timeout: Duration,
         lock_timeout: Duration,
     ) -> Result<Self, BlockingStoreError> {
-        if pool_size == 0 {
-            return Err(BlockingStoreError::Configuration(
-                "PostgreSQL pool size must be greater than zero".to_owned(),
-            ));
-        }
-        if acquire_timeout.is_zero()
-            || operation_timeout.is_zero()
-            || statement_timeout.is_zero()
-            || lock_timeout.is_zero()
-        {
-            return Err(BlockingStoreError::Configuration(
-                "PostgreSQL acquire/operation/statement/lock timeouts must be greater than zero"
-                    .to_owned(),
-            ));
-        }
-        if statement_timeout >= operation_timeout {
-            return Err(BlockingStoreError::Configuration(
-                "PostgreSQL statement timeout must be shorter than the outer operation timeout"
-                    .to_owned(),
-            ));
-        }
-        if lock_timeout > statement_timeout {
-            return Err(BlockingStoreError::Configuration(
-                "PostgreSQL lock timeout must not exceed statement timeout".to_owned(),
-            ));
-        }
+        validate_postgres_policy(
+            pool_size,
+            acquire_timeout,
+            operation_timeout,
+            statement_timeout,
+            lock_timeout,
+        )?;
         let reaper = PostgresDropReaper::new()?;
         let build_reaper = reaper.clone();
         let stores = tokio::task::spawn_blocking(move || {
@@ -232,6 +213,62 @@ impl BlockingStoreExecutor {
                 .map(|_| {
                     PostgresCommandStore::connect_no_tls_with_timeouts(
                         &url,
+                        statement_timeout,
+                        lock_timeout,
+                    )
+                    .map(|store| PooledPostgresStore::new(store, build_reaper.clone()))
+                })
+                .collect::<Result<Vec<_>, DomainError>>()
+        })
+        .await
+        .map_err(|error| BlockingStoreError::Join(error.to_string()))?
+        .map_err(BlockingStoreError::Domain)?;
+        let (sender, receiver) = mpsc::channel(pool_size);
+        for store in stores {
+            sender
+                .try_send(store)
+                .map_err(|_| BlockingStoreError::BackendUnavailable)?;
+        }
+        drop(reaper);
+        Ok(Self {
+            backend: BlockingBackend::Postgres(Arc::new(PostgresPool {
+                sender,
+                receiver: AsyncMutex::new(receiver),
+            })),
+            permits: Arc::new(Semaphore::new(pool_size)),
+            acquire_timeout,
+            operation_timeout,
+        })
+    }
+
+    /// Build a bounded PostgreSQL pool with verified TLS.
+    ///
+    /// Connection creation runs on Tokio's blocking pool. TLS verification is
+    /// performed by the PostgreSQL adapter; no plaintext fallback is permitted.
+    pub(crate) async fn postgres_tls(
+        url: String,
+        root_ca_pem: Option<Vec<u8>>,
+        pool_size: usize,
+        acquire_timeout: Duration,
+        operation_timeout: Duration,
+        statement_timeout: Duration,
+        lock_timeout: Duration,
+    ) -> Result<Self, BlockingStoreError> {
+        validate_postgres_policy(
+            pool_size,
+            acquire_timeout,
+            operation_timeout,
+            statement_timeout,
+            lock_timeout,
+        )?;
+        let reaper = PostgresDropReaper::new()?;
+        let build_reaper = reaper.clone();
+        let stores = tokio::task::spawn_blocking(move || {
+            (0..pool_size)
+                .map(|_| {
+                    PostgresCommandStore::connect_tls_with_timeouts(
+                        &url,
+                        root_ca_pem.as_deref(),
                         statement_timeout,
                         lock_timeout,
                     )
@@ -328,6 +365,42 @@ impl BlockingStoreExecutor {
         })
         .await
     }
+}
+
+fn validate_postgres_policy(
+    pool_size: usize,
+    acquire_timeout: Duration,
+    operation_timeout: Duration,
+    statement_timeout: Duration,
+    lock_timeout: Duration,
+) -> Result<(), BlockingStoreError> {
+    if pool_size == 0 {
+        return Err(BlockingStoreError::Configuration(
+            "PostgreSQL pool size must be greater than zero".to_owned(),
+        ));
+    }
+    if acquire_timeout.is_zero()
+        || operation_timeout.is_zero()
+        || statement_timeout.is_zero()
+        || lock_timeout.is_zero()
+    {
+        return Err(BlockingStoreError::Configuration(
+            "PostgreSQL acquire/operation/statement/lock timeouts must be greater than zero"
+                .to_owned(),
+        ));
+    }
+    if statement_timeout >= operation_timeout {
+        return Err(BlockingStoreError::Configuration(
+            "PostgreSQL statement timeout must be shorter than the outer operation timeout"
+                .to_owned(),
+        ));
+    }
+    if lock_timeout > statement_timeout {
+        return Err(BlockingStoreError::Configuration(
+            "PostgreSQL lock timeout must not exceed statement timeout".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 fn run_operation<R, F>(
