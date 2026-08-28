@@ -639,7 +639,9 @@ impl AnalyticsEngine {
 
         let column_count = rows
             .as_ref()
-            .ok_or_else(|| AideMemoError::Internal("failed to get statement reference".to_string()))?
+            .ok_or_else(|| {
+                AideMemoError::Internal("failed to get statement reference".to_string())
+            })?
             .column_count();
 
         let mut results = Vec::new();
