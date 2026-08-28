@@ -426,18 +426,18 @@ jobs:
         if: steps.detect.outputs.exists == 'true'
         run: |
           echo "Checking aidememo-core with --features ${{ matrix.feature }}..."
-          cargo check -p aidememo-core --features ${{ matrix.feature }}
+          cargo check -p aidememo-core --features "${{ matrix.feature }}"
           echo "Checking aidememo-cli with --features ${{ matrix.feature }}..."
-          cargo check -p aidememo-cli --features ${{ matrix.feature }}
+          cargo check -p aidememo-cli --features "${{ matrix.feature }}"
 
       # When the feature exists, test it. This must succeed for the job to pass.
       - name: Test ${{ matrix.feature }} feature
         if: steps.detect.outputs.exists == 'true'
         run: |
           echo "Testing aidememo-core with --features ${{ matrix.feature }}..."
-          cargo test -p aidememo-core --features ${{ matrix.feature }}
+          cargo test -p aidememo-core --features "${{ matrix.feature }}"
           echo "Testing aidememo-cli with --features ${{ matrix.feature }}..."
-          cargo test -p aidememo-cli --features ${{ matrix.feature }}
+          cargo test -p aidememo-cli --features "${{ matrix.feature }}"
 
       # Verify that when the feature exists, tests actually ran. This prevents
       # silent passes when the skip logic is broken.
