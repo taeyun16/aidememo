@@ -64,6 +64,7 @@ python3 scripts/docs-site-e2e.py
 | `aidememo overview` | 익숙하지 않은 저장소의 첫 인상 snapshot 생성 |
 | `aidememo consolidate` | 생명주기 관리를 위해 팩트 중복 제거, 만료, GAC clustering |
 | `aidememo auth` | HTTP MCP bearer-token credential 생성, 저장, 목록, 삭제 |
+| `aidememo postgres` | PostgreSQL 전용 논리적 백업, 복원, 테넌트 내보내기 및 테넌트 삭제 작업 |
 
 ## CLI 하위 명령
 
@@ -92,6 +93,7 @@ python3 scripts/docs-site-e2e.py
 | 워크플로 | `aidememo workflow start` |
 | 프로필 아티팩트 | `aidememo profile export` |
 | 인증 | `aidememo auth generate`, `aidememo auth login`, `aidememo auth logout`, `aidememo auth list` |
+|| PostgreSQL 작업 | `aidememo postgres backup-create`, `aidememo postgres backup-restore`, `aidememo postgres tenant-export`, `aidememo postgres tenant-delete` |
 
 ## MCP 도구
 
