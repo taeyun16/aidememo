@@ -347,10 +347,14 @@ fn current_epoch_ms() -> u64 {
 
 fn sanitize_database_url(url: &str) -> String {
     // Remove password from URL for logging
-    url.split('@')
-        .next_back()
-        .map(|s| format!("postgres://<credentials>@{}", s))
-        .unwrap_or_else(|| "postgres://<redacted>".to_string())
+    if url.contains('@') {
+        url.split('@')
+            .next_back()
+            .map(|s| format!("postgres://<credentials>@{}", s))
+            .unwrap_or_else(|| "postgres://<redacted>".to_string())
+    } else {
+        "postgres://<redacted>".to_string()
+    }
 }
 
 #[cfg(test)]
