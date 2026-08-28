@@ -23,7 +23,7 @@ semantic-adapt = ["semantic"]
 fastembed = ["semantic", "dep:fastembed"]
 parallel = ["rayon"]
 remote = ["oneio"]
-s3 = ["sqlite", "dep:aws-config", "aws-sdk-s3", "aws-credential-types", "tokio/full", "zstd"]
+s3 = ["sqlite", "dep:aws-config", "aws-sdk-s3", "tokio/full", "zstd"]
 sqlite = ["dep:rusqlite"]
 # `analytics` opts the user into DuckDB-backed OLAP analytics engine.
 # Derived projection rebuilt from canonical facts/entities/relations.
@@ -31,9 +31,6 @@ sqlite = ["dep:rusqlite"]
 analytics = ["dep:duckdb"]
 
 [dependencies]
-# CLI 파싱
-bpaf = { version = "0.9", features = ["derive"] }
-
 # 직렬화
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -61,8 +58,6 @@ trigram = "0.4"
 # ID 생성
 ulid = { version = "1.1", features = ["serde"] }
 
-# 테이블 출력
-comfy-table = "7.0"
 chrono = "0.4"
 
 # Layer 1 deterministic structured-fact extraction. Each crate is
@@ -73,7 +68,6 @@ chrono = "0.4"
 regex = "1.10"
 interim = { version = "0.2", features = ["chrono_0_4"] }  # English NL dates with anchor
 fundu = "2.0"              # Duration normalization "1.5 weeks" → seconds
-rusty-money = "0.4"        # Currency parsing "$1,200.50" → typed Money
 
 # 시맨틱 검색 (선택)
 # Official Model2Vec Rust implementation. Kept as an optional dependency behind
@@ -134,12 +128,9 @@ tokio = { version = "1.35", features = ["full"], optional = true }
 
 # 에러 처리
 thiserror = "1.0"
-anyhow = "1.0"
 
 # 공통
-once_cell = "1.19"
 parking_lot = "0.12"
-bytes = "1.5"
 tempfile = "3.10"
 walkdir = "2.4"
 
@@ -150,4 +141,3 @@ tracing = "0.1"
 
 [dev-dependencies]
 tempfile = "3.10"
-proptest = "1.4"
