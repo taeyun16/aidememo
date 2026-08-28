@@ -1,0 +1,11 @@
+# Build configuration for aidememo
+# Fixes C++ compilation issues on Ubuntu/Debian systems where rust-lld cannot
+# find libstdc++ without an explicit search path.
+
+[build]
+# Use GCC toolchain for C/C++ dependencies (esaxx-rs, onig_sys, etc.)
+rustflags = ["-C", "link-arg=-L/usr/lib/gcc/x86_64-linux-gnu/13"]
+
+[env]
+CC = "gcc"
+CXX = "g++"

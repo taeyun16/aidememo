@@ -717,6 +717,7 @@ pub fn build_cli() -> OptionParser<Args> {
     })
     .to_options()
     .descr("AideMemo: Structured index engine for LLM wikis")
+    .version(env!("CARGO_PKG_VERSION"))
 }
 
 fn singleton_list(parser: impl Parser<Option<String>>) -> impl Parser<Option<Vec<String>>> {
