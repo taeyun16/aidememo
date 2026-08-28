@@ -637,13 +637,17 @@ impl AnalyticsEngine {
             .query(params)
             .map_err(|e| AideMemoError::Internal(format!("query execution failed: {}", e)))?;
 
+        let column_count = rows
+            .as_ref()
+            .ok_or_else(|| AideMemoError::Internal("failed to get statement reference".to_string()))?
+            .column_count();
+
         let mut results = Vec::new();
 
         while let Some(row) = rows
             .next()
             .map_err(|e| AideMemoError::Internal(format!("failed to read row: {}", e)))?
         {
-            let column_count = row.column_count();
             let mut row_data = Vec::with_capacity(column_count);
             for i in 0..column_count {
                 let value: Option<String> = row.get(i).ok();
