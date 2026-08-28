@@ -100,8 +100,7 @@ pub struct ToolCallResult {
     pub is_error: Option<bool>,
 }
 
-#[derive(Debug, Serialize)]
-#[derive(Default)]
+#[derive(Debug, Serialize, Default)]
 pub struct ContentBlock {
     #[serde(rename = "type")]
     pub block_type: String,
