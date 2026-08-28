@@ -4,6 +4,7 @@
 //! Server HTTP use is mediated by the bounded blocking executor in
 //! `aidememo-server`; this adapter remains synchronous and transport-agnostic.
 
+pub mod backup;
 mod identity;
 
 use aidememo_domain::{
@@ -13,7 +14,9 @@ use aidememo_domain::{
     MaterializedChangeBatch, MutationCommand, ProjectEpoch, ProjectScope, ProjectSequence,
     ProjectSnapshot, ResourceId, ResourceKind, ResourceRef, ResourceState, Revision, SourceId,
 };
-use postgres::{Client, GenericClient, IsolationLevel, NoTls, Row, Transaction};
+use native_tls::{Certificate, TlsConnector};
+use postgres::{Client, GenericClient, IsolationLevel, NoTls, Row, Transaction, config::SslMode};
+use postgres_native_tls::MakeTlsConnector;
 use std::{
     sync::{Mutex, MutexGuard},
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -74,7 +77,54 @@ impl PostgresCommandStore {
         statement_timeout: Duration,
         lock_timeout: Duration,
     ) -> Result<Self, DomainError> {
-        let mut client = Client::connect(url, NoTls).map_err(|error| storage("connect", error))?;
+        let client = Client::connect(url, NoTls).map_err(|error| storage("connect", error))?;
+        Self::from_connected_client(client, statement_timeout, lock_timeout)
+    }
+
+    /// Connect with certificate- and hostname-verified TLS and finite server-side timeouts.
+    ///
+    /// The PostgreSQL URL is parsed into [`postgres::Config`] and its SSL mode is
+    /// forcibly set to [`SslMode::Require`]. This prevents a URL-provided
+    /// `sslmode=disable`/`prefer` value from downgrading the transport. The
+    /// platform trust store is used by default; an optional PEM root certificate
+    /// may be added for private/internal CAs. Certificate and hostname validation
+    /// are never disabled.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stable storage error when URL parsing, CA parsing, TLS connector
+    /// construction, TLS connection, timeout configuration, or migration fails.
+    pub fn connect_tls_with_timeouts(
+        url: &str,
+        root_ca_pem: Option<&[u8]>,
+        statement_timeout: Duration,
+        lock_timeout: Duration,
+    ) -> Result<Self, DomainError> {
+        let mut config = url
+            .parse::<postgres::Config>()
+            .map_err(|error| storage("tls_config_parse", error))?;
+        config.ssl_mode(SslMode::Require);
+
+        let mut builder = TlsConnector::builder();
+        if let Some(root_ca_pem) = root_ca_pem {
+            let certificate = Certificate::from_pem(root_ca_pem)
+                .map_err(|error| storage("tls_root_ca_parse", error))?;
+            builder.add_root_certificate(certificate);
+        }
+        let connector = builder
+            .build()
+            .map_err(|error| storage("tls_connector_build", error))?;
+        let client = config
+            .connect(MakeTlsConnector::new(connector))
+            .map_err(|error| storage("tls_connect", error))?;
+        Self::from_connected_client(client, statement_timeout, lock_timeout)
+    }
+
+    fn from_connected_client(
+        mut client: Client,
+        statement_timeout: Duration,
+        lock_timeout: Duration,
+    ) -> Result<Self, DomainError> {
         configure_timeout(&mut client, "statement_timeout", statement_timeout)?;
         configure_timeout(&mut client, "lock_timeout", lock_timeout)?;
         let store = Self {
@@ -332,6 +382,115 @@ impl PostgresCommandStore {
             });
         }
         Ok(receipt)
+    }
+
+    /// Export all resources for a specific tenant.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stable storage error when PostgreSQL cannot query the resources.
+    pub fn export_tenant_resources(
+        &self,
+        tenant_id: &aidememo_domain::TenantId,
+    ) -> Result<Vec<serde_json::Value>, DomainError> {
+        let mut client = self.lock_client()?;
+        let rows = client
+            .query(
+                "SELECT project_id, resource_kind, resource_id, revision, body
+                 FROM ssot_resources
+                 WHERE tenant_id = $1
+                 ORDER BY project_id, resource_kind, resource_id",
+                &[&tenant_id.as_str()],
+            )
+            .map_err(|error| storage("tenant_export", error))?;
+
+        let resources: Result<Vec<_>, _> = rows
+            .iter()
+            .map(|row| {
+                let project_id: String = row.get(0);
+                let resource_kind: String = row.get(1);
+                let resource_id: String = row.get(2);
+                let revision: i64 = row.get(3);
+                let body: Option<Vec<u8>> = row.get(4);
+                Ok(serde_json::json!({
+                    "project_id": project_id,
+                    "resource_kind": resource_kind,
+                    "resource_id": resource_id,
+                    "revision": revision,
+                    "body": body.and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok()),
+                }))
+            })
+            .collect();
+        resources
+    }
+
+    /// Delete all data for a specific tenant.
+    ///
+    /// **WARNING**: This is a destructive operation. All resources, receipts, changes,
+    /// and audit records for the tenant will be permanently deleted.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stable storage error when PostgreSQL cannot delete the data.
+    pub fn delete_tenant_data(
+        &self,
+        tenant_id: &aidememo_domain::TenantId,
+    ) -> Result<backup::TenantDeleteReport, DomainError> {
+        let mut client = self.lock_client()?;
+        let mut tx = client
+            .transaction()
+            .map_err(|error| storage("tenant_delete_begin", error))?;
+
+        let deleted_resources = tx
+            .execute(
+                "DELETE FROM ssot_resources WHERE tenant_id = $1",
+                &[&tenant_id.as_str()],
+            )
+            .map_err(|error| storage("tenant_delete_resources", error))?;
+
+        let deleted_receipts = tx
+            .execute(
+                "DELETE FROM ssot_receipts WHERE tenant_id = $1",
+                &[&tenant_id.as_str()],
+            )
+            .map_err(|error| storage("tenant_delete_receipts", error))?;
+
+        let deleted_changes = tx
+            .execute(
+                "DELETE FROM ssot_changes WHERE tenant_id = $1",
+                &[&tenant_id.as_str()],
+            )
+            .map_err(|error| storage("tenant_delete_changes", error))?;
+
+        // Also delete audit records and projects
+        tx.execute(
+            "DELETE FROM ssot_audit WHERE tenant_id = $1",
+            &[&tenant_id.as_str()],
+        )
+        .map_err(|error| storage("tenant_delete_audit", error))?;
+
+        tx.execute(
+            "DELETE FROM ssot_projects WHERE tenant_id = $1",
+            &[&tenant_id.as_str()],
+        )
+        .map_err(|error| storage("tenant_delete_projects", error))?;
+
+        // Delete handoff index entries
+        tx.execute(
+            "DELETE FROM ssot_handoff_index WHERE tenant_id = $1",
+            &[&tenant_id.as_str()],
+        )
+        .map_err(|error| storage("tenant_delete_handoff_index", error))?;
+
+        tx.commit()
+            .map_err(|error| storage("tenant_delete_commit", error))?;
+
+        Ok(backup::TenantDeleteReport {
+            tenant_id: tenant_id.to_string(),
+            deleted_resources: deleted_resources as usize,
+            deleted_receipts: deleted_receipts as usize,
+            deleted_changes: deleted_changes as usize,
+        })
     }
 }
 

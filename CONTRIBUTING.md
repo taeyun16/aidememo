@@ -26,7 +26,15 @@ not have permission to redistribute.
 
 ## Setup
 
+**System dependencies**: AideMemo has C++ dependencies (esaxx-rs, onig_sys) that require a C++ compiler. On Ubuntu/Debian, install `build-essential`. On macOS, install Xcode Command Line Tools (`xcode-select --install`). The repository includes `.cargo/config.toml` to configure the toolchain automatically.
+
 ```bash
+# Ubuntu/Debian
+sudo apt install build-essential
+
+# macOS (if needed)
+xcode-select --install
+
 # Recommended: installs the same toolchain versions used by CI.
 mise install
 mise run ci-lint
