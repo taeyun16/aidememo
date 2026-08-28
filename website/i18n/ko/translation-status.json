@@ -24,7 +24,8 @@
     "SHARED_MEMORY": "8d4a25a7eed89694cc7b92fa2b89090286045ccb10d45a18b6c34453b192ffbe"
   },
   "fallback_docs": [
-    "MEASUREMENTS"
+    "MEASUREMENTS",
+    "POSTGRES_BACKUP"
   ],
   "token_parity_docs": [
     "BRANCHES",
