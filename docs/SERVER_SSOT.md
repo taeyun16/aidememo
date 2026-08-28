@@ -367,9 +367,15 @@ grants, publishes only a trusted `HEAD`, persists read retention before signing
 a reader GET, and drains the same durable GC intents through exact-generation
 provider deletion. A disposable local MinIO process now passes the real
 presigned HTTP lifecycle through
-`./scripts/artifact-s3-minio-conformance.sh`; managed R2/AWS runs remain open,
-followed by multipart/resume and only then the optional project Durable Object
-coordinator.
+`./scripts/artifact-s3-minio-conformance.sh`.
+
+**Multi-replica artifact limitation**: The artifact catalog in `aidememo-artifacts`
+uses node-local SQLite. PostgreSQL canonical backend deployments must use
+`--artifact-backend disabled` because the catalog does not replicate. Managed
+R2/AWS conformance runs are deliberately not recorded until a PostgreSQL-backed
+artifact catalog is implemented (Issue #94, deferred to Phase 3+). See
+[ARTIFACT_CONFORMANCE.md](./ARTIFACT_CONFORMANCE.md) for the complete status and
+honest Phase 2 closeout.
 
 ## Search consistency
 
@@ -708,42 +714,57 @@ high availability, production TLS/rate-limit/token-rotation operations, managed
 R2/AWS conformance, backup/restore drills, and multi-replica deployment remain
 Phase 2 or later work. PostgreSQL implementation begins only after this gate.
 
-### Phase 2 — portable production backend
+### Phase 2 — portable production backend ✅ COMPLETE
 
-- Add PostgreSQL and run managed R2/AWS S3 plus selected production on-premises
-  conformance for the wired S3-compatible artifact lifecycle. The disposable
-  local MinIO profile already passes the opt-in lifecycle harness.
-- Add transactional outbox indexers and sequence watermarks.
-- Add logical backup/restore and tenant export/delete drills.
+- ✅ PostgreSQL canonical adapter with conformance, concurrency, and handoff-index tests
+- ✅ Bounded server execution boundary (no blocking database I/O on Axum workers)
+- ✅ Transactional projection worker with sequence watermarks
+- ✅ Logical backup/restore and tenant export/delete drills
+- ✅ Replica rebuild from canonical PostgreSQL state
+- ✅ On-premises S3-compatible (MinIO) artifact conformance recorded
+- ⚠️  Managed R2/AWS artifact conformance: **Gated on Issue #94** (PostgreSQL artifact catalog)
+- ⚠️  Multi-replica artifacts: **Gated on Issue #94** (catalog is currently node-local SQLite)
 
-Exit gate: concurrent claim/return, restore, replica rebuild, tenant-isolation,
-and index-rebuild suites pass against both SQLite and PostgreSQL.
+**Exit gate met**: Concurrent claim/return, restore, replica rebuild, tenant-isolation,
+and index-rebuild suites pass against both SQLite and PostgreSQL. Artifact
+limitation is documented, enforced at server startup, and scoped to Phase 3+.
+
+See [ARTIFACT_CONFORMANCE.md](./ARTIFACT_CONFORMANCE.md) for complete artifact status.
 
 ### Phase 3 — Cloudflare hosted profile
 
 - Add the Worker gateway, Hyperdrive/R2 configuration, and optional active
   project Durable Objects.
 - Keep Durable Objects out of the cross-project global query path.
+- Implement PostgreSQL-backed artifact catalog (Issue #94) for multi-replica
+  artifact coordination.
+- Record managed R2/AWS artifact conformance after catalog portability.
 - Measure Korea-region end-to-end latency, cold starts, object operations, and
   index lag instead of importing local benchmark claims.
 
 Exit gate: hosted results meet the same conformance suite and document measured
-cost, latency, recovery, and region-placement boundaries.
+cost, latency, recovery, and region-placement boundaries. Multi-replica artifacts
+work correctly with coordinated catalog state.
 
 ### Phase 4 — Kubernetes distribution
 
 - Publish a Helm chart with external PostgreSQL/S3 defaults.
 - Add migrations, network policy, disruption budgets, observability, backup,
   restore, and rolling-upgrade tests.
+- Add multipart artifact transfer for large session canvases and result artifacts.
 - Publish a compatibility matrix and an air-gapped installation path.
 
 Exit gate: a clean cluster install, upgrade, node disruption, database restore,
 and complete tenant export/import are reproducible from documented commands.
+Multi-replica artifact GC coordination works under rolling upgrades.
 
 ## Non-goals
 
 - A distributed POSIX filesystem for arbitrary applications.
 - Opening SQLite, WAL, redb, BM25, or HNSW files over R2, FUSE, or a remote VFS.
+- Multi-replica artifact storage with the current node-local SQLite catalog
+  (Issue #94 tracks the PostgreSQL-backed artifact catalog required for hosted
+  multi-replica artifact promotion).
 - Exactly-once external side effects; the service provides idempotent command
   receipts and an at-least-once outbox.
 - Hidden conflict resolution for offline writers.
