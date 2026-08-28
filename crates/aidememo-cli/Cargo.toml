@@ -17,6 +17,9 @@ aidememo-client = { version = "0.1.0", path = "../aidememo-client" }
 aidememo-core = { version = "0.1.0", path = "../aidememo-core", default-features = false, features = ["semantic", "semantic-adapt"] }
 aidememo-domain = { version = "0.1.0", path = "../aidememo-domain" }
 
+# DuckDB — required by analytics feature for OLAP projection
+duckdb = { version = "1.1.5", optional = true }
+
 # Profile-mode measurement for `aidememo bench`.
 # - memory-stats: cross-platform RSS (includes virtual mappings — useful as a
 #   broad upper bound but overstates real memory on mmap-heavy workloads).
@@ -89,7 +92,7 @@ default = ["sqlite"]
 sqlite = ["aidememo-core/sqlite"]
 redb = ["aidememo-core/redb"]
 s3 = ["aidememo-core/s3"]
-analytics = ["aidememo-core/analytics"]
+analytics = ["aidememo-core/analytics", "dep:duckdb"]
 fastembed = ["aidememo-core/fastembed"]
 # Replace the GlobalAlloc with dhat's instrumented allocator. The bin
 # emits dhat-heap.json on exit (or when the Profiler guard drops),

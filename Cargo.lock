@@ -109,6 +109,7 @@ dependencies = [
  "crossterm",
  "dhat",
  "dirs",
+ "duckdb",
  "libc",
  "mach2",
  "memory-stats",
