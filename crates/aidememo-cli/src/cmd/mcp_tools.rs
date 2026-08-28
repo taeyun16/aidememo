@@ -100,7 +100,7 @@ pub struct ToolCallResult {
     pub is_error: Option<bool>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Default)]
 pub struct ContentBlock {
     #[serde(rename = "type")]
     pub block_type: String,
@@ -4607,6 +4607,8 @@ fn call_tool(
         "aidememo_fact_archive" => tool_fact_archive(args, wiki),
         "aidememo_fact_edit" => tool_fact_edit(args, wiki),
         "aidememo_aggregate" => tool_aggregate(args, wiki),
+        #[cfg(feature = "analytics")]
+        "aidememo_analytics_query" => tool_analytics_query(args, wiki),
         _ => Err(format!("Unknown tool: {}", name)),
     }
 }
@@ -4680,6 +4682,53 @@ pub fn dispatch_with_remote_profile(
             &format!("Method not found: {}", req.method),
         )),
     }
+}
+
+#[cfg(feature = "analytics")]
+fn tool_analytics_query(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, String> {
+    let sql = args
+        .get("sql")
+        .and_then(|v| v.as_str())
+        .ok_or("sql required")?;
+    let params: Vec<String> = args
+        .get("params")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let engine_guard = wiki
+        .analytics_engine()
+        .map_err(|e| format!("failed to open analytics engine: {}", e))?;
+    let engine = engine_guard
+        .as_ref()
+        .ok_or("analytics engine not initialized")?;
+
+    // Convert Vec<String> to &[&dyn ToSql]
+    let param_refs: Vec<&dyn duckdb::ToSql> =
+        params.iter().map(|s| s as &dyn duckdb::ToSql).collect();
+    let rows = engine
+        .query(sql, &param_refs)
+        .map_err(|e| format!("analytics query failed: {}", e))?;
+
+    let payload = json!({
+        "sql": sql,
+        "params": params,
+        "row_count": rows.len(),
+        "rows": rows,
+    });
+
+    Ok(ToolCallResult {
+        content: vec![ContentBlock {
+            block_type: "text".into(),
+            text: Some(serde_json::to_string_pretty(&payload).unwrap()),
+            ..Default::default()
+        }],
+        is_error: None,
+    })
 }
 
 #[cfg(test)]

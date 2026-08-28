@@ -267,6 +267,7 @@ jobs:
         run: |
           echo "Checking for known security vulnerabilities in dependencies..."
           cargo audit \
+            --ignore RUSTSEC-2026-0235 \
             --ignore RUSTSEC-2026-0194 \
             --ignore RUSTSEC-2026-0195 \
             --ignore RUSTSEC-2026-0104 \

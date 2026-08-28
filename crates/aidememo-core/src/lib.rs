@@ -4,6 +4,8 @@
 compile_error!("aidememo-core requires at least one storage backend feature: `sqlite` or `redb`.");
 
 pub mod adapt;
+#[cfg(feature = "analytics")]
+pub mod analytics;
 pub mod archive;
 pub mod backend;
 pub mod backup;
@@ -130,6 +132,11 @@ pub struct AideMemo {
     /// True for cold-tier AideMemos so they refuse to recursively
     /// open another cold (would create nested cold-tier files).
     is_cold: bool,
+    /// Analytics engine: DuckDB-backed OLAP projection.
+    /// Derived and rebuildable from canonical store.
+    /// Lazily initialized on first use.
+    #[cfg(feature = "analytics")]
+    analytics_engine: parking_lot::RwLock<Option<analytics::AnalyticsEngine>>,
 }
 
 fn workflow_resume_exports(session_id: &str, source_id: Option<&str>) -> String {
@@ -186,6 +193,8 @@ impl AideMemo {
             reranker: OnceLock::new(),
             cold_sibling: parking_lot::Mutex::new(None),
             is_cold,
+            #[cfg(feature = "analytics")]
+            analytics_engine: parking_lot::RwLock::new(None),
         })
     }
 
@@ -250,6 +259,51 @@ impl AideMemo {
     /// `Store::fact_upsert_record`.
     pub(crate) fn bm25_mark_dirty_pub(&self) {
         self.bm25_mark_dirty();
+    }
+
+    /// Lazy-initialize analytics engine if enabled and not yet open.
+    /// Returns the analytics path (sidecar next to the main store).
+    #[cfg(feature = "analytics")]
+    fn ensure_analytics_engine(&self) -> Result<()> {
+        let mut guard = self.analytics_engine.write();
+        if guard.is_some() {
+            return Ok(());
+        }
+
+        let analytics_path = self.store_path.with_extension("analytics.duckdb");
+        let engine = analytics::AnalyticsEngine::open(&analytics_path)?;
+        *guard = Some(engine);
+        Ok(())
+    }
+
+    /// Sync analytics engine from canonical store (incremental).
+    /// No-op if analytics feature is disabled or engine not initialized.
+    #[cfg(feature = "analytics")]
+    fn analytics_sync(&self) -> Result<()> {
+        // Ensure engine is initialized
+        self.ensure_analytics_engine()?;
+
+        let mut guard = self.analytics_engine.write();
+        if let Some(engine) = guard.as_mut() {
+            let store = self.store.read();
+            engine.incremental_sync(&*store)?;
+        }
+        Ok(())
+    }
+
+    /// Stub for analytics sync when feature is disabled.
+    #[cfg(not(feature = "analytics"))]
+    fn analytics_sync(&self) -> Result<()> {
+        Ok(())
+    }
+
+    /// Public analytics engine accessor for CLI/MCP tools.
+    #[cfg(feature = "analytics")]
+    pub fn analytics_engine(
+        &self,
+    ) -> Result<parking_lot::RwLockWriteGuard<'_, Option<analytics::AnalyticsEngine>>> {
+        self.ensure_analytics_engine()?;
+        Ok(self.analytics_engine.write())
     }
 
     /// Hand the inner store Arc to a same-crate caller. Today only
@@ -839,7 +893,10 @@ impl AideMemo {
 
     /// Backwards-compatible alias for add_fact.
     pub fn fact_add(&self, input: FactInput) -> Result<FactId> {
-        self.add_fact(input)
+        let id = self.add_fact(input)?;
+        // Sync analytics after canonical write
+        let _sync_result = self.analytics_sync();
+        Ok(id)
     }
 
     /// Insert N facts in one backend transaction when supported. Use this for
@@ -864,6 +921,8 @@ impl AideMemo {
         // 1 or 1000 facts; the next search rebuilds against the
         // post-batch state.
         self.bm25_mark_dirty();
+        // Sync analytics after canonical batch write
+        let _sync_result = self.analytics_sync();
         Ok(ids)
     }
 

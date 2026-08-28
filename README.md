@@ -152,6 +152,10 @@ placement boundaries.
 
 Featured use case: [share one project memory across isolated Codex profiles](docs/CODEX_MULTI_PROFILE.md).
 
+### Default Install (SQLite, no external dependencies)
+
+The default binary includes SQLite (bundled) and runs with no C++ compiler required:
+
 ```bash
 # Install the prebuilt CLI and MCP server (macOS / Linux, arm64 / x64)
 curl -fsSL https://raw.githubusercontent.com/taeyun16/aidememo/main/scripts/install.sh | bash
@@ -166,10 +170,26 @@ cargo install --git https://github.com/taeyun16/aidememo aidememo-cli
 cargo install --path crates/aidememo-cli
 ```
 
-The binary is `aidememo`. Add `~/.cargo/bin` to your `PATH` if needed. CI and
-local development versions are pinned in [`mise.toml`](mise.toml); run
-`mise install` from a checkout to use the same Rust, Node, Python, Go, and
-Elixir/Erlang versions. The workspace MSRV is `1.95`.
+The binary is `aidememo`. Add `~/.cargo/bin` to your `PATH` if needed.
+
+### Optional Features
+
+Build with additional features as needed:
+
+```bash
+# Optional redb backend (single-writer file lock)
+cargo install --path crates/aidememo-cli --features redb
+
+# Optional S3 backup/restore (AWS S3, R2, MinIO)
+cargo install --path crates/aidememo-cli --features s3
+
+# Optional fastembed (ONNX-backed BGE models)
+cargo install --path crates/aidememo-cli --features fastembed
+```
+
+**In-flight feature (PR [#100](https://github.com/taeyun16/aidememo/pull/100), not on main):** DuckDB analytics as a derived OLAP projection. When available, build with `--features analytics`. **Requires a C++ toolchain** (`build-essential`/`g++` on Linux, Xcode Command Line Tools on macOS) because bundled DuckDB compiles native code.
+
+The workspace MSRV is `1.95`. CI and local development versions are pinned in [`mise.toml`](mise.toml); run `mise install` from a checkout to use the same Rust, Node, Python, Go, and Elixir/Erlang versions.
 
 The public packages are available as `aidememo-cli` on
 [crates.io](https://crates.io/crates/aidememo-cli),
@@ -753,18 +773,19 @@ and temporal memory semantics, not a SOTA benchmark claim.
 
 ## Feature Map
 
-| Area | Features |
-|---|---|
-| Retrieval | BM25, semantic HNSW, hybrid RRF, optional TEI / `lfm-sidecar`, fastembed and rerank paths |
-| Graph | entities, facts, relations, traversal, shortest path, Mermaid / DOT export |
-| Time | `supersede`, `current_only`, `as_of`, archive / cold tier |
-| Agent tools | 29 MCP tools including `aidememo_workflow_start`, `aidememo_handoff`, `aidememo_handoff_inbox`, `aidememo_context`, `aidememo_query`, `aidememo_aggregate`, `aidememo_fact_add_many` |
-| Capture | `aidememo_extract`, pending review queue, review-only LFM LoRA `fact_type_hint` shadow path, opt-in Hermes/OpenClaw capture adapter |
-| Artifacts | `aidememo session canvas`, `aidememo session handoff`, `aidememo profile export` for bounded, auditable Markdown views over typed facts |
-| Ops | `doctor` / MCP `aidememo_doctor`, `overview`, `bench`, `vector-rebuild`, `consolidate`, `auto-relate` |
-| Sharing | `source_id`, installation-scoped `actor_id`, pull-based session assignments, multi-project stores, stdio/HTTP MCP, daemon discovery, branch logs |
-| Code-first composition | `aidememo-agent-sdk` with `Memory.open`, `search_rows`, `coverage_by`, `aggregate_many`, `remember`, and handoff send/inbox/accept/return/show methods |
-| Bindings | Python, Node, Elixir, C |
+| Area | Features | Status |
+|---|---|---|
+| Retrieval | BM25, semantic HNSW, hybrid RRF, optional TEI / `lfm-sidecar`, fastembed and rerank paths | Shipped |
+| Graph | entities, facts, relations, traversal, shortest path, Mermaid / DOT export | Shipped |
+| Time | `supersede`, `current_only`, `as_of`, archive / cold tier | Shipped |
+| Analytics | DuckDB-based OLAP projection for fast aggregations, time-range scans, graph analytics (PR [#100](https://github.com/taeyun16/aidememo/pull/100)) | Draft — not on main |
+| Agent tools | 29 MCP tools including `aidememo_workflow_start`, `aidememo_handoff`, `aidememo_handoff_inbox`, `aidememo_context`, `aidememo_query`, `aidememo_aggregate`, `aidememo_fact_add_many` | Shipped |
+| Capture | `aidememo_extract`, pending review queue, review-only LFM LoRA `fact_type_hint` shadow path, opt-in Hermes/OpenClaw capture adapter | Shipped |
+| Artifacts | `aidememo session canvas`, `aidememo session handoff`, `aidememo profile export` for bounded, auditable Markdown views over typed facts | Shipped |
+| Ops | `doctor` / MCP `aidememo_doctor`, `overview`, `bench`, `vector-rebuild`, `consolidate`, `auto-relate` | Shipped |
+| Sharing | `source_id`, installation-scoped `actor_id`, pull-based session assignments, multi-project stores, stdio/HTTP MCP, daemon discovery, branch logs | Shipped |
+| Code-first composition | `aidememo-agent-sdk` with `Memory.open`, `search_rows`, `coverage_by`, `aggregate_many`, `remember`, and handoff send/inbox/accept/return/show methods | Shipped |
+| Bindings | Python, Node, Elixir, C | Shipped |
 
 ## CLI Reference
 
@@ -814,15 +835,31 @@ g = aidememo.AideMemo("./_meta/wiki.redb", backend="redb")
 
 ## Architecture
 
+**`aidememo-core` is the canonical Single Source of Truth (SSOT) for all writes.** It maintains a write ledger with typed facts, entities, relations, and temporal validity windows. All persistence backends sync from this canonical store.
+
+### Storage Backends
+
+| Backend | Status | Use When |
+|---|---|---|
+| **SQLite** (default) | Shipped | Local-first default path. Bundled `libsqlite3`, no external dependencies. Multi-agent writes via busy timeout or shared `mcp-serve` daemon. |
+| **redb** (optional Cargo feature) | Shipped | Optional Rust-native embedded store. Single-writer file lock; use shared `mcp-serve` for concurrent agents. |
+| **PostgreSQL** | Phase 2 in flight ([#87](https://github.com/taeyun16/aidememo/pull/87), [#94](https://github.com/taeyun16/aidememo/pull/94), [#98](https://github.com/taeyun16/aidememo/pull/98)) | Production multi-tenant server backend. Not finished; docs will update when Phase 2 merges. |
+| **DuckDB analytics** | Draft ([#100](https://github.com/taeyun16/aidememo/pull/100)) | Derived OLAP projection for fast aggregations and graph analytics. Not a write ledger — syncs incrementally from canonical store. Requires C++ toolchain. |
+
+BM25 and HNSW semantic indexes follow the same pattern: derived projections that rebuild from the canonical store. Writes always go through `aidememo-core` first, then sync to secondary indexes and projections.
+
+### Crates
+
 | Crate | Purpose |
 |---|---|
-| `aidememo-core` | SQLite default store, optional redb store, ingest, BM25, semantic search, graph, lint, lifecycle |
+| `aidememo-core` | Canonical SSOT: write ledger, ingest, BM25, semantic search, graph, lint, lifecycle |
 | `aidememo-cli` | `aidememo` binary: CLI, stdio MCP, HTTP/SSE MCP |
 | `aidememo-agent-sdk` | Python composition layer for code-executing agents (Codex, Claude Code, Hermes, CI); uses `aidememo-python` or CLI fallback |
 | `aidememo-python` | PyO3 bindings |
 | `aidememo-napi` | Node.js bindings |
 | `aidememo-nif` | Elixir/Erlang bindings |
 | `aidememo-ffi` | C ABI bindings |
+| `aidememo-domain`, `aidememo-service`, `aidememo-store-local`, `aidememo-server`, `aidememo-client`, `aidememo-artifacts` | Server/SSOT foundations (Phase 2) — see [docs/SERVER_SSOT.md](docs/SERVER_SSOT.md) |
 | `benchmarks` | Rust benchmark binaries and reproducible fixtures |
 
 ## Influences And References
