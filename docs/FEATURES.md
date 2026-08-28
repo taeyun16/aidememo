@@ -91,6 +91,7 @@ python3 scripts/docs-site-e2e.py
 | Workflows | `aidememo workflow start` |
 | Profile artifacts | `aidememo profile export` |
 | Auth | `aidememo auth generate`, `aidememo auth login`, `aidememo auth logout`, `aidememo auth list` |
+| PostgreSQL operations | `aidememo postgres backup-create`, `aidememo postgres backup-restore`, `aidememo postgres tenant-export`, `aidememo postgres tenant-delete` |
 
 ## MCP tools
 
