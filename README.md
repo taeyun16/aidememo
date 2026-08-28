@@ -91,22 +91,18 @@ flowchart TB
         auto_gate -->|weak or CJK| semantic --> ranked
     end
 
-    subgraph optional_models["Opt-in local SLM sidecars - downloaded separately"]
-        lfm_embed["LFM2.5 Embedding 350M<br/>MLX / TEI-compatible"]
-        lfm_rerank["LFM2.5 ColBERT 350M<br/>candidate rerank"]
-        lfm_type["LFM2.5 1.2B + LoRA<br/>fact_type_hint only"]
-        type_review["Pending review<br/>no automatic write"]
+    subgraph optional_models["Opt-in local model sidecars - downloaded separately"]
         privacy_model["OpenAI Privacy Filter<br/>redact / block on write"]
-        lfm_type -. "confidence-gated" .-> type_review
+        external_embed["External embedding provider<br/>TEI-compatible / OpenAI-compatible"]
+        external_rerank["External reranker<br/>TEI-compatible"]
     end
 
     sdk --> core
     mcp --> core
     cli --> core
     bindings --> core
-    lfm_embed -. "optional embedding provider" .-> semantic
-    lfm_rerank -. "optional rerank" .-> ranked
-    write_path -. "reviewed shadow data" .-> lfm_type
+    external_embed -. "optional embedding provider" .-> semantic
+    external_rerank -. "optional rerank" .-> ranked
     privacy_model -. "pre-persistence policy" .-> write_path
 ```
 

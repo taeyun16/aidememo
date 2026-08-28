@@ -32,9 +32,8 @@ flowchart TB
   shadow["선택형 팩트 타입 shadow log<br/>리뷰된 JSONL; 쓰기 변경 없음"]
 
   subgraph optional_models["선택형 로컬 모델 사이드카 - 별도 다운로드"]
-    lfm_embed["LFM2.5 Embedding 350M 4-bit<br/>MLX / TEI 호환 임베딩"]
-    lfm_rerank["LFM2.5 ColBERT 350M 4-bit<br/>후보 재랭킹 실험"]
-    lfm_type["LFM2.5 1.2B Instruct + LoRA<br/>shadow fact_type_hint 전용"]
+    external_embed["외부 임베딩 provider<br/>TEI 호환 / OpenAI 호환"]
+    external_rerank["외부 재랭커<br/>TEI 호환"]
     privacy_model["OpenAI Privacy Filter MLX mxfp4<br/>보고 / 교정 / 차단"]
   end
 
@@ -56,9 +55,8 @@ flowchart TB
   core --> indexes
   cli -. "AIDEMEMO_FACT_TYPE_SHADOW_LOG" .-> shadow
   mcp -. "AIDEMEMO_FACT_TYPE_SHADOW_LOG" .-> shadow
-  lfm_embed -. "model.provider=lfm-sidecar" .-> indexes
-  lfm_rerank -. "선택형 호환 재랭커" .-> indexes
-  shadow -. "오프라인 학습과 평가" .-> lfm_type
+  external_embed -. "model.provider" .-> indexes
+  external_rerank -. "선택형 호환 재랭커" .-> indexes
   privacy_model -. "privacy.provider" .-> core
 ```
 
@@ -112,13 +110,12 @@ flowchart TD
   bm25["BM25 어휘 검색"]
   auto_gate{"어휘 증거가 강한가?"}
   model2vec["model2vec<br/>내장 기본 semantic provider"]
-  lfm_embed["LFM2.5 Embedding 350M 4-bit<br/>선택형 MLX / TEI 사이드카"]
+  external_embed["외부 임베딩 provider<br/>선택형 TEI / OpenAI 호환 사이드카"]
   hnsw["Semantic HNSW 조회"]
   fuse["BM25와 RRF 결합"]
   candidates["후보 팩트"]
   rerank_gate{"rerank.provider가 활성화되었나?"}
   rerank["TEI 호환 후보 재랭킹<br/>실패 시 비치명적 폴백"]
-  lfm_rerank["LFM2.5 ColBERT 350M 4-bit<br/>선택형 검증 경로"]
   graphCtx["선택형 그래프와 최근 컨텍스트"]
   result["순위 팩트와 컨텍스트 팩"]
 
@@ -134,14 +131,13 @@ flowchart TD
   auto_gate -->|예| candidates
   auto_gate -->|약함 또는 CJK이며 semantic 준비됨| hnsw
   model2vec --> hnsw
-  lfm_embed -. "설정된 provider" .-> hnsw
+  external_embed -. "설정된 provider" .-> hnsw
   bm25 --> fuse
   hnsw --> fuse
   fuse --> candidates
   candidates --> rerank_gate
   rerank_gate -->|아니요| graphCtx
   rerank_gate -->|예| rerank
-  lfm_rerank -. "호환 로컬 scorer" .-> rerank
   rerank --> graphCtx
   graphCtx --> result
 ```
@@ -177,7 +173,7 @@ flowchart TD
   rebuild["vector-rebuild --current-only"]
   read["이후 search / query / context"]
   shadow["리뷰된 shadow corpus<br/>명시적 label + hint"]
-  lfm_type["LFM2.5 1.2B Instruct + LoRA<br/>오프라인 classifier"]
+  external_classifier["외부 classifier<br/>오프라인 학습 모델"]
   hint["confidence + margin 기준 fact_type_hint<br/>pending review 전용"]
 
   fact --> classify --> privacy_gate
@@ -196,7 +192,7 @@ flowchart TD
   archive --> read
   rebuild --> read
   hot -. "AIDEMEMO_FACT_TYPE_SHADOW_LOG" .-> shadow
-  shadow --> lfm_type --> hint
+  shadow --> external_classifier --> hint
 ```
 
 팩트는 의도적으로 명시적입니다. 일반 에이전트 루프에서 호출하는 에이전트가
@@ -242,7 +238,7 @@ sequenceDiagram
 | 저장소 디스패치 | `crates/aidememo-core/src/backend.rs`, `sqlite_store.rs`, `store.rs` | [`운영`](OPERATIONS.md), [`기능 목록`](FEATURES.md) |
 | Python 에이전트 SDK | `packages/aidememo-agent-sdk/src/aidememo_agent/sdk.py` | [`Python SDK`](SDK.md), [`에이전트 워크플로`](AGENT_WORKFLOWS.md) |
 | 네이티브 바인딩 | `crates/aidememo-python`, `crates/aidememo-napi`, `crates/aidememo-nif`, `crates/aidememo-ffi` | [`Python SDK`](SDK.md), 패키지 README |
-| 로컬 모델 사이드카와 평가 | `scripts/lfm_mlx_embedding_sidecar.py`, `scripts/lfm_colbert_rerank.py`, `scripts/lfm_fact_type_sidecar.py`, `scripts/privacy_filter_mlx_sidecar.py` | [`운영`](OPERATIONS.md), [`측정 원장`](MEASUREMENTS.md) |
+| Privacy filtering 사이드카 | `scripts/privacy_filter_mlx_sidecar.py` | [`운영`](OPERATIONS.md) |
 | 검증과 릴리스 게이트 | `scripts/changelog-release-check.py`, `scripts/registry-readiness-check.py`, `scripts/cargo-package-readiness.sh`, `scripts/docs-feature-gate.py`, `scripts/docs-i18n-status.py`, `scripts/docs-site-e2e.py`, `scripts/*smoke*.sh`, `scripts/ci-local.sh` | [`측정 원장`](MEASUREMENTS.md), [`릴리스 체크리스트`](RELEASE.md) |
 
 ## 문서 계약
