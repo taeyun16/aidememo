@@ -101,6 +101,7 @@ pub struct ToolCallResult {
 }
 
 #[derive(Debug, Serialize)]
+#[derive(Default)]
 pub struct ContentBlock {
     #[serde(rename = "type")]
     pub block_type: String,

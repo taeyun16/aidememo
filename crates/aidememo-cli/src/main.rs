@@ -153,12 +153,7 @@ fn main() {
         cmd::Command::Overview(sub) => handle_overview(&store_path, config, sub, json),
         cmd::Command::Consolidate(sub) => handle_consolidate(&store_path, config, sub, json),
         #[cfg(feature = "analytics")]
-        cmd::Command::Analytics(sub) => {
-            let store = open_store_with_config(&store_path, config, json)?;
-            cmd::analytics::run_analytics(sub, &store)
-                .map_err(|e| AideMemoError::Internal(e.to_string()))?;
-            Ok(String::new())
-        }
+        cmd::Command::Analytics(sub) => handle_analytics(&store_path, config, sub)
         cmd::Command::Auth(sub) => cmd::auth::run_auth(sub),
     };
 
@@ -3788,6 +3783,19 @@ fn handle_consolidate(
             stats.max_cosine,
             elapsed_ms,
         ))
+    })
+}
+
+#[cfg(feature = "analytics")]
+fn handle_analytics(
+    path: &Path,
+    config: Config,
+    sub: cmd::AnalyticsCommand,
+) -> Result<String, AideMemoError> {
+    with_wiki(path, config, |wiki| {
+        cmd::analytics::run_analytics(sub, &wiki)
+            .map_err(|e| AideMemoError::Internal(e.to_string()))?;
+        Ok(String::new())
     })
 }
 
