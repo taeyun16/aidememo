@@ -354,6 +354,7 @@ fn sanitize_database_url(url: &str) -> String {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 
