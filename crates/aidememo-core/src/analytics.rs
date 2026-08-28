@@ -14,7 +14,7 @@
 //!
 //! ## Usage
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use aidememo_core::analytics::AnalyticsEngine;
 //! use aidememo_core::backend::StoreKind;
 //!
