@@ -8,8 +8,8 @@ This document records the artifact storage conformance status for AideMemo's Pha
 - ✅ Local artifact storage (SQLite catalog + filesystem bodies): **Production-ready**
 - ✅ S3-compatible body storage with local MinIO: **Conformance test passes**
 - ⚠️  **PostgreSQL canonical backend + artifacts: NOT SUPPORTED**
-- ❌ Managed R2/AWS conformance: **Gated on Issue #94**
-- ❌ Multi-replica artifact catalog: **Gated on Issue #94**
+- ❌ Managed R2/AWS conformance: **Gated on Phase 3 artifact catalog**
+- ❌ Multi-replica artifact catalog: **Deferred to Phase 3+**
 
 ## Architecture and Current Limitations
 
@@ -80,7 +80,7 @@ The repository includes `scripts/artifact-s3-minio-conformance.sh`, which:
 
 ### Managed R2/AWS Conformance (❌ Not Recorded)
 
-**Gated on**: Issue #94 (PostgreSQL-backed artifact catalog)
+**Gated on**: Phase 3+ PostgreSQL-backed artifact catalog implementation
 
 The S3 adapter (`aidememo-artifacts/src/s3.rs`) is designed for AWS S3, Cloudflare R2, and MinIO, with:
 - Conditional single-`PUT` (R2 documents `If-None-Match: *` support)
@@ -104,10 +104,11 @@ To promote artifacts to hosted multi-replica production (Phase 3+):
    - Transactional GC queue visible to all server replicas
    - Preserve idempotent replay receipts across replicas
 
-2. **Managed R2/AWS conformance**:
+2. **Managed R2/AWS artifact conformance**:
    - Run the presigned lifecycle test against real R2
    - Run the presigned lifecycle test against real AWS S3
    - Validate provider-specific behavior (cached custom domains, versioning, consistency)
+   - Record conformance results for production promotion
 
 3. **Multipart artifact transfer** (deferred to Phase 4+):
    - Sign conditional multipart upload initiation and completion
@@ -129,14 +130,14 @@ Issue #87 completion criterion:
 
 - ✅ **On-prem S3-compatible (MinIO)**: Conformance test exists and passes
 - ⚠️  **Managed R2/AWS**: Deliberately not recorded because the single-node SQLite catalog makes the numbers misleading
-- ✅ **Production promotion gate**: Documented that PostgreSQL + artifacts requires Issue #94 first
+- ✅ **Production promotion gate**: Documented that PostgreSQL + artifacts requires Phase 3 portable catalog first
 
 **Phase 2 is complete** for the PostgreSQL canonical backend. The artifact limitation is:
 - **Documented** (this file, SERVER_SSOT.md, server CLI help)
 - **Enforced** (server refuses PostgreSQL + artifacts)
 - **Honest** (no fake R2/AWS numbers for a non-production-ready catalog)
 
-The remaining artifact work (PostgreSQL catalog, managed conformance, multipart) is explicitly scoped to Phase 3+ and Issue #94.
+The remaining artifact work (PostgreSQL catalog, managed conformance, multipart) is explicitly scoped to Phase 3+.
 
 ## Production Deployment Guidance
 
@@ -188,7 +189,7 @@ because artifact catalog metadata is node-local SQLite
 
 ### Migration Path to Multi-Replica Artifacts
 
-Once Issue #94 (PostgreSQL artifact catalog) is implemented:
+Once the Phase 3 PostgreSQL artifact catalog is implemented:
 
 1. New `--artifact-catalog-backend postgres` flag (or automatic when `--canonical-backend postgres`)
 2. Server validates catalog identity matches S3 adapter configuration
@@ -203,7 +204,6 @@ Once Issue #94 (PostgreSQL artifact catalog) is implemented:
 
 - [SERVER_SSOT.md](SERVER_SSOT.md) — Server architecture and deployment profiles
 - [Issue #87](https://github.com/taeyun16/aidememo/issues/87) — Phase 2: portable PostgreSQL production backend
-- [Issue #94](https://github.com/taeyun16/aidememo/issues/94) — PostgreSQL-backed artifact metadata catalog (deferred)
 - `scripts/artifact-s3-minio-conformance.sh` — Local MinIO conformance harness
 - `crates/aidememo-artifacts/tests/s3_live_conformance.rs` — S3 provider presigned lifecycle test
 - `crates/aidememo-artifacts/src/s3.rs` — S3-compatible body store adapter

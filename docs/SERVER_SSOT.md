@@ -373,7 +373,7 @@ presigned HTTP lifecycle through
 uses node-local SQLite. PostgreSQL canonical backend deployments must use
 `--artifact-backend disabled` because the catalog does not replicate. Managed
 R2/AWS conformance runs are deliberately not recorded until a PostgreSQL-backed
-artifact catalog is implemented (Issue #94, deferred to Phase 3+). See
+artifact catalog is implemented (deferred to Phase 3+). See
 [ARTIFACT_CONFORMANCE.md](ARTIFACT_CONFORMANCE.md) for the complete status and
 honest Phase 2 closeout.
 
@@ -722,8 +722,8 @@ Phase 2 or later work. PostgreSQL implementation begins only after this gate.
 - ✅ Logical backup/restore and tenant export/delete drills
 - ✅ Replica rebuild from canonical PostgreSQL state
 - ✅ On-premises S3-compatible (MinIO) artifact conformance recorded
-- ⚠️  Managed R2/AWS artifact conformance: **Gated on Issue #94** (PostgreSQL artifact catalog)
-- ⚠️  Multi-replica artifacts: **Gated on Issue #94** (catalog is currently node-local SQLite)
+- ⚠️  Managed R2/AWS artifact conformance: **Deferred to Phase 3** (requires portable PostgreSQL catalog)
+- ⚠️  Multi-replica artifacts: **Deferred to Phase 3+** (catalog is currently node-local SQLite)
 
 **Exit gate met**: Concurrent claim/return, restore, replica rebuild, tenant-isolation,
 and index-rebuild suites pass against both SQLite and PostgreSQL. Artifact
@@ -736,8 +736,7 @@ See [ARTIFACT_CONFORMANCE.md](ARTIFACT_CONFORMANCE.md) for complete artifact sta
 - Add the Worker gateway, Hyperdrive/R2 configuration, and optional active
   project Durable Objects.
 - Keep Durable Objects out of the cross-project global query path.
-- Implement PostgreSQL-backed artifact catalog (Issue #94) for multi-replica
-  artifact coordination.
+- Implement PostgreSQL-backed artifact catalog for multi-replica artifact coordination.
 - Record managed R2/AWS artifact conformance after catalog portability.
 - Measure Korea-region end-to-end latency, cold starts, object operations, and
   index lag instead of importing local benchmark claims.
@@ -763,7 +762,7 @@ Multi-replica artifact GC coordination works under rolling upgrades.
 - A distributed POSIX filesystem for arbitrary applications.
 - Opening SQLite, WAL, redb, BM25, or HNSW files over R2, FUSE, or a remote VFS.
 - Multi-replica artifact storage with the current node-local SQLite catalog
-  (Issue #94 tracks the PostgreSQL-backed artifact catalog required for hosted
+  (Phase 3+ will add the PostgreSQL-backed artifact catalog required for hosted
   multi-replica artifact promotion).
 - Exactly-once external side effects; the service provides idempotent command
   receipts and an at-least-once outbox.
