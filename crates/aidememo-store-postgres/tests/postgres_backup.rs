@@ -1,11 +1,12 @@
 //! PostgreSQL backup/restore and tenant operations integration tests.
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use aidememo_domain::{ProjectEpoch, ProjectScope, TenantId};
     use aidememo_store_postgres::{
         PostgresCommandStore,
-        backup::{create_postgres_backup, export_tenant, restore_postgres_backup},
+        backup::{create_postgres_backup, export_tenant},
     };
     use std::path::Path;
     use tempfile::TempDir;
