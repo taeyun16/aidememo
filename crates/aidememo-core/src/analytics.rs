@@ -35,6 +35,7 @@
 //! ```
 
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use duckdb::{Connection, Result as DuckDBResult, ToSql, params};
@@ -44,8 +45,11 @@ use crate::error::{AideMemoError, Result};
 use crate::types::{FactListOpts, ListOpts};
 
 /// DuckDB analytics engine — derived OLAP projection.
+/// 
+/// The connection is wrapped in Arc<Mutex<>> to enable Send+Sync for use
+/// in multi-threaded environments like axum servers.
 pub struct AnalyticsEngine {
-    conn: Connection,
+    conn: Arc<Mutex<Connection>>,
     /// Last canonical fact sequence number synced
     last_fact_seq: u64,
     /// Last canonical entity sequence number synced
@@ -72,7 +76,7 @@ impl AnalyticsEngine {
         let (last_fact_seq, last_entity_seq, last_relation_seq) = Self::load_watermarks(&conn)?;
 
         Ok(Self {
-            conn,
+            conn: Arc::new(Mutex::new(conn)),
             last_fact_seq,
             last_entity_seq,
             last_relation_seq,
@@ -228,8 +232,11 @@ impl AnalyticsEngine {
 
     /// Save sync watermarks to metadata table.
     fn save_watermarks(&self) -> Result<()> {
-        self.conn
-            .execute(
+        let conn = self.conn.lock().map_err(|e| {
+            AideMemoError::Internal(format!("failed to lock connection: {}", e))
+        })?;
+
+        conn.execute(
                 "INSERT OR REPLACE INTO _analytics_meta (key, value) VALUES (?, ?)",
                 params!["last_fact_timestamp", self.last_fact_seq as i64],
             )
@@ -237,8 +244,7 @@ impl AnalyticsEngine {
                 AideMemoError::Internal(format!("failed to save fact watermark: {}", e))
             })?;
 
-        self.conn
-            .execute(
+        conn.execute(
                 "INSERT OR REPLACE INTO _analytics_meta (key, value) VALUES (?, ?)",
                 params!["last_entity_timestamp", self.last_entity_seq as i64],
             )
@@ -246,8 +252,7 @@ impl AnalyticsEngine {
                 AideMemoError::Internal(format!("failed to save entity watermark: {}", e))
             })?;
 
-        self.conn
-            .execute(
+        conn.execute(
                 "INSERT OR REPLACE INTO _analytics_meta (key, value) VALUES (?, ?)",
                 params!["last_relation_timestamp", self.last_relation_seq as i64],
             )
@@ -263,26 +268,29 @@ impl AnalyticsEngine {
     /// This truncates all analytics tables and rebuilds from scratch. Safe to
     /// call at any time — analytics data is derived and rebuildable.
     pub fn rebuild_from_canonical(&mut self, store: &StoreKind) -> Result<()> {
+        let conn = self.conn.lock().map_err(|e| {
+            AideMemoError::Internal(format!("failed to lock connection: {}", e))
+        })?;
+
         // Begin transaction
-        self.conn.execute("BEGIN TRANSACTION", []).map_err(|e| {
+        conn.execute("BEGIN TRANSACTION", []).map_err(|e| {
             AideMemoError::Internal(format!("failed to begin rebuild transaction: {}", e))
         })?;
 
         // Truncate tables
-        self.conn
-            .execute("DELETE FROM fact_entities", [])
+        conn.execute("DELETE FROM fact_entities", [])
             .map_err(|e| {
                 AideMemoError::Internal(format!("failed to truncate fact_entities: {}", e))
             })?;
-        self.conn
-            .execute("DELETE FROM relations", [])
+        conn.execute("DELETE FROM relations", [])
             .map_err(|e| AideMemoError::Internal(format!("failed to truncate relations: {}", e)))?;
-        self.conn
-            .execute("DELETE FROM facts", [])
+        conn.execute("DELETE FROM facts", [])
             .map_err(|e| AideMemoError::Internal(format!("failed to truncate facts: {}", e)))?;
-        self.conn
-            .execute("DELETE FROM entities", [])
+        conn.execute("DELETE FROM entities", [])
             .map_err(|e| AideMemoError::Internal(format!("failed to truncate entities: {}", e)))?;
+
+        // Drop lock before calling sync methods that need their own lock
+        drop(conn);
 
         // Sync all data
         let max_entity_ts = self.sync_entities(store)?;
@@ -296,8 +304,10 @@ impl AnalyticsEngine {
         self.save_watermarks()?;
 
         // Commit transaction
-        self.conn
-            .execute("COMMIT", [])
+        let conn = self.conn.lock().map_err(|e| {
+            AideMemoError::Internal(format!("failed to lock connection: {}", e))
+        })?;
+        conn.execute("COMMIT", [])
             .map_err(|e| AideMemoError::Internal(format!("failed to commit rebuild: {}", e)))?;
 
         Ok(())
@@ -314,9 +324,12 @@ impl AnalyticsEngine {
 
         let mut max_ts = 0u64;
 
+        let conn = self.conn.lock().map_err(|e| {
+            AideMemoError::Internal(format!("failed to lock connection: {}", e))
+        })?;
+
         // Prepare batch insert
-        let mut stmt = self
-            .conn
+        let mut stmt = conn
             .prepare(
                 "INSERT INTO entities (id, name, entity_type, fact_count)
                  VALUES (?, ?, ?, ?)",
@@ -349,17 +362,19 @@ impl AnalyticsEngine {
 
         let mut max_ts = 0u64;
 
+        let conn = self.conn.lock().map_err(|e| {
+            AideMemoError::Internal(format!("failed to lock connection: {}", e))
+        })?;
+
         // Prepare batch inserts
-        let mut fact_stmt = self
-            .conn
+        let mut fact_stmt = conn
             .prepare(
                 "INSERT INTO facts (id, content, fact_type, source_id, actor_id, created_at, updated_at)
                  VALUES (?, ?, ?, ?, ?, ?, ?)",
             )
             .map_err(|e| AideMemoError::Internal(format!("failed to prepare fact insert: {}", e)))?;
 
-        let mut fact_entity_stmt = self
-            .conn
+        let mut fact_entity_stmt = conn
             .prepare("INSERT INTO fact_entities (fact_id, entity_id) VALUES (?, ?)")
             .map_err(|e| {
                 AideMemoError::Internal(format!("failed to prepare fact_entity insert: {}", e))
@@ -401,9 +416,12 @@ impl AnalyticsEngine {
 
         let mut max_ts = 0u64;
 
+        let conn = self.conn.lock().map_err(|e| {
+            AideMemoError::Internal(format!("failed to lock connection: {}", e))
+        })?;
+
         // Prepare batch insert
-        let mut stmt = self
-            .conn
+        let mut stmt = conn
             .prepare(
                 "INSERT INTO relations (id, source_entity_id, target_entity_id, relation_type, weight, created_at)
                  VALUES (?, ?, ?, ?, ?, ?)",
@@ -443,8 +461,12 @@ impl AnalyticsEngine {
             return self.rebuild_from_canonical(store);
         }
 
+        let conn = self.conn.lock().map_err(|e| {
+            AideMemoError::Internal(format!("failed to lock connection: {}", e))
+        })?;
+
         // Begin transaction
-        self.conn.execute("BEGIN TRANSACTION", []).map_err(|e| {
+        conn.execute("BEGIN TRANSACTION", []).map_err(|e| {
             AideMemoError::Internal(format!("failed to begin sync transaction: {}", e))
         })?;
 
@@ -460,8 +482,7 @@ impl AnalyticsEngine {
             ..Default::default()
         })?;
 
-        let mut entity_upsert_stmt = self
-            .conn
+        let mut entity_upsert_stmt = conn
             .prepare(
                 "INSERT OR REPLACE INTO entities (id, name, entity_type, fact_count)
                  VALUES (?, ?, ?, ?)",
@@ -488,23 +509,20 @@ impl AnalyticsEngine {
             ..Default::default()
         })?;
 
-        let mut fact_upsert_stmt = self
-            .conn
+        let mut fact_upsert_stmt = conn
             .prepare(
                 "INSERT OR REPLACE INTO facts (id, content, fact_type, source_id, actor_id, created_at, updated_at)
                  VALUES (?, ?, ?, ?, ?, ?, ?)",
             )
             .map_err(|e| AideMemoError::Internal(format!("failed to prepare fact upsert: {}", e)))?;
 
-        let mut fact_entity_delete_stmt = self
-            .conn
+        let mut fact_entity_delete_stmt = conn
             .prepare("DELETE FROM fact_entities WHERE fact_id = ?")
             .map_err(|e| {
                 AideMemoError::Internal(format!("failed to prepare fact_entity delete: {}", e))
             })?;
 
-        let mut fact_entity_insert_stmt = self
-            .conn
+        let mut fact_entity_insert_stmt = conn
             .prepare("INSERT INTO fact_entities (fact_id, entity_id) VALUES (?, ?)")
             .map_err(|e| {
                 AideMemoError::Internal(format!("failed to prepare fact_entity insert: {}", e))
@@ -550,8 +568,7 @@ impl AnalyticsEngine {
         // Sync new/updated relations
         let relations = store.relations_list_all()?;
 
-        let mut relation_upsert_stmt = self
-            .conn
+        let mut relation_upsert_stmt = conn
             .prepare(
                 "INSERT OR REPLACE INTO relations (id, source_entity_id, target_entity_id, relation_type, weight, created_at)
                  VALUES (?, ?, ?, ?, ?, ?)",
@@ -587,11 +604,16 @@ impl AnalyticsEngine {
         self.last_entity_seq = max_entity_ts;
         self.last_fact_seq = max_fact_ts;
         self.last_relation_seq = max_relation_ts;
+        
+        // Drop conn to release lock before save_watermarks which needs its own lock
+        drop(conn);
         self.save_watermarks()?;
 
         // Commit transaction
-        self.conn
-            .execute("COMMIT", [])
+        let conn = self.conn.lock().map_err(|e| {
+            AideMemoError::Internal(format!("failed to lock connection: {}", e))
+        })?;
+        conn.execute("COMMIT", [])
             .map_err(|e| AideMemoError::Internal(format!("failed to commit sync: {}", e)))?;
 
         Ok(())
@@ -606,8 +628,11 @@ impl AnalyticsEngine {
     /// This function provides raw SQL access. Callers must sanitize inputs
     /// and use parameter binding to prevent SQL injection.
     pub fn query(&self, sql: &str, params: &[&dyn duckdb::ToSql]) -> Result<Vec<Vec<String>>> {
-        let mut stmt = self
-            .conn
+        let conn = self.conn.lock().map_err(|e| {
+            AideMemoError::Internal(format!("failed to lock connection: {}", e))
+        })?;
+
+        let mut stmt = conn
             .prepare(sql)
             .map_err(|e| AideMemoError::InvalidInput(format!("invalid SQL query: {}", e)))?;
 
@@ -638,8 +663,11 @@ impl AnalyticsEngine {
     where
         T: duckdb::types::FromSql,
     {
-        let mut stmt = self
-            .conn
+        let conn = self.conn.lock().map_err(|e| {
+            AideMemoError::Internal(format!("failed to lock connection: {}", e))
+        })?;
+
+        let mut stmt = conn
             .prepare(sql)
             .map_err(|e| AideMemoError::InvalidInput(format!("invalid SQL query: {}", e)))?;
 
