@@ -201,7 +201,7 @@ Once Issue #94 (PostgreSQL artifact catalog) is implemented:
 
 ## References
 
-- [SERVER_SSOT.md](./SERVER_SSOT.md) — Server architecture and deployment profiles
+- [SERVER_SSOT.md](SERVER_SSOT.md) — Server architecture and deployment profiles
 - [Issue #87](https://github.com/taeyun16/aidememo/issues/87) — Phase 2: portable PostgreSQL production backend
 - [Issue #94](https://github.com/taeyun16/aidememo/issues/94) — PostgreSQL-backed artifact metadata catalog (deferred)
 - `scripts/artifact-s3-minio-conformance.sh` — Local MinIO conformance harness

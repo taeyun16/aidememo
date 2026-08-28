@@ -374,7 +374,7 @@ uses node-local SQLite. PostgreSQL canonical backend deployments must use
 `--artifact-backend disabled` because the catalog does not replicate. Managed
 R2/AWS conformance runs are deliberately not recorded until a PostgreSQL-backed
 artifact catalog is implemented (Issue #94, deferred to Phase 3+). See
-[ARTIFACT_CONFORMANCE.md](./ARTIFACT_CONFORMANCE.md) for the complete status and
+[ARTIFACT_CONFORMANCE.md](ARTIFACT_CONFORMANCE.md) for the complete status and
 honest Phase 2 closeout.
 
 ## Search consistency
@@ -729,7 +729,7 @@ Phase 2 or later work. PostgreSQL implementation begins only after this gate.
 and index-rebuild suites pass against both SQLite and PostgreSQL. Artifact
 limitation is documented, enforced at server startup, and scoped to Phase 3+.
 
-See [ARTIFACT_CONFORMANCE.md](./ARTIFACT_CONFORMANCE.md) for complete artifact status.
+See [ARTIFACT_CONFORMANCE.md](ARTIFACT_CONFORMANCE.md) for complete artifact status.
 
 ### Phase 3 — Cloudflare hosted profile
 
