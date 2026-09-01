@@ -68,8 +68,6 @@ These are research harnesses, not the first-stop user path.
 
 | Family | Scripts |
 |---|---|
-| Multi-hop readers | `hotpotqa_reader.py`, `multihop_rag_reader.py`, `locomo_reader.py` |
-| Query expansion | `expand_queries.py` |
 | Consolidation analysis | `gac_analyze.py` |
 | Overview eval | `overview_eval.py` |
 | Privacy filtering | `privacy_filter_sidecar.py`, `privacy_filter_mlx_sidecar.py` |
