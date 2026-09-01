@@ -66,11 +66,9 @@ name = "aidememo-benchmarks"
 version = "0.1.0"
 dependencies = [
  "aidememo-core",
- "chrono",
  "criterion",
  "instant-distance",
  "parking_lot",
- "rayon",
  "redb",
  "rusqlite",
  "serde",
