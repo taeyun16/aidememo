@@ -7,4 +7,4 @@ LFM 모델 평가 스크립트와 LongMemEval 벤치마크는 이 리포지토�
 - [근거](EVIDENCE.md#모델-배치) 간결한 근거 요약
 - [측정](MEASUREMENTS.md) 검색 및 모델 트레이드오프
 
-선택적 LFM 사이드카(`lfm_mlx_embedding_sidecar.py`, `lfm_colbert_rerank.py`, `lfm_fact_type_sidecar.py`, `privacy_filter_mlx_sidecar.py`)는 로컬에서 실행하려는 사용자를 위해 `scripts/` 디렉토리에 남아 있습니다.
+프라이버시 필터 사이드카(`privacy_filter_sidecar.py`와 `privacy_filter_mlx_sidecar.py`)는 로컬에서 실행하려는 사용자를 위해 `scripts/` 디렉토리에 남아 있습니다. LFM 전용 사이드카는 평가 스크립트와 함께 제거되었습니다.
