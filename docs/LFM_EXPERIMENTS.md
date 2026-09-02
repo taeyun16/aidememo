@@ -7,4 +7,4 @@ For historical context and model placement guidance, see:
 - [Evidence](EVIDENCE.md#model-placement) for the concise evidence summary
 - [Measurements](MEASUREMENTS.md) for retrieval and model trade-offs
 
-The optional LFM sidecars (`lfm_mlx_embedding_sidecar.py`, `lfm_colbert_rerank.py`, `lfm_fact_type_sidecar.py`, and `privacy_filter_mlx_sidecar.py`) remain in the `scripts/` directory for users who wish to run them locally.
+The privacy filter sidecars (`privacy_filter_sidecar.py` and `privacy_filter_mlx_sidecar.py`) remain in the `scripts/` directory for users who wish to run them locally. The LFM-specific sidecars were removed with the evaluation scripts.
