@@ -22,7 +22,7 @@ semantic-adapt = ["semantic"]
 # English-tuned model.
 fastembed = ["semantic", "dep:fastembed"]
 parallel = ["rayon"]
-remote = ["oneio"]
+remote = ["suppaftp"]  # oneio temporarily disabled due to suppaftp 7.x (RUSTSEC-2026-0271)
 s3 = ["sqlite", "dep:aws-config", "aws-sdk-s3", "tokio/full", "zstd"]
 sqlite = ["dep:rusqlite"]
 # `analytics` opts the user into DuckDB-backed OLAP analytics engine.
@@ -116,7 +116,10 @@ lru = "0.18"
 rayon = { version = "1.8", optional = true }
 
 # S3 공유 (선택)
-oneio = { version = "0.23", optional = true }
+# oneio = { version = "0.26", optional = true }  # Temporarily disabled due to suppaftp 7.x (RUSTSEC-2026-0271)
+
+# Override oneio's suppaftp 7.x with the patched 10.0.2 version (RUSTSEC-2026-0271 fix)
+suppaftp = { version = "10.0.2", optional = true }
 # Keep the SDK's standard client/runtime features while excluding its legacy
 # rustls 0.21 TLS feature. `default-https-client` uses the maintained TLS path.
 aws-sdk-s3 = { version = "1.136.0", optional = true, default-features = false, features = ["sigv4a", "http-1x", "default-https-client", "rt-tokio"] }
