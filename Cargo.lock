@@ -146,7 +146,6 @@ name = "aidememo-core"
 version = "0.1.0"
 dependencies = [
  "aws-config",
- "aws-credential-types",
  "aws-sdk-s3",
  "bincode",
  "bm25",
@@ -160,7 +159,6 @@ dependencies = [
  "memchr",
  "model2vec-rs",
  "parking_lot",
- "rayon",
  "redb",
  "regex",
  "rusqlite",
@@ -169,7 +167,6 @@ dependencies = [
  "sha2 0.11.0",
  "simsimd",
  "strsim",
- "suppaftp",
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
@@ -3565,29 +3562,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bf36173d4167ed999940f804952e6b08197cae5ad5d572eb4db150ce8ad5d58f"
 
 [[package]]
-name = "lazy-regex"
-version = "3.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4994ba703f78b083e2f7946dac9251abd83fd43a0365f030e99b69be5b4b9ef9"
-dependencies = [
- "lazy-regex-proc_macros",
- "once_cell",
- "regex",
-]
-
-[[package]]
-name = "lazy-regex-proc_macros"
-version = "3.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fd97232314824e6dbef1918a871bb93f51070455e3715bf26e19a6d01aa977a0"
-dependencies = [
- "proc-macro2",
- "quote",
- "regex",
- "syn 2.0.119",
-]
-
-[[package]]
 name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6269,17 +6243,6 @@ name = "subtle"
 version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
-
-[[package]]
-name = "suppaftp"
-version = "10.0.2"
-source = "git+https://github.com/veeso/suppaftp?tag=v10.0.2#194bdd1979b16c4848d1fad6897dfa524b688d88"
-dependencies = [
- "chrono",
- "lazy-regex",
- "log",
- "thiserror 2.0.20",
-]
 
 [[package]]
 name = "syn"
