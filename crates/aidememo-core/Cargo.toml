@@ -21,8 +21,6 @@ semantic-adapt = ["semantic"]
 # offline-pure (model2vec) unless you specifically need a heavier
 # English-tuned model.
 fastembed = ["semantic", "dep:fastembed"]
-parallel = ["rayon"]
-remote = ["suppaftp"]  # oneio temporarily disabled due to suppaftp 7.x (RUSTSEC-2026-0271)
 s3 = ["sqlite", "dep:aws-config", "aws-sdk-s3", "tokio/full", "zstd"]
 sqlite = ["dep:rusqlite"]
 # `analytics` opts the user into DuckDB-backed OLAP analytics engine.
@@ -112,19 +110,11 @@ bincode = { version = "1.3", optional = true }
 # Model2Vec inference entirely. Tiny dep, well-maintained.
 lru = "0.18"
 
-# 병렬 처리 (선택)
-rayon = { version = "1.8", optional = true }
-
 # S3 공유 (선택)
-# oneio = { version = "0.26", optional = true }  # Temporarily disabled due to suppaftp 7.x (RUSTSEC-2026-0271)
-
-# Override oneio's suppaftp 7.x with the patched 10.0.2 version (RUSTSEC-2026-0271 fix)
-suppaftp = { version = "10.0.2", optional = true }
 # Keep the SDK's standard client/runtime features while excluding its legacy
 # rustls 0.21 TLS feature. `default-https-client` uses the maintained TLS path.
 aws-sdk-s3 = { version = "1.136.0", optional = true, default-features = false, features = ["sigv4a", "http-1x", "default-https-client", "rt-tokio"] }
 aws-config = { version = "1.8.18", optional = true }
-aws-credential-types = { version = "1.2.14", optional = true }
 zstd = { version = "0.13.3", optional = true }
 # Async runtime for optional S3 workflows
 tokio = { version = "1.35", features = ["full"], optional = true }

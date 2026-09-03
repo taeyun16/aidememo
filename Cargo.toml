@@ -74,5 +74,3 @@ codegen-units = 16
 # the same build sources in the Python sdist as `vendor/tokenizers`.
 [patch.crates-io]
 tokenizers = { path = "vendor/tokenizers" }
-# Override oneio's transitive suppaftp 7.1.0 → 10.0.2 (RUSTSEC-2026-0271 fix)
-suppaftp = { git = "https://github.com/veeso/suppaftp", tag = "v10.0.2" }

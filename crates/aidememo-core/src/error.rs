@@ -170,13 +170,6 @@ pub enum AideMemoError {
     UnsupportedSchemaVersion(u32),
 
     // === S3 (feature-gated) ===
-    #[cfg(feature = "remote")]
-    #[error("remote IO failed for {url}: {source}")]
-    RemoteIo {
-        url: String,
-        #[source]
-        source: oneio::OneIoError,
-    },
 
     // === Search ===
     #[error("search failed: {0}")]
@@ -233,8 +226,6 @@ impl AideMemoError {
             Self::MigrationFailed { .. } => "migration_failed",
             Self::SchemaVersionMismatch { .. } => "schema_version_mismatch",
             Self::UnsupportedSchemaVersion(_) => "unsupported_schema_version",
-            #[cfg(feature = "remote")]
-            Self::RemoteIo { .. } => "remote_io",
             Self::SearchFailed(_) => "search_failed",
             Self::IndexCorrupted(_) => "index_corrupted",
             Self::LintFailed(_) => "lint_failed",
