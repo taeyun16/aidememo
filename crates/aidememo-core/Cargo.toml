@@ -21,7 +21,7 @@ semantic-adapt = ["semantic"]
 # offline-pure (model2vec) unless you specifically need a heavier
 # English-tuned model.
 fastembed = ["semantic", "dep:fastembed"]
-s3 = ["sqlite", "dep:aws-config", "aws-sdk-s3", "tokio/full", "zstd"]
+s3 = ["sqlite", "dep:aws-config", "aws-sdk-s3", "zstd"]
 sqlite = ["dep:rusqlite"]
 # `analytics` opts the user into DuckDB-backed OLAP analytics engine.
 # Derived projection rebuilt from canonical facts/entities/relations.
@@ -116,8 +116,8 @@ lru = "0.18"
 aws-sdk-s3 = { version = "1.136.0", optional = true, default-features = false, features = ["sigv4a", "http-1x", "default-https-client", "rt-tokio"] }
 aws-config = { version = "1.8.18", optional = true }
 zstd = { version = "0.13.3", optional = true }
-# Async runtime for optional S3 workflows
-tokio = { version = "1.35", features = ["full"], optional = true }
+# Async runtime for optional S3 workflows (provided transitively by aws-sdk-s3/rt-tokio)
+# tokio = { version = "1.35", features = ["full"], optional = true }
 
 # 에러 처리
 thiserror = "1.0"
