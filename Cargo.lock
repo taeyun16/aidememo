@@ -168,7 +168,7 @@ dependencies = [
  "simsimd",
  "strsim",
  "tempfile",
- "thiserror 1.0.69",
+ "thiserror 2.0.20",
  "toml",
  "tracing",
  "trigram",
@@ -184,7 +184,7 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
- "thiserror 1.0.69",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
