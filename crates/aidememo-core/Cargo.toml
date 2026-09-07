@@ -120,7 +120,7 @@ zstd = { version = "0.13.3", optional = true }
 # tokio = { version = "1.35", features = ["full"], optional = true }
 
 # 에러 처리
-thiserror = "1.0"
+thiserror = "2.0"
 
 # 공통
 parking_lot = "0.12"
