@@ -76,7 +76,7 @@ model2vec-rs = { version = "0.2.1", optional = true }
 # ONNX-Runtime-backed BGE / E5 embedding models. Opt-in via the
 # `fastembed` cargo feature — the default `semantic` build stays
 # Model2Vec-only (no native ONNX Runtime DLL on disk).
-fastembed = { version = "5", optional = true }
+fastembed = { version = "6", optional = true }
 
 # OpenAI-compatible HTTP embeddings (Ollama / OpenAI / OpenRouter / vLLM / LocalAI).
 # Pulled in alongside the `semantic` feature so users who opt into semantic
