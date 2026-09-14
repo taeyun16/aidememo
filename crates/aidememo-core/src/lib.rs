@@ -139,6 +139,7 @@ pub struct AideMemo {
     analytics_engine: parking_lot::RwLock<Option<analytics::AnalyticsEngine>>,
 }
 
+#[cfg(feature = "semantic")]
 fn workflow_resume_exports(session_id: &str, source_id: Option<&str>) -> String {
     fn shell_quote(value: &str) -> String {
         format!("'{}'", value.replace('\'', "'\"'\"'"))

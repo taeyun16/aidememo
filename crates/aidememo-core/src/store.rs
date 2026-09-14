@@ -6,7 +6,7 @@
 use crate::config::Config;
 use crate::error::{AideMemoError, Result};
 use crate::types::*;
-use redb::{Database, ReadableTable, TableDefinition};
+use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition};
 use std::path::Path;
 use std::sync::Arc;
 use ulid::Ulid;
@@ -69,7 +69,7 @@ impl Store {
 
     /// Open a write transaction with the durability level configured
     /// in `store.durability`. Defaults to `Immediate` (per-commit
-    /// fsync); `Eventual` is honored when the user has explicitly
+    /// fsync); `None` is honored when the user has explicitly
     /// opted in. An unrecognized value falls back to `Immediate` —
     /// the safe choice — and `set` validation already prevents
     /// other strings from landing in the config in the first place.
@@ -81,10 +81,13 @@ impl Store {
                 source: Box::new(e),
             })?;
         let durability = match self.config.store.durability.as_str() {
-            "eventual" => redb::Durability::Eventual,
+            "eventual" => redb::Durability::None,
             _ => redb::Durability::Immediate,
         };
-        txn.set_durability(durability);
+        txn.set_durability(durability)
+            .map_err(|e| AideMemoError::TransactionBegin {
+                source: Box::new(e),
+            })?;
         Ok(txn)
     }
 

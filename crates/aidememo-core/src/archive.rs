@@ -28,7 +28,7 @@
 use std::path::PathBuf;
 
 #[cfg(feature = "redb")]
-use redb::ReadableTable;
+use redb::{ReadableDatabase, ReadableTable};
 
 #[cfg(feature = "redb")]
 use crate::backend::StoreBackend;
