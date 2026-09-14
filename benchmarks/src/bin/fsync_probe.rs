@@ -34,7 +34,7 @@ fn run(label: &str, db: &Database, durability: Durability) {
         let key = (i as u64).to_be_bytes();
         let t0 = Instant::now();
         let mut txn = db.begin_write().expect("begin_write");
-        txn.set_durability(durability);
+        txn.set_durability(durability).expect("set_durability");
         {
             let mut tbl = txn.open_table(TABLE).expect("open_table");
             tbl.insert(&key as &[u8], payload.as_slice())
@@ -74,7 +74,7 @@ fn main() {
         let dir2 = TempDir::new().expect("tempdir");
         let path2 = dir2.path().join("probe.redb");
         let db = Database::create(&path2).expect("create");
-        run("Eventual", &db, Durability::Eventual); // queues, no per-commit fsync
+        run("None (queued)", &db, Durability::None); // queues, no per-commit fsync
     }
     {
         let dir3 = TempDir::new().expect("tempdir");
