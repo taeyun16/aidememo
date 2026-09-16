@@ -16,12 +16,6 @@ members = [
     "crates/aidememo-ffi",
     "crates/aidememo-nif",
 ]
-exclude = [
-    # Local fork of tokenizers; consumed via [patch.crates-io] below.
-    # Keep it out of our workspace because it's an independent crate
-    # with its own edition/lints we don't want to override.
-    "vendor/tokenizers",
-]
 # Native addon / Python extension crates are now part of the workspace build.
 
 [workspace.package]
