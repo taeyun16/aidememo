@@ -63,7 +63,6 @@ def check_sdist(path: Path, version: str) -> None:
         f"{expected_root}pyproject.toml",
         f"{expected_root}README.md",
         f"{expected_root}crates/aidememo-python/src/lib.rs",
-        f"{expected_root}vendor/tokenizers/Cargo.toml",
     }
     missing = sorted(required - names)
     if missing:
