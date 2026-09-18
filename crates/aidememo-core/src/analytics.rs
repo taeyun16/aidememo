@@ -466,7 +466,6 @@ impl AnalyticsEngine {
         })?;
 
         // Track max timestamps for this sync
-        let mut max_entity_ts = self.last_entity_seq;
         let mut max_fact_ts = self.last_fact_seq;
         let mut max_relation_ts = self.last_relation_seq;
 
@@ -597,8 +596,7 @@ impl AnalyticsEngine {
 
         // Update watermarks
         // Entity watermark tracks fact watermark since EntitySummary has no timestamps
-        max_entity_ts = max_fact_ts;
-        self.last_entity_seq = max_entity_ts;
+        self.last_entity_seq = max_fact_ts;
         self.last_fact_seq = max_fact_ts;
         self.last_relation_seq = max_relation_ts;
 

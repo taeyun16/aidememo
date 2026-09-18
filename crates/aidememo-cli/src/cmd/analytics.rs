@@ -40,8 +40,6 @@ pub enum AnalyticsCommand {
 
 #[cfg(feature = "analytics")]
 pub fn run_analytics(cmd: AnalyticsCommand, g: &AideMemo) -> anyhow::Result<()> {
-    use aidememo_core::analytics::AnalyticsEngine;
-
     match cmd {
         AnalyticsCommand::Rebuild => {
             println!("Rebuilding analytics engine from canonical store...");

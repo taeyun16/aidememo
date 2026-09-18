@@ -287,7 +287,7 @@ impl AideMemo {
         let mut guard = self.analytics_engine.write();
         if let Some(engine) = guard.as_mut() {
             let store = self.store.read();
-            engine.incremental_sync(&*store)?;
+            engine.incremental_sync(&store)?;
         }
         Ok(())
     }
