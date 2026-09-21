@@ -830,7 +830,7 @@ mod tests {
             .fact_add(FactInput {
                 content: "Redis is fast".to_string(),
                 fact_type: Some(FactType::Claim),
-                entity_ids: Some(vec![redis_id.clone()]),
+                entity_ids: Some(vec![redis_id]),
                 source_id: None,
                 actor_id: None,
                 tags: None,
@@ -844,7 +844,7 @@ mod tests {
             .fact_add(FactInput {
                 content: "PostgreSQL is reliable".to_string(),
                 fact_type: Some(FactType::Claim),
-                entity_ids: Some(vec![postgres_id.clone()]),
+                entity_ids: Some(vec![postgres_id]),
                 source_id: None,
                 actor_id: None,
                 tags: None,
@@ -898,7 +898,7 @@ mod tests {
             .fact_add(FactInput {
                 content: "Redis is fast".to_string(),
                 fact_type: Some(FactType::Claim),
-                entity_ids: Some(vec![redis_id.clone()]),
+                entity_ids: Some(vec![redis_id]),
                 source_id: None,
                 actor_id: None,
                 tags: None,
@@ -931,7 +931,7 @@ mod tests {
             .fact_add(FactInput {
                 content: "PostgreSQL is reliable".to_string(),
                 fact_type: Some(FactType::Claim),
-                entity_ids: Some(vec![postgres_id.clone()]),
+                entity_ids: Some(vec![postgres_id]),
                 source_id: None,
                 actor_id: None,
                 tags: None,
