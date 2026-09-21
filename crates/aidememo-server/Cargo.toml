@@ -38,7 +38,7 @@ tower = { version = "0.5", features = ["util"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 ulid = "1.1"
-ureq = { version = "2.12", features = ["json"], optional = true }
+ureq = { version = "3.4", features = ["json"], optional = true }
 
 [dev-dependencies]
 aidememo-client = { path = "../aidememo-client" }
