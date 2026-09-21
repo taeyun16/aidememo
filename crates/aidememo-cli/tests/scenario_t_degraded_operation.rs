@@ -135,14 +135,45 @@ fn http_json(
     body: Option<Value>,
 ) -> Result<(u16, Value), Box<dyn std::error::Error>> {
     let url = format!("{base}{path}");
-    let mut request = ureq::request(method, &url)
-        .header("Authorization", &format!("Bearer {token}"))
-        .header("Accept", "application/json");
-    let result = if let Some(body) = body {
-        request = request.header("Content-Type", "application/json");
-        request.send_json(body)
-    } else {
-        request.call()
+    let result = match (method, body) {
+        ("GET", None) => ureq::get(&url)
+            .header("Authorization", &format!("Bearer {token}"))
+            .header("Accept", "application/json")
+            .call(),
+        ("POST", Some(body)) => ureq::post(&url)
+            .header("Authorization", &format!("Bearer {token}"))
+            .header("Accept", "application/json")
+            .header("Content-Type", "application/json")
+            .send_json(body),
+        ("POST", None) => ureq::post(&url)
+            .header("Authorization", &format!("Bearer {token}"))
+            .header("Accept", "application/json")
+            .send(""),
+        ("PUT", Some(body)) => ureq::put(&url)
+            .header("Authorization", &format!("Bearer {token}"))
+            .header("Accept", "application/json")
+            .header("Content-Type", "application/json")
+            .send_json(body),
+        ("PUT", None) => ureq::put(&url)
+            .header("Authorization", &format!("Bearer {token}"))
+            .header("Accept", "application/json")
+            .send(""),
+        ("DELETE", None) => ureq::delete(&url)
+            .header("Authorization", &format!("Bearer {token}"))
+            .header("Accept", "application/json")
+            .call(),
+        ("PATCH", Some(body)) => ureq::patch(&url)
+            .header("Authorization", &format!("Bearer {token}"))
+            .header("Accept", "application/json")
+            .header("Content-Type", "application/json")
+            .send_json(body),
+        ("PATCH", None) => ureq::patch(&url)
+            .header("Authorization", &format!("Bearer {token}"))
+            .header("Accept", "application/json")
+            .send(""),
+        (method, _) => {
+            return Err(format!("unsupported HTTP method: {method}").into());
+        }
     };
     match result {
         Ok(response) => {

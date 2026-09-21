@@ -1139,17 +1139,19 @@ mod tests {
         let url = format!("{base_url}{path}");
         let token = token.to_string();
         tokio::task::spawn_blocking(move || {
-            let request = match body.as_ref() {
-                Some(_) => ureq::post(&url),
-                None => ureq::get(&url),
-            }
-            .header("Authorization", &format!("Bearer {token}"))
-            .config()
-            .http_status_as_error(false)
-            .build();
             let response = match body {
-                Some(body) => request.send_json(body),
-                None => request.call(),
+                Some(body) => ureq::post(&url)
+                    .header("Authorization", &format!("Bearer {token}"))
+                    .config()
+                    .http_status_as_error(false)
+                    .build()
+                    .send_json(body),
+                None => ureq::get(&url)
+                    .header("Authorization", &format!("Bearer {token}"))
+                    .config()
+                    .http_status_as_error(false)
+                    .build()
+                    .call(),
             };
             match response {
                 Ok(response) => {
