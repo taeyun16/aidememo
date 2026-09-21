@@ -136,22 +136,21 @@ fn http_json(
 ) -> Result<(u16, Value), Box<dyn std::error::Error>> {
     let url = format!("{base}{path}");
     let mut request = ureq::request(method, &url)
-        .set("Authorization", &format!("Bearer {token}"))
-        .set("Accept", "application/json");
+        .header("Authorization", &format!("Bearer {token}"))
+        .header("Accept", "application/json");
     let result = if let Some(body) = body {
-        request = request.set("Content-Type", "application/json");
+        request = request.header("Content-Type", "application/json");
         request.send_json(body)
     } else {
         request.call()
     };
     match result {
         Ok(response) => {
-            let status = response.status();
-            let value = response.into_json::<Value>().unwrap_or(Value::Null);
-            Ok((status, value))
-        }
-        Err(ureq::Error::Status(status, response)) => {
-            let value = response.into_json::<Value>().unwrap_or(Value::Null);
+            let status = response.status().as_u16();
+            let value = response
+                .into_body()
+                .read_json::<Value>()
+                .unwrap_or(Value::Null);
             Ok((status, value))
         }
         Err(error) => Err(error.into()),

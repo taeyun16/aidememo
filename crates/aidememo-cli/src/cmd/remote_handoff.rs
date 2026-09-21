@@ -1161,7 +1161,10 @@ impl RemoteHandoffClient {
             .header("Authorization", &format!("Bearer {}", self.profile.token));
         match request.send_json(body.clone()) {
             Ok(response) => decode(Ok(response)),
-            Err(error) if error.to_string().contains("connection") || error.to_string().contains("timeout") => {
+            Err(error)
+                if error.to_string().contains("connection")
+                    || error.to_string().contains("timeout") =>
+            {
                 let retry = self
                     .agent
                     .post(&endpoint)
@@ -1180,7 +1183,7 @@ impl RemoteHandoffClient {
     }
 }
 
-fn decode(result: Result<ureq::Response, ureq::Error>) -> Result<Value, AideMemoError> {
+fn decode(result: Result<http::Response<ureq::Body>, ureq::Error>) -> Result<Value, AideMemoError> {
     let response = result.map_err(remote_error)?;
     let status = response.status().as_u16();
     if status >= 400 {

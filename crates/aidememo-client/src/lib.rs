@@ -282,10 +282,7 @@ impl HttpReplicaClient {
                         .read_json::<RemoteErrorResponse>()
                         .map(|body| body.error.message)
                         .unwrap_or_else(|_| "remote request failed".to_owned());
-                    return Err(ClientError::Remote {
-                        status,
-                        message,
-                    });
+                    return Err(ClientError::Remote { status, message });
                 }
                 response
                     .into_body()
