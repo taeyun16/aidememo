@@ -1143,19 +1143,18 @@ mod tests {
                 Some(_) => ureq::post(&url),
                 None => ureq::get(&url),
             }
-            .set("Authorization", &format!("Bearer {token}"));
+            .header("Authorization", &format!("Bearer {token}"))
+            .config()
+            .http_status_as_error(false)
+            .build();
             let response = match body {
                 Some(body) => request.send_json(body),
                 None => request.call(),
             };
             match response {
                 Ok(response) => {
-                    let status = response.status();
-                    let body = response.into_string().unwrap_or_default();
-                    (status, body)
-                }
-                Err(ureq::Error::Status(status, response)) => {
-                    let body = response.into_string().unwrap_or_default();
+                    let status = response.status().as_u16();
+                    let body = response.into_body().read_to_string().unwrap_or_default();
                     (status, body)
                 }
                 Err(error) => panic!("test HTTP request failed: {error}"),

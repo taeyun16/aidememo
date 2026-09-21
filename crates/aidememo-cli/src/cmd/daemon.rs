@@ -134,7 +134,9 @@ fn delete_registry() -> Result<(), AideMemoError> {
 fn probe_health(port: u16) -> bool {
     let url = format!("http://127.0.0.1:{port}/health");
     ureq::get(&url)
-        .timeout(Duration::from_millis(500))
+        .config()
+        .timeout_global(Some(Duration::from_millis(500)))
+        .build()
         .call()
         .map(|r| r.status() == 200)
         .unwrap_or(false)

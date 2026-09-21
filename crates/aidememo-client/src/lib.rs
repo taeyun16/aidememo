@@ -186,13 +186,13 @@ impl HttpReplicaClient {
     /// Construct a client around a validated profile.
     #[must_use]
     pub fn new(profile: RemoteProfile) -> Self {
+        let config = ureq::Agent::config_builder()
+            .timeout_connect(Some(Duration::from_secs(5)))
+            .timeout_global(Some(Duration::from_secs(30)))
+            .build();
         Self {
             profile,
-            agent: ureq::AgentBuilder::new()
-                .timeout_connect(Duration::from_secs(5))
-                .timeout_read(Duration::from_secs(30))
-                .timeout_write(Duration::from_secs(30))
-                .build(),
+            agent: ureq::Agent::new_with_config(config),
         }
     }
 
@@ -268,20 +268,31 @@ impl HttpReplicaClient {
         let response = self
             .agent
             .get(&format!("{}{path}", self.profile.url))
-            .set("Authorization", &format!("Bearer {}", self.profile.token))
+            .header("Authorization", &format!("Bearer {}", self.profile.token))
+            .config()
+            .http_status_as_error(false)
+            .build()
             .call();
         match response {
-            Ok(response) => response
-                .into_json::<T>()
-                .map_err(|error| ClientError::Protocol(error.to_string())),
-            Err(ureq::Error::Status(status, response)) => {
-                let message = response
-                    .into_json::<RemoteErrorResponse>()
-                    .map(|body| body.error.message)
-                    .unwrap_or_else(|_| "remote request failed".to_owned());
-                Err(ClientError::Remote { status, message })
+            Ok(response) => {
+                let status = response.status().as_u16();
+                if status >= 400 {
+                    let message = response
+                        .into_body()
+                        .read_json::<RemoteErrorResponse>()
+                        .map(|body| body.error.message)
+                        .unwrap_or_else(|_| "remote request failed".to_owned());
+                    return Err(ClientError::Remote {
+                        status,
+                        message,
+                    });
+                }
+                response
+                    .into_body()
+                    .read_json::<T>()
+                    .map_err(|error| ClientError::Protocol(error.to_string()))
             }
-            Err(ureq::Error::Transport(error)) => Err(ClientError::Transport(error.to_string())),
+            Err(error) => Err(ClientError::Transport(error.to_string())),
         }
     }
 }

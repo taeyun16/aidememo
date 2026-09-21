@@ -88,16 +88,16 @@ impl HttpEmbeddingProvider {
                 "embedding dimension must be greater than zero".to_owned(),
             ));
         }
+        let config = ureq::Agent::config_builder()
+            .timeout_connect(Some(std::time::Duration::from_secs(5)))
+            .timeout_global(Some(std::time::Duration::from_secs(30)))
+            .build();
         Ok(Self {
             endpoint,
             model,
             api_key: api_key.filter(|key| !key.trim().is_empty()),
             dimension,
-            agent: ureq::AgentBuilder::new()
-                .timeout_connect(std::time::Duration::from_secs(5))
-                .timeout_read(std::time::Duration::from_secs(30))
-                .timeout_write(std::time::Duration::from_secs(30))
-                .build(),
+            agent: ureq::Agent::new_with_config(config),
         })
     }
 
@@ -112,9 +112,9 @@ impl HttpEmbeddingProvider {
         let mut request = self
             .agent
             .post(&self.endpoint)
-            .set("Content-Type", "application/json");
+            .header("Content-Type", "application/json");
         if let Some(api_key) = &self.api_key {
-            request = request.set("Authorization", &format!("Bearer {api_key}"));
+            request = request.header("Authorization", &format!("Bearer {api_key}"));
         }
         let response = request
             .send_json(body)
@@ -122,12 +122,13 @@ impl HttpEmbeddingProvider {
                 operation: "embedding_request",
                 detail: error.to_string(),
             })?;
-        let response = response.into_json::<EmbeddingResponse>().map_err(|error| {
-            DomainError::StorageFailure {
+        let response = response
+            .into_body()
+            .read_json::<EmbeddingResponse>()
+            .map_err(|error| DomainError::StorageFailure {
                 operation: "embedding_decode",
                 detail: error.to_string(),
-            }
-        })?;
+            })?;
         let vectors = response
             .data
             .into_iter()
