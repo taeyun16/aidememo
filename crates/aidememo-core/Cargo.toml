@@ -115,7 +115,7 @@ lru = "0.18"
 # rustls 0.21 TLS feature. `default-https-client` uses the maintained TLS path.
 aws-sdk-s3 = { version = "1.136.0", optional = true, default-features = false, features = ["sigv4a", "http-1x", "default-https-client", "rt-tokio"] }
 aws-config = { version = "1.8.18", optional = true }
-zstd = { version = "0.13.3", optional = true }
+zstd = { version = "0.14.0", optional = true }
 # Async runtime for optional S3 workflows (provided transitively by aws-sdk-s3/rt-tokio)
 # tokio = { version = "1.35", features = ["full"], optional = true }
 
