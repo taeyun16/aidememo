@@ -1183,7 +1183,9 @@ impl RemoteHandoffClient {
     }
 }
 
-fn decode(result: Result<ureq::http::Response<ureq::Body>, ureq::Error>) -> Result<Value, AideMemoError> {
+fn decode(
+    result: Result<ureq::http::Response<ureq::Body>, ureq::Error>,
+) -> Result<Value, AideMemoError> {
     let response = result.map_err(remote_error)?;
     let status = response.status().as_u16();
     if status >= 400 {
