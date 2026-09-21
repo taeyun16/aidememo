@@ -978,7 +978,7 @@ impl RemoteHandoffClient {
                 "include_completed",
                 if include_completed { "true" } else { "false" },
             )
-            .query("limit", &limit.to_string());
+            .query("limit", limit.to_string());
         if let Some(source_id) = source_id {
             validate_id("source_id", source_id)?;
             request = request.query("source_id", source_id);
@@ -1183,7 +1183,7 @@ impl RemoteHandoffClient {
     }
 }
 
-fn decode(result: Result<http::Response<ureq::Body>, ureq::Error>) -> Result<Value, AideMemoError> {
+fn decode(result: Result<ureq::http::Response<ureq::Body>, ureq::Error>) -> Result<Value, AideMemoError> {
     let response = result.map_err(remote_error)?;
     let status = response.status().as_u16();
     if status >= 400 {

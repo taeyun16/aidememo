@@ -4228,7 +4228,6 @@ fn pull_one_batch(
     prev: &StoredCursor,
     batch_limit: usize,
 ) -> Result<String, AideMemoError> {
-    use std::io::Read;
     let mut endpoint = format!("{}/sync/since?limit={}", key, batch_limit);
     if let Some(e) = &prev.entity {
         endpoint.push_str(&format!("&entity={}", e));
