@@ -81,7 +81,7 @@ fastembed = { version = "6", optional = true }
 # OpenAI-compatible HTTP embeddings (Ollama / OpenAI / OpenRouter / vLLM / LocalAI).
 # Pulled in alongside the `semantic` feature so users who opt into semantic
 # search get the choice between offline (Model2Vec) and pluggable HTTP.
-ureq = { version = "2.12", features = ["json"], optional = true }
+ureq = { version = "3.4", features = ["json"], optional = true }
 
 # SHA-256 for exact-content dedup at fact_add. Tiny crate, already
 # in the workspace tree (transitive). Modeled after OMEGA's write-

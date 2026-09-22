@@ -449,19 +449,21 @@ fn build_llm_request(
 /// `rerank.rs`.
 #[cfg(feature = "semantic")]
 fn post_chat_completion(url: &str, api_key: &str, body: &serde_json::Value) -> Result<String> {
-    let agent = ureq::AgentBuilder::new()
-        .timeout(std::time::Duration::from_secs(60))
+    let config = ureq::Agent::config_builder()
+        .timeout_global(Some(std::time::Duration::from_secs(60)))
         .build();
+    let agent = ureq::Agent::new_with_config(config);
     let mut req = agent.post(url);
     if !api_key.is_empty() {
-        req = req.set("Authorization", &format!("Bearer {}", api_key));
+        req = req.header("Authorization", &format!("Bearer {}", api_key));
     }
-    req.set("Content-Type", "application/json")
+    req.header("Content-Type", "application/json")
         .send_json(body.clone())
         .map_err(|e| {
             crate::error::AideMemoError::invalid_input(format!("LLM extract POST failed: {e}"))
         })?
-        .into_string()
+        .into_body()
+        .read_to_string()
         .map_err(|e| {
             crate::error::AideMemoError::invalid_input(format!("LLM extract read failed: {e}"))
         })

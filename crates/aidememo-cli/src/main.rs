@@ -3010,10 +3010,11 @@ fn run_search_via_daemon(
         }
     });
     let resp: serde_json::Value = ureq::post(&url)
-        .set("Content-Type", "application/json")
+        .header("Content-Type", "application/json")
         .send_json(body)
         .map_err(|e| AideMemoError::Internal(format!("daemon POST {url} failed: {e}")))?
-        .into_json()
+        .into_body()
+        .read_json()
         .map_err(|e| AideMemoError::Internal(format!("daemon response parse: {e}")))?;
     if let Some(err) = resp.get("error") {
         return Err(AideMemoError::Internal(format!("daemon error: {err}")));
@@ -3382,10 +3383,11 @@ fn daemon_tool_call(
     tool: &str,
 ) -> Result<String, AideMemoError> {
     let resp: serde_json::Value = ureq::post(url)
-        .set("Content-Type", "application/json")
+        .header("Content-Type", "application/json")
         .send_json(body)
         .map_err(|e| AideMemoError::Internal(format!("daemon POST {url} failed: {e}")))?
-        .into_json()
+        .into_body()
+        .read_json()
         .map_err(|e| AideMemoError::Internal(format!("daemon response parse: {e}")))?;
     if let Some(err) = resp.get("error") {
         return Err(AideMemoError::Internal(format!(
@@ -4226,7 +4228,6 @@ fn pull_one_batch(
     prev: &StoredCursor,
     batch_limit: usize,
 ) -> Result<String, AideMemoError> {
-    use std::io::Read;
     let mut endpoint = format!("{}/sync/since?limit={}", key, batch_limit);
     if let Some(e) = &prev.entity {
         endpoint.push_str(&format!("&entity={}", e));
@@ -4264,21 +4265,25 @@ fn pull_one_batch(
     if let Some(t) = token
         && !t.is_empty()
     {
-        req = req.set("Authorization", &format!("Bearer {}", t));
+        req = req.header("Authorization", &format!("Bearer {}", t));
     }
     let resp = req
+        .config()
+        .http_status_as_error(false)
+        .build()
         .call()
         .map_err(|e| AideMemoError::Internal(format!("sync pull HTTP failed: {e}")))?;
-    if resp.status() != 200 {
+    let status = resp.status().as_u16();
+    if status != 200 {
         return Err(AideMemoError::Internal(format!(
             "sync pull returned HTTP {}: {}",
-            resp.status(),
-            resp.into_string().unwrap_or_default()
+            status,
+            resp.into_body().read_to_string().unwrap_or_default()
         )));
     }
-    let mut body = String::new();
-    resp.into_reader()
-        .read_to_string(&mut body)
+    let body = resp
+        .into_body()
+        .read_to_string()
         .map_err(|e| AideMemoError::Internal(format!("sync pull body read: {e}")))?;
     Ok(body)
 }

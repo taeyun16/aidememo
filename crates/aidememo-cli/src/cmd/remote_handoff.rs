@@ -940,9 +940,10 @@ struct RemoteHandoffClient {
 impl RemoteHandoffClient {
     fn new(profile: auth::RemoteAuthProfile) -> Result<Self, AideMemoError> {
         validate_id("project_id", &profile.project_id)?;
+        let config = ureq::Agent::config_builder().build();
         Ok(Self {
             profile,
-            agent: ureq::AgentBuilder::new().build(),
+            agent: ureq::Agent::new_with_config(config),
         })
     }
 
@@ -971,13 +972,13 @@ impl RemoteHandoffClient {
         let mut request = self
             .agent
             .get(&endpoint)
-            .set("Authorization", &format!("Bearer {}", self.profile.token))
+            .header("Authorization", &format!("Bearer {}", self.profile.token))
             .query("box", mailbox)
             .query(
                 "include_completed",
                 if include_completed { "true" } else { "false" },
             )
-            .query("limit", &limit.to_string());
+            .query("limit", limit.to_string());
         if let Some(source_id) = source_id {
             validate_id("source_id", source_id)?;
             request = request.query("source_id", source_id);
@@ -1123,10 +1124,16 @@ impl RemoteHandoffClient {
         let request = self
             .agent
             .get(&endpoint)
-            .set("Authorization", &format!("Bearer {}", self.profile.token));
+            .header("Authorization", &format!("Bearer {}", self.profile.token))
+            .config()
+            .http_status_as_error(false)
+            .build();
         match request.call() {
             Ok(response) => {
-                let value = response.into_json::<Value>().map_err(|error| {
+                if response.status().as_u16() == 404 {
+                    return Ok(None);
+                }
+                let value = response.into_body().read_json::<Value>().map_err(|error| {
                     AideMemoError::Internal(format!("decode remote resource response: {error}"))
                 })?;
                 Ok(value
@@ -1134,7 +1141,6 @@ impl RemoteHandoffClient {
                     .and_then(|state| state.get("body"))
                     .cloned())
             }
-            Err(ureq::Error::Status(404, _)) => Ok(None),
             Err(error) => Err(remote_error(error)),
         }
     }
@@ -1143,7 +1149,7 @@ impl RemoteHandoffClient {
         let request = self
             .agent
             .get(&self.endpoint(path))
-            .set("Authorization", &format!("Bearer {}", self.profile.token));
+            .header("Authorization", &format!("Bearer {}", self.profile.token));
         decode(request.call())
     }
 
@@ -1152,14 +1158,17 @@ impl RemoteHandoffClient {
         let request = self
             .agent
             .post(&endpoint)
-            .set("Authorization", &format!("Bearer {}", self.profile.token));
+            .header("Authorization", &format!("Bearer {}", self.profile.token));
         match request.send_json(body.clone()) {
             Ok(response) => decode(Ok(response)),
-            Err(ureq::Error::Transport(_)) => {
+            Err(error)
+                if error.to_string().contains("connection")
+                    || error.to_string().contains("timeout") =>
+            {
                 let retry = self
                     .agent
                     .post(&endpoint)
-                    .set("Authorization", &format!("Bearer {}", self.profile.token));
+                    .header("Authorization", &format!("Bearer {}", self.profile.token));
                 decode(retry.send_json(body))
             }
             Err(error) => Err(remote_error(error)),
@@ -1174,32 +1183,35 @@ impl RemoteHandoffClient {
     }
 }
 
-fn decode(result: Result<ureq::Response, ureq::Error>) -> Result<Value, AideMemoError> {
-    result
-        .map_err(remote_error)?
-        .into_json::<Value>()
+fn decode(
+    result: Result<ureq::http::Response<ureq::Body>, ureq::Error>,
+) -> Result<Value, AideMemoError> {
+    let response = result.map_err(remote_error)?;
+    let status = response.status().as_u16();
+    if status >= 400 {
+        let detail = response
+            .into_body()
+            .read_json::<Value>()
+            .ok()
+            .and_then(|value| {
+                value
+                    .pointer("/error/message")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            })
+            .unwrap_or_else(|| "remote request failed".to_owned());
+        return Err(AideMemoError::InvalidInput(format!(
+            "remote server returned HTTP {status}: {detail}"
+        )));
+    }
+    response
+        .into_body()
+        .read_json::<Value>()
         .map_err(|error| AideMemoError::Internal(format!("decode remote response: {error}")))
 }
 
 fn remote_error(error: ureq::Error) -> AideMemoError {
-    match error {
-        ureq::Error::Status(status, response) => {
-            let detail = response
-                .into_json::<Value>()
-                .ok()
-                .and_then(|value| {
-                    value
-                        .pointer("/error/message")
-                        .and_then(Value::as_str)
-                        .map(str::to_owned)
-                })
-                .unwrap_or_else(|| "remote request failed".to_owned());
-            AideMemoError::InvalidInput(format!("remote server returned HTTP {status}: {detail}"))
-        }
-        ureq::Error::Transport(error) => {
-            AideMemoError::Internal(format!("remote server request failed: {error}"))
-        }
-    }
+    AideMemoError::Internal(format!("remote server request failed: {error}"))
 }
 
 fn reject_actor_override(actor_id: Option<&str>) -> Result<(), AideMemoError> {

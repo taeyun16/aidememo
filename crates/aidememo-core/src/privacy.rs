@@ -330,14 +330,15 @@ fn fetch_spans(content: &str, config: &PrivacyConfig) -> Result<Vec<DetectedSpan
         "redact_labels": config.redact_labels,
         "review_labels": config.review_labels,
     });
-    let mut req = ureq::post(&endpoint).set("Content-Type", "application/json");
+    let mut req = ureq::post(&endpoint).header("Content-Type", "application/json");
     if let Some(token) = privacy_token(config) {
-        req = req.set("Authorization", &format!("Bearer {token}"));
+        req = req.header("Authorization", &format!("Bearer {token}"));
     }
     let value: serde_json::Value = req
         .send_json(body)
         .map_err(|e| AideMemoError::Internal(format!("privacy filter POST {endpoint}: {e}")))?
-        .into_json()
+        .into_body()
+        .read_json()
         .map_err(|e| AideMemoError::Internal(format!("privacy filter response parse: {e}")))?;
     let response: SidecarResponse = serde_json::from_value(value)
         .map_err(|e| AideMemoError::Internal(format!("privacy filter response shape: {e}")))?;

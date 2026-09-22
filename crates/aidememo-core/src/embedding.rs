@@ -321,9 +321,9 @@ mod openai {
                 "model": self.model,
                 "input": texts,
             });
-            let mut req = ureq::post(&self.endpoint).set("Content-Type", "application/json");
+            let mut req = ureq::post(&self.endpoint).header("Content-Type", "application/json");
             if let Some(key) = &self.api_key {
-                req = req.set("Authorization", &format!("Bearer {key}"));
+                req = req.header("Authorization", &format!("Bearer {key}"));
             }
             let resp = req.send_json(body).map_err(|e| {
                 AideMemoError::Internal(format!(
@@ -332,7 +332,8 @@ mod openai {
                 ))
             })?;
             let parsed: EmbeddingsResponse = resp
-                .into_json()
+                .into_body()
+                .read_json()
                 .map_err(|e| AideMemoError::Internal(format!("embedding response parse: {e}")))?;
             Ok(parsed.data.into_iter().map(|d| d.embedding).collect())
         }
@@ -470,20 +471,21 @@ mod tei {
     fn fetch_info(url: &str, api_key: Option<&str>) -> Result<InfoResponse> {
         let mut req = ureq::get(url);
         if let Some(key) = api_key {
-            req = req.set("Authorization", &format!("Bearer {key}"));
+            req = req.header("Authorization", &format!("Bearer {key}"));
         }
         let resp = req.call().map_err(|e| {
             AideMemoError::Internal(format!("tei /info request failed at {url}: {e}"))
         })?;
-        resp.into_json()
+        resp.into_body()
+            .read_json()
             .map_err(|e| AideMemoError::Internal(format!("tei /info parse failed: {e}")))
     }
 
     fn probe_dimension(embed_endpoint: &str, api_key: Option<&str>) -> Result<usize> {
         let body = serde_json::json!({"inputs": "."});
-        let mut req = ureq::post(embed_endpoint).set("Content-Type", "application/json");
+        let mut req = ureq::post(embed_endpoint).header("Content-Type", "application/json");
         if let Some(key) = api_key {
-            req = req.set("Authorization", &format!("Bearer {key}"));
+            req = req.header("Authorization", &format!("Bearer {key}"));
         }
         let resp = req.send_json(body).map_err(|e| {
             AideMemoError::Internal(format!(
@@ -491,7 +493,8 @@ mod tei {
             ))
         })?;
         let vectors: Vec<Vec<f32>> = resp
-            .into_json()
+            .into_body()
+            .read_json()
             .map_err(|e| AideMemoError::Internal(format!("tei dimension probe parse: {e}")))?;
         vectors
             .into_iter()
@@ -542,9 +545,9 @@ mod tei {
                     serde_json::json!({"inputs": chunk, "truncate": true})
                 };
                 let mut req =
-                    ureq::post(&self.embed_endpoint).set("Content-Type", "application/json");
+                    ureq::post(&self.embed_endpoint).header("Content-Type", "application/json");
                 if let Some(key) = &self.api_key {
-                    req = req.set("Authorization", &format!("Bearer {key}"));
+                    req = req.header("Authorization", &format!("Bearer {key}"));
                 }
                 let resp = req.send_json(body).map_err(|e| {
                     AideMemoError::Internal(format!(
@@ -552,7 +555,7 @@ mod tei {
                         self.embed_endpoint
                     ))
                 })?;
-                let mut parsed: Vec<Vec<f32>> = resp.into_json().map_err(|e| {
+                let mut parsed: Vec<Vec<f32>> = resp.into_body().read_json().map_err(|e| {
                     AideMemoError::Internal(format!("tei /embed response parse: {e}"))
                 })?;
                 out.append(&mut parsed);

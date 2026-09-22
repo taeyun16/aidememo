@@ -223,15 +223,16 @@ mod tei {
                 "return_text": false,
                 "truncate": true,
             });
-            let mut req = ureq::post(&self.endpoint).set("Content-Type", "application/json");
+            let mut req = ureq::post(&self.endpoint).header("Content-Type", "application/json");
             if let Some(key) = &self.api_key {
-                req = req.set("Authorization", &format!("Bearer {key}"));
+                req = req.header("Authorization", &format!("Bearer {key}"));
             }
             let resp = req.send_json(body).map_err(|e| {
                 AideMemoError::Internal(format!("tei rerank to {} failed: {e}", self.endpoint))
             })?;
             let parsed: Vec<Rank> = resp
-                .into_json()
+                .into_body()
+                .read_json()
                 .map_err(|e| AideMemoError::Internal(format!("tei rerank parse: {e}")))?;
             let mut scores = vec![f32::NEG_INFINITY; texts.len()];
             for r in parsed {
