@@ -593,7 +593,7 @@ mod tei {
 #[cfg(feature = "fastembed")]
 mod fastembed_provider {
     use super::{AideMemoError, Config, EmbeddingProvider, Result};
-    use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
+    use fastembed::{EmbeddingModel, TextEmbedding, TextInitOptions};
     use parking_lot::Mutex;
 
     pub struct FastembedProvider {
@@ -615,7 +615,7 @@ mod fastembed_provider {
                 config.model.name.clone()
             };
             let (model_enum, dim) = parse_model(&model_id)?;
-            let mut opts = InitOptions::new(model_enum);
+            let mut opts = TextInitOptions::new(model_enum);
             // Honour the user's configured cache_dir — keeps every aidememo
             // download under the same root rather than scattering
             // model weights across HF + Model2Vec caches.
