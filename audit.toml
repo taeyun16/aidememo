@@ -12,14 +12,6 @@ ignore = [
     # rebuild with compatible dependencies.
     "RUSTSEC-2026-0235",
 
-    # quick-xml 0.38.x is present only through oneio's optional `s3`
-    # dependency graph. AideMemo enables oneio's default HTTPS features,
-    # not oneio/s3; its own `s3` feature uses aws-sdk-s3 instead. cargo-audit
-    # scans optional lockfile entries even when no shipped feature compiles
-    # them. Remove these once oneio widens its quick-xml requirement.
-    "RUSTSEC-2026-0194",
-    "RUSTSEC-2026-0195",
-
     # Additional transitive optional dependency issues in DuckDB/s3 paths
     "RUSTSEC-2026-0104",
     "RUSTSEC-2026-0098",
