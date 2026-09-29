@@ -12,11 +12,6 @@ ignore = [
     # rebuild with compatible dependencies.
     "RUSTSEC-2026-0235",
 
-    # Additional transitive optional dependency issues in DuckDB/s3 paths
-    "RUSTSEC-2026-0104",
-    "RUSTSEC-2026-0098",
-    "RUSTSEC-2026-0099",
-
     # Unmaintained crates (warnings, not vulnerabilities). Replacing them
     # would mean churning multiple transitive deps' API surface — accept
     # for now, revisit during 0.2.0.
