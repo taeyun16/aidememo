@@ -16,6 +16,7 @@ ignore = [
     # would mean churning multiple transitive deps' API surface — accept
     # for now, revisit during 0.2.0.
     "RUSTSEC-2025-0141",  # bincode (replaced by serde-bincode upstream)
+    "RUSTSEC-2025-0119",  # number_prefix (via indicatif 0.17.11 in model2vec-rs)
     "RUSTSEC-2025-0057",  # fxhash (rustc-hash is the de-facto successor)
     "RUSTSEC-2024-0436",  # paste (proc-macro, transitive only)
 ]
