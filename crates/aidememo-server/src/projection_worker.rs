@@ -8,7 +8,7 @@
 #[cfg(feature = "semantic")]
 use crate::semantic::{SemanticProjection, SharedEmbeddingProvider};
 use crate::{executor::BlockingStoreExecutor, lexical::LexicalProjection};
-use aidememo_domain::{DomainError, ProjectEpoch, ProjectScope, ProjectSequence, ProjectSnapshot};
+use aidememo_domain::{DomainError, ProjectScope, ProjectSnapshot};
 use std::{sync::Arc, time::Duration};
 use tokio::{
     sync::RwLock,
@@ -29,29 +29,6 @@ pub(crate) struct CachedLexicalProjection {
 }
 
 impl CachedLexicalProjection {
-    #[allow(dead_code)]
-    #[must_use]
-    pub(crate) fn projection(&self) -> &Arc<LexicalProjection> {
-        &self.projection
-    }
-
-    #[allow(dead_code)]
-    #[must_use]
-    pub(crate) fn scope(&self) -> &ProjectScope {
-        &self.scope
-    }
-
-    #[allow(dead_code)]
-    #[must_use]
-    pub(crate) fn index_seq(&self) -> ProjectSequence {
-        self.projection.index_seq()
-    }
-
-    #[allow(dead_code)]
-    #[must_use]
-    pub(crate) fn project_epoch(&self) -> &ProjectEpoch {
-        self.projection.project_epoch()
-    }
 }
 
 #[cfg(feature = "semantic")]
@@ -63,27 +40,7 @@ pub(crate) struct CachedSemanticProjection {
 }
 
 #[cfg(feature = "semantic")]
-#[allow(dead_code)]
 impl CachedSemanticProjection {
-    #[must_use]
-    pub(crate) fn projection(&self) -> &Arc<SemanticProjection> {
-        &self.projection
-    }
-
-    #[must_use]
-    pub(crate) fn scope(&self) -> &ProjectScope {
-        &self.scope
-    }
-
-    #[must_use]
-    pub(crate) fn index_seq(&self) -> ProjectSequence {
-        self.projection.index_seq()
-    }
-
-    #[must_use]
-    pub(crate) fn project_epoch(&self) -> &ProjectEpoch {
-        self.projection.project_epoch()
-    }
 }
 
 /// Worker state for maintaining projection indexes.
@@ -117,19 +74,6 @@ impl ProjectionWorker {
     /// Get the current cached lexical projection for a scope, if available and fresh.
     pub(crate) async fn get_lexical(&self, scope: &ProjectScope) -> Option<Arc<LexicalProjection>> {
         let cache = self.lexical_cache.read().await;
-        cache
-            .as_ref()
-            .filter(|cached| cached.scope == *scope)
-            .map(|cached| Arc::clone(&cached.projection))
-    }
-
-    #[cfg(feature = "semantic")]
-    #[allow(dead_code)]
-    pub(crate) async fn get_semantic(
-        &self,
-        scope: &ProjectScope,
-    ) -> Option<Arc<SemanticProjection>> {
-        let cache = self.semantic_cache.read().await;
         cache
             .as_ref()
             .filter(|cached| cached.scope == *scope)
@@ -247,7 +191,7 @@ impl ProjectionWorker {
                                 })
                                 .await
                             {
-                                Ok(canonical_seq) => canonical_seq > cache.index_seq(),
+                                Ok(canonical_seq) => canonical_seq > cache.projection.index_seq(),
                                 Err(error) => {
                                     tracing::debug!(
                                         error = %error,
@@ -273,7 +217,7 @@ impl ProjectionWorker {
                         if let Some(cache) = cached.as_ref() {
                             tracing::debug!(
                                 scope = ?scope,
-                                index_seq = cache.index_seq().get(),
+                                index_seq = cache.projection.index_seq().get(),
                                 "projection worker refreshed"
                             );
                         }
