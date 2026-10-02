@@ -50,7 +50,6 @@ unsafe impl Sync for Store {}
 
 impl Store {
     /// Access the store configuration.
-    #[allow(dead_code)]
     pub(crate) fn config(&self) -> &Config {
         &self.config
     }

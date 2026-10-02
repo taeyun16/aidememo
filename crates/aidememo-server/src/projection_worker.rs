@@ -30,7 +30,6 @@ pub(crate) struct CachedLexicalProjection {
 
 #[cfg(feature = "semantic")]
 #[derive(Clone)]
-#[allow(dead_code)]
 pub(crate) struct CachedSemanticProjection {
     projection: Arc<SemanticProjection>,
     scope: ProjectScope,
