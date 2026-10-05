@@ -1219,7 +1219,7 @@ def check_docusaurus_contract() -> list[str]:
         errors.append("website/docusaurus.config.js must include @docusaurus/theme-mermaid")
     if '"@docusaurus/theme-mermaid"' not in package:
         errors.append("website/package.json must depend on @docusaurus/theme-mermaid")
-    if '"docusaurus-pagefind-search": "0.2.2"' not in package:
+    if '"docusaurus-pagefind-search": "0.3.1"' not in package:
         errors.append("website/package.json must pin the Pagefind documentation search plugin")
     if not re.search(r"locales:\s*\[\s*['\"]en['\"]\s*,\s*['\"]ko['\"]\s*\]", config):
         errors.append("website/docusaurus.config.js must build the en and ko locales")
