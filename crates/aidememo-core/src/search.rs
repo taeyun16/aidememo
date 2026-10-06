@@ -515,7 +515,7 @@ mod semantic {
             }
         };
         phase("query_embed", t);
-        let mut q_norm = query_embedding.clone();
+        let mut q_norm = query_embedding;
         crate::vector_index::l2_normalize(&mut q_norm);
         let cap = config.search.semantic_prefilter.max(limit) * 2;
         let t = std::time::Instant::now();

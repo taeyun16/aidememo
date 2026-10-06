@@ -702,7 +702,7 @@ impl AideMemo {
     /// Add an alias to an entity.
     pub fn entity_alias_add(&self, name: &str, alias: &str) -> Result<()> {
         let record = self.store.read().entity_get(name)?;
-        let mut updated_aliases = record.aliases.clone();
+        let mut updated_aliases = record.aliases;
         updated_aliases.push(alias.to_string());
         self.store.write().entity_update(
             name,
