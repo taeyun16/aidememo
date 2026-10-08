@@ -294,7 +294,7 @@ impl MaterializedChangeBatch {
             scope.clone(),
             cursor.clone(),
             entries.iter().map(|entry| entry.change.clone()).collect(),
-            next_cursor.clone(),
+            next_cursor,
             has_more,
         )?;
         Ok(Self {

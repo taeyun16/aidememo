@@ -360,9 +360,7 @@ async fn authorize(
         .run_service(move |service| {
             let (authenticated, membership) = request_context(service, &digest, &project_id)?;
             if mutation && !membership.role.can_mutate() {
-                return Err(DomainError::ProjectUnauthorized {
-                    project_id: project_id.clone(),
-                });
+                return Err(DomainError::ProjectUnauthorized { project_id });
             }
             Ok(ProjectScope::new(
                 authenticated.tenant_id().clone(),
