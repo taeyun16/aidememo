@@ -1,12 +1,11 @@
-//! Background worker for maintaining rebuildable lexical/semantic projections.
+//! Background worker for maintaining rebuildable lexical projections.
 //!
-//! Projections are derived state built from canonical snapshots. Each projection
-//! tracks the exact project sequence (`index_seq`) it represents. The worker
-//! periodically refreshes projections when new canonical data arrives, using the
-//! bounded executor to avoid blocking Axum runtime workers.
+//! Lexical projections are derived state built from canonical snapshots. Each
+//! projection tracks the exact project sequence (`index_seq`) it represents. The
+//! worker periodically refreshes the lexical cache when new canonical data
+//! arrives, using the bounded executor to avoid blocking Axum runtime workers.
+//! Semantic projections stay on `ServerState` and are rebuilt on demand.
 
-#[cfg(feature = "semantic")]
-use crate::semantic::{SemanticProjection, SharedEmbeddingProvider};
 use crate::{executor::BlockingStoreExecutor, lexical::LexicalProjection};
 use aidememo_domain::{DomainError, ProjectScope, ProjectSnapshot};
 use std::{sync::Arc, time::Duration};
@@ -28,39 +27,20 @@ pub(crate) struct CachedLexicalProjection {
     scope: ProjectScope,
 }
 
-#[cfg(feature = "semantic")]
-#[derive(Clone)]
-#[allow(dead_code)]
-pub(crate) struct CachedSemanticProjection {
-    projection: Arc<SemanticProjection>,
-    scope: ProjectScope,
-}
-
 /// Worker state for maintaining projection indexes.
 #[derive(Clone)]
 pub(crate) struct ProjectionWorker {
     executor: BlockingStoreExecutor,
     lexical_cache: Arc<RwLock<Option<CachedLexicalProjection>>>,
-    #[cfg(feature = "semantic")]
-    semantic_cache: Arc<RwLock<Option<CachedSemanticProjection>>>,
-    #[cfg(feature = "semantic")]
-    semantic_provider: Option<SharedEmbeddingProvider>,
 }
 
 impl ProjectionWorker {
     /// Create a new projection worker for the given executor.
     #[must_use]
-    pub(crate) fn new(
-        executor: BlockingStoreExecutor,
-        #[cfg(feature = "semantic")] semantic_provider: Option<SharedEmbeddingProvider>,
-    ) -> Self {
+    pub(crate) fn new(executor: BlockingStoreExecutor) -> Self {
         Self {
             executor,
             lexical_cache: Arc::new(RwLock::new(None)),
-            #[cfg(feature = "semantic")]
-            semantic_cache: Arc::new(RwLock::new(None)),
-            #[cfg(feature = "semantic")]
-            semantic_provider,
         }
     }
 
@@ -73,7 +53,7 @@ impl ProjectionWorker {
             .map(|cached| Arc::clone(&cached.projection))
     }
 
-    /// Rebuild projections for a specific scope from a fresh snapshot.
+    /// Rebuild the lexical projection for a specific scope from a fresh snapshot.
     ///
     /// This operation runs on the bounded executor to avoid blocking Axum workers.
     pub(crate) async fn rebuild_for_scope(&self, scope: ProjectScope) -> Result<(), DomainError> {
@@ -91,51 +71,25 @@ impl ProjectionWorker {
         Ok(())
     }
 
-    /// Rebuild projections from an already-fetched snapshot.
+    /// Rebuild the lexical projection from an already-fetched snapshot.
     async fn rebuild_from_snapshot(
         &self,
         scope: ProjectScope,
         snapshot: ProjectSnapshot,
     ) -> Result<(), DomainError> {
-        // Rebuild lexical on blocking pool
-        let lexical_snapshot = snapshot.clone();
         let lexical_projection =
-            tokio::task::spawn_blocking(move || LexicalProjection::rebuild(&lexical_snapshot))
+            tokio::task::spawn_blocking(move || LexicalProjection::rebuild(&snapshot))
                 .await
                 .map_err(|error| DomainError::StorageFailure {
                     operation: "projection_worker_lexical_task",
                     detail: error.to_string(),
                 })??;
 
-        {
-            let mut cache = self.lexical_cache.write().await;
-            *cache = Some(CachedLexicalProjection {
-                projection: Arc::new(lexical_projection),
-                scope: scope.clone(),
-            });
-        }
-
-        #[cfg(feature = "semantic")]
-        {
-            if let Some(provider) = &self.semantic_provider {
-                let semantic_snapshot = snapshot;
-                let semantic_provider = Arc::clone(provider);
-                let semantic_projection = tokio::task::spawn_blocking(move || {
-                    SemanticProjection::rebuild(&semantic_snapshot, semantic_provider.as_ref())
-                })
-                .await
-                .map_err(|error| DomainError::StorageFailure {
-                    operation: "projection_worker_semantic_task",
-                    detail: error.to_string(),
-                })??;
-
-                let mut cache = self.semantic_cache.write().await;
-                *cache = Some(CachedSemanticProjection {
-                    projection: Arc::new(semantic_projection),
-                    scope,
-                });
-            }
-        }
+        let mut cache = self.lexical_cache.write().await;
+        *cache = Some(CachedLexicalProjection {
+            projection: Arc::new(lexical_projection),
+            scope,
+        });
 
         Ok(())
     }

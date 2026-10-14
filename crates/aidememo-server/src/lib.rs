@@ -127,11 +127,7 @@ impl ServerState {
         )
         .await
         .map_err(blocking_store_initialization_error)?;
-        let worker = projection_worker::ProjectionWorker::new(
-            canonical.clone(),
-            #[cfg(feature = "semantic")]
-            None,
-        );
+        let worker = projection_worker::ProjectionWorker::new(canonical.clone());
         Ok(Self {
             canonical,
             artifacts: None,
@@ -170,11 +166,7 @@ impl ServerState {
         )
         .await
         .map_err(blocking_store_initialization_error)?;
-        let worker = projection_worker::ProjectionWorker::new(
-            canonical.clone(),
-            #[cfg(feature = "semantic")]
-            None,
-        );
+        let worker = projection_worker::ProjectionWorker::new(canonical.clone());
         Ok(Self {
             canonical,
             artifacts: None,
@@ -249,17 +241,11 @@ impl ServerState {
     ///
     /// The provider owns no canonical data; cached HNSW state is rebuilt from
     /// canonical project snapshots whenever sequence or model identity changes.
-    /// If a projection worker exists, it will also be updated to use this provider.
+    /// Lexical projection refresh stays on the existing worker.
     #[cfg(feature = "semantic")]
     #[must_use]
     pub fn with_semantic_provider(mut self, provider: SharedEmbeddingProvider) -> Self {
-        self.semantic_provider = Some(provider.clone());
-        if let Some(_worker) = &self.projection_worker {
-            // Create a new worker with the semantic provider
-            let new_worker =
-                projection_worker::ProjectionWorker::new(self.canonical.clone(), Some(provider));
-            self.projection_worker = Some(Arc::new(new_worker));
-        }
+        self.semantic_provider = Some(provider);
         self
     }
 
