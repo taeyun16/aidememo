@@ -7,9 +7,9 @@
 //! TODO(phase6): swap the filesystem mirror for a real S3 client (aws-sdk-s3
 //! or rusoto). Current callers only exercise the local path — there is no
 //! retry, signing, or multi-region story yet.
-//! TODO(phase6): manifest compaction in `flush_segments_to_manifest` runs
-//! per-flush only. A scheduled background compactor (daemon side) would
-//! reclaim space without blocking ingest.
+//! TODO(phase6): manifest compaction on flush runs per-flush only. A
+//! scheduled background compactor (daemon side) would reclaim space
+//! without blocking ingest.
 
 use crate::error::{AideMemoError, Result};
 use crate::wal::{WALSegment, wal_compact};
@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use ulid::Ulid;
-use zstd::stream::{decode_all, encode_all};
+use zstd::stream::encode_all;
 
 pub type SegmentId = Ulid;
 pub type Manifest = Vec<ManifestEntry>;
@@ -36,7 +36,6 @@ pub struct ManifestEntry {
 
 #[derive(Debug, Clone)]
 pub struct S3Manifest {
-    bucket: String,
     root: PathBuf,
     manifest: Manifest,
 }
@@ -59,11 +58,7 @@ impl S3Manifest {
             Vec::new()
         };
 
-        Ok(Self {
-            bucket,
-            root,
-            manifest,
-        })
+        Ok(Self { root, manifest })
     }
 
     pub fn append_entry(&mut self, entry: ManifestEntry) -> Result<()> {
@@ -74,35 +69,6 @@ impl S3Manifest {
     pub fn manifest(&self) -> &[ManifestEntry] {
         &self.manifest
     }
-
-    pub fn bucket(&self) -> &str {
-        &self.bucket
-    }
-}
-
-pub fn download_segment(segment_id: SegmentId) -> Result<String> {
-    let root = current_bucket_root();
-    let compressed = std::fs::read(segment_path(&root, segment_id)).map_err(|source| {
-        AideMemoError::StoreRead {
-            table: "segments",
-            key: segment_id.to_string(),
-            source: Box::new(source),
-        }
-    })?;
-
-    let decompressed = decode_all(&compressed[..]).map_err(|source| {
-        AideMemoError::Internal(format!(
-            "failed to decompress segment {segment_id}: {source}"
-        ))
-    })?;
-    String::from_utf8(decompressed).map_err(|source| {
-        AideMemoError::Internal(format!("segment {segment_id} is not valid UTF-8: {source}"))
-    })
-}
-
-pub fn flush_segments_to_manifest(segments: Vec<WALSegment>) -> Result<ManifestEntry> {
-    let root = current_bucket_root();
-    flush_segments_to_manifest_at(&root, segments)
 }
 
 fn flush_segments_to_manifest_at(root: &Path, segments: Vec<WALSegment>) -> Result<ManifestEntry> {
@@ -219,12 +185,6 @@ fn bucket_root(bucket: &str) -> PathBuf {
     std::env::temp_dir()
         .join("aidememo-s3")
         .join(sanitize_bucket(bucket))
-}
-
-fn current_bucket_root() -> PathBuf {
-    std::env::var("AIDEMEMO_STORAGE")
-        .map(|value| bucket_root(&value))
-        .unwrap_or_else(|_| std::env::temp_dir().join("aidememo-s3").join("default"))
 }
 
 fn sanitize_bucket(bucket: &str) -> String {

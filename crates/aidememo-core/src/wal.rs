@@ -104,25 +104,6 @@ impl WALSegment {
     }
 }
 
-pub fn wal_append(segment: WALSegment) -> Result<SegmentId> {
-    let conn = wal_db()?;
-    let bytes = serde_json::to_vec(&segment).map_err(|source| AideMemoError::Serialize {
-        context: "wal segment".to_string(),
-        source,
-    })?;
-    conn.execute(
-        "INSERT OR REPLACE INTO wal_segments (id, created_at, record_json)
-         VALUES (?1, ?2, ?3)",
-        params![
-            segment.segment_id.to_string(),
-            segment.created_at as i64,
-            bytes
-        ],
-    )
-    .map_err(|source| sqlite_write("wal_segments", &segment.segment_id.to_string(), source))?;
-    Ok(segment.segment_id)
-}
-
 pub fn wal_segments() -> Result<Vec<WALSegment>> {
     let conn = wal_db()?;
     let mut stmt = conn
