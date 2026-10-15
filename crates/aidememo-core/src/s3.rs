@@ -7,9 +7,9 @@
 //! TODO(phase6): swap the filesystem mirror for a real S3 client (aws-sdk-s3
 //! or rusoto). Current callers only exercise the local path — there is no
 //! retry, signing, or multi-region story yet.
-//! TODO(phase6): manifest compaction on flush runs per-flush only. A
-//! scheduled background compactor (daemon side) would reclaim space
-//! without blocking ingest.
+//! TODO(phase6): manifest compaction in `flush_segments_to_manifest` runs
+//! per-flush only. A scheduled background compactor (daemon side) would
+//! reclaim space without blocking ingest.
 
 use crate::error::{AideMemoError, Result};
 use crate::wal::{WALSegment, wal_compact};
@@ -69,6 +69,11 @@ impl S3Manifest {
     pub fn manifest(&self) -> &[ManifestEntry] {
         &self.manifest
     }
+}
+
+pub fn flush_segments_to_manifest(segments: Vec<WALSegment>) -> Result<ManifestEntry> {
+    let root = current_bucket_root();
+    flush_segments_to_manifest_at(&root, segments)
 }
 
 fn flush_segments_to_manifest_at(root: &Path, segments: Vec<WALSegment>) -> Result<ManifestEntry> {
@@ -185,6 +190,12 @@ fn bucket_root(bucket: &str) -> PathBuf {
     std::env::temp_dir()
         .join("aidememo-s3")
         .join(sanitize_bucket(bucket))
+}
+
+fn current_bucket_root() -> PathBuf {
+    std::env::var("AIDEMEMO_STORAGE")
+        .map(|value| bucket_root(&value))
+        .unwrap_or_else(|_| std::env::temp_dir().join("aidememo-s3").join("default"))
 }
 
 fn sanitize_bucket(bucket: &str) -> String {
