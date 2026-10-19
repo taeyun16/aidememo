@@ -1,0 +1,38 @@
+# `cargo-audit` configuration.
+#
+# Lives in .cargo/ because that is where cargo-audit auto-loads its config
+# from (a repo-root audit.toml is silently ignored). CI runs `cargo audit` on
+# every push (see .github/workflows/ci.yml `audit` job), which also passes
+# the older IDs below as --ignore flags. The advisories below are known and
+# tracked but either need a larger upgrade or occur only in inactive optional
+# lockfile entries. Each entry has an owner reason and removal condition;
+# review during 0.2.0 prep.
+
+[advisories]
+ignore = [
+    # rkyv 0.7.46 out-of-bounds issue in Rc/Arc archives. DuckDB analytics
+    # uses rkyv transitively; upgrade tracked but requires bundled DuckDB
+    # rebuild with compatible dependencies.
+    "RUSTSEC-2026-0235",
+
+    # Unmaintained crates (warnings, not vulnerabilities). Replacing them
+    # would mean churning multiple transitive deps' API surface — accept
+    # for now, revisit during 0.2.0.
+    "RUSTSEC-2025-0141",  # bincode (replaced by serde-bincode upstream)
+    "RUSTSEC-2025-0057",  # fxhash (rustc-hash is the de-facto successor)
+    "RUSTSEC-2024-0436",  # paste (proc-macro, transitive only)
+
+    # zip 6.0.0 extraction issues (SUID/SGID preservation, symlink escape,
+    # permissions applied through symlinks). zip is a build-time-only
+    # dependency of libduckdb-sys ([build-dependencies] in its Cargo.toml):
+    # it is used only by libduckdb-sys's build script to extract a DuckDB
+    # archive at build time and is never linked into aidememo or run on user
+    # data. Our `bundled` build unpacks the vendored duckdb.tar.gz with
+    # tar/flate2; zip is only exercised on the opt-in DUCKDB_DOWNLOAD_LIB
+    # path. Fixed in zip >= 9 (libduckdb-sys >= 1.10506.1); duckdb is pinned
+    # deliberately, so drop these when the pin moves.
+    # Expires / revisit by: 2026-11-19.
+    "RUSTSEC-2026-0367",  # zip: SUID/SGID bits preserved on extraction
+    "RUSTSEC-2026-0368",  # zip: extract() symlink targets escape destination
+    "RUSTSEC-2026-0369",  # zip: Unix permissions applied through symlinks
+]
