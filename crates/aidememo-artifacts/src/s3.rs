@@ -81,36 +81,6 @@ impl S3BodyStoreConfig {
             force_path_style,
         })
     }
-
-    /// Configured bucket name.
-    #[must_use]
-    pub fn bucket(&self) -> &str {
-        &self.bucket
-    }
-
-    /// Adapter-owned object prefix without leading or trailing slash.
-    #[must_use]
-    pub fn prefix(&self) -> &str {
-        &self.prefix
-    }
-
-    /// Signing region (`auto` for R2).
-    #[must_use]
-    pub fn region(&self) -> &str {
-        &self.region
-    }
-
-    /// Optional S3-compatible endpoint.
-    #[must_use]
-    pub fn endpoint_url(&self) -> Option<&str> {
-        self.endpoint_url.as_deref()
-    }
-
-    /// Whether the SDK must use path-style bucket addressing.
-    #[must_use]
-    pub fn force_path_style(&self) -> bool {
-        self.force_path_style
-    }
 }
 
 /// Short-lived bearer capability for one exact body-store operation.
