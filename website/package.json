@@ -19,8 +19,8 @@
     "@mdx-js/react": "^3.1.1",
     "clsx": "^2.1.1",
     "prism-react-renderer": "^2.4.1",
-    "react": "^19.3.0",
-    "react-dom": "^19.3.0"
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
   },
   "overrides": {
     "serialize-javascript": "^7.0.5",
@@ -32,7 +32,7 @@
     "@docusaurus/preset-classic": "3.10.2",
     "@docusaurus/theme-mermaid": "^3.10.2",
     "@docusaurus/tsconfig": "3.10.2",
-    "docusaurus-pagefind-search": "0.3.1",
+    "docusaurus-pagefind-search": "0.4.1",
     "typescript": "~7.0.2"
   },
   "browserslist": {
