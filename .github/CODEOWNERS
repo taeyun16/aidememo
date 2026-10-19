@@ -5,4 +5,4 @@
 /scripts/*publish* @taeyun16
 /scripts/release-preflight.sh @taeyun16
 /SECURITY.md @taeyun16
-/audit.toml @taeyun16
+/.cargo/audit.toml @taeyun16
