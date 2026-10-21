@@ -35,4 +35,12 @@ ignore = [
     "RUSTSEC-2026-0367",  # zip: SUID/SGID bits preserved on extraction
     "RUSTSEC-2026-0368",  # zip: extract() symlink targets escape destination
     "RUSTSEC-2026-0369",  # zip: Unix permissions applied through symlinks
+
+    # webpki-roots 0.26.11 is pulled in only by ureq 2 (aidememo-cli /
+    # aidememo-client). No patched 0.26.x exists; 0.26.11 is a semver-trick
+    # shim that re-exports webpki-roots 1.x, which is locked at the patched
+    # 1.0.10, so the actual root data in use is fixed. Drop once the ureq
+    # major bump (#147) lands and 0.26.x leaves the lockfile.
+    # Expires / revisit by: 2026-11-21.
+    "RUSTSEC-2026-0381",  # webpki-roots 0.26.11 (shim over patched 1.x)
 ]
