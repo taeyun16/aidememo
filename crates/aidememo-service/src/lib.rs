@@ -34,18 +34,6 @@ impl<S> CommandService<S> {
     pub const fn store(&self) -> &S {
         &self.store
     }
-
-    /// Mutably borrow the adapter for administration.
-    #[must_use]
-    pub const fn store_mut(&mut self) -> &mut S {
-        &mut self.store
-    }
-
-    /// Consume the service and return its adapter.
-    #[must_use]
-    pub fn into_store(self) -> S {
-        self.store
-    }
 }
 
 impl<S: CommandStore> CommandService<S> {
