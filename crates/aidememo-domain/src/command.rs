@@ -228,12 +228,6 @@ impl<T> AuthorizedCommand<T> {
     pub const fn envelope(&self) -> &CommandEnvelope<T> {
         &self.envelope
     }
-
-    /// Consume this value into its checked components.
-    #[must_use]
-    pub fn into_parts(self) -> (ProjectAuthorization, CommandEnvelope<T>) {
-        (self.authorization, self.envelope)
-    }
 }
 
 /// Storage-neutral mutation used by the backend conformance fixture.
