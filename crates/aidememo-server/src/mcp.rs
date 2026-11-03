@@ -109,7 +109,7 @@ async fn mcp_post(
     };
     let identity = match authenticated_identity(&state, &project_id, &authorization).await {
         Ok(identity) => identity,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
 
     let result = match request.method.as_str() {
@@ -189,7 +189,7 @@ async fn authenticated_identity(
     state: &ServerState,
     project_id: &ProjectId,
     authorization: &HeaderValue,
-) -> Result<Value, Response> {
+) -> Result<Value, Box<Response>> {
     let response = dispatch(
         state,
         Method::GET,
@@ -203,24 +203,24 @@ async fn authenticated_identity(
     let bytes = match body.collect().await {
         Ok(collected) => collected.to_bytes(),
         Err(error) => {
-            return Err(protocol_error(
+            return Err(Box::new(protocol_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Value::Null,
                 -32603,
                 format!("read internal identity response: {error}"),
-            ));
+            )));
         }
     };
     if !status.is_success() {
-        return Err(Response::from_parts(parts, Body::from(bytes)));
+        return Err(Box::new(Response::from_parts(parts, Body::from(bytes))));
     }
     serde_json::from_slice(&bytes).map_err(|error| {
-        protocol_error(
+        Box::new(protocol_error(
             StatusCode::INTERNAL_SERVER_ERROR,
             Value::Null,
             -32603,
             format!("decode internal identity response: {error}"),
-        )
+        ))
     })
 }
 
