@@ -765,7 +765,11 @@ fn snapshot_sqlite(store_path: &Path, snapshot_path: &Path) -> Result<()> {
         source: Box::new(source),
     })?;
     source
-        .backup(rusqlite::MAIN_DB, snapshot_path, None)
+        .backup(
+            rusqlite::MAIN_DB,
+            snapshot_path,
+            None::<fn(rusqlite::backup::Progress)>,
+        )
         .map_err(|source| AideMemoError::StoreWrite {
             table: "backup",
             key: snapshot_path.display().to_string(),
