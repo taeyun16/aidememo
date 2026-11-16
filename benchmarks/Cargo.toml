@@ -13,7 +13,7 @@ publish = false
 criterion = "0.8"
 parking_lot = "0.12"
 redb = "4.2"
-rusqlite = { version = "0.40.1", default-features = false, features = ["bundled"] }
+rusqlite = { version = "0.41.0", default-features = false, features = ["bundled"] }
 tempfile = "3.10"
 aidememo-core = { version = "0.1.0", path = "../crates/aidememo-core", features = ["semantic", "fastembed", "redb"] }
 

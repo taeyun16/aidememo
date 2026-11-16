@@ -26,7 +26,7 @@ not have permission to redistribute.
 
 ## Setup
 
-**System dependencies**: AideMemo has C++ dependencies (esaxx-rs, onig_sys) that require a C++ compiler. On Ubuntu/Debian, install `build-essential`. On macOS, install Xcode Command Line Tools (`xcode-select --install`). The repository includes `.cargo/config.toml` to configure the toolchain automatically.
+**System dependencies**: AideMemo has C++ dependencies (esaxx-rs, onig_sys) that require a C++ compiler. On Ubuntu/Debian, install `build-essential`. On macOS, install Xcode Command Line Tools (`xcode-select --install`). Native build scripts use the platform's default compiler and runtime. If you override `CC`, `CXX`, or the Cargo target linker, select a compatible toolchain for all of them; avoid a versioned `libstdc++` search path from a different GCC installation.
 
 ```bash
 # Ubuntu/Debian

@@ -22,20 +22,6 @@ ignore = [
     "RUSTSEC-2025-0057",  # fxhash (rustc-hash is the de-facto successor)
     "RUSTSEC-2024-0436",  # paste (proc-macro, transitive only)
 
-    # zip 6.0.0 extraction issues (SUID/SGID preservation, symlink escape,
-    # permissions applied through symlinks). zip is a build-time-only
-    # dependency of libduckdb-sys ([build-dependencies] in its Cargo.toml):
-    # it is used only by libduckdb-sys's build script to extract a DuckDB
-    # archive at build time and is never linked into aidememo or run on user
-    # data. Our `bundled` build unpacks the vendored duckdb.tar.gz with
-    # tar/flate2; zip is only exercised on the opt-in DUCKDB_DOWNLOAD_LIB
-    # path. Fixed in zip >= 9 (libduckdb-sys >= 1.10506.1); duckdb is pinned
-    # deliberately, so drop these when the pin moves.
-    # Expires / revisit by: 2026-11-19.
-    "RUSTSEC-2026-0367",  # zip: SUID/SGID bits preserved on extraction
-    "RUSTSEC-2026-0368",  # zip: extract() symlink targets escape destination
-    "RUSTSEC-2026-0369",  # zip: Unix permissions applied through symlinks
-
     # webpki-roots 0.26.11 is pulled in only by ureq 2 (aidememo-cli /
     # aidememo-client). No patched 0.26.x exists; 0.26.11 is a semver-trick
     # shim that re-exports webpki-roots 1.x, which is locked at the patched
