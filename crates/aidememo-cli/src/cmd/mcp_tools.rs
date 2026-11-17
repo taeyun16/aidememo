@@ -1529,12 +1529,16 @@ fn tool_aggregate(args: &Value, wiki: &AideMemo) -> Result<ToolCallResult, Strin
         .get("current_only")
         .and_then(|v| v.as_bool())
         .unwrap_or(true);
+    let bm25_only = args
+        .get("bm25_only")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     let hits = wiki
         .hybrid_search(
             query,
             aidememo_core::SearchOpts {
                 limit: Some(limit),
-                bm25_only: false,
+                bm25_only,
                 current_only,
                 since,
                 entity_filter,
@@ -4155,7 +4159,8 @@ pub fn list_tools() -> Vec<Tool> {
                     "source_id": {"type": "string", "description": "Restrict search, entity resolution, and aggregation to one source namespace. If omitted, MCP falls back to AIDEMEMO_SOURCE_ID when set."},
                     "limit": {"type": "number", "default": 50, "description": "Top-K to consider before fact_type filter. Larger → more recall, slower."},
                     "preview_chars": {"type": "number", "default": 120, "description": "Per-item content preview length when op=enumerate."},
-                    "relevance_threshold": {"type": "number", "default": 0.0, "description": "For value-level ops only. Cosine similarity 0..1; facts below the threshold are dropped before structured extraction. 0 = no filter (default). 0.4 ≈ p50 on LongMemEval data — drops half the off-topic facts."}
+                    "relevance_threshold": {"type": "number", "default": 0.0, "description": "For value-level ops only. Cosine similarity 0..1; facts below the threshold are dropped before structured extraction. 0 = no filter (default). 0.4 ≈ p50 on LongMemEval data — drops half the off-topic facts."},
+                    "bm25_only": {"type": "boolean", "default": false, "description": "Skip embedding model — pure BM25. Use for deterministic CI/demo smoke runs or when surface-form recall is enough."}
                 },
                 "required": ["query"]
             }),
@@ -5676,7 +5681,8 @@ mod tests {
                 "query": "Redis cache policy decision",
                 "op": "enumerate",
                 "source_id": "alpha",
-                "limit": 10
+                "limit": 10,
+                "bm25_only": true
             }),
             &wiki,
         )
