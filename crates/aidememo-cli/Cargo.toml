@@ -48,7 +48,7 @@ ulid = "1.1"
 tempfile = "3.10"
 walkdir = "2.4"
 notify = "8.2"
-dirs = "6.0"
+dirs = "7.0"
 toml = "0.8"
 
 # `aidememo pending review` TUI. Pinned to the same versions our other
